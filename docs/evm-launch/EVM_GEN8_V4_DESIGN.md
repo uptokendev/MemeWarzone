@@ -497,12 +497,15 @@ MemeWarzone cannot change it.
    coins to `0xdEaD`. Before graduation gen-7 also refused buybacks past 95% curve progress; keep that rule (it stops a
    buyback from triggering graduation).
 
-### 4.2 Holder batches [Decided: unchanged process]
+### 4.2 Holder batches [Decided: unchanged process, new holder source]
 
-Same weekly HMAC-timed snapshot and Monday batch (`realtime-indexer/src/evm/evmCreatorChoice*.ts`,
-`docs/evm-launch/creator-choice-operator.md`). Input change: holder balances for gen-8 coins come from the ERC20
-`Transfer` events of the coin (no curve contract holds tokens any more; the PoolManager holds the pool's coins and
-must be excluded from holder lists, as must `0xdEaD`, the hook, and the display pair, which holds nothing).
+Same weekly HMAC-timed snapshot and Monday batch (`realtime-indexer/src/evm/evmCreatorChoice*.ts`, program
+`airdrop_holders_gen7`, `evm_holder_batches` per chain, vault and week; `docs/evm-launch/creator-choice-operator.md`).
+Input change: today the holder census (`realtime-indexer/src/tokenHolders.ts`, `Transfer` replay into
+`token_holder_balances` / `token_holder_sync`) is only caught up on demand by `evm/evmCreatorChoiceWorker.ts:47`.
+For gen-8 coins it must be kept caught up continuously (6.5), because there is no curve contract and the coin is
+transferable from block one. Excluded from holder lists: the PoolManager (holds the pool's coins), the hook,
+`0xdEaD`, the launcher, the reserve lock and the escrow contract. The display pair holds nothing.
 
 ### 4.3 Creator buy escrow [Open, D5]
 
@@ -547,106 +550,198 @@ the coin's owner on `CreatorTransferred`. A creator contract that rejects native
 
 ## 5. Leagues, recruiters, airdrops, battles, graduation, MWL, market stats
 
-| Area | Today (gen-7 EVM) | Gen-8 change | Marker |
-|---|---|---|---|
-| League points (volume) | From curve trade events (actor = signed trader) | From `HookFee` + PoolManager `Swap` in the same log batch; actor = `tx.from`; volume = `curveAmount` (gen-7 volume definition, fee excluded) | [Decided: same rules, new source] |
-| Which trades count | Our site only | Every trade on our pool, any router; side-pool trades do not count (no fee) | [Open, D7; recommend: count all our-pool trades] |
-| Creator's own trades | Never counted | Never counted (`tx.from == creator` or the creator-escrow contract) | [Decided] |
-| Recruiter earnings | Pooled vault, credited per trade by the indexer | Same, from the A-model accruals | [Open, D1] |
-| Airdrop pots | Gen-7 `CommunityRewardsVault` (airdrop + squad), gen-6 pot separate | Gen-8 can reuse the gen-7 community vault if the splitter is allowed to deposit (it is a new depositor) or needs its own; founder said "automate everything, no recurring manual Safe step" | [Open, D8; recommend reuse gen-7 vaults] |
-| Battles | `market_stats` (price, MC, volume) | Same tables; price from `sqrtPriceX96`, MC = price x 1B | [Decided] |
-| Graduation for the platform (badges, "graduated" filters, league bonuses) | Campaign state `graduated` after `graduate()` | `Graduated` event = graduated, same block as the crossing trade. No "pending" state, no keeper. | [Decided] |
-| MWL payouts | Coin creator/owner per `mwl-payout-decisions` | Owner = hook creator (follows `CreatorTransferred`) | [Decided] |
-| Market cap | price x 1B (gen-6/7 rule) | Same: `1e9 x price`, price = `(2^96 / sqrtPriceX96)^2` native per coin | [Decided] |
+Today every one of these reads `curve_trades` (bonding trades, written from campaign `TokensPurchased` / `TokensSold`)
+and, after graduation, `dex_trades` / `market_stats` (written by the DEX pool indexers). If gen-8 writes the same
+tables with the same split at the graduation block (6.3, D14), none of the readers below needs a logic change; they
+need gen-8 rows and the gen-8 fee rate.
 
----
+| Area | Reads today (live branch) | Gen-8 change | Marker |
+|---|---|---|---|
+| League standings and payouts | `realtime-indexer/src/rewards/leagueLeaderboard.ts`, `jobs/generateLeagueStandings.ts`, `finalizeEpochWinners.ts`: `curve_trades` with `block_number <= graduated_block`; `frontend/api/league.js` (:480, :1297-1385; pot = `curve_trades` gross x fee bps, :470-535) | Rows come from gen-8 bonding swaps; actor = `tx.from`; volume = `HookFee.curveAmount`. The pot formula must take the fee from the row (`fee_raw`), not a fixed bps, because gen-8 has the 60 s decay and 2% / 1% rates. "League shown = paid" check re-run on gen-8 rows. | [Decided: same rules, new source] |
+| Which trades count | Our site only (every trade was signed) | Every trade in our pool from any router; side pools never (no fee, not ingested) | [Open, D7] |
+| Creator's own trades | `league_excluded` (`curveTradeGen5Columns.ts`, `evmGen5Store.ts:270`) | Same column; set when `tx.from` is the hook creator or the trade came through the escrow contract | [Decided] |
+| Recruiter league and earnings | `rewards/recruiterLeague.ts`, `frontend/api/leagueRecruiter.js` (volume from `curve_trades`, earnings from `reward_events`); `rewards/creditRecruiterEarnings.ts` attributes from `route_authorization_log`, else the wallet's recruiter link (header :6-20) | No trade authorizations exist any more, so attribution always uses the wallet link at trade time (the existing fallback). `reward_events` rows come from the gen-8 fee accruals (6.3) instead of `RouteExecuted`. | [Open, D1] |
+| Airdrop pots and candidates | `frontend/scripts/weekly-airdrop/` (`pots.mjs` main + gen7, `candidates.mjs:183, 225` from `curve_trades`), `rewards/airdrops.ts`, `api/airdropPool.js`, `scripts/lib/gen7AirdropPot.ts` | Candidates unchanged (gen-8 rows in `curve_trades`). Pot inflow is the splitter's airdrop / squad deposits; whether that is the gen-7 pot or a third pot follows D8 | [Open, D8] |
+| Battles | `lib/arenaBattleMetrics.js:398` (`market_trades_v`), `lib/arenaMarketSnapshot.js` (`market_stats` :162-180, `token_stats` :215, `token_holder_balances` :233, `dex_pools` :253), `arenaBattles.js` | Unchanged if 6.3 fills `token_stats` before and `market_stats` / `dex_pools` after graduation; holders need the continuous census (6.5) | [Decided] |
+| Graduation for the platform | Campaign `Graduated` -> `markEvmCampaignGraduated` (`indexer.ts:1430`) -> `setCampaignGraduated` (:471, `notifyCampaignGraduated`); keeper `evm/evmGraduationKeeper.ts`; `graduationReconciler.ts` | Hook `Graduated` event drives the same `markEvmCampaignGraduated` path, same block as the crossing trade. No pending state; keeper excludes gen-8. | [Decided] |
+| MWL | `arenaLeagueScore.js` and related: battle and check-in points, not trade volume (survey: unverified) | Owner = hook creator (follows `CreatorTransferred`) | [Decided] |
+| Market cap | price x 1B (gen-6/7 rule; `campaigns-base.js:15-22` fully diluted when `factory_generation >= 6`) | Same; gen-8 has `factory_generation = 8` | [Decided] |
 
 ## 6. App, API and indexer changes
 
-File references are on `origin/build/cross-chain-stabilization-rh-base` unless noted. Exact line-level change lists
-are produced in build step 3-5; this section fixes what changes and the rules.
+All references are on `origin/build/cross-chain-stabilization-rh-base`. Line numbers are as read on 2026-10-11.
+
+### 6.0 What gen-8 breaks in the live stack
+
+| # | Today | Why gen-8 breaks it | Fix (section) |
+|---|---|---|---|
+| B1 | Trades, candles, stats are ingested per campaign contract from `TokensPurchased` / `TokensSold` | Gen-8 has no campaign contract; trades are PoolManager `Swap` events keyed by pool id, fees are hook events | 6.3 |
+| B2 | `curve_trades` vs `dex_trades`, `token_stats` vs `market_stats`, and "graduated" all assume a switch from the curve to a separate DEX pool | Gen-8 is one pool before and after | 6.3, D14 |
+| B3 | Discovery via factory `CampaignCreated` | Launcher `Launched` / hook `PoolLaunched` | 6.3 |
+| B4 | Fee income, recruiter credit, airdrop pot and finance all come from router `RouteExecuted` | Hook `HookFee` + splitter runs | 6.3, 6.6 |
+| B5 | Signed trade authorization and `route_authorization_log` | Gone for trades | 6.1, 6.2 |
+| B6 | Graduated EVM coins trade through the import swap route, which does not support V4 hook pools (`CO-IMPORT-SWAP-FEE.md:66`); LP crank and pool indexers target V2 / V3 | Gen-8 graduated coins are V4 hook pools | 6.2, 6.7 |
+| B7 | Holder count = distinct buyers in `curve_trades` (`frontend/api/campaigns-base.js` ~546) | Coins move freely; buyers is not holders | 6.5 |
 
 ### 6.1 Create flow [Open, D3]
 
-- `frontend/src/pages/Create.tsx` and `frontend/src/lib/launchpadClient.ts`: a gen-8 path that calls
-  `launcher.launch(name, symbol, targetUsd, minFirstBuyOut, ...)` with `msg.value` = first buy. First-buy preview
-  from `launcher.plan(target)` plus the shared curve maths (`frontend/shared/evmGen7Curve.mjs` on `build/evm-gen7`,
-  reused: same `vN`, `vT`). 70% MAX and balance block as gen-7.
-- API create authorization (`frontend/api/dev-fix/route-auth.js`, `routeAuthorizationSigner.js`): today it signs the
-  create and every trade. Gen-8: trades are never signed. Create is either signed (D3 option "create-only") or not
-  signed at all. Recommendation: **create-only signing**, same EIP-191 scheme and 1-day max TTL, binding creator,
-  name, symbol, target, fee choice, metadata hash. It keeps bans (`RiskRegistry`), metadata and draft authorization
-  checks, and keeps pools of our hook app-created; it does not affect trading.
+Today: `frontend/src/pages/Create.tsx` reads the launch generation (`readEvmLaunchGeneration` :548-566, `evmGen7`
+:330, gen-7 inputs :578-587, `components/create/EvmGen6LaunchOptions.tsx`, `createCampaign` :1152);
+`frontend/src/lib/launchpadClient.ts` `createCampaign` :864-960 runs preflight-create, then
+`POST /api/routing/create-authorization` (:158), then `createCampaignAuthorized` /
+`createBasicQuoteCampaignAuthorized`. Signer: `frontend/api/dev-fix/route-auth.js` (`routingCreateAuthorization`
+:411, gen-7 targets :155-236), `routeAuthorizationSigner.js`, log `route-auth-log.js` (`route_authorization_log`).
+
+Gen-8:
+
+- A third generation branch in `Create.tsx` / `launchpadClient.ts` that calls `launcher.launch(...)` with
+  `msg.value` = first buy. First-buy preview from `launcher.plan(target)` plus `frontend/shared/evmGen7Curve.mjs`
+  (same `vN`, `vT`). 70% MAX and balance block as gen-7.
+- Recommendation for D3: **create-only signing**. `routingCreateAuthorization` gains a gen-8 payload (creator, name,
+  symbol, target, fee choice, metadata hash, deadline) signed with the same scheme; it keeps bans (`RiskRegistry`),
+  metadata and draft checks, and logs to `route_authorization_log` as today. If D3 = permissionless, the create
+  endpoint only stores metadata and the indexer adopts any `Launched` coin.
 
 ### 6.2 Trade panel [Decided]
 
-- Quotes: `V4Quoter.quoteExactInputSingle` / `quoteExactOutputSingle` with our pool key (proven equal to execution
-  in every case); `hook.previewFill` (lens after the split) when a price limit is set; `currentFeeBps` for the fee
-  line (shows the launch rate countdown).
-- Execution: UniversalRouter `V4_SWAP` (one router version per chain, 2.1), native in for buys (no Permit2 needed),
-  Permit2 approval for sells. `hookData` = our referrer/attribution word (analytics only).
-- The signed BUY/SELL entry points and the per-trade route authorization call are not used for gen-8 coins. The
-  Solana CREATE/BUY/SELL shape rule in CLAUDE.md is untouched (this is EVM only).
-- Graduated gen-8 coins trade through the same pool and panel, not through the import aggregator route (D9).
+Today: `launchpadClient.ts:1030-1145` runs preflight-buy/sell, `POST /api/routing/trade-authorization` (:174,
+`routingTradeAuthorization` `route-auth.js:620`), then `buyExactTokensAuthorized` / `sellExactTokensAuthorized`.
+Quotes from campaign views (`TokenDetails.tsx:4231-4275, 4908, 4944`, `launchpadClient.ts:747`, `readGen5Quotes`).
+After graduation: `WarRoomTradePanel.tsx` -> `ImportedTradePanel` via `graduatedEvmTradeRoute.mjs`
+(`/api/imports/swap/quote|build`).
 
-### 6.3 Indexer ingestion [Decided: sources; build detail in step 3]
+Gen-8 (both before and after graduation, one panel):
 
-Today: per-generation EVM readers (`realtime-indexer/src/evm/evmGen5*.ts`, `evmGen7Curve.ts`, `evmGen7Fees.ts`,
-chain list in `evmIndexerChains.ts`), keeper (`evmGraduationKeeper*.ts`), creator choice (`evmCreatorChoice*.ts`).
+- Quotes: `V4Quoter.quoteExactInputSingle` / `quoteExactOutputSingle` with our pool key (proven equal to execution);
+  `previewFill` (lens) when a price limit is set; `currentFeeBps` for the fee line and the launch-rate countdown.
+- Execution: UniversalRouter `V4_SWAP` (one router version per chain, layout v2.1), native in for buys, Permit2 for
+  sells. `hookData` = our attribution word (analytics only, never money).
+- No trade authorization call and no `route_authorization_log` row for gen-8 trades. Preflight keeps only the
+  client-side checks (balance, slippage).
+- Graduated gen-8 coins stay on this panel; `graduatedEvmTradeRoute.mjs` must not send them to the import route
+  (D9). If the widget is to support gen-8 coins, the import swap build gains a V4 hook-pool path via UniversalRouter.
+- The Solana CREATE / BUY / SELL shape rule in CLAUDE.md is untouched (EVM only).
 
-Gen-8 adds one reader per chain:
+### 6.3 Indexer ingestion [Decided: sources; Open: table split D14]
+
+Today (`realtime-indexer/src/`):
+
+- Chains: `indexer.ts:302-341` (`CHAINS` 56 / 97 / 46630 / 4663; env `BSC_RPC_HTTP_<id>`, `ROBINHOOD_RPC_HTTP_<id>`,
+  `FACTORY_ADDRESS_<id>`, `FACTORY_START_BLOCK_<id>`). Loops: `server.ts` `runIndexerOnce` (~2851), `runTipScanOnce`
+  every 10 s (~2950).
+- Generation: `evm/evmGen5Store.ts` `resolveCampaignGeneration` (`FACTORY_GENERATION` / `CAMPAIGN_GENERATION`,
+  `EVM_GEN7_FACTORIES_<id>` :54); gen-7 = 7/6 (`evm/evmGen7Curve.ts:14-15`).
+- Discovery: `scanFactoryRange` (`indexer.ts:996-1095`, `CampaignCreated`) -> `upsertCampaign` (:383) ->
+  `notifyCampaignCreated` + Ably `league:<chain>` `campaign_created`; `factoryDiscovery.ts`, `factoryInventory.ts`,
+  `SUPPORTED_FACTORY_ADDRESSES_<id>` (`env.ts:76-82`).
+- Trades: `scanCampaignRange` (`indexer.ts:1522-1860`), `getLogs` per campaign with `GEN5_ALL_TOPICS`
+  (`evm/evmGen5CampaignLogs.ts`, ABI `evm/evmGen5Abi.ts:22-37`); per trade `insertTrade` -> `curve_trades`
+  (:560-627), `gen5AnnotateAfterInsert` / `annotateCurveTrade` (`fee_raw`, `league_excluded`), activity, milestones,
+  `upsertCandle` -> `token_candles` (:769-818), `patchStats` -> `token_stats` (:877-952) from `virtualNative` /
+  `virtualToken` (`loadBnbCurveParams` :847, `bnbCurvePricing.ts`); other logs -> `evm_campaign_events`;
+  `canonicalCandleMaterializer.ts` also reads the virtual reserves.
+- After graduation: `topazPoolIndexer.ts` (BNB), `robinhoodV3PoolIndexer.ts` (Robinhood), pools from
+  `campaign_market_state`, writing `dex_pools`, `market_pairs`, `dex_trades`, `token_candles`, `market_stats`.
+  `market_trades_v` = `curve_trades` UNION `dex_trades` (`db/migrations/20260921_000002_...`).
+- Fees: `RouteExecuted` per router (`indexer.ts:1213-1330`, cursor `rewards-router:<addr>`) -> `reward_events`
+  (`rewards/ingest.ts:186`); gen-7 router `EVM_GEN7_ROUTER_<id>` (`evm/evmGen7Fees.ts`); vault and locker events via
+  `evm/evmGen5Aux.ts:48-56`.
+
+Gen-8: one new module `evm/evmGen8Pool.ts` per chain, own cursor, env `EVM_GEN8_LAUNCHER_<id>` and
+`EVM_GEN8_HOOK_<id>` (`0xaddr@startBlock`, same convention as `EVM_GEN7_ROUTER_<id>`):
 
 | Event | Source | Writes |
 |---|---|---|
-| `Launched` | launcher | new campaign row (generation `gen8`, token, pool id, creator, target, ticks, first buy) |
-| `PoolLaunched` | hook | pool key, liquidity, rates, display pair |
-| `Swap(id, sender, amount0, amount1, sqrtPriceX96, liquidity, tick, fee)` | PoolManager, filtered by our pool ids | trade row: side, native and coin amounts, price, trader = `tx.from` |
-| `HookFee` | hook | fee row: curve amount (volume), fee, rate, creator share, referrer; joined to the Swap by tx + log order |
-| `Graduated` | hook | campaign status graduated, graduation fee row |
-| `CreatorClaimed`, `CreatorProposed`, `CreatorTransferred` | hook | creator payouts, owner changes |
-| `RouterClaimed`, `RouterProposed`, `RouterChanged` | hook | finance + alert |
-| ERC20 `Transfer` of each gen-8 coin | coin | holders |
+| `Launched` + `PoolLaunched` | launcher, hook | `upsertCampaign` with `factory_generation = 8`, token, pool id, hook, creator, target, ticks, rates, display pair; `notifyCampaignCreated`; Ably `campaign_created` |
+| `Swap` (PoolManager, topic filtered by our pool ids) | PoolManager | one trade row per swap: side, native and coin amounts, price from `sqrtPriceX96`, trader = `tx.from` |
+| `HookFee` | hook | joined to the `Swap` of the same swap (same tx, consecutive logs): `fee_raw`, rate, creator share, referrer; fee accrual row (D1) |
+| `Graduated` | hook | `markEvmCampaignGraduated` (same path as gen-7), graduation fee accrual row |
+| `CreatorClaimed`, `CreatorProposed`, `CreatorTransferred` | hook | `evm_campaign_events`, owner change |
+| `RouterClaimed`, `RouterProposed`, `RouterChanged`, `DisplayUpdateFailed` | hook | finance, `reward_alerts` |
+| splitter `Routed` | `MwzFeeSplitter` | `reward_events` (per bucket), finance |
 
-- Price and candles: from `sqrtPriceX96` of each `Swap` (native per coin = `(2^96 / sqrtP)^2`), fed into the existing
-  canonical candle path (`canonicalCandleMaterializer.ts`, `candlePublish.ts`). Market stats: price x 1B, 24 h volume
-  from `HookFee.curveAmount`.
-- Graduation: the `Graduated` event; the gen-7 keeper filter excludes gen-8 (nothing to call).
-- Fee accruals (D1 = A): per `HookFee`, profile by `tx.from` at block time, slices as `dbcFeeSplit.ts`, stored per
-  `(tx, log_index)`; a route worker calls `claimRouter` then `MwzFeeSplitter.route` with the summed slices.
-- Ably: reuse the existing trade / candle / campaign channels (`ably.ts`) with the gen-8 rows; no new channel names.
+**D14, where gen-8 trades go.** Recommendation: split at the graduation block, exactly as the live readers expect.
+Swaps up to and including the crossing swap go to `curve_trades` (+ `token_candles`, `token_stats`); swaps after it
+go to `dex_trades` (+ `market_stats`, `dex_pools` / `market_pairs` row for our pool, seeded at launch so the coin page
+can switch without a gap). Reason: leagues, airdrop candidates and `finalizeEpochWinners` read `curve_trades` with
+`block_number <= graduated_block`; battles and the coin page read `market_trades_v`, which unions both. With this
+split no reader changes logic. Alternative: one table for both phases, which would require changing every reader
+listed in section 5. Price for `token_stats` comes from the pool price, not `virtualNative` / `virtualToken`
+(gen-8 has no such views); `loadBnbCurveParams` and `canonicalCandleMaterializer.ts` gain a gen-8 branch that uses
+`sqrtPriceX96`.
+
+Ably (`realtime-indexer/src/ably.ts`): unchanged channel and event names. Before graduation `token:<chain>:<addr>`
+`trade`, `stats_patch`, `candle_upsert`; after `market_trade`, `market_stats_patch`, `market_candle_upsert`;
+`market_stage_changed` at graduation; `league:<chain>` `campaign_created`, `campaign_patch`. Consumers
+(`useCurveTrades.ts`, `useUnifiedMarket.ts`, `useTokenStatsRealtime.ts`, `useLeagueRealtimeBase.ts`) need no change if
+D14 is taken as recommended.
+
+Fee accruals (D1 = A): per `HookFee`, profile from the wallet link at trade time (the `dbcFeeAccruals.ts` SQL), slices
+as `dbcFeeSplit.ts`, idempotent on `(tx, log_index)`; a route worker calls `claimRouter` then
+`MwzFeeSplitter.route`; `reward_events` rows written per trade with `sourceEvent = 'HookFee'` so
+`creditRecruiterEarnings.ts` and finance read them like today's `RouteExecuted` rows.
 
 ### 6.4 Campaign state API [Decided]
 
-The campaign-state endpoint gains `generation: "gen8"`, `pool` (key, id), `hook`, `graduated` from `Graduated`,
-`progress` = coins sold from A / 850M (from the pool tick, exact), current fee rate, display pair (BNB). No
-"pending graduation" state exists for gen-8.
+Today: `/api/campaigns` (`frontend/api/campaigns-base.js`, `server.mjs:452`) decides graduated from
+`graduated_at_chain` / `cms.dex_pair_address` / DEX `market_stage` (:31-40, :157), joins `token_stats` +
+`market_stats` (:420-422); progress from `frontend/api/lib/evmCampaignProgress.js` (`sold()`, `curveSupply()`,
+`graduationNativeTarget()`, `graduationTarget()`, SQL fallback 50 BNB). Coin page `GET /api/evm/campaign-state`
+(`server.mjs:561`) -> `evmCampaignState.js` -> `lib/evmGen5CampaignState.js` (`isEvmGen7Pair` :318, `generationKind`
+:434); shared maths `frontend/shared/evmGen7Curve.mjs`, `frontend/src/lib/evmGen7.mjs`; `lib/evmGen7Fees.js`,
+`evmGen7Lockers.js`.
+
+Gen-8: `generationKind` gains `gen8`; `evmGen8CampaignState` reads the hook (`pools(id)`, `currentFeeBps`,
+`creatorOwed`) and StateView (`getSlot0`); progress = coins sold from A / 850M from the pool tick (exact), so
+`evmCampaignProgress.js` gets a gen-8 branch and the 50 BNB fallback never applies. Graduated = `graduated_at_chain`
+set from the hook event; `cms.dex_pair_address` holds the hook address and the pool id goes into the market-state
+metadata (a V4 pool has no pair address).
 
 ### 6.5 Holders [Decided]
 
-From coin `Transfer` events; exclude PoolManager, hook, `0xdEaD`, launcher, reserve lock, escrow contract.
+Gen-8 coins are added to the continuous `tokenHolders.ts` `Transfer` census (not only on demand), and
+`campaigns-base.js` takes `holder_count` from `token_holder_balances` for `factory_generation = 8` instead of
+distinct buyers. Exclusions as 4.2.
 
 ### 6.6 Finance views [Decided: lanes; detail in step 4]
 
-`frontend/api/admin/finance.js`, `financeAccounting.js`: new lanes `evm_trade_gen8` (bonding fees by bucket from the
-accruals), `evm_graduation_gen8`, `evm_postgrad_gen8` (protocol 0.5% and creator 0.5%), splitter route runs, creator
-claims. The gen-7 LP harvest lane does not apply (no LP to harvest).
+Today EVM income = `reward_events` + locker `FeesHarvested`, assembled in `frontend/api/admin/finance.js`,
+`lib/financeFeeRouting.js`, `financeFeeRoutingEvm.js`, `financeRevenueLanes.js`, `financeAccountingSources.js`,
+`financePayouts.js` (`reward_events`, `evm_campaign_events` :965), `financeRouterScan.js`, `financeTreasuryStore.js`,
+`financeHolderBatchAlerts.js`. No finance DB views.
+
+Gen-8 lanes: `evm_trade_gen8` (bonding fee by bucket from the accruals), `evm_graduation_gen8`, `evm_postgrad_gen8`
+(protocol 0.5% and creator 0.5%), splitter runs (`financeRouterScan.js` gains the splitter), creator claims from
+`evm_campaign_events`, and the unclaimed `routerOwed` / `creatorOwed` read live from the hook. No LP lane.
 
 ### 6.7 LP harvest crank [Decided]
 
-Not needed for gen-8 (fees are taken per swap in native). The gen-7 crank keeps running for gen-6/7 pools.
+Today: `frontend/api/lib/evmLpHarvestCrank.js`, run by `frontend/scripts/run-arena-battle-realtime-worker.mjs:202-219`
+(`EVM_LP_HARVEST=dry|send`, `EVM_LP_HARVEST_SCAN_MS`); Solana `realtime-indexer/src/solanaLpHarvestLoop.ts`.
+Gen-8 has no LP locker and nothing to harvest: the hook takes every fee in native per swap. The crank is not used
+for gen-8 and keeps running unchanged for gen-6/7 pools. The gen-8 periodic job is the splitter route run (6.3).
 
-### 6.8 Side-pool watcher, alerts, notification center [Decided: build]
+### 6.8 Side-pool watcher, alerts, notification center [Decided: build, nothing exists today]
 
-- Watcher (indexer): for every gen-8 coin, scan `PoolManager.Initialize` events with `currency1 == coin` and any other
-  hook, Uniswap V2/V3 and PancakeSwap V2/V3/Infinity factory `PairCreated` / `PoolCreated` with the coin, on both
-  chains. Record pool, venue, liquidity, 24 h volume.
-- Alerts: new side pool, side-pool volume above a share of our pool's volume, `RouterProposed`, `DisplayUpdateFailed`
-  bursts, splitter run failures, oracle staleness at launch.
-- Command Center (web-dashboard repo): a notification center (list, unread state, acknowledge, per-alert link to the
-  coin and explorer), fed from an alerts table via the API. The coin page shows our pool as the main market.
+Facts: no `PairCreated` / `PoolCreated` / PoolManager `Initialize` watcher exists anywhere. Ops alerts live in
+`public.reward_alerts` (`realtime-indexer/src/evm/payoutWatchdog*.ts`, `raiseAlert` :88, `payout_watchdog_state`,
+`rewards/rewardOps.ts`, `reminders.ts`), served by `/api/admin/rewards/alerts` and `/internal/rewards/ops/alerts`.
+User notifications are separate (`prepare_mode_notifications`, `db/migrations/20261003_000004_notification_feed.sql`,
+`lib/notificationProducers.js`, `notifications.js`, indexer `campaignLifecycleNotifications.ts`, `notifications.ts`,
+bell `usePrepareNotificationCenter.ts`).
 
+Gen-8:
 
----
+- Watcher (new indexer module): PoolManager `Initialize` with our coin and any hook other than ours; Uniswap V2/V3,
+  PancakeSwap V2/V3/Infinity, Topaz factory `PairCreated` / `PoolCreated` with our coin; per pool liquidity and 24 h
+  volume. Writes a `side_pools` table.
+- Alerts via `raiseAlert` into `reward_alerts` (one alert source, no second table): new side pool; side-pool volume
+  above a share of our pool's volume; `RouterProposed`; `DisplayUpdateFailed` bursts; splitter run failures or
+  backlog; oracle staleness at launch.
+- Notification center in the web-dashboard repo (`uptokendev/web-dashboard`, Command Center): list, unread state,
+  acknowledge, links to coin and explorer, on top of `/api/admin/rewards/alerts`. The user bell
+  (`usePrepareNotificationCenter.ts`) is not used for ops alerts.
+- Coin page shows our pool as the main market and does not link side pools.
 
 ## 7. Discovery and listing plan
 
@@ -747,9 +842,9 @@ turnaround.
 | 0 | Founder answers section 10 | | founder |
 | 1 | Production contracts: hook (library split, D2 bonding share, A4 flush), lens, launcher (L1-L5), reserve lock, splitter, creator-choice vault, escrow periphery, display factory with `factory()`; unit + property tests; internal audit write-up | 8-10 | founder go |
 | 2 | Fork suite extended (all paths, splitter, choice vault, side pools) | 3 | step 1 |
-| 3 | Indexer: V4 ingestion, accruals, splitter run, candles, graduation, holders, side-pool watcher | 6-8 | step 1 ABIs |
-| 4 | API: create authorization (D3), campaign state, finance lanes, quotes endpoint, alerts | 4-5 | step 3 |
-| 5 | App: create, trade panel (UR + Permit2 + previewFill), coin page, creator panel, Playbook copy | 5-7 | step 4 |
+| 3 | Indexer: `evmGen8Pool.ts` (Launched/PoolLaunched/Swap/HookFee/Graduated), D14 table split, pool-price stats and candles, accruals + splitter route worker, continuous holder census, side-pool watcher + `raiseAlert` | 8-10 | step 1 ABIs |
+| 4 | API: gen-8 create authorization (D3), `evmGen8CampaignState` + `evmCampaignProgress.js` branch, `campaigns-base.js` holders and status, league pot from `fee_raw`, finance lanes + splitter scan, graduated route not to imports (D9) | 5-6 | step 3 |
+| 5 | App: Create.tsx / launchpadClient.ts gen-8 branch, one V4 trade panel before and after graduation (V4Quoter, UR, Permit2, previewFill), coin page, creator panel (claim, transfer), Playbook copy; widget V4 path only if wanted | 6-8 | step 4 |
 | 6 | Command Center notification center + side-pool alerts + gen-8 finance views (web-dashboard repo) | 3-4 | step 3 |
 | 7 | External audit, fixes, re-test | 10-20 calendar | step 2 |
 | 8 | Testnets 97 / 46630 full lifecycle + browser test | 2-3 | step 7, founder go |
@@ -775,6 +870,7 @@ turnaround.
 | D11 | External paid audit | paid external; internal only (as E16) | **Paid external audit** before mainnet (immutable, new code base) |
 | D12 | Quote-bound coins (BNB quote tokens, Robinhood stocks) | stay on gen-7; gen-8 native only | **Stay on gen-7** for now; gen-8 is native vs coin only |
 | D13 | Rates at launch | 200 / 100 / 50 / 9000 as decided; per-coin variants | **Fixed launcher constants** (L1); per-coin variants only by a new launcher |
+| D14 | Where gen-8 trades are stored (6.3) | split at the graduation block: `curve_trades` / `token_stats` before, `dex_trades` / `market_stats` after; one table | **Split at the graduation block**: every live reader (leagues, airdrops, battles, coin page) works unchanged |
 
 
 ---
