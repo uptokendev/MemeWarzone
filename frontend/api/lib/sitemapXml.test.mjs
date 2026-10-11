@@ -100,3 +100,17 @@ test("sitemapOrigin / absoluteLoc honour APP_PUBLIC_ORIGIN", () => {
   });
   withEnv("   ", () => assert.equal(sitemapOrigin(), APP_ORIGIN));
 });
+
+test("chunkEntries guards invalid size", () => {
+  const e = [{ loc: "x" }, { loc: "y" }, { loc: "z" }];
+  for (const bad of [0, -1, NaN, 1.5, "2", Infinity]) {
+    assert.deepEqual(chunkEntries(e, bad).map((c) => c.length), [3], String(bad));
+  }
+});
+
+test("sitemapOrigin rejects malformed env values", () => {
+  for (const bad of ["staging.test", "javascript:alert(1)", "https://a.test/path", "https://a b.test", "ftp://a.test", "https://"]) {
+    withEnv(bad, () => assert.equal(sitemapOrigin(), APP_ORIGIN, bad));
+  }
+  withEnv("http://localhost:8080//", () => assert.equal(sitemapOrigin(), "http://localhost:8080"));
+});

@@ -4,6 +4,10 @@
 
 export const APP_ORIGIN = "https://app.memewar.zone";
 
+/** Generic site description; identical to the meta description in frontend/index.html. */
+export const DEFAULT_DESCRIPTION =
+  "Memecoin launchpad on BNB Chain, Solana and Robinhood Chain. Launch on a bonding curve, trade, compete in coin battles and earn with MemeWarzone.";
+
 const ROBOTS_INDEX = "index,follow";
 const ROBOTS_NOINDEX = "noindex,follow";
 
@@ -33,7 +37,7 @@ export const ROUTE_RULES = [
   // Index, fixed URLs.
   {
     pattern: "/", kind: "index",
-    title: "Memecoin launchpad and battles on BNB Chain, Solana and Robinhood Chain",
+    title: "Memecoin launchpad and coin battles",
     description: "MemeWarzone is a memecoin launchpad on BNB Chain, Solana and Robinhood Chain. Launch a coin, trade it on its bonding curve and enter coin battles.",
   },
   {
@@ -110,6 +114,8 @@ export const ROUTE_RULES = [
   // Noindex: more specific than the per-entity rules below, so they come first.
   { pattern: "/token/:id/edit", kind: "noindex", title: "Edit coin" },
   { pattern: "/profile/:wallet/command/**", kind: "noindex", title: "Command center" },
+  // `@handle` URLs are <Navigate>d to /profile/<wallet> by ProfilePage, so the handle form is never canonical.
+  { pattern: "/profile/@**", kind: "noindex", title: "Profile" },
   // Exact profile first: `/profile/:wallet/**` below also matches zero extra segments.
   {
     pattern: "/profile/:wallet", kind: "index",
@@ -181,7 +187,10 @@ function matchPattern(pattern, segs) {
     const p = pSegs[i];
     if (p === "**") { params["**"] = segs.slice(i).join("/"); return params; }
     if (i >= segs.length) return null;
-    if (p.startsWith(":")) params[p.slice(1)] = segs[i];
+    if (p === "@**") {
+      if (!segs[i].startsWith("@")) return null;
+      params["@"] = segs[i];
+    } else if (p.startsWith(":")) params[p.slice(1)] = segs[i];
     else if (p !== segs[i]) return null;
   }
   return pSegs.length === segs.length ? params : null;
@@ -212,8 +221,19 @@ export function aliasTarget(pathname) {
   return `/${out.join("/")}`;
 }
 
-function defaultCanonical(pathname) {
+function defaultCanonical(pathname, rule) {
   const segs = segmentsOf(pathname);
+  if (rule.pattern === "/token/:id") {
+    // Same rule as the sitemap: a bare 0x address is BNB Chain, so other chains keep ?chainId=.
+    const raw = segs[1] ?? "";
+    let id = raw;
+    try { id = decodeURIComponent(raw); } catch { /* keep raw */ }
+    const query = String(pathname ?? "").split("#")[0].split("?")[1] || "";
+    const fromQuery = new URLSearchParams(query).get("chainId");
+    const implied = /^0x/i.test(id) ? 56 : 101;
+    const fallback = canonicalForToken(id, fromQuery ? Number(fromQuery) : implied);
+    if (fallback) return fallback;
+  }
   return `${APP_ORIGIN}/${segs.join("/")}`;
 }
 
@@ -233,7 +253,7 @@ export function headForPath(pathname, overrides = {}) {
   return {
     title,
     description,
-    canonical: overrides.canonical || defaultCanonical(pathname),
+    canonical: overrides.canonical || defaultCanonical(pathname, rule),
     robots: ROBOTS_INDEX,
   };
 }
@@ -242,6 +262,8 @@ export function headForPath(pathname, overrides = {}) {
  * The one canonical URL for a coin page. The app resolves a bare 0x address as BNB Chain and a bare
  * base58 address as Solana (TokenDetailsEntry), so those carry no query. Every other chain (Robinhood
  * 4663, testnets) needs `?chainId=` to be addressable. EVM addresses are lowercased.
+ * Fall-through cases return the bare URL: base58 on a non-101 chain, or 0x with a non-positive or
+ * invalid chainId.
  * @param {string} address
  * @param {number|string} chainId
  * @returns {string|null}

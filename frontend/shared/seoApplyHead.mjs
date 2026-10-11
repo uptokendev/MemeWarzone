@@ -1,5 +1,7 @@
 // Applies computed head values to a document. Pure apart from the document it is given.
 
+import { DEFAULT_DESCRIPTION } from "./seoRoutes.mjs";
+
 const BRAND = "MemeWarzone";
 
 function ensure(doc, selector, tag, attr) {
@@ -32,10 +34,9 @@ export function applyHead(doc, head) {
   const title = String(head?.title ?? "").trim();
   doc.title = !title || title === BRAND ? BRAND : `${title} · ${BRAND}`;
 
-  const description = String(head?.description ?? "").trim();
-  if (description) {
-    ensure(doc, 'meta[name="description"]', "meta", ["name", "description"]).setAttribute("content", description);
-  }
+  // An empty description resets to the generic one, so a page never inherits the previous page's text.
+  const description = String(head?.description ?? "").trim() || DEFAULT_DESCRIPTION;
+  ensure(doc, 'meta[name="description"]', "meta", ["name", "description"]).setAttribute("content", description);
 
   const existing = doc.querySelector('link[rel="canonical"]');
   if (typeof head?.canonical === "string" && head.canonical) {

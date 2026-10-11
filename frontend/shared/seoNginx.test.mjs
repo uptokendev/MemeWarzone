@@ -155,10 +155,10 @@ test("unknown samples hit the default location; trailing slash is a 301", () => 
 });
 
 test("robots map", () => {
-  for (const p of ["/drafts/x", "/drafts/x/promotion", "/live", "/import", "/profile", "/profile/w/command/x", "/profile/w/command", "/profile/w/other", "/status", "/story/101/x", "/embed/chart/101/x", "/token/abc/edit", "/command", "/command/coins", "/recruiter", "/recruiter/signup", "/recruiter-dashboard", "/squad-dashboard", "/r/code", "/warzone/verify-email", "/live?x=1", "/status?a=/b"]) {
+  for (const p of ["/drafts/x", "/drafts/x/promotion", "/live", "/import", "/profile", "/profile/w/command/x", "/profile/w/command", "/profile/w/other", "/status", "/story/101/x", "/embed/chart/101/x", "/token/abc/edit", "/command", "/command/coins", "/recruiter", "/recruiter/signup", "/recruiter-dashboard", "/squad-dashboard", "/r/code", "/warzone/verify-email", "/live?x=1", "/status?a=/b", "/profile/@handle", "/profile/@handle?x=1"]) {
     assert.equal(robotsFor(p), "noindex", p);
   }
-  for (const p of ["/", "/coins", "/token/0xabc", "/token/0xabc?chainId=4663", "/warzone/battles/1", "/league", "/profile/wallet1", "/profile/@handle", "/recruiters", "/recruiters/x", "/livestock", "/imports", "/statuses", "/prepare/x", "/post/1", "/playbook?x=/live"]) {
+  for (const p of ["/", "/coins", "/token/0xabc", "/token/0xabc?chainId=4663", "/warzone/battles/1", "/league", "/profile/wallet1", "/profile/at@x", "/recruiters", "/recruiters/x", "/livestock", "/imports", "/statuses", "/prepare/x", "/post/1", "/playbook?x=/live"]) {
     assert.equal(robotsFor(p), "", p);
   }
   // consistent with ROUTE_RULES noindex kinds

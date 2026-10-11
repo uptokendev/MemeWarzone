@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { APP_ORIGIN, ROUTE_RULES, matchRoute, headForPath, aliasTarget, canonicalForToken } from "./seoRoutes.mjs";
+import { APP_ORIGIN, ROUTE_RULES, matchRoute, headForPath, aliasTarget, canonicalForToken, DEFAULT_DESCRIPTION } from "./seoRoutes.mjs";
 
 const INDEX = [
   "/", "/coins", "/warzone", "/warzone/battles", "/warzone/major-war-league", "/warzone/tournaments",
@@ -96,4 +96,36 @@ test("copy rules", () => {
     }
     if (r.kind === "alias") assert.ok(r.aliasTo, r.pattern);
   }
+});
+
+test("token canonical follows chainId from the path query", () => {
+  const a = "0xAbC0000000000000000000000000000000000001";
+  const low = a.toLowerCase();
+  assert.equal(headForPath(`/token/${a}?chainId=4663`).canonical, `${APP_ORIGIN}/token/${low}?chainId=4663`);
+  assert.equal(headForPath(`/token/${a}?chainId=56`).canonical, `${APP_ORIGIN}/token/${low}`);
+  assert.equal(headForPath(`/token/${a}`).canonical, `${APP_ORIGIN}/token/${low}`);
+  assert.equal(headForPath(`/token/${a}?utm=1&chainId=4663&x=2`).canonical, `${APP_ORIGIN}/token/${low}?chainId=4663`);
+  assert.equal(headForPath(`/token/${a}?utm=1`).canonical, `${APP_ORIGIN}/token/${low}`);
+  const mint = "So11111111111111111111111111111111111111112";
+  assert.equal(headForPath(`/token/${mint}?ref=x`).canonical, `${APP_ORIGIN}/token/${mint}`);
+  assert.equal(headForPath(`/token/${mint}`).canonical, `${APP_ORIGIN}/token/${mint}`);
+  assert.equal(headForPath(`/token/${a}?chainId=4663`, { canonical: "https://x.test/c" }).canonical, "https://x.test/c");
+});
+
+test("@handle profile URLs are noindex with no canonical", () => {
+  const h = headForPath("/profile/@name");
+  assert.equal(h.robots, "noindex,follow");
+  assert.equal(h.canonical, null);
+  assert.equal(headForPath("/profile/0xabc").robots, "index,follow");
+});
+
+test("root title is short", () => {
+  assert.ok(headForPath("/").title.length <= 45, headForPath("/").title);
+});
+
+test("DEFAULT_DESCRIPTION matches index.html", async () => {
+  const { readFileSync } = await import("node:fs");
+  const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  const m = /<meta name="description" content="([^"]*)"/.exec(html);
+  assert.equal(DEFAULT_DESCRIPTION, m[1]);
 });

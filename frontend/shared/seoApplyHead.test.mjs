@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { applyHead, resolveHead } from "./seoApplyHead.mjs";
-import { headForPath } from "./seoRoutes.mjs";
+import { headForPath, DEFAULT_DESCRIPTION } from "./seoRoutes.mjs";
 
 function makeDoc(initial = []) {
   const children = [];
@@ -81,13 +81,13 @@ test("removes canonical when null", () => {
   assert.equal(d.querySelector('link[rel="canonical"]'), null);
 });
 
-test("keeps existing description when empty", () => {
-  const d = makeDoc([["meta", "name", "description", { content: "Keep me" }]]);
+test("empty description resets to the generic site description", () => {
+  const d = makeDoc([["meta", "name", "description", { content: "Previous page" }]]);
   applyHead(d, { ...base, description: "" });
-  assert.equal(d.querySelector('meta[name="description"]').attrs.content, "Keep me");
+  assert.equal(d.querySelector('meta[name="description"]').attrs.content, DEFAULT_DESCRIPTION);
   const e = makeDoc();
   applyHead(e, { ...base, description: "" });
-  assert.equal(e.querySelector('meta[name="description"]'), null);
+  assert.equal(e.querySelector('meta[name="description"]').attrs.content, DEFAULT_DESCRIPTION);
 });
 
 test("resolveHead: noindex override nulls canonical", () => {

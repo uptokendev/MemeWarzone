@@ -17,7 +17,7 @@ function esc(value) {
 /** Origin for sitemap URLs: env APP_PUBLIC_ORIGIN (trimmed, no trailing slash) or APP_ORIGIN. */
 export function sitemapOrigin() {
   const raw = String(process.env.APP_PUBLIC_ORIGIN || "").trim().replace(/\/+$/, "");
-  return raw || APP_ORIGIN;
+  return /^https?:\/\/[^/\s]+$/.test(raw) ? raw : APP_ORIGIN;
 }
 
 /** Absolute URL for an app path, using sitemapOrigin(). */
@@ -60,8 +60,9 @@ export function sitemapIndexXml(names, origin) {
  */
 export function chunkEntries(entries, size = MAX_URLS_PER_SITEMAP) {
   const list = entries || [];
+  const step = Number.isInteger(size) && size > 0 ? size : MAX_URLS_PER_SITEMAP;
   const chunks = [];
-  for (let i = 0; i < list.length; i += size) chunks.push(list.slice(i, i + size));
+  for (let i = 0; i < list.length; i += step) chunks.push(list.slice(i, i + step));
   return chunks;
 }
 

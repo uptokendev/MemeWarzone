@@ -95,6 +95,14 @@ test("handlers: throwing source gives 200 valid empty urlset", async () => {
   assert.equal(res.statusCode, 200);
   assert.match(res.headers["content-type"], /application\/xml; charset=utf-8/);
   assert.match(res.body, /<urlset[^>]*>\s*<\/urlset>/);
+  assert.equal(res.headers["cache-control"], "public, max-age=60");
+});
+
+test("handlers: successful child is cached for 600 s", async () => {
+  const h = createSitemapHandlers({ db: fakeDb(() => [{ id: 1 }]) });
+  const res = fakeRes();
+  await h.child({ params: { file: "posts.xml" } }, res);
+  assert.equal(res.headers["cache-control"], "public, max-age=600");
 });
 
 test("handlers: unknown child is 404 XML", async () => {

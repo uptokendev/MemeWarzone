@@ -34,10 +34,12 @@ function dedupe(entries) {
   return entries.filter((e) => e.loc && !seen.has(e.loc) && seen.add(e.loc));
 }
 
-// Campaigns: the app's canonical coin URL uses the token address (TokenDetails.tsx:1277, 1494), so the
-// token address is listed and the campaign address is only a fallback when it is empty. Public hidden filter copied from api/lib/publicHiddenSql.js (used by campaigns.js:164
-// via loadPublicHiddenCampaignKeys); future-scheduled drafts excluded as in campaigns.js:183-184.
-// Imports: api/arenaImports.js handleRecent (public list) takes status = 'passed'.
+// Campaigns: the app's canonical coin URL uses the token address (TokenDetails.tsx:1277, 1494). The
+// token address is listed; the campaign address is only a fallback when the token address is empty.
+// The hidden filter is publicHiddenWhere (api/lib/publicHiddenSql.js), the same one campaigns.js:164
+// applies via loadPublicHiddenCampaignKeys. Campaigns whose draft has a future scheduled_launch_at are
+// excluded, as in campaigns.js:183-184.
+// Imports: api/arenaImports.js handleRecent (the public list) takes status = 'passed'.
 export async function coinEntries(db) {
   const campaigns = await db.query(
     `select c.chain_id, coalesce(nullif(c.token_address, ''), c.campaign_address) as coin_address, coalesce(c.created_at_chain, c.created_at) as lastmod
@@ -164,9 +166,11 @@ export async function profileEntries(db) {
   return out;
 }
 
-// Launched drafts (status 'deployed', dev-fix/drafts.js:323; or a campaign_address whose launch time has
-// passed, drafts.js:327-331) have a coin page, so they are left out.
-// campaigns.js:183. prepare-og.js:75-79: a draft is private when visibility = 'private'; everything else with a slug is public.
+// Launched drafts have a coin page, so they are left out: status 'deployed' (dev-fix/drafts.js:323), or a
+// campaign_address whose scheduled_launch_at has passed (drafts.js:327-331). A draft with a
+// campaign_address and a NULL scheduled_launch_at makes `scheduled_launch_at <= now()` NULL, so the
+// `not (...)` is NULL and the row is dropped too (not listed).
+// prepare-og.js:75-79: a draft is private when visibility = 'private'; everything else with a slug is public.
 export async function prepareEntries(db) {
   const r = await db.query(
     `select d.slug, d.updated_at as lastmod
@@ -200,9 +204,10 @@ const XML_HEADERS = {
   "cache-control": "public, max-age=600",
 };
 
-function send(res, status, body) {
+function send(res, status, body, cacheControl) {
   res.statusCode = status;
   for (const [k, v] of Object.entries(XML_HEADERS)) res.setHeader(k, v);
+  if (cacheControl) res.setHeader("cache-control", cacheControl);
   res.end(body);
 }
 
@@ -215,7 +220,7 @@ export function createSitemapHandlers({ db, now = Date.now, log = console.error 
 
   async function load(name) {
     const hit = cache.get(name);
-    if (hit && now() - hit.at < hit.ttl) return hit.chunks;
+    if (hit && now() - hit.at < hit.ttl) return hit;
     if (inflight.has(name)) return inflight.get(name);
     const p = (async () => {
       let entries = [];
@@ -228,8 +233,9 @@ export function createSitemapHandlers({ db, now = Date.now, log = console.error 
         ttl = FAIL_TTL_MS;
       }
       const chunks = chunkEntries(entries);
-      cache.set(name, { at: now(), ttl, chunks });
-      return chunks;
+      const entry = { at: now(), ttl, chunks, failed: ttl === FAIL_TTL_MS };
+      cache.set(name, entry);
+      return entry;
     })().finally(() => inflight.delete(name));
     inflight.set(name, p);
     return p;
@@ -237,7 +243,7 @@ export function createSitemapHandlers({ db, now = Date.now, log = console.error 
 
   async function index(_req, res) {
     const names = [];
-    const all = await Promise.all(CHILD_NAMES.map((name) => load(name)));
+    const all = await Promise.all(CHILD_NAMES.map((name) => load(name).then((e) => e.chunks)));
     for (const [idx, name] of CHILD_NAMES.entries()) {
       const chunks = all[idx];
       const count = Math.max(1, chunks.length);
@@ -252,9 +258,10 @@ export function createSitemapHandlers({ db, now = Date.now, log = console.error 
     if (!m || !CHILD_NAMES.includes(m[1])) return send(res, 404, notFoundXml);
     const n = m[2] === undefined ? 1 : Number(m[2]);
     if (!Number.isInteger(n) || (n < 2 && m[2] !== undefined)) return send(res, 404, notFoundXml);
-    const chunks = await load(m[1]);
+    const { chunks, failed } = await load(m[1]);
     if (n > Math.max(1, chunks.length)) return send(res, 404, notFoundXml);
-    return send(res, 200, urlsetXml(chunks[n - 1] || []));
+    // A failed source is retried after 60 s server side; let clients re-fetch on the same schedule.
+    return send(res, 200, urlsetXml(chunks[n - 1] || []), failed ? "public, max-age=60" : undefined);
   }
 
   return { index, child };
