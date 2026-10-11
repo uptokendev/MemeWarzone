@@ -213,6 +213,7 @@ import dashboardLpFees from "./dashboard/lp-fees.js";
 import analyticsIngest from "./analytics/ingest.js";
 import analyticsAdmin from "./analytics/admin.js";
 import prepareOg from "./prepare-og.js";
+import { sitemapChild, sitemapIndex } from "./sitemap.js";
 import story, { handleSharePage as storySharePage } from "./story.js";
 import battleOg from "./battle-og.js";
 import adminAbuseMe from "./admin/abuse/me.js";
@@ -700,6 +701,8 @@ router.all("/internal/rewards/airdrops/epochs/:epochId/draws/run", wrap(withInte
 
 // Story share links live outside /api so the URL people post stays short.
 app.get("/s/:chainId/:token", wrap(storySharePage));
+app.get("/sitemap.xml", wrap(sitemapIndex));
+app.get("/sitemaps/:file", wrap(sitemapChild));
 app.use("/api", router);
 app.use((req, res) => res.status(404).json({ error: `Unknown route: ${req.path}` }));
 app.use((err, _req, res, _next) => {

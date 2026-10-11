@@ -38,37 +38,7 @@ in runbook section 4.
 
 ### App security headers
 
-Custom nginx configuration for the Coolify app service. Copy it exactly:
-
-```
-server {
-    listen 80;
-    listen [::]:80;
-    server_name localhost;
-    root /usr/share/nginx/html;
-    index index.html;
-
-    location /embed/chart/ {
-        add_header Content-Security-Policy "frame-ancestors 'self' https://crypticpump.com https://www.crypticpump.com" always;
-        rewrite ^ /index.html break;
-    }
-
-    location /assets/ {
-        add_header Cache-Control "public, max-age=31536000, immutable";
-        add_header Content-Security-Policy "frame-ancestors 'none'" always;
-        add_header X-Content-Type-Options "nosniff" always;
-        try_files $uri =404;
-    }
-
-    location / {
-        add_header Content-Security-Policy "frame-ancestors 'none'" always;
-        add_header X-Frame-Options "DENY" always;
-        add_header X-Content-Type-Options "nosniff" always;
-        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-        try_files $uri $uri/ /index.html;
-    }
-}
-```
+Custom nginx configuration for the Coolify app service. The config now lives in `deploy/nginx/app.conf` in the repo and must be pasted from there, whole file, exactly (it starts with a `map` block, then one `server` block). It keeps the security headers (`frame-ancestors 'none'`, `X-Frame-Options DENY`, nosniff, referrer policy), the crypticpump embed exception on `/embed/chart/`, the long cache on `/assets/`, and adds the 301 aliases, `X-Robots-Tag: noindex` on private routes, a real 404 status for unknown URLs and the sitemap proxy to the API. `npm run test:seo` checks the file against the app routes.
 
 Check after the redeploy:
 
