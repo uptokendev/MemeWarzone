@@ -88,6 +88,8 @@ function safeExternalUrl(value: string | null | undefined) {
 }
 
 function formatUsd(value: number | null | undefined) {
+  // Number(null) is 0: a missing figure must read as missing, not as a $0.00 coin.
+  if (value == null) return "—";
   const n = Number(value);
   if (!Number.isFinite(n)) return "—";
   if (Math.abs(n) >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
@@ -97,6 +99,7 @@ function formatUsd(value: number | null | undefined) {
 
 /** A token price keeps its significant digits ($0.0000196, not $0.00). */
 function formatUsdPrice(value: number | null | undefined) {
+  if (value == null) return "—";
   const n = Number(value);
   if (!Number.isFinite(n)) return "—";
   if (n === 0 || Math.abs(n) >= 1) return formatUsd(n);
