@@ -207,7 +207,7 @@ export function createSeoEntities({ db, loadBattle, appOrigin = APP_ORIGIN, apiO
     const description = fit(`${left} vs ${right}, a memecoin battle${where ? ` on ${where}` : ""} on MemeWarzone. ${status} ${scoring}`, 160);
     const startDate = iso(b.startedAt);
     const endDate = iso(b.endsAt);
-    const image = `${app}/api/battle-share-card?battleId=${encodeURIComponent(String(b.id))}&v=1`;
+    const image = `${api}/api/battle-share-card?battleId=${encodeURIComponent(String(b.id))}&v=1`;
     const event = prune({
       "@context": CTX,
       "@type": "Event",
@@ -316,7 +316,7 @@ export function createSeoEntities({ db, loadBattle, appOrigin = APP_ORIGIN, apiO
     } catch { /* promotion table optional, as in prepare-og.js */ }
     const blurb = clean(d.description) || clean(promo.mission_statement) || clean(promo.creator_note);
     const description = fit(`${label} is preparing to launch${chainName(chain) ? ` on ${chainName(chain)}` : ""} on MemeWarzone.${blurb ? ` ${blurb}` : ""} Follow the countdown and the launch dossier.`, 160);
-    const image = `${app}/api/prepare-share-card?slug=${encodeURIComponent(String(d.slug))}&v=4`;
+    const image = `${api}/api/prepare-share-card?slug=${encodeURIComponent(String(d.slug))}&v=4`;
     let url = canonical;
     let robots = isPublicChain(chain) ? INDEX : NOINDEX;
     if (launched) {

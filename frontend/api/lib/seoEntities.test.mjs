@@ -116,7 +116,7 @@ test("battle: found with Event jsonld, image and canonical", async () => {
   const r = await make(fakeDb(), { loadBattle: async (id) => { assert.equal(id, "arena-abc"); return battlePayload(); } }).battle("arena-abc");
   assert.equal(r.found, true);
   assert.equal(r.canonical, `${O}/warzone/battles/arena-abc`);
-  assert.equal(r.image, `${O}/api/battle-share-card?battleId=arena-abc&v=1`);
+  assert.equal(r.image, `${API}/api/battle-share-card?battleId=arena-abc&v=1`);
   assert.match(r.title, /AAA vs BBB/);
   assert.match(r.description, /BNB Chain/);
   const ev = r.jsonLd.find((j) => j["@type"] === "Event");
@@ -166,7 +166,7 @@ test("prepare: public draft", async () => {
   assert.equal(r.found, true);
   assert.equal(r.private, undefined);
   assert.equal(r.canonical, `${O}/prepare/my-coin`);
-  assert.equal(r.image, `${O}/api/prepare-share-card?slug=my-coin&v=4`);
+  assert.equal(r.image, `${API}/api/prepare-share-card?slug=my-coin&v=4`);
   assert.equal(r.robots, "index,follow");
   assert.match(db.calls[0].sql, /lower\(slug\) = lower\(\$1\)/);
   noEmDash(r);
@@ -290,4 +290,12 @@ test("all loaders are read-only sql", async () => {
   await Promise.all([e.coin(EVM), e.tournament("1"), e.prepare("a"), e.post("1"), e.recruiter("a"), e.profile(EVM)]);
   assert.ok(db.calls.length > 6);
   for (const c of db.calls) assert.doesNotMatch(c.sql, /\b(insert|update|delete|alter|drop|truncate)\s/i);
+});
+
+test("every image url starts with apiOrigin", async () => {
+  const db = fakeDb((sql) => (sql.includes("campaign_drafts") && !sql.includes("public.campaigns") ? [draft()] : sql.includes("public.campaigns") ? [coinRow()] : []));
+  const e = make(db, { loadBattle: async () => battlePayload() });
+  const images = [(await e.coin(EVM)).image, (await e.battle("arena-abc")).image, (await e.prepare("my-coin")).image];
+  assert.equal(images.length, 3);
+  for (const img of images) assert.ok(img.startsWith(`${API}/`), img);
 });
