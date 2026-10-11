@@ -3899,6 +3899,17 @@ const toSeconds = (ts: number): number => {
             curve = await resolveSolanaCampaignCurve(String(campaign.campaign));
             if (!cancelled && curve) setSolanaCurve(curve);
           }
+          // No curve state means no quote. The defaults below price from zero sold with a 1-lamport
+          // slope: 1M K88 quoted 510 SOL against a real cost of ~0.23 SOL.
+          if (!curve) {
+            if (!cancelled) {
+              setEffectiveBnbWei(0n);
+              setEffectiveTokenWei(0n);
+              setQuoteWei(null);
+              setQuoteError("Couldn't load the bonding curve. Try again in a moment.");
+            }
+            return;
+          }
 
           const {
             quoteBuyExactSolIn,
