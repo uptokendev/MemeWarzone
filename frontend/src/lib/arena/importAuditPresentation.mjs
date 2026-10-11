@@ -31,6 +31,11 @@ const KNOWN_SCAN_REASONS = Object.freeze({
   no_pancake_pool: "No PancakeSwap WBNB pool was found by the automatic check.",
   pancake_getPool_failed: "The automatic PancakeSwap pool lookup could not be completed.",
   pancakeswap_buy_quote_failed: "The automatic PancakeSwap buy quote could not be completed.",
+  sell_simulation_failed: "A simulated buy worked, but selling it back through the public router failed.",
+  buy_simulation_failed: "A simulated buy on the pool failed, so selling could not be checked.",
+  swap_tax_high: "The simulated buy and sell lost more than the review threshold to token taxes.",
+  swap_simulation_unavailable: "The simulated buy and sell could not run on this network.",
+  sell_quote_unavailable: "The automatic sell quote could not be read because the network check failed.",
 });
 
 const AUTHORITY_OUTCOMES = new Set([
