@@ -85,8 +85,7 @@ create table if not exists public.evm_gen8_fee_accruals (
   squad numeric(78,0) not null default 0,
   airdrop numeric(78,0) not null default 0,
   protocol numeric(78,0) not null default 0,
-  run_id bigint,                             -- the MwzFeeSplitter run whose claim covered this fee
-  run_late boolean not null default false,   -- covered by the run's claim but not in its accrualRoot
+  run_id bigint,                             -- the MwzFeeSplitter run (the rows between two claims to the splitter)
   created_at timestamptz not null default now(),
   unique (chain_id, tx_hash, log_index),
   constraint evm_gen8_fee_accruals_kind_chk check (kind in ('trade', 'graduation')),

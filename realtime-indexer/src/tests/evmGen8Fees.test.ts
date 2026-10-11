@@ -172,3 +172,20 @@ test("accrualRoot: leaves hash deterministically, every proof verifies, any chan
   assert.notEqual(merkleRoot(changed), root);
   assert.equal(merkleRoot([]), ethers.ZeroHash);
 });
+
+test("claim-first runs (MwzFeeSplitter V13): route(runId, expectedPaid, ...) ABI, PaidMismatch, and the claim cut", async () => {
+  const { GEN8_SPLITTER_IFACE } = await import("../evm/evmGen8Abi.js");
+  const { claimCut, PAID_MISMATCH_SELECTOR } = await import("../evm/evmGen8FeeRouting.js");
+  assert.equal(GEN8_SPLITTER_IFACE.getFunction("route")!.selector, "0x2b790927");
+  assert.equal(GEN8_SPLITTER_IFACE.getError("PaidMismatch")!.selector, PAID_MISMATCH_SELECTOR);
+  assert.equal(GEN8_SPLITTER_IFACE.getEvent("Routed")!.topicHash, "0x57881eb45e99d6dfb862adfc2e825ffc08734a496e850ef6106dd14bb24b2ef3");
+  const claims = [
+    { blockNumber: 10, logIndex: 3, txHash: "0xa", amount: 100n, bondingFees: 90n, gradFees: 0n, cumulative: 100n },
+    { blockNumber: 12, logIndex: 1, txHash: "0xb", amount: 50n, bondingFees: 50n, gradFees: 0n, cumulative: 150n }, // e.g. a third-party claim
+    { blockNumber: 15, logIndex: 7, txHash: "0xc", amount: 25n, bondingFees: 0n, gradFees: 25n, cumulative: 175n }, // e.g. the A4 flush
+  ];
+  assert.equal(claimCut(claims, 150n)!.txHash, "0xb", "the run's rows end at the claim that brought paid to P");
+  assert.equal(claimCut(claims, 175n)!.txHash, "0xc");
+  assert.equal(claimCut(claims, 160n), null, "a P no indexed claim reaches: not indexed yet, no plan");
+  assert.equal(claimCut(claims, 0n), null);
+});

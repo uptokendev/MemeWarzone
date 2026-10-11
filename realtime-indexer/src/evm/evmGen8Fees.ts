@@ -119,7 +119,7 @@ export type RunAmounts = { recruiter: bigint; squad: bigint; airdrop: bigint; rs
 
 /**
  * The run amounts, exactly the aggregate rule proven in the step-2 fork suite (scripts/gen8/fork-suite/step2.mjs
- * aggregateRun, build/evm-gen8 e1a7c8ac): over the run's rows only (the rows between two Routed events),
+ * aggregateRun, build/evm-gen8 e1a7c8ac): over the run's rows only (the rows between two claims to the splitter, V13),
  *   recruiter = floor(sum of fee x recruiter bps / 10000)            (one floor on the summed numerator)
  *   squad     = min(floor(sum of fee x squad bps / 10000), squadMax)
  *   rsa       = floor((recruiter + squad + airdrop numerators) / 10000) clamped into [rsaMin, rsaMax]

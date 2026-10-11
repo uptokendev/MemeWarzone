@@ -473,7 +473,7 @@ async function applyEvent(ctx: Ctx, e: Gen8Event, pools: Map<string, Gen8PoolRow
       return false;
     }
     case "Routed": {
-      await recordRoutedRun(db, cfg, e, at);
+      await recordRoutedRun(db, cfg, e, at, (a) => sinks.raiseAlert({ ...a, kind: a.kind }));
       return false;
     }
     case "RouterProposed":

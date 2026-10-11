@@ -62,7 +62,9 @@ export const GEN8_SPLITTER_ABI = [
   "function runs() view returns (uint256)",
   "function pending() view returns (uint256 total, uint256 bondingFees, uint256 gradFees)",
   "function bands(uint256 bondingFees, uint256 gradFees) pure returns (uint256 weekly, uint256 monthly, uint256 rsaMin, uint256 rsaMax, uint256 squadMax)",
-  "function route(uint256 runId, uint256 recruiter, uint256 squad, uint256 airdrop, bytes32 accrualRoot) returns ((uint256 total, uint256 bondingFees, uint256 gradFees, uint256 weeklyLeague, uint256 monthlyLeague, uint256 recruiter, uint256 squad, uint256 airdrop, uint256 protocol) r)",
+  // V13 (build/evm-gen8 aac801d5): expectedPaid pins the run to hook.routerPaid(splitter).amount; no auto-claim.
+  "function route(uint256 runId, uint256 expectedPaid, uint256 recruiter, uint256 squad, uint256 airdrop, bytes32 accrualRoot) returns ((uint256 total, uint256 bondingFees, uint256 gradFees, uint256 weeklyLeague, uint256 monthlyLeague, uint256 recruiter, uint256 squad, uint256 airdrop, uint256 protocol) r)",
+  "error PaidMismatch(uint256 expected, uint256 actual)",
 ] as const;
 
 export const GEN8_LAUNCHER_IFACE = new ethers.Interface(GEN8_LAUNCHER_EVENTS as unknown as string[]);

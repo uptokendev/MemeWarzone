@@ -155,8 +155,25 @@ test("gen-8 indexer end to end on a local chain", { skip: runnable ? false : "ge
     }
     assert.equal(holders, expected, "PoolManager, hook, reserve lock and 0xdEaD are not holders");
 
-    // ---- fee routing: dry run first (nothing sent), then a local send
+    // ---- fee routing, claim-first (MwzFeeSplitter V13: route(runId, expectedPaid, ...), no auto-claim)
+    const { aggregateRunAmounts, emptyProfileSums, addToSums } = await import("../evm/evmGen8Fees.js");
     const routeChain = ethersRouteChain(cfg, provider, env.operator.connect(provider) as any);
+    const send = { db, cfg, chain: routeChain, send: true, operatorAddress: env.operator.address, minWei: 0n, alert: (a: any) => sinks.raiseAlert(a) };
+    const sumsOfRun = async (runId: number) => {
+      const rows = (await db.query(`select kind, phase, profile, fee from public.evm_gen8_fee_accruals where run_id = $1`, [runId])).rows;
+      const sums = emptyProfileSums();
+      for (const r of rows) addToSums(sums, { kind: r.kind, phase: r.phase, profile: r.profile, fee: BigInt(r.fee) });
+      return sums;
+    };
+    const dry0 = await runGen8RoutePass({ db, cfg, chain: routeChain, send: false, minWei: 0n });
+    assert.equal(dry0.status, "skipped", "dry run never claims");
+    assert.equal((dry0 as any).reason, "dry-run-would-claim");
+    const claim1 = await runGen8RoutePass(send);
+    assert.equal(claim1.status, "claimed", JSON.stringify(claim1));
+    await catchUp();
+    // A trade AFTER the claim: its fee stays in the hook and must go to the next run, in full.
+    const late = await swap(env, coin, env.linked, { buy: true, exactIn: true, amount: WAD / 300n });
+    await catchUp();
     const dry = await runGen8RoutePass({ db, cfg, chain: routeChain, send: false, minWei: 0n });
     assert.equal(dry.status, "planned", JSON.stringify(dry));
     assert.equal(BigInt(await (env.splitter as any).runs()), 0n, "dry run sends nothing");
@@ -164,7 +181,7 @@ test("gen-8 indexer end to end on a local chain", { skip: runnable ? false : "ge
     const local = splitterBands(BigInt((dry as any).bondingFees), BigInt((dry as any).gradFees));
     assert.equal(BigInt(contractBands[2]), local.rsaMin);
     assert.equal(BigInt(contractBands[3]), local.rsaMax);
-    const sent = await runGen8RoutePass({ db, cfg, chain: routeChain, send: true, operatorAddress: env.operator.address, minWei: 0n });
+    const sent = await runGen8RoutePass(send);
     assert.equal(sent.status, "sent", JSON.stringify(sent));
     assert.equal(BigInt(await (env.splitter as any).runs()), 1n);
     await catchUp();
@@ -172,12 +189,50 @@ test("gen-8 indexer end to end on a local chain", { skip: runnable ? false : "ge
     assert.equal(run1.status, "confirmed");
     assert.equal(run1.recruiter, (sent as any).recruiter);
     assert.equal(run1.accrual_root, (sent as any).root);
-    const unassigned = (await db.query(`select count(*)::int as n from public.evm_gen8_fee_accruals where run_id is null`)).rows[0].n;
-    assert.equal(unassigned, 0, "every accrual is covered by run 1");
+    const lateRow = (await db.query(`select run_id from public.evm_gen8_fee_accruals where tx_hash = $1`, [late.hash.toLowerCase()])).rows[0];
+    assert.equal(lateRow.run_id, null, "the fee after the claim is not in run 1");
+    const bandsRun1 = splitterBands(BigInt(run1.bonding_fees), BigInt(run1.grad_fees));
+    const exp1 = aggregateRunAmounts(await sumsOfRun(1), bandsRun1);
+    assert.deepEqual([run1.recruiter, run1.squad, run1.airdrop], [exp1.recruiter, exp1.squad, exp1.airdrop].map(String), "run 1 = aggregate rule over exactly its rows");
     assert.equal(BigInt(await provider.getBalance(await env.recruiter.getAddress())), BigInt(run1.recruiter), "recruiter vault got the run's recruiter amount");
     assert.equal(BigInt(await provider.getBalance(await env.weekly.getAddress())), BigInt(run1.weekly_league));
 
-    // ---- second coin, second run (cumulative targets, paid amounts subtracted)
+    // ---- run 2: claim, then a third party trades and claims before our route -> PaidMismatch -> re-plan
+    const claim2 = await runGen8RoutePass(send);
+    assert.equal(claim2.status, "claimed", JSON.stringify(claim2));
+    await catchUp();
+    const racing = {
+      ...routeChain,
+      sendRoute: async (a: any) => {
+        await swap(env, coin, env.og, { buy: true, exactIn: true, amount: WAD / 800n });
+        await (await (env.hook.connect(env.other) as any).claimRouter()).wait(); // permissionless third-party claim
+        return routeChain.sendRoute(a);
+      },
+    };
+    const mismatch = await runGen8RoutePass({ ...send, chain: racing });
+    assert.equal(mismatch.status, "skipped");
+    assert.equal((mismatch as any).reason, "paid-mismatch-replan", JSON.stringify(mismatch));
+    assert.equal(BigInt(await (env.splitter as any).runs()), 1n);
+    await catchUp();
+    const sent2 = await runGen8RoutePass(send);
+    assert.equal(sent2.status, "sent", JSON.stringify(sent2));
+    await catchUp();
+    const run2 = (await db.query(`select * from public.evm_gen8_route_runs where run_id = 2`)).rows[0];
+    assert.equal(run2.status, "confirmed");
+    assert.equal((await db.query(`select run_id from public.evm_gen8_fee_accruals where tx_hash = $1`, [late.hash.toLowerCase()])).rows[0].run_id, "2", "the late fee is routed in run 2");
+    const exp2 = aggregateRunAmounts(await sumsOfRun(2), splitterBands(BigInt(run2.bonding_fees), BigInt(run2.grad_fees)));
+    assert.deepEqual([run2.recruiter, run2.squad, run2.airdrop], [exp2.recruiter, exp2.squad, exp2.airdrop].map(String), "run 2 pays the late fee's shares in full");
+    assert.equal((await db.query(`select count(*)::int as n from public.evm_gen8_fee_accruals where run_id is null`)).rows[0].n, 0);
+    const routeUntilSent = async () => {
+      for (let i = 0; i < 4; i += 1) {
+        const r = await runGen8RoutePass(send);
+        await catchUp();
+        if (r.status === "sent") return r;
+      }
+      throw new Error("no run sent");
+    };
+
+    // ---- second coin, run 3
     const coin2 = await launchCoin(env, env.other, { name: "Second", symbol: "TWO" });
     await provider.send("evm_increaseTime", [120]);
     for (let i = 0; i < 5; i += 1) await swap(env, coin2, i % 2 ? env.linked : env.buyer, { buy: true, exactIn: true, amount: WAD / 700n + BigInt(i) * 12_345n });
@@ -188,10 +243,23 @@ test("gen-8 indexer end to end on a local chain", { skip: runnable ? false : "ge
     const ownerRows = (await db.query(`select profile, recruiter, squad, airdrop from public.evm_gen8_fee_accruals where trader = $1 and kind = 'trade' and phase = 'bonding'`, [env.other.address.toLowerCase()])).rows;
     assert.ok(ownerRows.length >= 1);
     assert.ok(ownerRows.every((r) => r.profile === "standard_unlinked" && r.recruiter === "0" && r.squad === "0" && BigInt(r.airdrop) > 0n), "a recruiter's own wallet without a link is unlinked");
-    const sent2 = await runGen8RoutePass({ db, cfg, chain: routeChain, send: true, operatorAddress: env.operator.address, minWei: 0n });
-    assert.equal(sent2.status, "sent", JSON.stringify(sent2));
+    await routeUntilSent();
+    assert.equal((await db.query(`select status from public.evm_gen8_route_runs where run_id = 3`)).rows[0].status, "confirmed");
+
+    // ---- A4 flush: a router change pays the bucket to the splitter (RouterClaimed) and that run still routes
+    await swap(env, coin2, env.buyer, { buy: true, exactIn: true, amount: WAD / 650n });
+    await (await (env.hook.connect(env.safe) as any).proposeTreasuryRouter(await env.protocol.getAddress())).wait();
+    await provider.send("evm_increaseTime", [48 * 3600 + 10]);
+    await (await (env.hook.connect(env.safe) as any).executeTreasuryRouter()).wait();
     await catchUp();
-    assert.equal((await db.query(`select status from public.evm_gen8_route_runs where run_id = 2`)).rows[0].status, "confirmed");
+    const flushRun = await runGen8RoutePass(send);
+    assert.equal(flushRun.status, "sent", JSON.stringify(flushRun));
+    await catchUp();
+    assert.equal((await db.query(`select status from public.evm_gen8_route_runs where run_id = 4`)).rows[0].status, "confirmed");
+    assert.equal((await db.query(`select count(*)::int as n from public.evm_gen8_fee_accruals where run_id is null`)).rows[0].n, 0, "the flushed bucket is fully routed");
+    const neverFire = (await db.query(`select metadata->>'kind' as kind from public.reward_alerts where metadata->>'kind' in ('gen8_accrual_mismatch','gen8_run_rows_mismatch','gen8_run_without_claim')`)).rows;
+    assert.deepEqual(neverFire, [], "the should-never-fire alerts did not fire");
+    assert.ok((await db.query(`select 1 from public.reward_alerts where metadata->>'kind' = 'gen8_router_not_splitter'`)).rows.length === 1, "router change alerted");
 
     // ---- side pool: a hookless V4 pool of our coin
     const pmSigner = env.pm.connect(env.buyer) as any;
