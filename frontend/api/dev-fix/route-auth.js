@@ -30,13 +30,14 @@ import {
 import { prepareRobinhoodStockCreateAuthorization } from "./robinhoodStockCreatePolicy.js";
 import { prepareBnbBasicQuoteCreateAuthorization, readBnbBasicCreationPreflight } from "./bnbBasicQuoteCreatePolicy.js";
 import { defaultEvmChainId } from "../lib/defaultEvmChain.js";
-import { refuseCreateIfCanaryBlocked } from "../lib/createCanary.js";
+import { createCanaryRefusalBody, isCreateAllowedForWallet, refuseCreateIfCanaryBlocked } from "../lib/createCanary.js";
 import { EVM_GEN7_FACTORY_GENERATION, GEN7_TARGET_TEST_USD, isGen7TargetAllowed } from "../../shared/evmGen7Curve.mjs";
 import { isCreatorArmCooldownActive, normalizeCreatorArmCooldownEndsAt } from "../lib/creatorArmCooldown.js";
 import { pool } from "../../server/db.js";
 import { gen8CreateAuthorization, gen8CreateSigner, gen8RoutingStatus, isGen8CreateRequest } from "./evmGen8CreateAuthorization.js";
 import { findGen8Coin, gen8TradeAuthorizationRefusal } from "../lib/evmGen8Coins.js";
 import { gen8ConfigFor } from "../lib/evmGen8Config.js";
+import { strictEvmWallet } from "../lib/evmGen8StrictWallet.js";
 
 const VALID_PROFILES = new Set([
   ROUTE_PROFILE_STANDARD_LINKED,
@@ -425,14 +426,18 @@ export async function routingStatus(req, res) {
  * launcher, or from POST /api/routing/gen8/create-authorization. evmGen8CreateAuthorization.js has the rules.
  */
 async function routingGen8CreateAuthorizationBody(res, body) {
-  const walletAddress = normalizeAddress(body.walletAddress);
-  if (walletAddress && refuseCreateIfCanaryBlocked(res, walletAddress)) return;
-  const { status, body: out } = await gen8CreateAuthorization(body, {
+  // Strict 0x wallet before the canary (audit B-02): a bare-hex or ICAP wallet is refused, never passed on unchecked.
+  const wallet = strictEvmWallet(body.walletAddress);
+  if (!wallet.ok) return json(res, 400, { error: "Invalid or missing walletAddress", code: "GEN8_WALLET_INVALID" });
+  if (refuseCreateIfCanaryBlocked(res, wallet.address)) return;
+  const { status, body: out } = await gen8CreateAuthorization({ ...body, walletAddress: wallet.address }, {
     signer: gen8CreateSigner(process.env, getRouteAuthorityPrivateKey()),
     getProvider: async (id) => (getRpcUrls(id).length ? getServerReadProvider(id) : null),
     evaluateCreatePreflight,
     getRouteDecision,
     logRouteAuthorization,
+    canaryAllows: (w) => isCreateAllowedForWallet(w),
+    canaryRefusal: createCanaryRefusalBody,
   });
   return json(res, status, out);
 }

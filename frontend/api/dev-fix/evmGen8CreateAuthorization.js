@@ -39,6 +39,10 @@ import {
   isGen8TargetAllowed,
 } from "../../shared/evmGen8.mjs";
 import { gen8ConfigFor } from "../lib/evmGen8Config.js";
+import { strictEvmWallet } from "../lib/evmGen8StrictWallet.js";
+import { createCanaryRefusalBody, isCreateAllowedForWallet } from "../lib/createCanary.js";
+
+export { strictEvmWallet } from "../lib/evmGen8StrictWallet.js";
 
 export const GEN8_LAUNCHER_PREFLIGHT_ABI = [
   "function createPaused() view returns (bool)",
@@ -241,7 +245,8 @@ function authDeadline(env, nowSec) {
 /**
  * The whole create authorization. deps (all injectable for tests):
  *   signer, getProvider(chainId), evaluateCreatePreflight({walletAddress, chainId}), getRouteDecision(wallet),
- *   logRouteAuthorization(row), canaryAllows(wallet), env, now() (ms), randomSalt()
+ *   logRouteAuthorization(row), canaryAllows(wallet) (default: CREATE_CANARY_WALLETS in env), canaryRefusal(), env,
+ *   now() (ms), randomSalt()
  * Returns { status, body }.
  */
 export async function gen8CreateAuthorization(body, deps) {
@@ -253,14 +258,19 @@ export async function gen8CreateAuthorization(body, deps) {
   if (!signer) {
     return { status: 503, body: { error: "Create authorization signer is not configured.", code: "ROUTE_AUTHORIZER_NOT_CONFIGURED", requiredEnv: ["EVM_GEN8_CREATE_SIGNER_PRIVATE_KEY", "or ROUTE_AUTHORITY_PRIVATE_KEY"] } };
   }
-  const walletRaw = String(body?.walletAddress || "").trim();
-  if (!ethers.isAddress(walletRaw)) return { status: 400, body: { error: "Invalid or missing walletAddress" } };
-  const walletAddress = ethers.getAddress(walletRaw);
+  // Strict 0x form only (audit B-02): bare hex and ICAP are refused here too, so no caller can reach the signer
+  // with a wallet form that an earlier check did not see.
+  const wallet = strictEvmWallet(body?.walletAddress);
+  if (!wallet.ok) return { status: 400, body: { error: "Invalid or missing walletAddress", code: "GEN8_WALLET_INVALID" } };
+  const walletAddress = wallet.address;
   const requestedLauncher = String(body?.launcherAddress || body?.factoryAddress || "").trim();
   if (requestedLauncher && (!ethers.isAddress(requestedLauncher) || ethers.getAddress(requestedLauncher) !== cfg.launcher)) {
     return { status: 400, body: { error: "launcherAddress is not this chain's gen-8 launcher.", code: "GEN8_LAUNCHER_MISMATCH", launcher: cfg.launcher } };
   }
-  if (deps.canaryAllows && !deps.canaryAllows(walletAddress)) return { status: 403, body: deps.canaryRefusal ? deps.canaryRefusal() : { error: "Creation is limited to the go-live canary wallets.", code: "CREATE_CANARY_ONLY" } };
+  // The go-live canary runs here as well as in route-auth.js (defence in depth). Without an injected check it reads
+  // CREATE_CANARY_WALLETS from env, so a direct caller cannot skip it by leaving the dependency out.
+  const canaryAllows = deps.canaryAllows || ((w) => isCreateAllowedForWallet(w, env));
+  if (!canaryAllows(walletAddress)) return { status: 403, body: deps.canaryRefusal ? deps.canaryRefusal() : createCanaryRefusalBody() };
   if (body?.stockToken || body?.graduationQuoteAsset || body?.graduationQuoteAssetId || body?.quoteAssetId) {
     // D12: quote-bound coins (BNB quote tokens, Robinhood stocks) stay on gen-7.
     return { status: 400, body: { error: "Quote-bound coins launch on generation 7; generation 8 is native only.", code: "GEN8_NATIVE_ONLY" } };

@@ -10,6 +10,7 @@ import {
   gen8CreateSigner,
   isGen8CreateRequest,
   parseGen8CreateRequest,
+  strictEvmWallet,
 } from "./evmGen8CreateAuthorization.js";
 import { GEN8_TARGET_DEFAULT_USD, GEN8_TARGET_TEST_USD, gen8AuthorizationPayload, gen8HashRequest, gen8PoolId, gen8PoolKey, gen8Progress } from "../../shared/evmGen8.mjs";
 import { deployGen8Local, directSwap, gen8ArtifactsAvailable, gen8EnvFor, startAnvil } from "../lib/evmGen8LocalChain.testkit.mjs";
@@ -78,6 +79,60 @@ test("refusals before any signature: not configured, no signer, quote-bound, pre
   assert.deepEqual([wrong.status, wrong.body.code], [400, "GEN8_LAUNCHER_MISMATCH"]);
   const blocked = await gen8CreateAuthorization(body, deps({ evaluateCreatePreflight: async () => ({ allowed: false, reasons: ["Wallet is restricted."] }) }));
   assert.deepEqual([blocked.status, blocked.body.code, blocked.body.error], [403, "CREATE_PREFLIGHT_BLOCKED", "Wallet is restricted."]);
+});
+
+test("B-02: strictEvmWallet takes only 0x + 40 hex (valid checksum), nothing ethers would also accept", () => {
+  const w = ethers.Wallet.createRandom().address;
+  assert.deepEqual(strictEvmWallet(w), { ok: true, address: w });
+  assert.deepEqual(strictEvmWallet(w.toLowerCase()), { ok: true, address: w });
+  for (const empty of [undefined, null, ""]) assert.deepEqual([strictEvmWallet(empty).ok, strictEvmWallet(empty).empty], [false, true]);
+  const refused = [
+    w.slice(2), w.slice(2).toLowerCase(), ethers.getIcapAddress(w), ` ${w}`, `${w} `, `${w}\n`, `\t${w}`,
+    `0X${w.slice(2)}`, `${w}00`, w.slice(0, 41), [w], { toString: () => w }, 123,
+  ];
+  // mixed case with a broken checksum: flip the case of the first letter
+  const i = w.slice(2).search(/[a-fA-F]/) + 2;
+  if (i >= 2 && /[a-f]/.test(w.slice(2).toLowerCase())) {
+    const flipped = w[i] === w[i].toUpperCase() ? w[i].toLowerCase() : w[i].toUpperCase();
+    const broken = w.slice(0, i) + flipped + w.slice(i + 1);
+    if (broken !== broken.toLowerCase() && broken.slice(2) !== broken.slice(2).toUpperCase()) refused.push(broken);
+  }
+  for (const raw of refused) {
+    const r = strictEvmWallet(raw);
+    assert.equal(r.ok, false, `refused: ${String(raw)}`);
+    assert.equal(r.empty, false);
+  }
+});
+
+test("B-02: gen8CreateAuthorization refuses loose wallet forms and runs the canary itself, before any signature", async () => {
+  const outsider = ethers.Wallet.createRandom().address;
+  const canary = "0x9999999999999999999999999999999999999999";
+  const deps = (over = {}) => ({
+    env: { ...baseEnv, CREATE_CANARY_WALLETS: canary },
+    signer: ethers.Wallet.createRandom(),
+    getProvider: async () => { throw new Error("must not read chain"); },
+    evaluateCreatePreflight: async () => { throw new Error("must not run preflight"); },
+    getRouteDecision: async () => { throw new Error("must not route"); },
+    logRouteAuthorization: async () => { throw new Error("must not log"); },
+    ...over,
+  });
+  const body = (walletAddress) => ({ chainId: 97, walletAddress, factoryAddress: LAUNCHER, campaignRequest: request() });
+  for (const loose of [outsider.slice(2), outsider.slice(2).toLowerCase(), ethers.getIcapAddress(outsider), ` ${outsider} `, ""]) {
+    const r = await gen8CreateAuthorization(body(loose), deps());
+    assert.equal(r.status, 400, `400 for ${JSON.stringify(loose)}`);
+    assert.equal(r.body.error, "Invalid or missing walletAddress");
+  }
+  // No canaryAllows injected: the env list (CREATE_CANARY_WALLETS) still refuses an outsider.
+  const byEnv = await gen8CreateAuthorization(body(outsider), deps());
+  assert.deepEqual([byEnv.status, byEnv.body.code], [403, "CREATE_CANARY_ONLY"]);
+  // Injected check (route-auth.js wiring) is used when given.
+  const seen = [];
+  const injected = await gen8CreateAuthorization(body(outsider.toLowerCase()), deps({ env: baseEnv, canaryAllows: (w) => { seen.push(w); return false; } }));
+  assert.deepEqual([injected.status, injected.body.code], [403, "CREATE_CANARY_ONLY"]);
+  assert.deepEqual(seen, [outsider], "the canary sees the checksummed strict address");
+  // The canary wallet itself passes the canary and reaches the preflight.
+  const passes = await gen8CreateAuthorization(body(canary), deps({ evaluateCreatePreflight: async () => ({ allowed: false, reasons: ["stop here"] }) }));
+  assert.deepEqual([passes.status, passes.body.code], [403, "CREATE_PREFLIGHT_BLOCKED"]);
 });
 
 const chainTests = gen8ArtifactsAvailable() ? test : test.skip;
