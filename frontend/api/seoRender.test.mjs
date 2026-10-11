@@ -28,7 +28,7 @@ function setup({ shell = SHELL, data = {}, cap } = {}) {
     
     const [path, qs] = url.split("?");
     await r({ path, url, originalUrl: url, query: Object.fromEntries(new URLSearchParams(qs || "")), headers: {} }, res);
-    assert.notEqual(res.statusCode, 404, "renderer must never answer 404");
+    if (res.statusCode === 404) assert.match(url, /^\/__render\/(token|warzone\/battles|post)\//, "only entity misses may be 404");
     return res;
   };
   return { run, calls, cur };
@@ -90,10 +90,10 @@ test("private prepare is noindex without canonical", async () => {
   assert.equal(res.headers["x-robots-tag"], "noindex,follow");
 });
 
-test("not found is 410 noindex with shell", async () => {
+test("entity miss is 404 noindex with shell", async () => {
   const { run } = setup({ data: { battle: { found: false } } });
   const res = await run("/__render/warzone/battles/abc");
-  assert.equal(res.statusCode, 410);
+  assert.equal(res.statusCode, 404);
   assert.match(res.body, /<title>Page not found · MemeWarzone<\/title>/);
   assert.match(res.body, /noindex/);
   assert.doesNotMatch(res.body, /rel="canonical"/);
@@ -174,4 +174,17 @@ test("XSS in loader title escaped", async () => {
 test("unexpected error is 500", async () => {
   const { run } = setup({ data: { coin: () => { throw new Error("boom"); } } });
   assert.equal((await run(`/__render/token/${SOL}`)).statusCode, 500);
+});
+
+test("miss cached 5s only; alias path is 410", async () => {
+  let t = 1000;
+  const calls = [];
+  const r = createSeoRenderer({ shell: { get: async () => SHELL }, entities: { post: async (id) => { calls.push(id); return { found: false }; } }, now: () => t });
+  const go = async (u) => { const res = fakeRes(); await r({ originalUrl: u, url: u, headers: {} }, res); return res; };
+  await go("/__render/post/5"); await go("/__render/post/5");
+  assert.equal(calls.length, 1);
+  t += 5001;
+  await go("/__render/post/5");
+  assert.equal(calls.length, 2);
+  assert.equal((await go("/__render/leagues")).statusCode, 410);
 });

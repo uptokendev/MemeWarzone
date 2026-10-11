@@ -9,7 +9,7 @@ import { DEFAULT_DESCRIPTION, headForPath, matchRoute } from "../shared/seoRoute
 const BRAND = "MemeWarzone";
 const NOINDEX = "noindex,follow";
 const TTL_FOUND_MS = 60_000;
-const TTL_MISS_MS = 15_000;
+const TTL_MISS_MS = 5_000;
 const DEFAULT_CAP = 2000;
 const CHAIN_IDS = new Set([56, 101, 4663]);
 
@@ -83,8 +83,10 @@ export function createSeoRenderer({ shell, entities, now = Date.now, cacheCap = 
     res.send(html);
   };
 
-  const notFound = (res, html) =>
-    send(res, 410, injectSeo(html, {
+  // 410 = invalid id / unknown path (nginx passes it through); entity miss = 404 (nginx serves the plain shell,
+  // so a just-launched coin that is not in the database yet never gets a sticky "Page not found" preview).
+  const notFound = (res, html, status = 410) =>
+    send(res, status, injectSeo(html, {
       title: titleOf("Page not found"),
       description: DEFAULT_DESCRIPTION,
       canonical: null,
@@ -135,7 +137,7 @@ export function createSeoRenderer({ shell, entities, now = Date.now, cacheCap = 
         res.setHeader("Cache-Control", "no-cache");
         return res.send("Render failed");
       }
-      if (!data.found) return notFound(res, html);
+      if (!data.found) return notFound(res, html, 404);
       const hidden = data.private || /noindex/i.test(String(data.robots || ""));
       const robots = hidden ? NOINDEX : data.robots || "index,follow";
       const canonical = hidden ? null : data.canonical || null;
