@@ -564,7 +564,7 @@ need gen-8 rows and the gen-8 fee rate.
 | Airdrop pots and candidates | `frontend/scripts/weekly-airdrop/` (`pots.mjs` main + gen7, `candidates.mjs:183, 225` from `curve_trades`), `rewards/airdrops.ts`, `api/airdropPool.js`, `scripts/lib/gen7AirdropPot.ts` | Candidates unchanged (gen-8 rows in `curve_trades`). Pot inflow is the splitter's airdrop / squad deposits; whether that is the gen-7 pot or a third pot follows D8 | [Open, D8] |
 | Battles | `lib/arenaBattleMetrics.js:398` (`market_trades_v`), `lib/arenaMarketSnapshot.js` (`market_stats` :162-180, `token_stats` :215, `token_holder_balances` :233, `dex_pools` :253), `arenaBattles.js` | Unchanged if 6.3 fills `token_stats` before and `market_stats` / `dex_pools` after graduation; holders need the continuous census (6.5) | [Decided] |
 | Graduation for the platform | Campaign `Graduated` -> `markEvmCampaignGraduated` (`indexer.ts:1430`) -> `setCampaignGraduated` (:471, `notifyCampaignGraduated`); keeper `evm/evmGraduationKeeper.ts`; `graduationReconciler.ts` | Hook `Graduated` event drives the same `markEvmCampaignGraduated` path, same block as the crossing trade. No pending state; keeper excludes gen-8. | [Decided] |
-| MWL | `arenaLeagueScore.js` and related: battle and check-in points, not trade volume (survey: unverified) | Owner = hook creator (follows `CreatorTransferred`) | [Decided] |
+| MWL | `arenaLeagueScore.js` and related: battle and check-in points, not trade volume (confirmed by the founder 2026-10-11) | Owner = hook creator (follows `CreatorTransferred`) | [Decided] |
 | Market cap | price x 1B (gen-6/7 rule; `campaigns-base.js:15-22` fully diluted when `factory_generation >= 6`) | Same; gen-8 has `factory_generation = 8` | [Decided] |
 
 ## 6. App, API and indexer changes
