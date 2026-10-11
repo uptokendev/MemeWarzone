@@ -9,25 +9,15 @@
 //   reserve, split vault) -> the API's coin-page state.
 //
 // Needs GEN8_ARTIFACTS (default ~/mwz-wt/evm-gen8/artifacts-gen8), anvil, and BSC_MAINNET_RPC / ROBINHOOD_MAINNET_RPC
-// (env, or the repo .env named by GEN8_FORK_ENV_FILE). Skips when any is missing.
+// (exported env, else the public RPCs). Skips when artifacts or anvil are missing.
 import assert from "node:assert/strict";
-import fs from "node:fs";
 import test from "node:test";
 import { ethers } from "ethers";
 
 import { deployGen8Local, gen8ArtifactsAvailable, gen8EnvFor, startAnvilFork, testWallets, WAD } from "../../api/lib/evmGen8LocalChain.testkit.mjs";
 
-function readEnvFile(file) {
-  const out = {};
-  if (!file || !fs.existsSync(file)) return out;
-  for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
-    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
-    if (m) out[m[1]] = m[2].replace(/^['"]|['"]$/g, "");
-  }
-  return out;
-}
-const FILE_ENV = readEnvFile(process.env.GEN8_FORK_ENV_FILE || "/mnt/e/network/Zakelijk/MemeWarzone/.env");
-const RPC = { 56: process.env.BSC_MAINNET_RPC || FILE_ENV.BSC_MAINNET_RPC, 4663: process.env.ROBINHOOD_MAINNET_RPC || FILE_ENV.ROBINHOOD_MAINNET_RPC };
+// Exported env only (never an .env file); else the chains' public RPCs (reads only).
+const RPC = { 56: process.env.BSC_MAINNET_RPC || "https://bsc-dataseed.bnbchain.org", 4663: process.env.ROBINHOOD_MAINNET_RPC || "https://rpc.mainnet.chain.robinhood.com" };
 const POOL_MANAGER = { 56: "0x28e2ea090877bf75740558f6bfb36a5ffee9e9df", 4663: "0x8366a39cc670b4001a1121b8f6a443a643e40951" };
 
 const client = await import("./evmGen8Client.mjs");

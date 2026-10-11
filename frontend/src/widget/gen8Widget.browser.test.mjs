@@ -15,16 +15,8 @@ import { deployGen8Local, gen8ArtifactsAvailable, gen8EnvFor, startAnvilFork, te
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const WIDGET = path.resolve(dir, "../../dist/widget/mwz-swap.js");
-function readEnvFile(file) {
-  const out = {};
-  if (!file || !fs.existsSync(file)) return out;
-  for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
-    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
-    if (m) out[m[1]] = m[2].replace(/^['"]|['"]$/g, "");
-  }
-  return out;
-}
-const RPC = process.env.BSC_MAINNET_RPC || readEnvFile(process.env.GEN8_FORK_ENV_FILE || "/mnt/e/network/Zakelijk/MemeWarzone/.env").BSC_MAINNET_RPC;
+// Exported env only (never an .env file); else BNB Chain's public RPC (reads only).
+const RPC = process.env.BSC_MAINNET_RPC || "https://bsc-dataseed.bnbchain.org";
 let chromium = null;
 try {
   ({ chromium } = await import("playwright"));
