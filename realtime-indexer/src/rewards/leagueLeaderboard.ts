@@ -6,8 +6,33 @@
 // trades. The rows below a skipped one move up a place; the paid-place count is taken over what is
 // left (finalizeEpochWinners.ts).
 import { publicHiddenWhere } from "./publicHiddenSql.js";
+import { curveTradeGen5Columns } from "../evm/curveTradeGen5Columns.js";
 
 type Db = { query: (text: string, params?: unknown[]) => Promise<{ rows: any[] }> };
+
+// EVM generation 8 rows (curve_trades.venue 'gen8', evm/evmGen8Store.ts) store the curve amount (HookFee.curveAmount,
+// fee excluded); every older row stores the trader-side amount. The leagues compare trader-side amounts: a gen-8 buy
+// is curve + fee, a sell curve - fee (evmGen8Decode.ts traderNative). Gen-8 rows the indexer marked league_excluded
+// (creator, escrow, the launcher's first buy, creator-choice vault buybacks) count for no trader league. No other row
+// is affected (frontend/api/lib/evmGen8LeagueSql.js applies the same rules to the live board).
+const GEN8_ROW = (a: string) => `coalesce(${a}.venue, '') = 'gen8'`;
+export function gen8TraderNativeRawSql(a = "t") {
+  return `(case when ${GEN8_ROW(a)} and ${a}.fee_raw is not null
+      then ${a}.bnb_amount_raw::numeric + (case when ${a}.side = 'buy' then ${a}.fee_raw::numeric else -${a}.fee_raw::numeric end)
+      else ${a}.bnb_amount_raw::numeric end)`;
+}
+export function gen8LeagueRowKeepSql(a = "t") {
+  return `NOT (${GEN8_ROW(a)} AND coalesce(${a}.league_excluded, false))`;
+}
+/** The gen-8 fragments once curve_trades has fee_raw and league_excluded (gen-8 rows need both); else the old SQL. */
+async function gen8LeagueSql(db: Db) {
+  const cols = await curveTradeGen5Columns(db);
+  const on = cols.leagueExcluded && cols.feeRaw;
+  return {
+    amount: (a = "t") => (on ? gen8TraderNativeRawSql(a) : `${a}.bnb_amount_raw::numeric`),
+    keep: (a = "t") => (on ? `AND ${gen8LeagueRowKeepSql(a)}` : ""),
+  };
+}
 
 function isSolanaChain(chainId: number) {
   return Number(chainId) === 101;
@@ -32,6 +57,7 @@ export async function leagueLeaderboard(
   limit: number
 ): Promise<Array<{ recipient: string; score: bigint; meta: any }>> {
   if (category === "fastest_finish") {
+    const g8 = await gen8LeagueSql(db);
     const { rows } = await db.query(
       `
       WITH grads AS (
@@ -52,6 +78,7 @@ export async function leagueLeaderboard(
               AND t.block_number >= c.created_block
               AND (c.graduated_block IS NULL OR c.graduated_block=0 OR t.block_number <= c.graduated_block)
               AND (c.creator_address IS NULL OR t.wallet <> c.creator_address)
+              ${g8.keep("t")}
           ) AS unique_buyers
         FROM campaigns c
         WHERE c.chain_id=$1
@@ -128,6 +155,7 @@ export async function leagueLeaderboard(
   }
 
   if (category === "biggest_hit") {
+    const g8 = await gen8LeagueSql(db);
     const solana = isSolanaChain(chainId);
     const { rows } = await db.query(
       `
@@ -139,13 +167,13 @@ export async function leagueLeaderboard(
           c.logo_uri,
           c.creator_address,
           t.wallet AS buyer_address,
-          t.bnb_amount_raw::numeric(78,0) AS score_raw,
+          ${g8.amount("t")}::numeric(78,0) AS score_raw,
           t.tx_hash,
           t.block_number,
           t.block_time,
           ROW_NUMBER() OVER (
             PARTITION BY t.campaign_address
-            ORDER BY t.bnb_amount_raw::numeric DESC NULLS LAST, t.block_number DESC, t.log_index DESC
+            ORDER BY ${g8.amount("t")} DESC NULLS LAST, t.block_number DESC, t.log_index DESC
           ) AS rn
         FROM public.curve_trades t
         JOIN public.campaigns c
@@ -159,6 +187,7 @@ export async function leagueLeaderboard(
           AND t.wallet IS DISTINCT FROM c.campaign_address
           AND (c.creator_address IS NULL OR t.wallet IS DISTINCT FROM c.creator_address)
           AND (c.fee_recipient_address IS NULL OR t.wallet IS DISTINCT FROM c.fee_recipient_address)
+          ${g8.keep("t")}
       )
       SELECT *
       FROM buys
@@ -246,12 +275,13 @@ export async function leagueLeaderboard(
   }
 
   if (category === "top_earner") {
+    const g8 = await gen8LeagueSql(db);
     const { rows } = await db.query(
       `
       WITH flows AS (
         SELECT
           ${sqlWallet("t.wallet", chainId)} as wallet,
-          sum(case when t.side='sell' then (t.bnb_amount_raw::numeric) else -(t.bnb_amount_raw::numeric) end)::numeric(78,0) as pnl_raw
+          sum(case when t.side='sell' then (${g8.amount("t")}) else -(${g8.amount("t")}) end)::numeric(78,0) as pnl_raw
         FROM public.curve_trades t
         JOIN public.campaigns c
           ON c.chain_id = t.chain_id
@@ -266,6 +296,7 @@ export async function leagueLeaderboard(
           AND t.wallet IS DISTINCT FROM c.campaign_address
           AND (c.creator_address IS NULL OR t.wallet IS DISTINCT FROM c.creator_address)
           AND (c.fee_recipient_address IS NULL OR t.wallet IS DISTINCT FROM c.fee_recipient_address)
+          ${g8.keep("t")}
         GROUP BY ${sqlWallet("t.wallet", chainId)}
       )
       SELECT wallet as recipient, pnl_raw
