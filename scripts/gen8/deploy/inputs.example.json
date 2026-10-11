@@ -1,0 +1,117 @@
+{
+  "_readme": "DRAFT inputs for plan-gen8-deploy.mjs (dry run). Known values are copied from the design doc 2.1 and the gen-7 mainnet records on build/evm-gen7 (deployments/*/mainnet.gen7.json). Every TODO must be filled and re-read on chain at step 9 (founder go); the weekly / monthly league destinations must be read from the live gen-7 TreasuryRouterV4 (weeklyLeagueVault(), monthlyLeagueTreasury()) on the day, because M1/M2 moved the monthly treasury once already.",
+  "56": {
+    "safe": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+    "poolManager": "0x28e2ea090877bf75740558f6bfb36a5ffee9e9df",
+    "wrappedNative": "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",
+    "graduationOracle": "0x9D204406d5ECA0f18e48427fDD983A32FdF57C9B",
+    "minNativeUsd": "50",
+    "maxNativeUsd": "20000",
+    "createSigner": "0xb989A99823eA96552c3E3198A40CdBF682EDf1aA",
+    "weeklyLeagueVault": "TODO read gen-7 router 0x576c1d6Ba6975020702Aa13dE0899D8CD92ECD1A weeklyLeagueVault() (gen-7 record input: 0xC9286EE3390A4dC642340bd703396E6B7b2521d5)",
+    "monthlyLeagueTreasury": "TODO read gen-7 router monthlyLeagueTreasury() (gen-7 record input: 0x42D254A7451808Bb01df879d71BcAfDC5D605A38, moved by M1/M2 since)",
+    "recruiterRewardsVault": "0x40ac5cD71bdB42cCF542b7f96C2083cDABa41e78",
+    "protocolRevenue": "0x2ABd8970680d806e46DeD9AEdDAA6E12d866641D",
+    "splitterOperator": "TODO new key, Zodiac Roles scoped to MwzFeeSplitter.route only",
+    "holderDistributor": "TODO gen-8 holder distributor (a RewardDistributor whose batch operator is the gen-8 choice vault)",
+    "vaultOperator": "0x20652bdb1d986220fEc30f4733587F279403E773",
+    "airdropDistributor": "TODO gen-8 airdrop pot RewardDistributor (D8)",
+    "airdropOperator": "0xdcf07EB07e6D6722c246161e7530dc905F9eaA50",
+    "holderBatchDelaySeconds": 86400,
+    "caps": {
+      "maxBuyPerTx": "0.5",
+      "maxBuybackPerCoinWeek": "2",
+      "minBuyIntervalSeconds": 3600,
+      "maxImpactBps": 50,
+      "maxHolderBatchPerWeek": "50"
+    },
+    "gen7Factories": [
+      "0x948463E91d63a7A51cEeC0342735D1B738044aea"
+    ],
+    "capsSource": "TODO placeholders: copy the gen-7 CreatorRewardsVaultV2.limits() of this chain on the day (gen-7 rule: caps default to the live vault's values)"
+  },
+  "4663": {
+    "safe": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+    "poolManager": "0x8366a39cc670b4001a1121b8f6a443a643e40951",
+    "graduationOracle": "0xe635AA43fE5707561c8c3C655225da5C3e4C2239",
+    "minNativeUsd": "100",
+    "maxNativeUsd": "50000",
+    "createSigner": "0xb989A99823eA96552c3E3198A40CdBF682EDf1aA",
+    "weeklyLeagueVault": "TODO read gen-7 router 0x63032E36A17f0fEf974517D5F85Da18b6732b95E weeklyLeagueVault() (gen-7 record: 0xB6ccAc81f84F125Ecdc8dFaB2e019c42EAc5486e)",
+    "monthlyLeagueTreasury": "TODO read gen-7 router monthlyLeagueTreasury() (gen-7 record: 0x576c1d6Ba6975020702Aa13dE0899D8CD92ECD1A)",
+    "recruiterRewardsVault": "0xBd7EB35d62B0AB69B1BB1d756BbDBcC6D31D86C7",
+    "protocolRevenue": "0x632061cA786f7B585Bbd46A792FDA92B02f70671",
+    "splitterOperator": "TODO new key, Zodiac Roles scoped to MwzFeeSplitter.route only",
+    "holderDistributor": "TODO gen-8 holder distributor (a RewardDistributor whose batch operator is the gen-8 choice vault)",
+    "vaultOperator": "0x20652bdb1d986220fEc30f4733587F279403E773",
+    "airdropDistributor": "TODO gen-8 airdrop pot RewardDistributor (D8)",
+    "airdropOperator": "0xdcf07EB07e6D6722c246161e7530dc905F9eaA50",
+    "holderBatchDelaySeconds": 86400,
+    "caps": {
+      "maxBuyPerTx": "0.15",
+      "maxBuybackPerCoinWeek": "0.6",
+      "minBuyIntervalSeconds": 3600,
+      "maxImpactBps": 50,
+      "maxHolderBatchPerWeek": "15"
+    },
+    "gen7Factories": [
+      "0x399E529c0C6888543E6501FD137ac49CA3E1Df58"
+    ],
+    "capsSource": "TODO placeholders: copy the gen-7 CreatorRewardsVaultV2.limits() of this chain on the day (gen-7 rule: caps default to the live vault's values)"
+  },
+  "97": {
+    "safe": "TODO testnet admin",
+    "poolManager": "TODO check Uniswap V4 exists on BSC testnet (design 8.4 step 3), else deploy v4-core for testing only",
+    "wrappedNative": "TODO WBNB on 97",
+    "graduationOracle": "TODO gen-7 testnet oracle",
+    "minNativeUsd": "50",
+    "maxNativeUsd": "20000",
+    "createSigner": "TODO testnet API signer",
+    "weeklyLeagueVault": "TODO",
+    "monthlyLeagueTreasury": "TODO",
+    "recruiterRewardsVault": "TODO",
+    "protocolRevenue": "TODO",
+    "splitterOperator": "TODO",
+    "holderDistributor": "TODO",
+    "vaultOperator": "TODO",
+    "airdropDistributor": "TODO",
+    "airdropOperator": "TODO",
+    "holderBatchDelaySeconds": 86400,
+    "caps": {
+      "maxBuyPerTx": "0.5",
+      "maxBuybackPerCoinWeek": "2",
+      "minBuyIntervalSeconds": 60,
+      "maxImpactBps": 50,
+      "maxHolderBatchPerWeek": "50"
+    },
+    "gen7Factories": [],
+    "capsSource": "TODO placeholders: copy the gen-7 CreatorRewardsVaultV2.limits() of this chain on the day (gen-7 rule: caps default to the live vault's values)"
+  },
+  "46630": {
+    "safe": "TODO testnet admin",
+    "poolManager": "TODO check Uniswap V4 exists on Robinhood testnet (design 8.4 step 3), else deploy v4-core for testing only",
+    "graduationOracle": "TODO gen-7 testnet oracle",
+    "minNativeUsd": "100",
+    "maxNativeUsd": "50000",
+    "createSigner": "TODO testnet API signer",
+    "weeklyLeagueVault": "TODO",
+    "monthlyLeagueTreasury": "TODO",
+    "recruiterRewardsVault": "TODO",
+    "protocolRevenue": "TODO",
+    "splitterOperator": "TODO",
+    "holderDistributor": "TODO",
+    "vaultOperator": "TODO",
+    "airdropDistributor": "TODO",
+    "airdropOperator": "TODO",
+    "holderBatchDelaySeconds": 86400,
+    "caps": {
+      "maxBuyPerTx": "0.15",
+      "maxBuybackPerCoinWeek": "0.6",
+      "minBuyIntervalSeconds": 60,
+      "maxImpactBps": 50,
+      "maxHolderBatchPerWeek": "15"
+    },
+    "gen7Factories": [],
+    "capsSource": "TODO placeholders: copy the gen-7 CreatorRewardsVaultV2.limits() of this chain on the day (gen-7 rule: caps default to the live vault's values)"
+  }
+}

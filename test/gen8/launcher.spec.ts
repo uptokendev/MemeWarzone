@@ -67,7 +67,7 @@ describe("gen8 MwzV4Launcher", function () {
       await expect(zeroOwner.deploy()).to.be.revertedWithCustomError(L, "ZeroAddress");
       const badBand = await deployLauncherWith(env, { min: 10n * WAD, max: 10n * WAD });
       await expect(badBand.deploy()).to.be.revertedWithCustomError(L, "OracleUnsuitable");
-      const slowFeed = await (await ethers.getContractFactory("GraduationOracle")).deploy(await env.feed.getAddress(), 2 * 86400);
+      const slowFeed = await (await ethers.getContractFactory("GraduationOracle")).deploy(await env.feed.getAddress(), 2 * 86400 + 1);
       const slow = await deployLauncherWith(env, { oracle: await slowFeed.getAddress() });
       await expect(slow.deploy()).to.be.revertedWithCustomError(L, "OracleUnsuitable");
     });

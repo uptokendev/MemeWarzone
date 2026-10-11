@@ -109,7 +109,9 @@ contract MwzV4Launcher is IUnlockCallback, ReentrancyGuard {
     uint256 public constant TEST_GRADUATION_USD = 150 ether;
 
     uint256 public constant MAX_AUTH_TTL = 1 days; // gen-7 audit 5
-    uint256 public constant MAX_ORACLE_AGE = 1 days; // bound on the oracle's own staleness window
+    /// @dev Upper bound on the oracle's own staleness window. The gen-7 oracles use 3600 s (BNB, Chainlink BNB/USD) and
+    /// 90000 s (Robinhood, Chainlink ETH/USD with a 24 h heartbeat); 2 days accepts both and refuses a misconfigured one.
+    uint256 public constant MAX_ORACLE_AGE = 2 days;
     int24 public constant TICK_SPACING = 10;
 
     uint8 public constant FEE_CHOICE_KEEP = 1;
