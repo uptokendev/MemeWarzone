@@ -1,5 +1,6 @@
 import { PublicKey } from "@solana/web3.js";
 import { readPumpImportEvidence } from "./projectImportPumpEvidence.js";
+import { getGenesisHashCached } from "./solanaGenesisHashCache.js";
 
 // Pump's published IDL: BondingCurve = discriminator + 5*u64 + bool + creator.
 // The account is derived for the requested mint; no token suffix, holder list,
@@ -18,7 +19,7 @@ function rpcError(message) {
 export async function assertSolanaImportMainnet(connection) {
   if (typeof connection?.getGenesisHash !== "function") throw rpcError("Solana network verification is unavailable. Please retry.");
   let genesis;
-  try { genesis = await connection.getGenesisHash(); }
+  try { genesis = await getGenesisHashCached(connection); }
   catch { throw rpcError("Solana network verification is temporarily unavailable. Please retry."); }
   if (genesis !== SOLANA_MAINNET_GENESIS) {
     throw Object.assign(new Error("The import service is connected to the wrong Solana network. Solana mainnet is required."), { code: "PROJECT_IMPORT_CHAIN_MISMATCH" });

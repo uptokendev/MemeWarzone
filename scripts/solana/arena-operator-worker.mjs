@@ -27,6 +27,7 @@ import {
 } from "./arena-operator-resolve.mjs";
 import { buildTournamentPlaces } from "../../frontend/api/lib/arenaTournamentPlaces.js";
 import { arenaEnvironmentIdentity } from "../../frontend/api/lib/arenaChainEnvironment.js";
+import { getGenesisHashCached } from "../../frontend/api/lib/solanaGenesisHashCache.js";
 import { recordLeagueShare } from "../../frontend/api/lib/arenaLeagueShareLedger.js";
 import {
   DEFAULT_INTERVAL_MS,
@@ -342,7 +343,7 @@ async function defaultChainReaders({ chainId, poolId }) {
   const loadConfig = async () => {
     const [info, genesisHash] = await Promise.all([
       connection.getAccountInfo(pdas.config, "confirmed"),
-      connection.getGenesisHash(),
+      getGenesisHashCached(connection),
     ]);
     return configAccountToPlanner(info, genesisHash, Number(chainId));
   };
