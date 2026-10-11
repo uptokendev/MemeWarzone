@@ -31,6 +31,7 @@ import {
 import { upsertCampaignFromDraft } from "./campaign-registry.js";
 import { refuseCreateIfCanaryBlocked } from "../lib/createCanary.js";
 import { EVM_GEN7_FACTORY_GENERATION, GEN7_TARGET_TEST_USD, isGen7TargetAllowed } from "../../shared/evmGen7Curve.mjs";
+import { Gen8ScheduleError, scheduleGen8Draft } from "./draftGen8Schedule.js";
 
 const MIN_SCHEDULE_SECONDS = 5 * 60;
 const MAX_SCHEDULE_SECONDS = 30 * 24 * 60 * 60;
@@ -487,6 +488,29 @@ export async function draftDeploy(req, res) {
     draftId,
   });
   if (!ok) return;
+
+  if (body.operation === "schedule_gen8") {
+    // Generation 8 timed launch: the draft keeps the time, the creator launches at or after it (draftGen8Schedule.js).
+    // No signature is issued here; the launch itself goes through the create authorization, which applies the canary.
+    try {
+      const out = await scheduleGen8Draft({
+        body,
+        row,
+        db: pool,
+        notify: (updatedRow, atIso) =>
+          notifyDraftOwner(pool, mapDraftRow(updatedRow), {
+            eventType: "schedule",
+            title: "Launch time set",
+            body: `$${updatedRow.ticker || row.ticker || "DRAFT"}: your launch time is ${new Date(atIso).toLocaleString("en-GB")} UTC. Launch it from the draft page when the timer ends.`,
+            metadata: { target: `/drafts/${row.id}/push-live`, scheduledLaunchAt: atIso, generation: 8 },
+          }),
+      });
+      return json(res, 200, { ok: true, draft: mapDraftRow(out.draft), scheduledLaunchAt: out.scheduledLaunchAt, generation: 8 });
+    } catch (error) {
+      if (error instanceof Gen8ScheduleError) return json(res, error.httpStatus, { error: error.message, code: error.code });
+      throw error;
+    }
+  }
 
   if (body.operation === "authorize_scheduled") {
     // Go-live canary: arming a scheduled create signs a create authorization.

@@ -72,7 +72,9 @@ async function createCoin({ local, provider, chainId, creator, feeChoice = "keep
     chainId, walletAddress: creator.address, launcher, name: "Gen Eight", symbol: "GEIGHT", logoURI: "https://example.com/g8.png",
     description: "gen-8 app test", targetUsd, feeChoice, feeCreatorPct, firstBuyValueWei,
   });
-  const out = await gen8CreateAuthorization(body, apiDeps(local, provider));
+  // The API dates the authorization by its clock; on a fork whose clock was moved forward, use the chain's.
+  const chainMs = Number((await provider.getBlock("latest")).timestamp) * 1000;
+  const out = await gen8CreateAuthorization(body, { ...apiDeps(local, provider), now: () => chainMs });
   assert.equal(out.status, 200, JSON.stringify(out.body));
   const { receipt, launched } = await client.launchGen8Coin({ signer: creator, chainId, launcher, authorization: out.body, firstBuyValueWei });
   return { auth: out.body, receipt, launched };
@@ -108,6 +110,32 @@ async function runChain(chainId, port, { display, extraRouters = [] }) {
     // split coin (creator-choice vault), launched before the clock moves past the oracle's staleness window
     const C = await createCoin({ local, provider, chainId, creator: other, feeChoice: "split", feeCreatorPct: 60, targetUsd });
     assert.equal(C.launched.hookCreator, cfg.choiceVault, "holders / split / buyback coins name the vault in the hook");
+
+    // ---- draft -> timed launch -> Push Live on gen-8: the time is saved on the draft (nothing on chain), the
+    // launch is locked before it and goes through the gen-8 launcher at it; the draft is then linked to the token.
+    const { scheduleGen8Draft } = await import("../../api/dev-fix/draftGen8Schedule.js");
+    const { isScheduleLocked } = await import("../../shared/dbcSchedule.mjs");
+    const chainNow = Number((await provider.getBlock("latest")).timestamp);
+    const draftWrites = [];
+    const draftDb = { query: async (sql, params) => { draftWrites.push(params); return { rows: [{ id: "draft-1", scheduled_launch_at: params[1] }] }; } };
+    const scheduled = await scheduleGen8Draft({
+      body: { scheduledLaunchAt: chainNow + 600, graduationTargetWei: targetUsd.toString() },
+      row: { id: "draft-1", chain_id: chainId, status: "promotion_published", campaign_address: null },
+      db: draftDb,
+      nowSec: chainNow,
+    });
+    assert.equal(draftWrites.length, 1, "scheduling writes the draft only");
+    const codeBefore = await provider.getTransactionCount(creator.address);
+    assert.equal(isScheduleLocked(scheduled.scheduledLaunchAt, chainNow * 1000), true, "Push Live is locked before the time");
+    await advance(provider, 600);
+    const chainAt = Number((await provider.getBlock("latest")).timestamp);
+    assert.equal(isScheduleLocked(scheduled.scheduledLaunchAt, chainAt * 1000), false, "and unlocked at it");
+    assert.equal(await provider.getTransactionCount(creator.address), codeBefore, "nothing was sent on chain while scheduled");
+    const D = await createCoin({ local, provider, chainId, creator, firstBuyValueWei: 10n ** 16n, targetUsd });
+    assert.equal(D.launched.creator, creator.address);
+    assert.ok(Number((await provider.getBlock(D.receipt.blockNumber)).timestamp) >= chainNow + 600, "the gen-8 launch lands at or after the saved time");
+    assert.equal(D.receipt.to, cfg.launcher, "Push Live goes to the gen-8 launcher");
+    r.draftLaunch = { scheduledLaunchAt: scheduled.scheduledLaunchAt, token: D.launched.token };
 
     const firstBuy = 10n ** 17n;
     const A = await createCoin({ local, provider, chainId, creator, firstBuyValueWei: firstBuy, targetUsd });
