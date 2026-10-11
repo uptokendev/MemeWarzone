@@ -381,7 +381,8 @@ test("finance: post-graduation lane and the gen-8 block; no lane and no query wi
   assert.equal(f.lanes.trade_post.creatorWei, milli(7).toString());
   assert.equal(f.claims.CreatorClaimed.amountWei, milli(3).toString());
   assert.equal(f.unclaimedIndexed.creatorWei, (milli(20) * 560n / 10000n + milli(7) - milli(3)).toString());
-  assert.equal(f.partner.attributable, false);
+  assert.equal(f.partner.attributable, true);
+  assert.equal(f.partner.attributedWei, "0", "no widget-built swap among these rows");
   assert.equal(f.live.available, false);
   assert.equal(gen8PartnerShareRaw({ curveAmount: milli(1000), protocol: milli(5) }), milli(1000) * 25n / 10000n);
   assert.equal(gen8PartnerShareRaw({ curveAmount: milli(1000), protocol: 1n }), 1n, "never above the protocol share");
@@ -709,4 +710,44 @@ test("fix round arena: a latched gen-8 coin back in range A is not graduated for
     setGen8(false);
     clearGen8SchemaCache(db);
   }
+});
+
+test("finance: D9 partner link, a widget swap after graduation matched by the build fingerprint the API recorded", async () => {
+  const { GEN8_REFERRER_WIDGET } = await import("../shared/evmGen8Swap.mjs");
+  const { evmFingerprint } = await import("./lib/importSwapFingerprint.js");
+  const { gen8PartnerAttribution } = await import("./lib/financeGen8.js");
+  await db.query(`create table if not exists public.import_swap_fingerprints (
+    fingerprint text primary key, chain_id integer not null, partner_id text not null, wallet text, token_address text, created_at timestamptz not null default now())`);
+  const at = new Date().toISOString();
+  const row = (tx, log, referrer, phase, curve, protocol) => db.query(
+    `insert into public.evm_gen8_fee_accruals (chain_id, hook_address, pool_id, token_address, tx_hash, log_index, block_number, block_time, kind, phase, referrer,
+       curve_amount, fee, creator_share, router_amount, protocol)
+     values ($1, $2, $3, $4, $5, $6, 900, $7, 'trade', $8, $9, $10, $11, 0, $11, $12)`,
+    [CHAIN, HOOK, POOL_ID, G8, tx, log, at, phase, referrer, curve.toString(), (curve / 100n).toString(), protocol.toString()],
+  );
+  const widget = GEN8_REFERRER_WIDGET.toLowerCase();
+  const txA = "0x" + "a1".repeat(32);
+  const txB = "0x" + "b2".repeat(32);
+  const txC = "0x" + "c3".repeat(32);
+  await row(txA, 1, widget, "post", milli(2000), milli(10)); // partner build
+  await row(txB, 1, widget, "post", milli(1000), milli(5)); // widget tag, no recorded build (forged or no partner)
+  await row(txC, 1, widget, "bonding", milli(1000), milli(5)); // bonding: no partner share (D9 is post-graduation)
+  await row("0x" + "d4".repeat(32), 1, null, "post", milli(1000), milli(5)); // the app or any router: never looked up
+  const txs = {
+    [txA]: { to: "0x00000000000000000000000000000000000000aa", data: "0x1234", value: 0n },
+    [txB]: { to: "0x00000000000000000000000000000000000000aa", data: "0x5678", value: 0n },
+  };
+  const fpA = evmFingerprint(txs[txA].to, txs[txA].data, txs[txA].value);
+  await db.query(`insert into public.import_swap_fingerprints (fingerprint, chain_id, partner_id) values ($1, $2, 'crypticpump')`, [fpA, CHAIN]);
+  const lookedUp = [];
+  const provider = { getTransaction: async (h) => { lookedUp.push(h); return txs[h] || null; } };
+  const out = await gen8PartnerAttribution({ db, chainId: CHAIN, hook: HOOK, provider });
+  assert.deepEqual(lookedUp.sort(), [txA, txB].sort(), "only widget-tagged post-graduation swaps cost an RPC call");
+  assert.equal(out.checked, 2);
+  assert.equal(out.attributedWei, (milli(2000) * 25n / 10000n).toString(), "0.25% of the partner swap's volume");
+  assert.deepEqual(Object.keys(out.byPartner), ["crypticpump"]);
+  assert.equal(out.rows[0].txHash, txA);
+  const none = await gen8PartnerAttribution({ db, chainId: CHAIN, hook: HOOK, provider: null });
+  assert.equal(none.unchecked, 2, "no RPC: reported, not guessed");
+  assert.equal(none.attributedWei, "0");
 });

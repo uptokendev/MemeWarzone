@@ -76,6 +76,7 @@ import tokenShareCard from "./token-share-card.js";
 import { importSwapBuild, importSwapQuote } from "./importSwap.js";
 import importCreatorFees, { importCreatorFeesOwner } from "./importCreatorFees.js";
 import { widgetBalances, widgetBuild, widgetCors, widgetQuote, widgetStatus, widgetToken } from "./importSwapWidget.js";
+import { gen8SwapBalances, gen8SwapBuild, gen8SwapQuote, gen8SwapStatus, gen8SwapToken } from "./gen8Swap.js";
 import airdropPool from "./airdropPool.js";
 import battleShareCard from "./battle-share-card.js";
 import status from "./status.js";
@@ -543,6 +544,12 @@ router.get("/widget/swap/balances", wrap(widgetBalances));
 router.post("/widget/swap/quote", wrap(widgetQuote));
 router.post("/widget/swap/build", wrap(widgetBuild));
 router.get("/widget/swap/status", wrap(widgetStatus));
+// Generation 8 coins in the widget (api/gen8Swap.js): the API builds the UniversalRouter call and records the partner fingerprint.
+router.get("/widget/swap/gen8/token", wrap(gen8SwapToken));
+router.get("/widget/swap/gen8/balances", wrap(gen8SwapBalances));
+router.post("/widget/swap/gen8/quote", wrap(gen8SwapQuote));
+router.post("/widget/swap/gen8/build", wrap(gen8SwapBuild));
+router.get("/widget/swap/gen8/status", wrap(gen8SwapStatus));
 // Bonding coins in the widget: the same handlers as the app's /solana/* routes, reached through the
 // widget's open CORS (no credentials, rate limited). The app's own routes and their CORS are unchanged.
 router.all("/widget/solana/campaign-account", wrap(solanaCampaignAccount));

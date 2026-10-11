@@ -271,7 +271,7 @@ async function dbPool() {
 }
 
 /** { id, feeAccount } for an active partner on this chain (feeAccount only when it checks out), else null. */
-async function readPartner(partnerId, chainId) {
+export async function readPartner(partnerId, chainId) {
   const id = String(partnerId || "").trim().toLowerCase();
   if (!id || !/^[a-z0-9][a-z0-9-]{1,40}$/.test(id)) return null;
   if (chainId === 101 && !SOLANA_IMPORT_FEE_COLLECTOR) return null; // no split on Solana: nothing to share
@@ -301,7 +301,7 @@ async function readPartner(partnerId, chainId) {
 }
 
 /** Best effort: a failed write only means the swap is not attributed to the partner. */
-async function rememberPartnerSwap(input) {
+export async function rememberPartnerSwap(input) {
   try {
     await recordFingerprint(await dbPool(), input);
   } catch (error) {

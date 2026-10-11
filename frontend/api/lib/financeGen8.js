@@ -18,13 +18,18 @@
  *     the unclaimed router / creator balances (indexed; live from the hook and the splitter when an RPC is set).
  *
  * D9 widget partner: on partner-attributed trades MemeWarzone's 0.5% after graduation is halved with the partner
- * (0.25% of volume, paid off chain from the protocol share). Attribution today is the widget build fingerprint
- * (importSwapFingerprint.js): it exists only for swaps the API builds, and the API builds no gen-8 swap (the widget is
- * Solana-only; gen-8 trades are built by the app against the V4 pool). So no gen-8 trade can be partner-attributed yet
- * and the partner share is 0. GAP, reported as `partner.attributable = false`; see gen8PartnerShareRaw for the rule.
+ * (0.25% of volume, paid off chain from the protocol share). Attribution is the widget build fingerprint, as for
+ * imports (importSwapFingerprint.js): the API builds the widget's gen-8 swaps (api/gen8Swap.js) and records
+ * keccak256(to:data:value) of each partner build. The link (gen8PartnerAttribution): post-graduation accruals whose
+ * hookData referrer is the widget tag (GEN8_REFERRER_WIDGET; a pre-filter only, so not every trade costs an RPC call)
+ * -> the landed transaction's to / input / value -> the same fingerprint -> import_swap_fingerprints.partner_id. A
+ * forged referrer cannot match a fingerprint the API did not record. The indexer needs nothing new: it already stores
+ * tx_hash and referrer on every HookFee row.
  */
 import { ethers } from "ethers";
 import { GEN8_REWARD_SOURCE } from "../../shared/evmGen8.mjs";
+import { GEN8_REFERRER_WIDGET } from "../../shared/evmGen8Swap.mjs";
+import { evmFingerprint, partnersForFingerprints } from "./importSwapFingerprint.js";
 import { gen8ConfigFor } from "./evmGen8Config.js";
 import { gen8Tables, isSchemaMissingError } from "./evmGen8Schema.js";
 
@@ -35,6 +40,58 @@ export function gen8PartnerShareRaw({ curveAmount, protocol }) {
   const share = (BigInt(curveAmount) * GEN8_PARTNER_BPS_OF_VOLUME) / 10_000n;
   const cap = BigInt(protocol);
   return share > cap ? cap : share;
+}
+
+/**
+ * D9 partner attribution of gen-8 widget swaps after graduation (see the header). Needs an RPC to read the landed
+ * transactions; without one the rows are reported as unchecked. Returns { checked, unchecked, attributedWei,
+ * byPartner: { [id]: { swaps, volumeWei, partnerWei } }, rows }.
+ */
+export async function gen8PartnerAttribution({ db, chainId, hook, provider = null, limit = 500 }) {
+  const { rows } = await db.query(
+    `select tx_hash, log_index, token_address, curve_amount::text as curve_amount, protocol::text as protocol, block_time
+       from public.evm_gen8_fee_accruals
+      where chain_id = $1 and hook_address = $2 and kind = 'trade' and phase = 'post' and lower(coalesce(referrer, '')) = $3
+      order by block_number desc, log_index desc
+      limit $4`,
+    [Number(chainId), String(hook).toLowerCase(), GEN8_REFERRER_WIDGET.toLowerCase(), Math.max(1, Math.min(5000, Number(limit) || 500))],
+  );
+  const out = { checked: 0, unchecked: 0, attributedWei: "0", byPartner: {}, rows: [] };
+  if (!rows.length) return out;
+  if (!provider) {
+    out.unchecked = rows.length;
+    return out;
+  }
+  const fpByTx = new Map();
+  for (const hash of [...new Set(rows.map((r) => String(r.tx_hash).toLowerCase()))]) {
+    try {
+      const tx = await provider.getTransaction(hash);
+      fpByTx.set(hash, tx ? evmFingerprint(tx.to, tx.data, tx.value) : null);
+    } catch {
+      fpByTx.set(hash, undefined);
+    }
+  }
+  const partners = await partnersForFingerprints(db, Number(chainId), [...fpByTx.values()].filter(Boolean));
+  let total = 0n;
+  for (const r of rows) {
+    const fp = fpByTx.get(String(r.tx_hash).toLowerCase());
+    if (fp === undefined) {
+      out.unchecked += 1;
+      continue;
+    }
+    out.checked += 1;
+    const partnerId = fp ? partners.get(fp) : null;
+    if (!partnerId) continue;
+    const share = gen8PartnerShareRaw({ curveAmount: r.curve_amount, protocol: r.protocol });
+    total += share;
+    const p = (out.byPartner[partnerId] ||= { swaps: 0, volumeWei: "0", partnerWei: "0" });
+    p.swaps += 1;
+    p.volumeWei = (BigInt(p.volumeWei) + BigInt(r.curve_amount)).toString();
+    p.partnerWei = (BigInt(p.partnerWei) + share).toString();
+    out.rows.push({ txHash: r.tx_hash, logIndex: Number(r.log_index), token: r.token_address, partnerId, volumeWei: String(r.curve_amount), partnerWei: share.toString(), blockTime: r.block_time });
+  }
+  out.attributedWei = total.toString();
+  return out;
 }
 
 /** Revenue lane spec (financeRevenueLanes.js LANE_SPECS shape): protocol share of post-graduation gen-8 trades. */
@@ -174,6 +231,7 @@ export async function buildGen8Finance({ db, chainId, getProvider = null, env = 
     const routerAccrued = BigInt(lanes.trade_bonding?.routerWei || 0) + BigInt(lanes.trade_post?.routerWei || 0) + BigInt(lanes.graduation?.routerWei || 0);
     const routerClaimed = BigInt(claimed.RouterClaimed?.amountWei || 0);
     const provider = getProvider ? await getProvider(Number(chainId)).catch(() => null) : null;
+    const partnerLink = await gen8PartnerAttribution({ db, chainId, hook: cfg.hook, provider }).catch((error) => ({ error: String(error?.message || error) }));
 
     return {
       ...base,
@@ -182,9 +240,13 @@ export async function buildGen8Finance({ db, chainId, getProvider = null, env = 
       postGraduationProtocolWei: lanes.trade_post?.protocolWei || "0",
       partner: {
         bpsOfVolume: Number(GEN8_PARTNER_BPS_OF_VOLUME),
-        attributable: false,
-        attributedWei: "0",
-        note: "No gen-8 swap is built by the API, so the widget fingerprint attribution cannot match one; the partner share stays 0 until a gen-8 widget build path exists.",
+        attributable: true,
+        attributedWei: partnerLink.attributedWei || "0",
+        byPartner: partnerLink.byPartner || {},
+        checkedSwaps: partnerLink.checked ?? 0,
+        uncheckedSwaps: partnerLink.unchecked ?? 0,
+        ...(partnerLink.error ? { error: partnerLink.error } : {}),
+        note: "Widget swaps after graduation, matched to the partner by the fingerprint the API recorded when it built them (api/gen8Swap.js). Paid off chain from MemeWarzone's 0.5%.",
       },
       runs,
       claims: claimed,
