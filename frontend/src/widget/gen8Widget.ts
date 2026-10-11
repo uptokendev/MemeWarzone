@@ -29,7 +29,7 @@ export type Gen8MountOptions = {
 };
 
 type TokenInfo = { chainId: number; token: string; decimals: number; name: string | null; symbol: string | null; imageUrl: string | null; nativeSymbol: string; phase: string; feeBps: number; pageUrl: string };
-type Quote = { amountIn: string; amountOut: string; minAmountOut: string; feeBps: number; feeNativeRaw: string; creatorShareNativeRaw: string; phase: string };
+type Quote = { amountIn: string; amountOut: string; minAmountOut: string; slippageBps: number; slippageAuto?: boolean; priceImpactBps?: number | null; feeBps: number; feeNativeRaw: string; creatorShareNativeRaw: string; phase: string };
 type Built = { to: string; data: string; value: string; quote: Quote };
 type NeedsPermit = { needsPermit: true; approval: { to: string; data: string; value: string } | null; permitTypedData: { domain: Record<string, unknown>; types: Record<string, Array<{ name: string; type: string }>>; primaryType: string; message: Record<string, unknown> }; quote: Quote };
 
@@ -50,6 +50,21 @@ export function typedDataJson(t: NeedsPermit["permitTypedData"]): string {
     { name: "verifyingContract", type: "address" },
   ].filter((f) => f.name in t.domain);
   return JSON.stringify({ domain: t.domain, types: { EIP712Domain: domainTypes, ...t.types }, primaryType: t.primaryType, message: t.message });
+}
+
+/** "2.45%", "<0.01%" under one bp, "-" when the API could not measure it. */
+export function formatPriceImpact(bps: number | null | undefined): string {
+  if (bps == null || !Number.isFinite(Number(bps))) return "-";
+  if (Number(bps) < 1) return "<0.01%";
+  return `${(Number(bps) / 100).toFixed(2)}%`;
+}
+
+/**
+ * The slippage the widget asks the API for: the partner's slippageBps when it set one, else nothing, so the API uses
+ * the chain's default (sized from the price impact on BNB Chain, 1% on Robinhood).
+ */
+export function slippageRequest(options: { slippageBps?: number }): { slippageBps?: number } {
+  return options.slippageBps == null ? {} : { slippageBps: options.slippageBps };
 }
 
 export function findEvmWallet(scope: Record<string, any> = globalThis as any): Eip1193 | null {
@@ -105,7 +120,8 @@ export class Gen8SwapWidget {
         <div class="field"><input data-k="amount" inputmode="decimal" autocomplete="off" placeholder="0" aria-label="Amount" /><span class="unit" data-k="unit"></span></div>
         <div class="row"><span data-k="balance"></span><button type="button" class="max" data-k="max" hidden>MAX</button></div>
         <div class="row"><span>You receive ~</span><b data-k="out">-</b></div>
-        <div class="row"><span>At least</span><b data-k="min">-</b></div>
+        <div class="row"><span>Price impact</span><b data-k="impact">-</b></div>
+        <div class="row"><span data-k="minLabel">At least</span><b data-k="min">-</b></div>
         <div class="row"><span data-k="feeLabel">Fee</span><b data-k="fee">-</b></div>
         <div class="row" data-k="creatorRow" hidden><span>Of which to the coin's creator</span><b data-k="creator">-</b></div>
         <button type="button" class="go" data-k="go">CONNECT WALLET</button>
@@ -177,6 +193,8 @@ export class Gen8SwapWidget {
     const outUnit = this.side === "buy" ? this.symbol() : this.native();
     this.el.out.textContent = q ? `${fromRaw(q.amountOut, 18)} ${outUnit}` : "-";
     this.el.min.textContent = q ? `${fromRaw(q.minAmountOut, 18)} ${outUnit}` : "-";
+    this.el.impact.textContent = q ? formatPriceImpact(q.priceImpactBps) : "-";
+    this.el.minLabel.textContent = q && Number.isFinite(Number(q.slippageBps)) ? `At least (${Number(q.slippageBps) / 100}% slippage)` : "At least";
     const feeBps = q?.feeBps ?? this.token?.feeBps ?? null;
     this.el.feeLabel.textContent = feeBps ? `Fee ${Number((feeBps / 100).toFixed(2))}%` : "Fee";
     this.el.fee.textContent = q ? `${fromRaw(q.feeNativeRaw, 18, 8)} ${this.native()}` : "-";
@@ -245,7 +263,7 @@ export class Gen8SwapWidget {
     try {
       const quote = await this.call<Quote>("/api/widget/swap/gen8/quote", {
         method: "POST",
-        body: JSON.stringify({ chainId: this.token.chainId, token: this.token.token, side: this.side, amountRaw: raw.toString(), slippageBps: this.options.slippageBps ?? 100 }),
+        body: JSON.stringify({ chainId: this.token.chainId, token: this.token.token, side: this.side, amountRaw: raw.toString(), ...slippageRequest(this.options) }),
       });
       if (seq !== this.quoteSeq) return null;
       this.quote = quote;
@@ -310,7 +328,7 @@ export class Gen8SwapWidget {
     this.paintButton();
     try {
       await this.ensureChain(wallet);
-      const body = { chainId: this.token.chainId, token: this.token.token, side: this.side, wallet: this.account, amountRaw: raw.toString(), slippageBps: this.options.slippageBps ?? 100, ...(this.options.partner ? { partner: this.options.partner } : {}) };
+      const body = { chainId: this.token.chainId, token: this.token.token, side: this.side, wallet: this.account, amountRaw: raw.toString(), ...slippageRequest(this.options), ...(this.options.partner ? { partner: this.options.partner } : {}) };
       this.say("Getting the latest price...");
       let built = await this.call<Built | NeedsPermit>("/api/widget/swap/gen8/build", { method: "POST", body: JSON.stringify(body) });
       if ((built as NeedsPermit).needsPermit) {

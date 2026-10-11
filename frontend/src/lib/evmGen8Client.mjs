@@ -50,13 +50,18 @@ import {
   gen8HookData,
   gen8MinOut,
   gen8PermitTypedData,
+  gen8PriceImpactBps,
   gen8QuoterFor,
+  gen8ReferenceAmount,
   gen8RouterFor,
   gen8SellFeeSplit,
+  gen8SizedSlippageBps,
 } from "../../shared/evmGen8Swap.mjs";
 import { gasWithHeadroom, legacyGasPriceFor } from "./evmGasHeadroom.mjs";
 
 export const GEN8_DEFAULT_SLIPPAGE_BPS = 100;
+/** Pass as slippageBps for the chain's default: sized from the price impact on BNB Chain (F13), 1% elsewhere. */
+export const GEN8_AUTO_SLIPPAGE = "auto";
 /** MAX first buy stays this far under the 70% cap, so a small oracle move between quote and launch cannot revert it. */
 export const GEN8_FIRST_BUY_MAX_HEADROOM_BPS = 50n;
 
@@ -402,7 +407,10 @@ function quoterKey(poolKey) {
 /**
  * Exact-input quote in the coin's pool through Uniswap's V4Quoter (proven equal to execution on the forks), with the
  * fee split for the panel. side "buy": amountIn native; "sell": amountIn coins.
- * Returns { side, amountIn, amountOut, minOut, slippageBps, feeBps, feeWei, curveWei, creatorShareWei, graduated, poolId, poolKey }.
+ * The price impact comes from a second quote of 1/1000 of the amount in the same block (gen8PriceImpactBps; null when
+ * that reference cannot be quoted). slippageBps GEN8_AUTO_SLIPPAGE = the chain's default (gen8SizedSlippageBps).
+ * Returns { side, amountIn, amountOut, minOut, slippageBps, slippageAuto, priceImpactBps, feeBps, feeWei, curveWei,
+ * creatorShareWei, graduated, poolId, poolKey }.
  */
 export async function quoteGen8Trade({ provider, cfg, token, side, amountIn, slippageBps = GEN8_DEFAULT_SLIPPAGE_BPS, sender = null, record = null }) {
   if (!cfg?.quoter) throw new Error("No Uniswap quoter is configured for this chain.");
@@ -411,18 +419,27 @@ export async function quoteGen8Trade({ provider, cfg, token, side, amountIn, sli
   const pool = record || (await readGen8PoolRecord({ provider, cfg, token }));
   if (!pool) throw new Error("This token has no MemeWarzone pool on this chain.");
   const swapSender = sender || cfg.router?.address;
-  const [feeBps, quoted] = await Promise.all([
+  const quoter = new Contract(cfg.quoter, V4_QUOTER_ABI, provider);
+  const refIn = gen8ReferenceAmount(amount);
+  const [feeBps, quoted, refQuoted] = await Promise.all([
     readGen8FeeBps({ provider, cfg, poolId: pool.poolId, sender: swapSender }),
-    new Contract(cfg.quoter, V4_QUOTER_ABI, provider).quoteExactInputSingle.staticCall([quoterKey(pool.poolKey), side === "buy", amount, gen8HookData(GEN8_REFERRER_APP)]),
+    quoter.quoteExactInputSingle.staticCall([quoterKey(pool.poolKey), side === "buy", amount, gen8HookData(GEN8_REFERRER_APP)]),
+    refIn == null ? null : quoter.quoteExactInputSingle.staticCall([quoterKey(pool.poolKey), side === "buy", refIn, gen8HookData(GEN8_REFERRER_APP)]).catch(() => null),
   ]);
   const amountOut = BigInt(quoted[0] ?? quoted.amountOut);
+  const refOut = refQuoted ? BigInt(refQuoted[0] ?? refQuoted.amountOut) : null;
+  const priceImpactBps = gen8PriceImpactBps({ amountIn: amount, amountOut, refIn, refOut });
+  const slippageAuto = slippageBps === GEN8_AUTO_SLIPPAGE;
+  const slippage = slippageAuto ? gen8SizedSlippageBps({ chainId: cfg.chainId, priceImpactBps }) : Number(slippageBps);
   const split = side === "buy" ? gen8BuyFeeSplit(amount, feeBps) : gen8SellFeeSplit(amountOut, feeBps);
   return {
     side,
     amountIn: amount,
     amountOut,
-    minOut: gen8MinOut(amountOut, slippageBps),
-    slippageBps: Number(slippageBps),
+    minOut: gen8MinOut(amountOut, slippage),
+    slippageBps: slippage,
+    slippageAuto,
+    priceImpactBps,
     feeBps,
     feeWei: split.feeWei,
     curveWei: split.curveWei,

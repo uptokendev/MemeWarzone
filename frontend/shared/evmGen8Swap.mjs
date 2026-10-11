@@ -373,3 +373,76 @@ export function gen8CreatorShareWei({ graduated, curveWei, feeWei, creatorBondin
   return (BigInt(feeWei) * BigInt(creatorBondingBps)) / 10_000n;
 }
 
+// ------------------------------------------------------------------ price impact and slippage (F13)
+
+/** Default slippage of a gen-8 trade where it is not sized (Robinhood, and any trade without a price impact): 1%. */
+export const GEN8_DEFAULT_SLIPPAGE_BPS = 100;
+/**
+ * Chains whose gen-8 trades get slippage sized from the quote's price impact (F13, audit D-M2): BNB Chain and its
+ * testnet, where a public mempool lets a searcher sandwich a buy for a profit that grows with the slippage allowed.
+ * Robinhood Chain orders first come first served, so it keeps the flat default.
+ */
+export const GEN8_SIZED_SLIPPAGE_CHAIN_IDS = Object.freeze([56, 97]);
+/**
+ * Sized slippage = clamp(BASE + priceImpact / IMPACT_DIVISOR, MIN, MAX), in bps:
+ *   0.30% for a trade that does not move the price, +0.1% per 1% of its own price impact, at most 1% (the flat
+ *   default before F13, so no trade allows a sandwich more room than before).
+ * Audit D (scripts/audit/D/results/econ-model.txt): on BSC every slippage above 0.05% is profitable to sandwich and the
+ * attacker's profit is about linear in it ($1,000 buy at $30K: $11 at 0.5%, $22 at 1%, $104 at 5%), so the default is
+ * the smallest that still covers normal movement between the quote and the block. The quote already contains the
+ * trade's own impact; the impact term covers a thin pool, where someone else's ordinary trade landing first moves the
+ * price more. The user can always pick another slippage.
+ */
+export const GEN8_SIZED_SLIPPAGE = Object.freeze({ baseBps: 30, impactDivisor: 10, minBps: 30, maxBps: 100 });
+
+/** True when gen-8 trades on this chain use the sized slippage. */
+export function gen8UsesSizedSlippage(chainId) {
+  return GEN8_SIZED_SLIPPAGE_CHAIN_IDS.includes(Number(chainId));
+}
+
+/**
+ * The default slippage of a gen-8 trade in bps: sized from `priceImpactBps` on BNB Chain (56, 97), the flat 1%
+ * elsewhere or when the impact is unknown (null).
+ */
+export function gen8SizedSlippageBps({ chainId, priceImpactBps }) {
+  if (!gen8UsesSizedSlippage(chainId) || priceImpactBps == null || !Number.isFinite(Number(priceImpactBps))) return GEN8_DEFAULT_SLIPPAGE_BPS;
+  const { baseBps, impactDivisor, minBps, maxBps } = GEN8_SIZED_SLIPPAGE;
+  const raw = baseBps + Math.ceil(Math.max(0, Number(priceImpactBps)) / impactDivisor);
+  return Math.min(maxBps, Math.max(minBps, raw));
+}
+
+/**
+ * The small reference trade a price impact is measured against: 1/1000 of the trade (its own impact is about 1/1000
+ * of the trade's), or null when that is too small to price to 0.01% (under 1e9 base units).
+ */
+export function gen8ReferenceAmount(amountIn) {
+  const ref = BigInt(amountIn) / 1000n;
+  return ref >= 1_000_000_000n ? ref : null;
+}
+
+/**
+ * Price impact of a trade in bps: how much worse its average price is than the pool's price just before it, both
+ * read from quotes of the same pool in the same block (the trade, and a reference trade of 1/1000 of it). Both quotes
+ * pay the same fee rate, so the fee cancels out and the result is the curve's movement only.
+ *   impact = 1 - (amountOut / amountIn) / (refOut / refIn), floored at 0, at most 10000. null without a reference.
+ */
+export function gen8PriceImpactBps({ amountIn, amountOut, refIn, refOut }) {
+  if (refIn == null || refOut == null) return null;
+  const aIn = BigInt(amountIn);
+  const aOut = BigInt(amountOut);
+  const rIn = BigInt(refIn);
+  const rOut = BigInt(refOut);
+  if (aIn <= 0n || rIn <= 0n || rOut <= 0n) return null;
+  // execution rate / reference rate, in bps (rounded down)
+  const ratioBps = (aOut * rIn * 10_000n) / (rOut * aIn);
+  const impact = 10_000n - ratioBps;
+  if (impact <= 0n) return 0;
+  return Number(impact > 10_000n ? 10_000n : impact);
+}
+
+/** "2.45%" for the panel and the widget; "<0.01%" under one bp; "-" when unknown. */
+export function gen8FormatPriceImpact(bps) {
+  if (bps == null) return "-";
+  if (Number(bps) < 1) return "<0.01%";
+  return `${(Number(bps) / 100).toFixed(2)}%`;
+}

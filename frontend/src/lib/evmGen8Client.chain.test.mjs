@@ -162,7 +162,27 @@ async function runChain(chainId, port, { display, extraRouters = [] }) {
     // ---- buy and sell in the app: quote == execution to the wei, fee == HookFee
     const qBuy = await client.quoteGen8Trade({ provider, cfg, token, side: "buy", amountIn: 3n * 10n ** 17n });
     assert.equal(qBuy.feeBps, 200);
-    const buy = await client.executeGen8Trade({ signer: buyer, chainId, cfg, token, side: "buy", amountIn: qBuy.amountIn, quote: qBuy });
+    // F13: price impact from a 1/1000 reference quote; slippage sized from it on BNB, 1% on Robinhood; the API agrees
+    const qAuto = await client.quoteGen8Trade({ provider, cfg, token, side: "buy", amountIn: qBuy.amountIn, slippageBps: client.GEN8_AUTO_SLIPPAGE });
+    assert.equal(qAuto.amountOut, qBuy.amountOut);
+    assert.ok(qAuto.priceImpactBps > 0, "a 0.3 native buy moves the curve");
+    assert.equal(qAuto.slippageBps, chainId === 56 ? swap.gen8SizedSlippageBps({ chainId, priceImpactBps: qAuto.priceImpactBps }) : 100);
+    assert.equal(qAuto.minOut, swap.gen8MinOut(qAuto.amountOut, qAuto.slippageBps));
+    const qBig = await client.quoteGen8Trade({ provider, cfg, token, side: "buy", amountIn: qBuy.amountIn * 5n, slippageBps: client.GEN8_AUTO_SLIPPAGE });
+    assert.ok(qBig.priceImpactBps > qAuto.priceImpactBps, "a bigger trade has a bigger impact");
+    const { gen8SwapQuoteCore: apiQuote } = await import("../../api/gen8Swap.js");
+    const aq = await apiQuote({ chainId, token, side: "buy", amountRaw: qBuy.amountIn.toString() }, { getProvider: async () => provider });
+    assert.deepEqual([aq.priceImpactBps, aq.slippageBps, aq.slippageAuto, aq.minAmountOut], [qAuto.priceImpactBps, qAuto.slippageBps, true, qAuto.minOut.toString()], "widget build uses the same sizing");
+    const qSmall = await client.quoteGen8Trade({ provider, cfg, token, side: "buy", amountIn: 10n ** 15n, slippageBps: client.GEN8_AUTO_SLIPPAGE });
+    if (chainId === 56) assert.ok(qSmall.slippageBps >= 30 && qSmall.slippageBps < 100, "a small BNB buy gets less than the old flat 1%");
+    else assert.equal(qSmall.slippageBps, 100, "Robinhood keeps 1%");
+    r.smallBuyImpactBps = qSmall.priceImpactBps;
+    r.smallBuySlippageBps = qSmall.slippageBps;
+    r.buyImpactBps = qAuto.priceImpactBps;
+    r.buySlippageBps = qAuto.slippageBps;
+    r.bigBuyImpactBps = qBig.priceImpactBps;
+    r.bigBuySlippageBps = qBig.slippageBps;
+    const buy = await client.executeGen8Trade({ signer: buyer, chainId, cfg, token, side: "buy", amountIn: qAuto.amountIn, quote: qAuto });
     assert.equal(await tokenDelta(provider, token, buyer.address, buy.receipt), qBuy.amountOut, "coins received == V4Quoter quote");
     const hfBuy = events(buy.receipt, HOOK_IFACE, "HookFee")[0];
     assert.equal(BigInt(hfBuy.args.fee), qBuy.feeWei);
@@ -173,7 +193,9 @@ async function runChain(chainId, port, { display, extraRouters = [] }) {
     r.buyGas = Number(buy.receipt.gasUsed);
 
     const sellAmount = qBuy.amountOut / 3n;
-    const qSell = await client.quoteGen8Trade({ provider, cfg, token, side: "sell", amountIn: sellAmount });
+    const qSell = await client.quoteGen8Trade({ provider, cfg, token, side: "sell", amountIn: sellAmount, slippageBps: client.GEN8_AUTO_SLIPPAGE });
+    assert.ok(qSell.priceImpactBps > 0);
+    r.sellImpactBps = qSell.priceImpactBps;
     const sell = await client.executeGen8Trade({ signer: buyer, chainId, cfg, token, side: "sell", amountIn: sellAmount, quote: qSell });
     assert.equal(await nativeDelta(provider, buyer.address, sell.receipt), qSell.amountOut, "native received == quote");
     const hfSell = events(sell.receipt, HOOK_IFACE, "HookFee")[0];

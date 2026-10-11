@@ -20,8 +20,15 @@ import {
   gen8CreatorShareWei,
   gen8HookData,
   gen8MinOut,
+  GEN8_DEFAULT_SLIPPAGE_BPS,
+  GEN8_SIZED_SLIPPAGE,
+  gen8FormatPriceImpact,
   gen8PermitTypedData,
+  gen8PriceImpactBps,
   gen8QuoterFor,
+  gen8ReferenceAmount,
+  gen8SizedSlippageBps,
+  gen8UsesSizedSlippage,
   gen8RouterFor,
   gen8SellFeeSplit,
   permitFromJson,
@@ -169,4 +176,41 @@ test("fee split for quotes: the hook's exact-input buy split and the gross-for-n
   }
   assert.equal(gen8CreatorShareWei({ graduated: false, curveWei: 10_000n, feeWei: 200n }), 11n, "560 bps of the bonding fee");
   assert.equal(gen8CreatorShareWei({ graduated: true, curveWei: 10_000n, feeWei: 100n }), 50n, "0.5% of volume after graduation");
+});
+
+test("F13 price impact: execution rate against a 1/1000 reference quote of the same pool, fee cancels out", () => {
+  // reference: 1e15 in -> 2e21 out (2,000,000 per unit); trade 1e18 in -> 1.9e24 out: 5% worse
+  assert.equal(gen8PriceImpactBps({ amountIn: 10n ** 18n, amountOut: 19n * 10n ** 23n, refIn: 10n ** 15n, refOut: 2n * 10n ** 21n }), 500);
+  // same rate: no impact; a better rate than the reference (rounding) floors at 0
+  assert.equal(gen8PriceImpactBps({ amountIn: 1000n, amountOut: 2000n, refIn: 10n, refOut: 20n }), 0);
+  assert.equal(gen8PriceImpactBps({ amountIn: 1000n, amountOut: 2100n, refIn: 10n, refOut: 20n }), 0);
+  // the fee scales both quotes alike: 2% off both outputs gives the same impact
+  const a = gen8PriceImpactBps({ amountIn: 10n ** 18n, amountOut: 19n * 10n ** 23n, refIn: 10n ** 15n, refOut: 2n * 10n ** 21n });
+  const b = gen8PriceImpactBps({ amountIn: 10n ** 18n, amountOut: (19n * 10n ** 23n * 98n) / 100n, refIn: 10n ** 15n, refOut: (2n * 10n ** 21n * 98n) / 100n });
+  assert.equal(a, b);
+  assert.equal(gen8PriceImpactBps({ amountIn: 1n, amountOut: 1n, refIn: null, refOut: null }), null, "no reference: unknown");
+  assert.equal(gen8PriceImpactBps({ amountIn: 10n, amountOut: 0n, refIn: 1n, refOut: 5n }), 10_000);
+  assert.equal(gen8ReferenceAmount(10n ** 18n), 10n ** 15n);
+  assert.equal(gen8ReferenceAmount(10n ** 11n), null, "too small to price to 0.01%");
+  assert.deepEqual([gen8FormatPriceImpact(null), gen8FormatPriceImpact(0), gen8FormatPriceImpact(245), gen8FormatPriceImpact(10_000)], ["-", "<0.01%", "2.45%", "100.00%"]);
+});
+
+test("F13 sized slippage: BNB Chain 0.3% + impact / 10, between 0.3% and 1%; Robinhood keeps 1%", () => {
+  assert.deepEqual(GEN8_SIZED_SLIPPAGE, { baseBps: 30, impactDivisor: 10, minBps: 30, maxBps: 100 });
+  assert.equal(GEN8_DEFAULT_SLIPPAGE_BPS, 100);
+  for (const chainId of [56, 97]) {
+    assert.equal(gen8UsesSizedSlippage(chainId), true);
+    assert.equal(gen8SizedSlippageBps({ chainId, priceImpactBps: 0 }), 30);
+    assert.equal(gen8SizedSlippageBps({ chainId, priceImpactBps: 1 }), 31, "rounded up");
+    assert.equal(gen8SizedSlippageBps({ chainId, priceImpactBps: 100 }), 40, "1% impact -> 0.4%");
+    assert.equal(gen8SizedSlippageBps({ chainId, priceImpactBps: 500 }), 80, "5% impact -> 0.8%");
+    assert.equal(gen8SizedSlippageBps({ chainId, priceImpactBps: 700 }), 100);
+    assert.equal(gen8SizedSlippageBps({ chainId, priceImpactBps: 5000 }), 100, "capped at the old flat 1%");
+    assert.equal(gen8SizedSlippageBps({ chainId, priceImpactBps: null }), 100, "unknown impact: the flat default");
+  }
+  for (const chainId of [4663, 46630, 31337]) {
+    assert.equal(gen8UsesSizedSlippage(chainId), false);
+    assert.equal(gen8SizedSlippageBps({ chainId, priceImpactBps: 0 }), 100);
+    assert.equal(gen8SizedSlippageBps({ chainId, priceImpactBps: 2000 }), 100);
+  }
 });

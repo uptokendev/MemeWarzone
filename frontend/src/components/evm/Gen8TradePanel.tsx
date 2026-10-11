@@ -9,6 +9,7 @@ import { getReadProvider } from "@/lib/readProvider";
 import { evmBuyGasReserveWei } from "@/lib/tradeBalanceReserve";
 import { DBC_CREATOR_LOCK_COPY } from "../../../shared/dbcEconomics.mjs";
 import {
+  GEN8_AUTO_SLIPPAGE,
   GEN8_DEFAULT_SLIPPAGE_BPS,
   assertGen8HookMatches,
   executeGen8EscrowBuy,
@@ -19,6 +20,14 @@ import {
   gen8FeeLine,
   quoteGen8Trade,
 } from "@/lib/evmGen8Client.mjs";
+import { gen8FormatPriceImpact, gen8UsesSizedSlippage } from "../../../shared/evmGen8Swap.mjs";
+import {
+  BSC_PROTECTED_RPC_DEFAULT,
+  addProtectedBscRpc,
+  offersProtectedRpc,
+  readProtectedRpcChoice,
+  rememberProtectedRpcChoice,
+} from "@/lib/bscProtectedRpc.mjs";
 import { useNowSeconds, type Gen8CoinState } from "@/hooks/useGen8Coin";
 
 type Quote = {
@@ -26,6 +35,9 @@ type Quote = {
   amountIn: bigint;
   amountOut: bigint;
   minOut: bigint;
+  slippageBps: number;
+  slippageAuto: boolean;
+  priceImpactBps: number | null;
   feeBps: number;
   feeWei: bigint;
   curveWei: bigint;
@@ -45,6 +57,11 @@ function parseUnitsSafe(text: string, decimals: number): bigint | null {
     return null;
   }
 }
+
+/** Slippage choices on BNB Chain (the sized default first); Robinhood keeps its flat 1% (F13). */
+const BNB_SLIPPAGE_CHOICES: Array<typeof GEN8_AUTO_SLIPPAGE | number> = [GEN8_AUTO_SLIPPAGE, 50, 100, 300];
+/** Price impact from which the panel shows it in red. */
+const HIGH_IMPACT_BPS = 1000;
 
 const fmt = (raw: bigint | string, digits: number) => Number(ethers.formatUnits(raw, 18)).toLocaleString(undefined, { maximumFractionDigits: digits });
 
@@ -89,6 +106,12 @@ export function Gen8TradePanel({
   const [quote, setQuote] = useState<Quote | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const sizedSlippage = gen8UsesSizedSlippage(chainId);
+  const [slippageChoice, setSlippageChoice] = useState<typeof GEN8_AUTO_SLIPPAGE | number>(sizedSlippage ? GEN8_AUTO_SLIPPAGE : GEN8_DEFAULT_SLIPPAGE_BPS);
+  const slippageArg = sizedSlippage ? slippageChoice : GEN8_DEFAULT_SLIPPAGE_BPS;
+  const showRpcOffer = offersProtectedRpc(chainId);
+  const [rpcChoice, setRpcChoice] = useState(() => (showRpcOffer ? readProtectedRpcChoice() : null));
+  const [rpcBusy, setRpcBusy] = useState(false);
   const [balances, setBalances] = useState<{ nativeRaw: bigint; tokenRaw: bigint } | null>(null);
   const [balanceTick, setBalanceTick] = useState(0);
   const graduated = state.graduation?.phase === "graduated";
@@ -123,7 +146,8 @@ export function Gen8TradePanel({
 
   const amountRaw = parseUnitsSafe(amount, 18);
 
-  // Live quote (exact input): what you receive, the minimum at 1% slippage, the fee and the creator's part.
+  // Live quote (exact input): what you receive, the price impact, the minimum at the slippage (sized from the impact on
+  // BNB Chain, 1% on Robinhood), the fee and the creator's part.
   useEffect(() => {
     setQuoteError(null);
     if (setupError || !amountRaw || !readProvider || !cfg) {
@@ -132,7 +156,7 @@ export function Gen8TradePanel({
     }
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      quoteGen8Trade({ provider: readProvider, cfg, token, side, amountIn: amountRaw, slippageBps: GEN8_DEFAULT_SLIPPAGE_BPS, sender: side === "buy" && escrowBuy ? cfg.escrow : null })
+      quoteGen8Trade({ provider: readProvider, cfg, token, side, amountIn: amountRaw, slippageBps: slippageArg, sender: side === "buy" && escrowBuy ? cfg.escrow : null })
         .then((q: Quote) => {
           if (!cancelled) setQuote(q);
         })
@@ -147,7 +171,7 @@ export function Gen8TradePanel({
       window.clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setupError, amount, side, token, readProvider, cfg, escrowBuy, state.graduation?.phase]);
+  }, [setupError, amount, side, token, readProvider, cfg, escrowBuy, state.graduation?.phase, slippageArg]);
 
   const gasReserve = evmBuyGasReserveWei(robinhood);
   const overBalance = Boolean(
@@ -178,8 +202,8 @@ export function Gen8TradePanel({
       }
       const result =
         side === "buy" && escrowBuy
-          ? await executeGen8EscrowBuy({ signer, chainId, cfg, token, amountIn: amountRaw, readProvider })
-          : await executeGen8Trade({ signer, chainId, cfg, token, side, amountIn: amountRaw, readProvider });
+          ? await executeGen8EscrowBuy({ signer, chainId, cfg, token, amountIn: amountRaw, slippageBps: slippageArg, readProvider })
+          : await executeGen8Trade({ signer, chainId, cfg, token, side, amountIn: amountRaw, slippageBps: slippageArg, readProvider });
       toast.success(`${side === "buy" ? "Buy" : "Sell"} confirmed: ${String(result.receipt?.hash || "").slice(0, 10)}…`);
       setAmount("");
       setQuote(null);
@@ -190,6 +214,30 @@ export function Gen8TradePanel({
     } finally {
       setBusy(false);
     }
+  }
+
+  async function addProtectedRpc() {
+    const eip1193 = (wallet.provider as any) || (typeof window !== "undefined" ? (window as any).ethereum : null);
+    if (!eip1193) {
+      toast.error("Connect the BNB wallet first.");
+      return;
+    }
+    setRpcBusy(true);
+    try {
+      await addProtectedBscRpc(eip1193, { rpc: BSC_PROTECTED_RPC_DEFAULT });
+      setRpcChoice(readProtectedRpcChoice() || { state: "added" });
+      toast.success("Your wallet accepted the request. Check that BNB Chain now uses the private RPC in your wallet's network settings.");
+    } catch (error) {
+      const text = String((error as Error)?.message || "");
+      toast.error(/user rejected|denied/i.test(text) ? "You rejected the request in your wallet." : "Your wallet did not add the RPC. You can add it by hand in its network settings.");
+    } finally {
+      setRpcBusy(false);
+    }
+  }
+
+  function dismissRpcOffer() {
+    rememberProtectedRpcChoice("dismissed");
+    setRpcChoice(readProtectedRpcChoice() || { state: "dismissed" });
   }
 
   if (setupError) {
@@ -222,7 +270,26 @@ export function Gen8TradePanel({
                 MAX
               </Button>
             ) : null}
-            <span className="whitespace-nowrap text-xs text-mw-muted">Slippage: {GEN8_DEFAULT_SLIPPAGE_BPS / 100}%</span>
+            {sizedSlippage ? (
+              <label className="flex items-center gap-1 whitespace-nowrap text-xs text-mw-muted">
+                Slippage
+                <select
+                  aria-label="Slippage"
+                  data-gen8-slippage="true"
+                  className="rounded-md border border-mw-border bg-transparent px-1 py-0.5 text-xs text-mw-text"
+                  value={String(slippageChoice)}
+                  onChange={(event) => setSlippageChoice(event.target.value === GEN8_AUTO_SLIPPAGE ? GEN8_AUTO_SLIPPAGE : Number(event.target.value))}
+                >
+                  {BNB_SLIPPAGE_CHOICES.map((choice) => (
+                    <option key={String(choice)} value={String(choice)}>
+                      {choice === GEN8_AUTO_SLIPPAGE ? `Auto${quote?.slippageAuto ? ` (${quote.slippageBps / 100}%)` : ""}` : `${choice / 100}%`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <span className="whitespace-nowrap text-xs text-mw-muted">Slippage: {GEN8_DEFAULT_SLIPPAGE_BPS / 100}%</span>
+            )}
           </div>
         </div>
         <div className="relative">
@@ -238,8 +305,12 @@ export function Gen8TradePanel({
             <span className="text-mw-muted">Receive</span>
             <span className="font-mw-mono font-bold text-mw-text">{quote ? (side === "buy" ? `${fmt(quote.amountOut, 4)} ${symbol || "tokens"}` : `${fmt(quote.amountOut, 8)} ${native}`) : "—"}</span>
           </div>
+          <div className={row} data-gen8-price-impact={quote?.priceImpactBps ?? undefined}>
+            <span className="text-mw-muted">Price impact</span>
+            <span className={`font-mw-mono ${quote?.priceImpactBps != null && quote.priceImpactBps >= HIGH_IMPACT_BPS ? "text-mw-down" : "text-mw-muted"}`}>{quote ? gen8FormatPriceImpact(quote.priceImpactBps) : "—"}</span>
+          </div>
           <div className={row}>
-            <span className="text-mw-muted">At least</span>
+            <span className="text-mw-muted">At least{quote ? ` (${quote.slippageBps / 100}% slippage)` : ""}</span>
             <span className="font-mw-mono text-mw-muted">{quote ? (side === "buy" ? `${fmt(quote.minOut, 4)} ${symbol || "tokens"}` : `${fmt(quote.minOut, 8)} ${native}`) : "—"}</span>
           </div>
           <div className={row}>
@@ -260,6 +331,27 @@ export function Gen8TradePanel({
         ) : null}
         <p className="mt-2 text-center text-[11px] text-mw-muted">{gen8FeeLine({ graduated, feeBps: graduated ? state.tradeFee?.postGraduationBps ?? 100 : state.tradeFee?.bondingBps ?? 200 })}</p>
         {side === "buy" && escrowBuy ? <p className="mt-1 text-center text-xs text-orange-200">{DBC_CREATOR_LOCK_COPY}</p> : null}
+        {showRpcOffer && rpcChoice?.state !== "dismissed" ? (
+          <div className="mt-2 rounded-md border border-mw-border p-2 text-xs text-mw-muted" data-gen8-rpc-offer={rpcChoice?.state || "open"}>
+            {rpcChoice?.state === "added" ? (
+              <p>You added the {BSC_PROTECTED_RPC_DEFAULT.label} to your wallet in this browser. Your wallet decides which RPC it sends with; check that BNB Chain uses it.</p>
+            ) : (
+              <>
+                <p>
+                  Your wallet sends this trade to its own BNB Chain RPC. Through a public RPC, bots see the trade before it lands and can buy just before you and sell just after (a sandwich), up to your slippage. A private RPC sends it to block builders without the public mempool.
+                </p>
+                <div className="mt-1.5 flex items-center gap-2">
+                  <Button type="button" variant="ghost" size="sm" className={cp.smallButton} disabled={rpcBusy || !account} onClick={() => void addProtectedRpc()}>
+                    Add protected BSC RPC
+                  </Button>
+                  <button type="button" className="text-xs underline" onClick={dismissRpcOffer}>
+                    Not now
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        ) : null}
         {quoteError && !quote ? <p className="mt-2 text-center text-xs text-mw-down">{quoteError}</p> : null}
         {overBalance ? <p className="mt-2 text-center text-xs text-mw-down">{side === "buy" ? `Not enough ${native} (about ${ethers.formatEther(gasReserve)} ${native} stays for gas).` : "Amount is above your balance."}</p> : null}
       </div>

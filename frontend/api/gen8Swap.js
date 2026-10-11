@@ -36,9 +36,12 @@ import {
   gen8HookData,
   gen8MinOut,
   gen8PermitTypedData,
+  gen8PriceImpactBps,
   gen8QuoterFor,
+  gen8ReferenceAmount,
   gen8RouterFor,
   gen8SellFeeSplit,
+  gen8SizedSlippageBps,
   permitFromJson,
 } from "../shared/evmGen8Swap.mjs";
 import { gen8ConfigFor } from "./lib/evmGen8Config.js";
@@ -55,7 +58,6 @@ const ERC20_ABI = [
   "function symbol() view returns (string)",
 ];
 const ERC20_IFACE = new ethers.Interface(["function approve(address spender, uint256 value) returns (bool)"]);
-const DEFAULT_SLIPPAGE_BPS = 100;
 const NATIVE_SYMBOL = { 56: "BNB", 97: "tBNB", 4663: "ETH", 46630: "ETH", 31337: "ETH" };
 
 export class Gen8SwapError extends Error {
@@ -108,8 +110,9 @@ function parseAmount(value) {
   throw new Gen8SwapError(400, "BAD_AMOUNT", "amountRaw must be a positive integer");
 }
 
+/** null = the chain's default: sized from the price impact on BNB Chain (F13), 1% elsewhere (gen8SizedSlippageBps). */
 function parseSlippage(value) {
-  if (value === undefined || value === null || value === "") return DEFAULT_SLIPPAGE_BPS;
+  if (value === undefined || value === null || value === "" || value === "auto") return null;
   const n = Number(value);
   if (!Number.isInteger(n) || n < 0 || n > 5000) throw new Gen8SwapError(400, "BAD_SLIPPAGE", "slippageBps must be an integer from 0 to 5000");
   return n;
@@ -143,7 +146,11 @@ async function feeBpsNow({ provider, setup, pool }) {
   return gen8FeeRate({ graduated: pool.graduated, launchTime: pool.launchTime, nowTs: Number(block.timestamp), fees: pool.fees });
 }
 
-/** Exact-input quote through the V4Quoter (the same call the app makes), with the fee split. */
+/**
+ * Exact-input quote through the V4Quoter (the same call the app makes), with the fee split and the price impact (a
+ * second quote of 1/1000 of the amount in the same block; gen8PriceImpactBps). Without slippageBps the slippage is the
+ * chain's default: sized from the price impact on BNB Chain (56, 97), 1% on Robinhood.
+ */
 export async function gen8SwapQuoteCore(input, deps = {}) {
   const env = deps.env || process.env;
   const chainId = parseChain(input.chainId);
@@ -156,15 +163,23 @@ export async function gen8SwapQuoteCore(input, deps = {}) {
   if (!provider) throw new Gen8SwapError(503, "RPC_NOT_CONFIGURED", `No RPC is configured for chain ${chainId}.`);
   const pool = await readGen8SwapPool({ provider, setup, token });
   const key = pool.poolKey;
-  const [feeBps, quoted] = await Promise.all([
+  const keyTuple = [key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks];
+  const quoter = new ethers.Contract(setup.quoter, V4_QUOTER_ABI, provider);
+  const refIn = gen8ReferenceAmount(amountIn);
+  const [feeBps, quoted, refQuoted] = await Promise.all([
     feeBpsNow({ provider, setup, pool }),
-    new ethers.Contract(setup.quoter, V4_QUOTER_ABI, provider).quoteExactInputSingle
-      .staticCall([[key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks], side === "buy", amountIn, gen8HookData(GEN8_REFERRER_WIDGET)])
+    quoter.quoteExactInputSingle
+      .staticCall([keyTuple, side === "buy", amountIn, gen8HookData(GEN8_REFERRER_WIDGET)])
       .catch((error) => {
         throw new Gen8SwapError(400, "GEN8_NO_QUOTE", `No quote for this amount (${String(error?.shortMessage || error?.reason || "the pool refused it")}).`);
       }),
+    refIn == null ? null : quoter.quoteExactInputSingle.staticCall([keyTuple, side === "buy", refIn, gen8HookData(GEN8_REFERRER_WIDGET)]).catch(() => null),
   ]);
   const amountOut = BigInt(quoted[0] ?? quoted.amountOut);
+  const refOut = refQuoted ? BigInt(refQuoted[0] ?? refQuoted.amountOut) : null;
+  const priceImpactBps = gen8PriceImpactBps({ amountIn, amountOut, refIn, refOut });
+  const slippageAuto = slippageBps == null;
+  const slippage = slippageAuto ? gen8SizedSlippageBps({ chainId, priceImpactBps }) : slippageBps;
   const split = side === "buy" ? gen8BuyFeeSplit(amountIn, feeBps) : gen8SellFeeSplit(amountOut, feeBps);
   const creatorShare = gen8CreatorShareWei({ graduated: pool.graduated, curveWei: split.curveWei, feeWei: split.feeWei, creatorBondingBps: pool.fees.creatorBondingBps, creatorPostBps: pool.fees.creatorPostBps });
   return {
@@ -174,8 +189,9 @@ export async function gen8SwapQuoteCore(input, deps = {}) {
     token,
     amountIn: amountIn.toString(),
     amountOut: amountOut.toString(),
-    minAmountOut: gen8MinOut(amountOut, slippageBps).toString(),
-    slippageBps,
+    minAmountOut: gen8MinOut(amountOut, slippage).toString(),
+    slippageBps: slippage,
+    slippageAuto,
     feeBps,
     feeNativeRaw: split.feeWei.toString(),
     creatorShareNativeRaw: creatorShare.toString(),
@@ -186,7 +202,8 @@ export async function gen8SwapQuoteCore(input, deps = {}) {
     phase: pool.graduated ? "graduated" : "bonding",
     poolId: pool.poolId,
     router: setup.router.address,
-    priceImpactPct: null,
+    priceImpactBps,
+    priceImpactPct: priceImpactBps == null ? null : priceImpactBps / 100,
   };
 }
 
