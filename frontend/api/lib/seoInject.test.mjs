@@ -151,3 +151,49 @@ test("$& in descriptions and og values stays literal", () => {
   assert.ok(out.includes('name="description" content="a $&amp; b $1"'));
   assert.ok(out.includes('property="og:title" content="$&amp;"'));
 });
+
+const mini = (head, body = '<div id="root"></div>') => `<!doctype html><html><head>${head}</head><body>${body}</body></html>`;
+
+test("title inside a comment is skipped; the real title is replaced", () => {
+  const c = "<!-- <title>X</title> -->";
+  const out = injectSeo(mini(`${c}<title>T</title>`), { title: "New" });
+  assert.ok(out.includes(c));
+  assert.ok(out.includes("<title>New</title>"));
+  assert.ok(!out.includes("<title>T</title>"));
+});
+
+test("a title only inside a comment counts as a missing anchor", () => {
+  const html = mini("<!-- <title>X</title> -->");
+  assert.equal(injectSeo(html, { title: "New" }), html);
+});
+
+test("</head> inside a comment is not the insertion point", () => {
+  const c = "<!-- </head> -->";
+  const out = injectSeo(mini(`<title>T</title>${c}`), { canonical: "https://x.test/" });
+  assert.ok(out.includes(c));
+  const canon = out.indexOf('rel="canonical"');
+  assert.ok(canon > out.indexOf(c) + c.length);
+  assert.ok(canon < out.indexOf("</head>", out.indexOf(c) + c.length));
+});
+
+test("root div inside a comment is skipped; the real root gets the summary", () => {
+  const c = '<!-- <div id="root"></div> -->';
+  const out = injectSeo(mini("<title>T</title>", `${c}<div id="root"></div>`), { summaryHtml: "<p>S</p>" });
+  assert.ok(out.includes(c));
+  assert.ok(out.includes('<div id="root"><p>S</p></div>'));
+  const only = mini("<title>T</title>", c);
+  assert.equal(injectSeo(only, { summaryHtml: "<p>S</p>" }), only);
+});
+
+test("unterminated comment masks the rest of the document", () => {
+  const html = mini('<title>T</title><!-- open <meta name="description" content="x" />');
+  const out = injectSeo(html, { title: "New", description: "D" });
+  assert.ok(out.includes('<!-- open <meta name="description" content="x" />'));
+});
+
+test("<!-- inside a script body does not start a comment", () => {
+  const html = mini('<script>var a = "<!--";</script><title>T</title><meta name="description" content="old" />');
+  const out = injectSeo(html, { title: "New", description: "D" });
+  assert.ok(out.includes("<title>New</title>"));
+  assert.ok(out.includes('name="description" content="D"'));
+});

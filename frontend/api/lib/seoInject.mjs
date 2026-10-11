@@ -84,8 +84,24 @@ function replaceTag(html, name, attr, value, tagHtml) {
   return seen ? out : null;
 }
 
+/** Replaces the first match of `re` that lies outside comment/script/style regions. */
+function replaceFirstUnmasked(html, re, fn) {
+  const masked = maskedRanges(html);
+  const g = new RegExp(re.source, re.flags.includes("g") ? re.flags : `${re.flags}g`);
+  let m;
+  while ((m = g.exec(html))) {
+    if (inRanges(masked, m.index)) continue;
+    return html.slice(0, m.index) + fn(m[0]) + html.slice(m.index + m[0].length);
+  }
+  return null;
+}
+
+const TITLE_RE = /<title>[\s\S]*?<\/title>/i;
+const ROOT_RE = /<div id="root">\s*<\/div>/;
+const HEAD_END_RE = /<\/head>/i;
+
 function insertInHead(html, snippet) {
-  return html.replace(/<\/head>/i, () => `    ${snippet}\n  </head>`);
+  return replaceFirstUnmasked(html, HEAD_END_RE, () => `    ${snippet}\n  </head>`) ?? html;
 }
 
 function setMeta(html, attr, key, content, { addIfMissing = true } = {}) {
@@ -100,13 +116,13 @@ const has = (v) => typeof v === "string" && v !== "";
 export function injectSeo(shell, opts = {}) {
   const { title, description, canonical, robots, og = {}, jsonLd = [], summaryHtml } = opts || {};
   const src = String(shell ?? "");
-  const rootRe = /<div id="root">\s*<\/div>/;
-  if (!rootRe.test(src) || !/<title>[\s\S]*?<\/title>/i.test(src) || !/<\/head>/i.test(src)) return src;
+  const anchored = (re) => replaceFirstUnmasked(src, re, (x) => x) !== null;
+  if (!anchored(ROOT_RE) || !anchored(TITLE_RE) || !anchored(HEAD_END_RE)) return src;
 
   let html = src;
 
   if (title != null) {
-    html = html.replace(/<title>[\s\S]*?<\/title>/i, () => `<title>${esc(title)}</title>`);
+    html = replaceFirstUnmasked(html, TITLE_RE, () => `<title>${esc(title)}</title>`) ?? html;
   }
   if (description != null) html = setMeta(html, "name", "description", description);
 
@@ -154,7 +170,7 @@ export function injectSeo(shell, opts = {}) {
   }
 
   if (typeof summaryHtml === "string" && summaryHtml) {
-    html = html.replace(rootRe, () => `<div id="root">${summaryHtml}</div>`);
+    html = replaceFirstUnmasked(html, ROOT_RE, () => `<div id="root">${summaryHtml}</div>`) ?? html;
   }
   return html;
 }
