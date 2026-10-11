@@ -2,7 +2,7 @@
 
 const BRAND = "MemeWarzone";
 
-function ensure(doc, selector, tag, attr, value) {
+function ensure(doc, selector, tag, attr) {
   let el = doc.querySelector(selector);
   if (!el) {
     el = doc.createElement(tag);
@@ -10,6 +10,18 @@ function ensure(doc, selector, tag, attr, value) {
     doc.head.appendChild(el);
   }
   return el;
+}
+
+/**
+ * Merges page overrides into a head computed by headForPath.
+ * A noindex result never carries a canonical.
+ * @param {{ title?: string, description?: string, canonical?: string|null, robots?: string }} head
+ * @param {{ robots?: string }} [overrides]
+ */
+export function resolveHead(head, overrides = {}) {
+  const robots = overrides?.robots || head?.robots;
+  const canonical = /noindex/.test(String(robots || "")) ? null : head?.canonical ?? null;
+  return { ...head, robots, canonical };
 }
 
 /**

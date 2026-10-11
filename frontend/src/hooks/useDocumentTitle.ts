@@ -2,7 +2,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { useLocation } from "react-router-dom";
 
 import { headForPath } from "../../shared/seoRoutes.mjs";
-import { applyHead } from "../../shared/seoApplyHead.mjs";
+import { applyHead, resolveHead } from "../../shared/seoApplyHead.mjs";
 
 const BASE = "MemeWarzone";
 
@@ -83,12 +83,11 @@ export function useDocumentTitle(pageTitle?: string | null) {
     const head = headForPath(path, {
       canonical: o.canonical,
       title: o.title,
-      robots: o.robots,
       description: o.description,
     });
     const title = explicit || head.title || titleForPath(location.pathname);
-    applyHead(document, { ...head, robots: o.robots || head.robots, title });
-  }, [path, explicit, version, location.pathname]);
+    applyHead(document, { ...resolveHead(head, o), title });
+  }, [path, explicit, version]);
 }
 
 /** Drop-in under BrowserRouter — keeps the tab title in sync with navigation. */

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { applyHead } from "./seoApplyHead.mjs";
+import { applyHead, resolveHead } from "./seoApplyHead.mjs";
+import { headForPath } from "./seoRoutes.mjs";
 
 function makeDoc(initial = []) {
   const children = [];
@@ -87,4 +88,32 @@ test("keeps existing description when empty", () => {
   const e = makeDoc();
   applyHead(e, { ...base, description: "" });
   assert.equal(e.querySelector('meta[name="description"]'), null);
+});
+
+test("resolveHead: noindex override nulls canonical", () => {
+  const head = headForPath("/coins");
+  assert.ok(head.canonical);
+  const r = resolveHead(head, { robots: "noindex,follow" });
+  assert.equal(r.robots, "noindex,follow");
+  assert.equal(r.canonical, null);
+  assert.equal(r.title, head.title);
+});
+
+test("resolveHead: index route keeps canonical", () => {
+  const head = headForPath("/coins");
+  const r = resolveHead(head, {});
+  assert.equal(r.robots, "index,follow");
+  assert.equal(r.canonical, head.canonical);
+});
+
+test("resolveHead: override canonical wins on index route", () => {
+  const overrides = { canonical: "https://app.memewar.zone/profile/abc" };
+  const r = resolveHead(headForPath("/profile/abc", overrides), overrides);
+  assert.equal(r.canonical, overrides.canonical);
+  assert.equal(r.robots, "index,follow");
+});
+
+test("resolveHead: natively noindex head stays without canonical", () => {
+  const r = resolveHead({ title: "", description: "", canonical: null, robots: "noindex,follow" }, {});
+  assert.equal(r.canonical, null);
 });
