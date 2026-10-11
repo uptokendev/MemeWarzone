@@ -2,7 +2,8 @@
 // Logic lives in lib/sitemapSources.js; this file only binds the real pool, lazily, so importing
 // the module never opens a database connection.
 import { createSitemapHandlers } from "./lib/sitemapSources.js";
-import { urlsetXml } from "./lib/sitemapXml.mjs";
+import { CHILD_NAMES } from "./lib/sitemapSources.js";
+import { sitemapIndexXml, sitemapOrigin, urlsetXml } from "./lib/sitemapXml.mjs";
 
 export { createSitemapHandlers };
 
@@ -24,6 +25,12 @@ async function run(kind, req, res) {
     res.statusCode = 200;
     res.setHeader("content-type", "application/xml; charset=utf-8");
     res.setHeader("cache-control", "public, max-age=60");
+    if (kind === "index") return res.end(sitemapIndexXml(CHILD_NAMES, sitemapOrigin()));
+    const m = /^([a-z]+)(?:-(\d+))?\.xml$/.exec(String(req?.params?.file ?? ""));
+    if (!m || !CHILD_NAMES.includes(m[1])) {
+      res.statusCode = 404;
+      return res.end('<?xml version="1.0" encoding="UTF-8"?>\n<error>Unknown sitemap</error>\n');
+    }
     res.end(urlsetXml([]));
   }
 }

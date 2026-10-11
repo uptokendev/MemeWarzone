@@ -16,6 +16,7 @@ export const CHILD_NAMES = ["static", "coins", "battles", "tournaments", "recrui
 
 const ROW_LIMIT = 200000;
 const TTL_MS = 10 * 60_000;
+const FAIL_TTL_MS = 60_000;
 // Mainnets only: BNB, Solana, Robinhood. Testnets (97, 46630) and devnet are never listed.
 const PUBLIC_CHAINS_SQL = "(56, 101, 4663)";
 
@@ -162,7 +163,9 @@ export async function profileEntries(db) {
   return out;
 }
 
-// prepare-og.js:75-79: a draft is private when visibility = 'private'; everything else with a slug is public.
+// Launched drafts (status 'deployed', dev-fix/drafts.js:323; or a campaign_address whose launch time has
+// passed, drafts.js:327-331) have a coin page, so they are left out. Future-scheduled drafts follow
+// campaigns.js:183. prepare-og.js:75-79: a draft is private when visibility = 'private'; everything else with a slug is public.
 export async function prepareEntries(db) {
   const r = await db.query(
     `select d.slug, d.updated_at as lastmod
@@ -170,6 +173,10 @@ export async function prepareEntries(db) {
       where d.slug is not null
         and d.slug <> ''
         and lower(coalesce(d.visibility, 'public')) <> 'private'
+        and d.chain_id in ${PUBLIC_CHAINS_SQL}
+        and coalesce(d.status, 'draft') <> 'deployed'
+        and not (d.scheduled_launch_at > now())
+        and not (d.campaign_address is not null and d.scheduled_launch_at <= now())
       order by d.slug
       limit ${ROW_LIMIT}`,
     [],
@@ -203,23 +210,25 @@ const notFoundXml = '<?xml version="1.0" encoding="UTF-8"?>\n<error>Unknown site
 
 /** @param {{ db: { query: Function }, now?: () => number, log?: (...a: any[]) => void }} deps */
 export function createSitemapHandlers({ db, now = Date.now, log = console.error } = {}) {
-  const cache = new Map(); // name -> { at, chunks }
+  const cache = new Map(); // name -> { at, ttl, chunks }
   const inflight = new Map();
 
   async function load(name) {
     const hit = cache.get(name);
-    if (hit && now() - hit.at < TTL_MS) return hit.chunks;
+    if (hit && now() - hit.at < hit.ttl) return hit.chunks;
     if (inflight.has(name)) return inflight.get(name);
     const p = (async () => {
       let entries = [];
+      let ttl = TTL_MS;
       try {
         entries = await SOURCES[name](db);
       } catch (err) {
         log(`[api/sitemap] ${name} failed`, err?.message || err);
         entries = [];
+        ttl = FAIL_TTL_MS;
       }
       const chunks = chunkEntries(entries);
-      cache.set(name, { at: now(), chunks });
+      cache.set(name, { at: now(), ttl, chunks });
       return chunks;
     })().finally(() => inflight.delete(name));
     inflight.set(name, p);
@@ -228,8 +237,9 @@ export function createSitemapHandlers({ db, now = Date.now, log = console.error 
 
   async function index(_req, res) {
     const names = [];
-    for (const name of CHILD_NAMES) {
-      const chunks = await load(name);
+    const all = await Promise.all(CHILD_NAMES.map((name) => load(name)));
+    for (const [idx, name] of CHILD_NAMES.entries()) {
+      const chunks = all[idx];
       const count = Math.max(1, chunks.length);
       for (let i = 0; i < count; i++) names.push(chunkName(name, i));
     }

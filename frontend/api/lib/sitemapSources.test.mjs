@@ -81,6 +81,10 @@ test("recruiter and post SQL filters", async () => {
   assert.match(t.calls[0].sql, /<>\s*'cancelled'/);
   const d = fakeDb(); await prepareEntries(d);
   assert.match(d.calls[0].sql, /visibility/);
+  assert.match(d.calls[0].sql, /d\.chain_id in \(56,\s*101,\s*4663\)/);
+  assert.match(d.calls[0].sql, /status.*<>\s*'deployed'/);
+  assert.match(d.calls[0].sql, /scheduled_launch_at\s*>\s*now\(\)/);
+  assert.match(d.calls[0].sql, /campaign_address is not null and d\.scheduled_launch_at <= now\(\)/);
 });
 
 test("handlers: throwing source gives 200 valid empty urlset", async () => {
@@ -148,4 +152,17 @@ test("handlers: static needs no db", async () => {
   assert.equal(res.statusCode, 200);
   assert.equal(db.calls.length, 0);
   assert.ok(res.body.includes(`${O}/coins`));
+});
+
+test("handlers: a failed source is retried within 2 minutes", async () => {
+  let t = 1_000_000;
+  let fail = true;
+  const db = fakeDb(() => { if (fail) throw new Error("down"); return [{ id: 9 }]; });
+  const h = createSitemapHandlers({ db, now: () => t, log: () => {} });
+  const a = fakeRes(); await h.child({ params: { file: "posts.xml" } }, a);
+  assert.doesNotMatch(a.body, /<url>/);
+  fail = false;
+  t += 90_000;
+  const b = fakeRes(); await h.child({ params: { file: "posts.xml" } }, b);
+  assert.match(b.body, /\/post\/9/);
 });
