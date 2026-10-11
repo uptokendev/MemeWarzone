@@ -8,6 +8,13 @@
  * rpcProvider.ts, keyed by chain and method only. URLs are never stored: they
  * carry the provider key.
  *
+ * Solana JSON-RPC goes over plain fetch (solanaIndexer, meteora, dbc, the
+ * keepers) and over @solana/web3.js, which captures globalThis.fetch when it is
+ * first imported. hookSolanaFetchCounter wraps globalThis.fetch and counts the
+ * Solana methods of JSON-RPC bodies (batches per entry) under chain "solana".
+ * It must run before @solana/web3.js is imported: main.ts imports
+ * rpcUsagePreload.ts first for that.
+ *
  * Exposed on GET /health (rpcUsage) and logged every RPC_USAGE_LOG_MINUTES
  * minutes (default 15; 0 = off):
  *   [rpc-usage] {"windowMin":15,"total":123,"byChain":{"56":{"total":100,"methods":{...}}}}
@@ -112,6 +119,54 @@ export function hookEthersRpcCounter(JsonRpcProviderClass: any = ethers.JsonRpcP
     return original.call(this, payload);
   };
   ethersHooked = true;
+}
+
+const SOLANA_METHOD = /^(get[A-Z]|sendTransaction|simulateTransaction|requestAirdrop|isBlockhashValid|minimumLedgerSlot)/;
+
+/**
+ * Counts the Solana methods of a JSON-RPC body under chain "solana". Other
+ * methods are ignored on purpose: EVM requests are already counted once by the
+ * ethers hook (which does not use fetch) or by rawRpcCall, so counting them
+ * here too would double them. Returns the number counted.
+ */
+export function countSolanaFetchBody(body: unknown): number {
+  if (typeof body !== "string" || !body.includes('"jsonrpc"')) return 0;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return 0;
+  }
+  let n = 0;
+  for (const item of Array.isArray(parsed) ? parsed : [parsed]) {
+    const method = (item as any)?.method;
+    if (typeof method === "string" && SOLANA_METHOD.test(method)) {
+      bump("solana", method);
+      n += 1;
+    }
+  }
+  return n;
+}
+
+/** Wraps a fetch so Solana JSON-RPC POST bodies are counted. URLs are never read or kept. */
+export function countingSolanaFetch(fetchImpl: typeof fetch): typeof fetch {
+  return function countedFetch(input: any, init?: any) {
+    try {
+      countSolanaFetchBody(init?.body);
+    } catch {
+      // never let counting break a request
+    }
+    return fetchImpl(input, init);
+  } as typeof fetch;
+}
+
+let fetchHooked = false;
+
+/** Counts Solana JSON-RPC sent through globalThis.fetch (also what @solana/web3.js uses). Once per process. */
+export function hookSolanaFetchCounter() {
+  if (fetchHooked || typeof globalThis.fetch !== "function") return;
+  globalThis.fetch = countingSolanaFetch(globalThis.fetch.bind(globalThis));
+  fetchHooked = true;
 }
 
 let timer: NodeJS.Timeout | null = null;
