@@ -565,3 +565,73 @@ export function gen8FeeLine({ graduated, feeBps }) {
   const pct = (Number(feeBps) / 100).toFixed(Number(feeBps) % 100 ? 2 : 0);
   return graduated ? `Fee ${pct}% on every trade, half of it to the coin's creator.` : `Fee ${pct}% on every trade until graduation.`;
 }
+
+// ------------------------------------------------------------------ errors in plain words
+
+const GEN8_ERROR_WORDS = Object.freeze({
+  AuthorizationExpired: "The launch approval expired. Press Deploy again.",
+  AuthorizationReplayed: "This launch approval was already used. Press Deploy again.",
+  InvalidAuthorization: "The launch approval does not match this wallet. Press Deploy again.",
+  CreatePaused: "New launches are paused right now. Try again later.",
+  FirstBuyTooLarge: "Your first buy is over 70% of the supply at today's price. Lower it or press MAX.",
+  FirstBuyTooSmall: "The price moved before the launch landed. Press Deploy again.",
+  FirstBuyValueMismatch: "The first buy amount changed. Press Deploy again.",
+  OraclePriceOutOfBand: "The price feed is out of range right now. Try again shortly.",
+  OraclePriceUnavailable: "The price feed did not answer. Try again shortly.",
+  TargetOutOfRangeAtPrice: "This graduation target does not fit today's price. Pick the other one.",
+  UnsupportedGraduationTarget: "This graduation target is not available. Pick another one.",
+  V4TooLittleReceived: "The price moved more than your slippage. Try again.",
+  V4TooMuchRequested: "The price moved more than your slippage. Try again.",
+  TransactionDeadlinePassed: "The swap waited too long. Try again.",
+  Slippage: "The price moved more than your slippage. Try again.",
+  NotCreator: "Only the coin's creator can do this.",
+  NotPendingCreator: "This wallet was not proposed as the new creator.",
+  NothingOwed: "There is nothing to claim yet.",
+  NothingToClaim: "There is nothing to claim yet.",
+  NotGraduated: "The reserve unlocks when the coin graduates.",
+  NothingLocked: "The reserve was already released.",
+  WrongChoice: "This coin keeps its fees in the hook; claim them there.",
+});
+
+const GEN8_ERROR_IFACE = new ethers.Interface([
+  ...Object.keys(GEN8_ERROR_WORDS).filter((n) => !["V4TooLittleReceived", "V4TooMuchRequested"].includes(n)).map((n) => `error ${n}()`),
+  "error V4TooLittleReceived(uint256 minAmountOutReceived, uint256 amountReceived)",
+  "error V4TooMuchRequested(uint256 maxAmountInRequested, uint256 amountRequested)",
+  "error ExecutionFailed(uint256 commandIndex, bytes message)",
+  "error WrappedError(address target, bytes4 selector, bytes reason, bytes details)",
+]);
+
+function revertDataOf(error) {
+  const seen = new Set();
+  const stack = [error];
+  while (stack.length) {
+    const e = stack.pop();
+    if (!e || typeof e !== "object" || seen.has(e)) continue;
+    seen.add(e);
+    const d = e.data;
+    if (typeof d === "string" && /^0x[0-9a-f]{8}/i.test(d)) return d;
+    stack.push(e.error, e.info, e.info?.error, e.cause, d && typeof d === "object" ? d : null);
+  }
+  return null;
+}
+
+/** A known gen-8 revert in plain words, or null (the caller shows its own message). */
+export function gen8ErrorMessage(error) {
+  let data = revertDataOf(error);
+  for (let depth = 0; data && depth < 4; depth += 1) {
+    let parsed = null;
+    try {
+      parsed = GEN8_ERROR_IFACE.parseError(data);
+    } catch {
+      parsed = null;
+    }
+    if (!parsed) break;
+    if (parsed.name === "ExecutionFailed") data = parsed.args.message;
+    else if (parsed.name === "WrappedError") data = parsed.args.reason;
+    else return GEN8_ERROR_WORDS[parsed.name] || null;
+  }
+  const text = String(error?.shortMessage || error?.reason || error?.message || "");
+  for (const [name, words] of Object.entries(GEN8_ERROR_WORDS)) if (text.includes(name)) return words;
+  if (/user rejected|denied/i.test(text)) return "You rejected the request in your wallet.";
+  return null;
+}
