@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useLocation, Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -86,6 +86,12 @@ export default function DocPage() {
     }
     return headings
   }, [raw, content, path])
+
+  useEffect(() => {
+    document.title = raw ? `${title} | MemeWarzone Docs` : 'MemeWarzone Docs'
+    const meta = document.querySelector('meta[name="description"]')
+    if (meta && description) meta.setAttribute('content', description)
+  }, [raw, title, description])
 
   if (!raw) {
     return (

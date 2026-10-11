@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { sourceLastModified } from './doc-lastmod.mjs'
 
 const root = process.cwd()
 const contentDir = path.join(root, 'src', 'content')
@@ -58,6 +59,7 @@ function loadCanonicalPages() {
 
     return {
       route: page.route,
+      source: page.source,
       title: data.title || page.title,
       description: data.description || '',
       content
@@ -71,8 +73,13 @@ if (!fs.existsSync(outDir)) {
 
 const pages = loadCanonicalPages()
 
+const lastModified = sourceLastModified(contentDir, pages.map((page) => page.source))
+
 const sitemap = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${pages
-  .map((page) => `  <url><loc>${siteUrl}${page.route}</loc></url>`)
+  .map((page) => {
+    const lastmod = lastModified[page.source] ? `<lastmod>${lastModified[page.source]}</lastmod>` : ''
+    return `  <url><loc>${siteUrl}${page.route}</loc>${lastmod}</url>`
+  })
   .join('\n')}\n</urlset>\n`
 
 fs.writeFileSync(path.join(outDir, 'sitemap.xml'), sitemap)

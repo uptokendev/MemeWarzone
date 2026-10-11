@@ -1,75 +1,55 @@
 ---
 title: Where Fees Go
-description: How MemeWarzone routes fees across creators, Leagues, recruiters, airdrops, squads, protocol revenue, and treasury policy.
+description: Each place MemeWarzone fees land, what fills it and who it pays out to, on BNB Chain, Solana and Robinhood Chain.
 ---
 
-MemeWarzone fees support the whole battlefield, not only the protocol owner.
+Fees land in separate vaults, one per purpose. On BNB Chain and Robinhood Chain each vault is its own contract. On Solana each vault is an account of the MemeWarzone rewards treasury program. Reward money and protocol money never share a vault.
 
-The important principle is:
+## The map
 
-```txt
-protocol revenue = fee remainder after creator and reward routing
-```
+| Vault | Filled by | Pays out to | When |
+| --- | --- | --- | --- |
+| Weekly League | 30% of the League slice of every trade fee | weekly League winners | after each weekly epoch |
+| Monthly League | 70% of the League slice of every trade fee | monthly League winners | after each month |
+| Creator | the creator slice of trades on that creator's coin, and 80% of its pool fees after graduation | the coin's creator, its holders, or a buyback, as the creator chose | creator claims, or paid out weekly for holders and buyback |
+| Recruiter | the recruiter slice of linked wallets' trades and graduations | the recruiter who brought the wallet in | the recruiter claims |
+| Squad Pool | the squad slice of linked wallets' trades and graduations | eligible squad members | after each epoch |
+| Warzone Airdrops | the recruiter and squad slices of unlinked wallets | weekly airdrop winners | every Monday |
+| Major War League | 20% of every battle buy-in | owners of the best coins in the Major War League | 60% after each month, 40% after each quarter |
+| Protocol | what is left of every fee after the slices above, plus UpVotes and the protocol share of battles | MemeWarzone | see below |
 
-## Trading fees
+## Leagues
 
-Every buy and sell has a 2.00% fee.
+The League slice is 37.5% of every trade fee, so 0.75% of all bonding-curve volume goes to League prizes. Prizes are paid over many ranks, not only first place. The prize pool shown on the League page is the vault balance, including any amount carried over. Read **[Epochs and Prizes](/leagues/epochs-and-prizes)**.
 
-That fee can route into:
+## Creator
 
-- creator wallet direct trade share
-- LeagueTreasury
-- RecruiterRewardsVault
-- CommunityRewardsVault: warzoneAirdropBalance
-- CommunityRewardsVault: squadPoolBalance
-- ProtocolRevenueVault
+On new coins the creator gets 5.6% of every trade fee. In the **Bond** step of Create, the creator chooses what happens to it:
 
-## Creator direct trade share
-
-From every buy and sell on a campaign's own bonding curve, **0.10% of trade notional** routes directly to that campaign creator's wallet.
-
-This is not an additional user fee. It is part of the existing 2.00% buy/sell fee.
-
-This gives creators ongoing upside from real bonding-curve activity even before graduation.
-
-## League Treasury
-
-From every buy and sell, 0.75% of trade notional routes to LeagueTreasury.
-
-This creates the League flywheel:
-
-1. trading volume creates League inflow
-2. League prizes create competition
-3. competition creates content and attention
-4. attention brings more trading volume
-
-## Recruiter rewards
-
-When a wallet has active recruiter attribution, part of eligible activity routes to RecruiterRewardsVault.
-
-| Activity | Standard recruiter | OG recruiter |
-| --- | ---: | ---: |
-| Buy / sell | 0.25% | 0.30% |
-| Finalize | 0.30% | 0.35% |
-
-OG override comes from protocol revenue. It does not increase the user-facing fee.
-
-## Squad Pool and Airdrops
-
-When a wallet is linked, 0.05% of buy/sell and finalize notional routes to the Squad Pool balance.
-
-When a wallet is unlinked, the unassigned recruiter and squad slices route to the Warzone Airdrop balance instead.
-
-| Flow | Destination |
+| Choice | What happens |
 | --- | --- |
-| Linked squad slice | Squad Pool |
-| Unlinked recruiter slice | Warzone Airdrops |
-| Unlinked squad slice | Warzone Airdrops |
+| Keep | the creator claims it in Command Center, under **Rewards and claims** |
+| Holders | it is paid to the coin's holders in the weekly round |
+| Split | part to the creator, the rest to holders |
+| Buyback | it buys the coin back and burns what it buys |
+
+On a Solana coin paired with another token, such as USDC or a stock token, the creator is paid in that token. Read **[Creator Earnings](/creators/creator-earnings)**.
+
+## Recruiters and squads
+
+A recruiter earns 12.5% of every trade fee paid by wallets they brought in, and 15% of the graduation fee of coins those wallets create. OG recruiters earn 15% and 17.5%. Read **[Recruiter Program](/programs/recruiter-program)** and **[Squad Pool](/rewards/squad-pool)**.
+
+## Warzone Airdrops
+
+When a wallet has no recruiter, the recruiter and squad slices are nobody's, so they fund the weekly airdrop: 15% of the trade fee and 17.5% of the graduation fee. Drops not claimed within 60 days go back into the pot. Read **[Warzone Airdrops](/rewards/warzone-airdrops)**.
 
 ## Protocol revenue
 
-ProtocolRevenueVault receives the remainder after creator, League, recruiter, airdrop, and Squad Pool routing.
+MemeWarzone's share is what is left after every reward slice. It pays for development, servers, audits and the team.
 
-That revenue can then move into Owners Safe policy and weekly treasury distribution. It should not flow directly to personal developer wallets.
+- **Solana:** the protocol share collects in the treasury program's protocol vault. Once an hour it is paid out: the operating wallet is topped up to at most $10,000, and everything above that goes to the MemeWarzone multisig, which needs several signers to move funds.
+- **BNB Chain and Robinhood Chain:** the protocol revenue vault forwards each payment to the MemeWarzone treasury as it arrives.
 
-Read: **[Treasury Structure](/treasury)**.
+The deployer wallet, which publishes our contracts and programs, never holds user money.
+
+Read: **[Treasury Structure](/treasury)** and **[Fee Examples](/fees/examples)**.
