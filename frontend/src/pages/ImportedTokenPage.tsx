@@ -228,7 +228,8 @@ export default function ImportedTokenPage({
   // asks again a few times so your trade shows in the chart within seconds.
   const [liveTrades, setLiveTrades] = useState<ArenaImportTrade[]>([]);
   useEffect(() => {
-    if (item.chainId !== SOLANA_CHAIN_ID) return;
+    // Solana, Robinhood (4663) and BNB (56) imports read their pool from the chain.
+    if (item.chainId !== SOLANA_CHAIN_ID && item.chainId !== 4663 && item.chainId !== 56) return;
     const controller = new AbortController();
     let timer: number | undefined;
     const bursts: number[] = [];
