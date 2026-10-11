@@ -78,6 +78,7 @@ function applyRewrite(loc, uri) {
   }
   return null;
 }
+const isRenderProxy = (loc) => dirsOf(loc, "proxy_pass").some((d) => /\/__render\$request_uri$/.test(d.args[0]));
 const isRedirect = (loc) => dirsOf(loc, "rewrite").some((d) => d.args[2] === "permanent");
 
 // ---- robots map ----
@@ -93,11 +94,11 @@ test("server-level mechanics", () => {
   assert.ok(server.block.some((d) => d.name === "resolver"));
 });
 
-test("home page resolves to the exact location and is served", () => {
+test("home page resolves to the exact location and is rendered by the API", () => {
   const l = pickLocation("/");
   assert.equal(l.mod, "=");
   assert.equal(l.pattern, "/");
-  assert.deepEqual(dirsOf(l, "try_files")[0].args, ["/index.html", "=404"]);
+  assert.ok(isRenderProxy(l));
 });
 
 function appRoutePaths() {
@@ -116,7 +117,7 @@ test("every App.tsx route resolves to the allowlist, an alias, or an ^~ block (n
   for (const p of paths) {
     const l = pickLocation(p);
     assert.ok(l, p);
-    const ok = isRedirect(l) || l.mod === "^~" || (l.mod === "=" && p === "/") || (l.mod === "~" && dirsOf(l, "try_files").some((d) => d.args.at(-1) === "/index.html"));
+    const ok = isRedirect(l) || isRenderProxy(l) || l.mod === "^~" || (l.mod === "=" && p === "/") || (l.mod === "~" && dirsOf(l, "try_files").some((d) => d.args.at(-1) === "/index.html"));
     assert.ok(ok, `${p} -> ${l.mod} ${l.pattern}`);
     assert.ok(l.mod !== "" || l.pattern !== "/", p);
   }
@@ -207,4 +208,70 @@ test("header sets per location", () => {
   assert.equal(val(chart, "X-Robots-Tag").args[1], "noindex");
   const assets = find("^~", "/assets/");
   assert.deepEqual(headerNames(assets), ["Cache-Control", "Content-Security-Policy", "X-Content-Type-Options"]);
+});
+
+const EVM = "0x1234567890abcdef1234567890abcdef12345678";
+const MINT = "So11111111111111111111111111111111111111112";
+
+test("index routes go to the renderer proxy", () => {
+  const index = ["/", "/coins", "/warzone", "/warzone/battles", "/warzone/major-war-league", "/warzone/tournaments", "/league", "/war-room", "/airdrops", "/airdrops/winners", "/recruiters", "/squads", "/playbook", "/sponsorships/apply", "/create",
+    `/token/${EVM}`, `/token/${MINT}`, "/warzone/battles/arena-mprhklw2-c5aa2c", "/warzone/tournaments/t-12", "/prepare/my-coin_1", "/post/12345", "/recruiters/ABC123", `/profile/${EVM}`, `/profile/${MINT}`];
+  for (const p of index) {
+    const l = pickLocation(p);
+    assert.ok(isRenderProxy(l), `${p} -> ${l.mod} ${l.pattern.slice(0, 40)}`);
+  }
+  // every kind "index" rule in seoRoutes is covered
+  for (const r of ROUTE_RULES.filter((x) => x.kind === "index")) {
+    const sample = r.pattern.replace(/:wallet/, EVM).replace(/:[a-z]+/i, "abc123");
+    assert.ok(isRenderProxy(pickLocation(sample)), sample);
+  }
+});
+
+test("noindex, client-only and loop-guard paths never reach the renderer", () => {
+  for (const p of ["/token/abc/edit", "/profile/w/command/x", "/profile/@handle", "/drafts/x/promotion", "/drafts/x/push-live", "/profile", "/live", "/status", "/story/101/x", "/r/code", "/embed/chart/101/x", "/import", "/recruiter", "/command", "/command/coins",
+    "/index.html", "/assets/x.js", "/robots.txt", "/sitemap.xml", "/sitemaps/a.xml", "/api/arena/battles", "/logo.png", "/nope", "/__render/coins", "/__render/"]) {
+    assert.ok(!isRenderProxy(pickLocation(p)), p);
+  }
+  const l = pickLocation("/__render/x");
+  assert.deepEqual([l.mod, l.pattern], ["^~", "/__render/"]);
+  assert.deepEqual(dirsOf(l, "return")[0].args, ["404"]);
+});
+
+test("renderer proxy directives and @spa fallback", () => {
+  const proxies = locations.filter(isRenderProxy);
+  assert.equal(proxies.length, 2); // exact "/" and the regex for the other index routes
+  const one = (l, name) => dirsOf(l, name).map((d) => d.args.join(" "));
+  for (const l of proxies) {
+    assert.deepEqual(one(l, "set"), ["$api https://api.memewar.zone"]);
+    assert.deepEqual(one(l, "proxy_pass"), ["$api/__render$request_uri"]);
+    assert.deepEqual(one(l, "proxy_set_header").sort(), ['Authorization ', "Cookie ", "Host api.memewar.zone"].sort());
+    assert.deepEqual(one(l, "proxy_connect_timeout"), ["1s"]);
+    assert.deepEqual(one(l, "proxy_read_timeout"), ["3s"]);
+    assert.deepEqual(one(l, "proxy_http_version"), ["1.1"]);
+    assert.deepEqual(one(l, "proxy_ssl_server_name"), ["on"]);
+    assert.deepEqual(one(l, "proxy_intercept_errors"), ["on"]);
+    const ep = dirsOf(l, "error_page");
+    assert.equal(ep.length, 1);
+    assert.deepEqual(ep[0].args, ["401", "403", "404", "408", "429", "500", "502", "503", "504", "=", "@spa"]);
+    assert.ok(!ep[0].args.includes("410"));
+    const hidden = dirsOf(l, "proxy_hide_header").map((d) => d.args[0]).sort();
+    assert.deepEqual(hidden, ["Access-Control-Allow-Credentials", "Access-Control-Allow-Origin", "Content-Security-Policy", "Set-Cookie", "Strict-Transport-Security", "X-Frame-Options", "X-Powered-By"].sort());
+    assert.ok(!hidden.includes("X-Robots-Tag"));
+    assert.deepEqual(headerNames(l), DEFAULT_SET);
+    assert.equal(dirsOf(l, "add_header").filter((d) => d.args[0] === "X-Robots-Tag").length, 1);
+    for (const d of dirsOf(l, "add_header")) assert.equal(d.args.at(-1), "always");
+  }
+  const spa = locations.find((l) => l.mod === "" && l.pattern === "@spa");
+  assert.ok(spa, "@spa missing");
+  assert.deepEqual(headerNames(spa), DEFAULT_SET);
+  assert.deepEqual(dirsOf(spa, "try_files")[0].args, ["/index.html", "=404"]);
+  assert.equal(dirsOf(spa, "error_page").length, 0);
+});
+
+test("regex order: trailing slash, aliases, proxy, allowlist", () => {
+  const regex = locations.filter((l) => l.re);
+  const idx = (f) => regex.findIndex(f);
+  const lastAlias = regex.map((l, i) => (isRedirect(l) ? i : -1)).reduce((a, b) => Math.max(a, b));
+  assert.ok(idx(isRenderProxy) > lastAlias);
+  assert.ok(idx((l) => dirsOf(l, "try_files").length > 0) > idx(isRenderProxy));
 });
