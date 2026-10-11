@@ -164,7 +164,7 @@ export async function profileEntries(db) {
 }
 
 // Launched drafts (status 'deployed', dev-fix/drafts.js:323; or a campaign_address whose launch time has
-// passed, drafts.js:327-331) have a coin page, so they are left out. Future-scheduled drafts follow
+// passed, drafts.js:327-331) have a coin page, so they are left out.
 // campaigns.js:183. prepare-og.js:75-79: a draft is private when visibility = 'private'; everything else with a slug is public.
 export async function prepareEntries(db) {
   const r = await db.query(
@@ -175,7 +175,6 @@ export async function prepareEntries(db) {
         and lower(coalesce(d.visibility, 'public')) <> 'private'
         and d.chain_id in ${PUBLIC_CHAINS_SQL}
         and coalesce(d.status, 'draft') <> 'deployed'
-        and not (d.scheduled_launch_at > now())
         and not (d.campaign_address is not null and d.scheduled_launch_at <= now())
       order by d.slug
       limit ${ROW_LIMIT}`,

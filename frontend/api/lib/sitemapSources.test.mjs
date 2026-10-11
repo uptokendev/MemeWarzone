@@ -83,7 +83,6 @@ test("recruiter and post SQL filters", async () => {
   assert.match(d.calls[0].sql, /visibility/);
   assert.match(d.calls[0].sql, /d\.chain_id in \(56,\s*101,\s*4663\)/);
   assert.match(d.calls[0].sql, /status.*<>\s*'deployed'/);
-  assert.match(d.calls[0].sql, /scheduled_launch_at\s*>\s*now\(\)/);
   assert.match(d.calls[0].sql, /campaign_address is not null and d\.scheduled_launch_at <= now\(\)/);
 });
 
