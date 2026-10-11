@@ -1,7 +1,42 @@
-import { useEffect } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { useLocation } from "react-router-dom";
 
+import { headForPath } from "../../shared/seoRoutes.mjs";
+import { applyHead } from "../../shared/seoApplyHead.mjs";
+
 const BASE = "MemeWarzone";
+
+export type SeoOverride = {
+  canonical?: string | null;
+  title?: string;
+  robots?: string;
+  description?: string;
+};
+
+let overrideStore: SeoOverride = {};
+let overrideVersion = 0;
+const listeners = new Set<() => void>();
+const subscribe = (fn: () => void) => {
+  listeners.add(fn);
+  return () => {
+    listeners.delete(fn);
+  };
+};
+const getVersion = () => overrideVersion;
+function setOverrideStore(next: SeoOverride) {
+  overrideStore = next;
+  overrideVersion += 1;
+  listeners.forEach((fn) => fn());
+}
+
+/** Lets a page override its head tags while mounted. Cleared on unmount. */
+export function useSeoOverride(overrides: SeoOverride) {
+  const key = JSON.stringify(overrides ?? {});
+  useEffect(() => {
+    setOverrideStore(JSON.parse(key));
+    return () => setOverrideStore({});
+  }, [key]);
+}
 
 /** Route → short page title (before · MemeWarzone). */
 export function titleForPath(pathname: string): string {
@@ -39,14 +74,21 @@ export function titleForPath(pathname: string): string {
 
 export function useDocumentTitle(pageTitle?: string | null) {
   const location = useLocation();
-  const resolved =
-    pageTitle != null && String(pageTitle).trim()
-      ? String(pageTitle).trim()
-      : titleForPath(location.pathname);
+  const version = useSyncExternalStore(subscribe, getVersion, getVersion);
+  const explicit = pageTitle != null && String(pageTitle).trim() ? String(pageTitle).trim() : "";
+  const path = location.pathname + location.search;
 
   useEffect(() => {
-    document.title = resolved === BASE ? BASE : `${resolved} · ${BASE}`;
-  }, [resolved]);
+    const o = overrideStore;
+    const head = headForPath(path, {
+      canonical: o.canonical,
+      title: o.title,
+      robots: o.robots,
+      description: o.description,
+    });
+    const title = explicit || head.title || titleForPath(location.pathname);
+    applyHead(document, { ...head, robots: o.robots || head.robots, title });
+  }, [path, explicit, version, location.pathname]);
 }
 
 /** Drop-in under BrowserRouter — keeps the tab title in sync with navigation. */
