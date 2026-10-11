@@ -1,7 +1,8 @@
 // Fetches the live app shell (built index.html of app.memewar.zone).
 // Never use a local dist/index.html: every app redeploy renames the hashed
 // assets and deletes the old ones, so a stale shell would reference deleted files.
-// Every get() revalidates with a conditional GET; failures return the last good body.
+// Every get() revalidates with a conditional GET; failures return the last good body
+// only while it was last confirmed within maxStaleMs, otherwise null.
 
 const isValidShell = (body) =>
   typeof body === "string" && body.includes("<head") && body.includes('<div id="root"></div>');
@@ -11,6 +12,7 @@ export function createAppShell({
   fetchImpl = globalThis.fetch,
   timeoutMs = 1500,
   now = Date.now,
+  maxStaleMs = 300_000,
 } = {}) {
   let body = null;
   let etag = null;
@@ -42,6 +44,9 @@ export function createAppShell({
     } finally {
       clearTimeout(timer);
     }
+    // After an app deploy the old shell's hashed assets are gone: do not serve a body
+    // that has not been confirmed within maxStaleMs.
+    if (body && now() - checkedAt > maxStaleMs) return null;
     return body;
   }
 

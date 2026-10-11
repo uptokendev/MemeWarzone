@@ -319,7 +319,8 @@ export function createSeoEntities({ db, loadBattle, appOrigin = APP_ORIGIN, apiO
     const description = fit(`${label} is preparing to launch${chainName(chain) ? ` on ${chainName(chain)}` : ""} on MemeWarzone.${blurb ? ` ${blurb}` : ""} Follow the countdown and the launch dossier.`, 160);
     const image = `${api}/api/prepare-share-card?slug=${encodeURIComponent(String(d.slug))}&v=4`;
     let url = canonical;
-    let robots = isPublicChain(chain) ? INDEX : NOINDEX;
+    // The sitemap drops a draft with a campaign but no launch time; stay noindex for parity.
+    let robots = isPublicChain(chain) && !(d.campaign_address && !d.scheduled_launch_at && !launched) ? INDEX : NOINDEX;
     if (launched) {
       const coinUrl = d.token_address ? canonicalForToken(d.token_address, chain) : null;
       if (coinUrl) url = coinUrl;
@@ -465,7 +466,7 @@ export function createSeoEntities({ db, loadBattle, appOrigin = APP_ORIGIN, apiO
     const coinLinks = coins
       .map((c) => ({ href: canonicalForToken(c.token_address || c.campaign_address, c.chain_id), text: clean(c.symbol) ? `${clean(c.name)} ($${sym(c.symbol)})` : clean(c.name) || "Coin" }))
       .filter((l) => l.href);
-    const launched = coins.length ? ` Launched ${coins.length === 1 ? "1 memecoin" : `${coins.length} or more memecoins`} on MemeWarzone.` : "";
+    const launched = coins.length ? ` Launched ${coins.length === 1 ? "1 memecoin" : (coins.length >= 5 ? `${coins.length} or more memecoins` : `${coins.length} memecoins`)} on MemeWarzone.` : "";
     const description = fit(`${name} on MemeWarzone.${launched} See holdings, battle record and activity across BNB Chain, Solana and Robinhood Chain.`, 160);
     return {
       found: true,

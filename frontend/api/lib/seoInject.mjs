@@ -141,6 +141,8 @@ export function injectSeo(shell, opts = {}) {
     html = setMeta(html, "property", "og:image", o.image);
     html = setMeta(html, "property", "og:image:secure_url", o.image, { addIfMissing: false });
     html = setMeta(html, "name", "twitter:image", o.image);
+    // These describe the shell's static image, not the replacement.
+    for (const k of ["og:image:type", "og:image:width", "og:image:height"]) html = removeTags(html, "meta", "property", k).html;
   }
   if (has(o.imageAlt)) {
     html = setMeta(html, "property", "og:image:alt", o.imageAlt, { addIfMissing: false });

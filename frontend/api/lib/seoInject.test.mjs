@@ -197,3 +197,11 @@ test("<!-- inside a script body does not start a comment", () => {
   assert.ok(out.includes("<title>New</title>"));
   assert.ok(out.includes('name="description" content="D"'));
 });
+
+test("replacing og.image drops the shell's static image type/width/height", () => {
+  const out = injectSeo(shell, { ...base, og: { title: "T", image: "https://i/a.png" } });
+  for (const k of ["og:image:type", "og:image:width", "og:image:height"]) assert.equal(count(out, `property="${k}"`), 0, k);
+  assert.equal(count(out, 'property="og:image"'), 1);
+  const kept = injectSeo(shell, { ...base, og: { title: "T" } });
+  for (const k of ["og:image:type", "og:image:width", "og:image:height"]) assert.equal(count(kept, `property="${k}"`), 1, k);
+});

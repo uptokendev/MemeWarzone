@@ -299,3 +299,20 @@ test("every image url starts with apiOrigin", async () => {
   assert.equal(images.length, 3);
   for (const img of images) assert.ok(img.startsWith(`${API}/`), img);
 });
+
+// ---------- round 2 fixes ----------
+test("prepare: campaign_address with no scheduled_launch_at is noindex (sitemap parity)", async () => {
+  const r = await make(fakeDb((sql) => (sql.includes("campaign_drafts") ? [draft({ campaign_address: "0xc", scheduled_launch_at: null })] : []))).prepare("my-coin");
+  assert.equal(r.found, true);
+  assert.equal(r.robots, "noindex,follow");
+});
+test("profile: copy never claims a wrong coin count", async () => {
+  const mk = (n) => Array.from({ length: n }, (_, i) => ({ chain_id: 56, token_address: "0x" + String(i + 1).repeat(40), name: `C${i}`, symbol: `S${i}` }));
+  const two = await make(profDb({ coins: mk(2) })).profile(EVM);
+  assert.match(two.description, /Launched 2 memecoins/);
+  assert.doesNotMatch(two.description, /or more/);
+  const one = await make(profDb({ coins: mk(1) })).profile(EVM);
+  assert.match(one.description, /Launched 1 memecoin /);
+  const five = await make(profDb({ coins: mk(5) })).profile(EVM);
+  assert.match(five.description, /Launched 5 or more memecoins/);
+});

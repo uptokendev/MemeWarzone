@@ -87,3 +87,16 @@ test("concurrent calls share one fetch", async () => {
   assert.equal(f.calls.length, 1);
   assert.deepEqual([a, b, c], [GOOD, GOOD, GOOD]);
 });
+
+test("a last-good shell older than maxStaleMs is not served when revalidation fails", async () => {
+  let t = 0;
+  const f = fake([res(200, GOOD, { etag: '"a"' }), new Error("down"), new Error("down"), res(304)]);
+  const s = createAppShell({ fetchImpl: f.fetchImpl, now: () => t, maxStaleMs: 300_000 });
+  assert.equal(await s.get(), GOOD);
+  t = 299_000;
+  assert.equal(await s.get(), GOOD);
+  t = 301_000;
+  assert.equal(await s.get(), null);
+  t = 302_000;
+  assert.equal(await s.get(), GOOD, "a successful 304 revalidation makes it fresh again");
+});

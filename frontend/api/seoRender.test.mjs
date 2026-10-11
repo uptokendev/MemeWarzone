@@ -188,3 +188,117 @@ test("miss cached 5s only; alias path is 410", async () => {
   assert.equal(calls.length, 2);
   assert.equal((await go("/__render/leagues")).statusCode, 410);
 });
+
+// ---------- DB protection ----------
+function gated(opts = {}) {
+  const gates = [];
+  let inflightNow = 0;
+  let maxInflight = 0;
+  let loaderCalls = 0;
+  let shellCalls = 0;
+  const clock = { t: 1000 };
+  const mk = (n) => async (id) => {
+    loaderCalls += 1; inflightNow += 1; maxInflight = Math.max(maxInflight, inflightNow);
+    try {
+      const v = await new Promise((resolve) => gates.push({ resolve }));
+      if (v === "throw") throw new Error("db down");
+      return v;
+    } finally { inflightNow -= 1; }
+  };
+  const entities = {};
+  for (const n of ["coin", "battle", "tournament", "prepare", "post", "recruiter", "profile"]) entities[n] = mk(n);
+  const r = createSeoRenderer({ shell: { get: async () => { shellCalls += 1; return SHELL; } }, entities, now: () => clock.t, ...opts });
+  const start = (url) => { const res = fakeRes(); const p = r({ path: url, url, originalUrl: url, query: {}, headers: {} }, res).then(() => res); return p; };
+  const flush = () => new Promise((r2) => setImmediate(r2));
+  return { start, flush, gates, clock, stats: () => ({ maxInflight, loaderCalls, shellCalls, inflightNow }) };
+}
+const battleUrl = (i) => `/__render/warzone/battles/b${i}`;
+
+test("cap: N+1 concurrent distinct ids -> at most N loader calls in flight, the rest 503 without a shell fetch", async () => {
+  const g = gated({ maxConcurrent: 3 });
+  const ps = [0, 1, 2, 3, 4].map((i) => g.start(battleUrl(i)));
+  await g.flush();
+  assert.equal(g.stats().maxInflight, 3);
+  const rejected = await Promise.all(ps.slice(3));
+  assert.deepEqual(rejected.map((r) => r.statusCode), [503, 503]);
+  assert.equal(g.stats().shellCalls, 0);
+  g.gates.forEach((x) => x.resolve(found()));
+  const ok = await Promise.all(ps.slice(0, 3));
+  assert.deepEqual(ok.map((r) => r.statusCode), [200, 200, 200]);
+  assert.equal(g.stats().loaderCalls, 3);
+});
+
+test("cap: default is 3", async () => {
+  const g = gated();
+  const ps = [0, 1, 2, 3].map((i) => g.start(battleUrl(i)));
+  await g.flush();
+  assert.equal(g.stats().loaderCalls, 3);
+  assert.equal((await ps[3]).statusCode, 503);
+  g.gates.forEach((x) => x.resolve(found()));
+  await Promise.all(ps.slice(0, 3));
+});
+
+test("coalescing: same key concurrently -> one loader call, one slot", async () => {
+  const g = gated({ maxConcurrent: 1 });
+  const ps = [0, 1, 2].map(() => g.start(battleUrl(1)));
+  await g.flush();
+  assert.equal(g.stats().loaderCalls, 1);
+  g.gates[0].resolve(found());
+  const rs = await Promise.all(ps);
+  assert.deepEqual(rs.map((r) => r.statusCode), [200, 200, 200]);
+  assert.equal(g.stats().loaderCalls, 1);
+});
+
+test("slot is released after a thrown loader", async () => {
+  const g = gated({ maxConcurrent: 1 });
+  const p1 = g.start(battleUrl(1));
+  await g.flush();
+  g.gates[0].resolve("throw");
+  assert.equal((await p1).statusCode, 500);
+  const p2 = g.start(battleUrl(2));
+  await g.flush();
+  assert.equal(g.stats().loaderCalls, 2);
+  g.gates[1].resolve(found());
+  assert.equal((await p2).statusCode, 200);
+});
+
+test("breaker: 5 errors in 10 s open it (503, no loader calls); it closes after 10 s", async () => {
+  const g = gated({ maxConcurrent: 3 });
+  for (let i = 0; i < 5; i++) {
+    const p = g.start(battleUrl(i));
+    await g.flush();
+    g.gates[i].resolve(i % 2 ? "throw" : { error: true });
+    assert.equal((await p).statusCode, 500);
+  }
+  assert.equal(g.stats().loaderCalls, 5);
+  const blocked = await g.start(battleUrl(99));
+  assert.equal(blocked.statusCode, 503);
+  assert.equal(g.stats().loaderCalls, 5);
+  assert.equal(g.stats().shellCalls, 0);
+  g.clock.t += 10_001;
+  const p = g.start(battleUrl(100));
+  await g.flush();
+  assert.equal(g.stats().loaderCalls, 6);
+  g.gates[5].resolve(found());
+  assert.equal((await p).statusCode, 200);
+});
+
+test("breaker: errors spread over more than the window do not open it", async () => {
+  const g = gated();
+  for (let i = 0; i < 6; i++) {
+    const p = g.start(battleUrl(i));
+    await g.flush();
+    g.gates[i].resolve({ error: true });
+    assert.equal((await p).statusCode, 500);
+    g.clock.t += 3000;
+  }
+  assert.equal(g.stats().loaderCalls, 6);
+});
+
+test("malformed id: 410 without any loader call", async () => {
+  const g = gated();
+  const r = await g.start("/__render/token/not-an-id");
+  assert.equal(r.statusCode, 410);
+  assert.equal(g.stats().loaderCalls, 0);
+  assert.equal(g.stats().shellCalls, 1);
+});

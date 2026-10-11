@@ -71,8 +71,27 @@ function splitUrl(req) {
   return { path, query };
 }
 
-export function createSeoRenderer({ shell, entities, now = Date.now, cacheCap = DEFAULT_CAP } = {}) {
+export function createSeoRenderer({
+  shell, entities, now = Date.now, cacheCap = DEFAULT_CAP,
+  maxConcurrent = 3, breakerErrors = 5, breakerWindowMs = 10_000, breakerOpenMs = 10_000,
+} = {}) {
   const cache = createLru(cacheCap);
+  // The renderer shares the API's pg pool, so it protects it: a slot cap, per-key coalescing and a
+  // circuit breaker. Anything refused answers 503 and nginx serves the plain shell.
+  const inflight = new Map();
+  let active = 0;
+  let errorTimes = [];
+  let openUntil = 0;
+  const UNAVAILABLE = { unavailable: true };
+
+  function noteError(t) {
+    errorTimes = errorTimes.filter((x) => t - x < breakerWindowMs);
+    errorTimes.push(t);
+    if (errorTimes.length >= breakerErrors) {
+      openUntil = t + breakerOpenMs;
+      errorTimes = [];
+    }
+  }
 
   const send = (res, status, html, robots) => {
     res.statusCode = status;
@@ -100,43 +119,70 @@ export function createSeoRenderer({ shell, entities, now = Date.now, cacheCap = 
     const key = `${spec.kind}:${norm}:${chainId || ""}`;
     const hit = cache.get(key, t);
     if (hit) return hit;
-    const data = spec.kind === "coin" ? await entities.coin(id, chainId) : await entities[spec.kind](id);
-    if (!data || typeof data !== "object" || data.error) return { error: true };
-    cache.set(key, data, t + (data.found ? TTL_FOUND_MS : TTL_MISS_MS));
+    let pending = inflight.get(key);
+    if (!pending) {
+      if (t < openUntil || active >= maxConcurrent) return UNAVAILABLE;
+      active += 1;
+      pending = (async () => {
+        try {
+          const d = spec.kind === "coin" ? await entities.coin(id, chainId) : await entities[spec.kind](id);
+          if (!d || typeof d !== "object" || d.error) { noteError(now()); return { error: true }; }
+          return d;
+        } catch (err) {
+          noteError(now());
+          throw err;
+        } finally {
+          active -= 1;
+          inflight.delete(key);
+        }
+      })();
+      inflight.set(key, pending);
+    }
+    const data = await pending;
+    if (data.error) return data;
+    cache.set(key, data, now() + (data.found ? TTL_FOUND_MS : TTL_MISS_MS));
     return data;
   }
 
+  const plain = (res, status, text) => {
+    res.statusCode = status;
+    if (typeof res.status === "function") res.status(status);
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache");
+    return res.send(text);
+  };
+
   async function handle(req, res) {
-    const html = await shell.get();
-    if (!html) {
-      res.statusCode = 503;
-      if (typeof res.status === "function") res.status(503);
-      res.setHeader("Content-Type", "text/plain; charset=utf-8");
-      res.setHeader("Cache-Control", "no-cache");
-      return res.send("Shell unavailable");
-    }
     const { path, query } = splitUrl(req);
     const rule = matchRoute(path);
-    if (!rule || rule.kind === "alias") return notFound(res, html);
+    const spec = rule && rule.kind === "index" ? ENTITY[rule.pattern] : undefined;
 
-    const spec = ENTITY[rule.pattern];
-    if (rule.kind === "index" && spec) {
-      let id = rule.params[spec.param];
-      try { id = decodeURIComponent(id); } catch { return notFound(res, html); }
-      if (!spec.ok(id)) return notFound(res, html);
-      let chainId;
-      if (spec.kind === "coin") {
+    // Validate first so a malformed id costs no loader call; the shell is fetched only when we answer with HTML.
+    let id;
+    let chainId;
+    let invalid = !rule || rule.kind === "alias";
+    if (!invalid && spec) {
+      id = rule.params[spec.param];
+      try { id = decodeURIComponent(id); } catch { invalid = true; }
+      if (!invalid && !spec.ok(id)) invalid = true;
+      if (!invalid && spec.kind === "coin") {
         const c = Number(new URLSearchParams(query).get("chainId"));
         if (Number.isInteger(c) && CHAIN_IDS.has(c)) chainId = c;
       }
-      const data = await load(spec, id, chainId);
-      if (data.error) {
-        res.statusCode = 500;
-        if (typeof res.status === "function") res.status(500);
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.setHeader("Cache-Control", "no-cache");
-        return res.send("Render failed");
-      }
+    }
+
+    let data;
+    if (!invalid && spec) {
+      data = await load(spec, id, chainId);
+      if (data.unavailable) return plain(res, 503, "Render busy");
+      if (data.error) return plain(res, 500, "Render failed");
+    }
+
+    const html = await shell.get();
+    if (!html) return plain(res, 503, "Shell unavailable");
+
+    if (invalid) return notFound(res, html);
+    if (spec) {
       if (!data.found) return notFound(res, html, 404);
       const hidden = data.private || /noindex/i.test(String(data.robots || ""));
       const robots = hidden ? NOINDEX : data.robots || "index,follow";
