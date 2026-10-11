@@ -159,3 +159,28 @@ contract V4Attacker is IUnlockCallback {
 
     receive() external payable {}
 }
+
+/// A creator that is a contract and rejects native (no receive / fallback). It can still accept creator
+/// rights and claim its fees to any EOA.
+interface IMwzHookCreatorRights {
+    function acceptCreator(bytes32 id) external;
+    function claimCreator(bytes32 id, address to) external returns (uint256);
+}
+
+contract RejectingCreator {
+    address public immutable admin;
+
+    constructor() {
+        admin = msg.sender;
+    }
+
+    function accept(IMwzHookCreatorRights hook, bytes32 id) external {
+        require(msg.sender == admin, "admin");
+        hook.acceptCreator(id);
+    }
+
+    function claimTo(IMwzHookCreatorRights hook, bytes32 id, address to) external returns (uint256) {
+        require(msg.sender == admin, "admin");
+        return hook.claimCreator(id, to);
+    }
+}

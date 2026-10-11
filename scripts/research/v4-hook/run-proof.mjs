@@ -35,6 +35,7 @@ const CHAIN_CFG = {
     rpc: process.env.BSC_MAINNET_RPC || ENV.BSC_MAINNET_RPC,
     port: 8661,
     oracle: "0x9D204406d5ECA0f18e48427fDD983A32FdF57C9B",
+    wNative: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", // WBNB: display pairs on BNB only
     pm: "0x28e2ea090877bf75740558f6bfb36a5ffee9e9df",
     posm: "0x7a4a5c919ae2541aed11041a1aeee68f1287f95b",
     urs: { "UR (docs main)": "0x1906c1d672b88cd1b9ac7593301ca990f94eae07", "UR 2.1.1": "0x8b844f885672f333bc0042cb669255f93a4c1e6b", "UR 2.1.2": "0xDc264714F68d84CF29BC605589405E78bDBE7C9f" },
@@ -151,10 +152,12 @@ async function setupChain(name, C) {
 
   // Fresh deterministic keys, funded on the fork only. The well-known anvil keys are EIP-7702
   // delegated to sweeper contracts on BSC mainnet, which forward any native they receive.
-  const keys = ["deployer", "creator", "buyer", "bot", "attacker", "router", "protocol"].map((n) => ethers.id("mwz-v4-hook-research/" + n)).map((k) => new ethers.NonceManager(new ethers.Wallet(k, provider)));
-  const [deployer, creator, buyer, bot, attacker, routerEoa, protocolEoa] = keys;
+  const names = ["deployer", "creator", "buyer", "bot", "attacker", "treasury", "safe", "creator2", "treasury2", "payee"];
+  const W = {};
+  for (const n of names) W[n] = new ethers.NonceManager(new ethers.Wallet(ethers.id("mwz-v4-hook-research/" + n), provider));
+  const { deployer } = W;
   const A = {};
-  for (const [k, w] of Object.entries({ deployer, creator, buyer, bot, attacker, routerEoa, protocolEoa })) {
+  for (const [k, w] of Object.entries(W)) {
     A[k] = await w.getAddress();
     await provider.send("anvil_setBalance", [A[k], "0x" + (100_000_000n * WAD).toString(16)]);
     check(`test account ${k} has no code on the fork`, (await provider.getCode(A[k])) === "0x", A[k]);
@@ -172,11 +175,18 @@ async function setupChain(name, C) {
   const nativeUsd = await oracle.nativeUsdPrice();
   note(`oracle native/USD at fork block: $${fmt(nativeUsd, 2)}  block gas limit ${forkBlock.gasLimit}`);
 
-  // ---- deploy: hook via CREATE2 with a mined salt, launcher at the deployer's next nonce
+  // ---- deploy: display factory (BNB only), hook via CREATE2 with a mined salt, launcher at a predicted nonce
+  let displayFactory = null;
+  if (cfg.wNative) {
+    const F = C.MwzDisplayPairFactory;
+    const fc = await new ethers.ContractFactory(F.abi, F.bytecode, deployer).deploy(cfg.wNative);
+    await fc.waitForDeployment();
+    displayFactory = new ethers.Contract(await fc.getAddress(), F.abi, provider);
+  }
   const startNonce = await provider.getTransactionCount(A.deployer);
   const launcherAddr = ethers.getCreateAddress({ from: A.deployer, nonce: startNonce + 1 });
   const H = C.MwzLaunchHook;
-  const initCode = ethers.concat([H.bytecode, coder.encode(["address", "address", "address", "address"], [cfg.pm, launcherAddr, A.routerEoa, A.protocolEoa])]);
+  const initCode = ethers.concat([H.bytecode, coder.encode(["address", "address", "address", "address", "address"], [cfg.pm, launcherAddr, A.safe, A.treasury, displayFactory ? displayFactory.target : ethers.ZeroAddress])]);
   const initHash = ethers.keccak256(initCode);
   const t0 = Date.now();
   let salt, hookAddr, tries = 0;
@@ -200,6 +210,11 @@ async function setupChain(name, C) {
   await launcherC.waitForDeployment();
   check("launcher at predicted address (hook immutable points at it)", (await launcherC.getAddress()) === launcherAddr && (await hook.launcher()) === launcherAddr, launcherAddr);
   const launcher = launcherC.connect(provider);
+  if (displayFactory) {
+    await (await displayFactory.connect(deployer).setHook(hookAddr)).wait();
+    check("display factory wired to the hook (one-time)", (await displayFactory.hook()) === hookAddr);
+  }
+  check("hook runtime size under the 24,576-byte limit", (C.MwzLaunchHook.runtimeSize) <= 24576, `${C.MwzLaunchHook.runtimeSize} bytes`);
   const deploy = async (n, ...a) => {
     const c = await new ethers.ContractFactory(C[n].abi, C[n].bytecode, deployer).deploy(...a);
     await c.waitForDeployment();
@@ -208,12 +223,13 @@ async function setupChain(name, C) {
   const trader = await deploy("V4DirectTrader", cfg.pm);
   const seeder = await deploy("V4PlainSeeder", cfg.pm);
   const attackerC = await deploy("V4Attacker", cfg.pm);
+  const rejecter = await deploy("RejectingCreator");
 
   const ifaces = [hook.interface, launcher.interface, new ethers.Interface(PM_ABI), new ethers.Interface(UR_ABI), new ethers.Interface(["error InvalidHookResponse()", "error HookCallFailed()", "error PartialFill()", "error HookDeltaExceedsSwapAmount()", "error V4TooMuchRequested(uint256,uint256)", "error DeltaNotNegative(address)", "error DeltaNotPositive(address)"])];
 
   // ---- UR encoding style per router (v2.0 params vs 2.1.x params with minHopPriceX36)
   const urStyles = {};
-  return { name, cfg, provider, child, A, W: { deployer, creator, buyer, bot, attacker, routerEoa, protocolEoa }, pm, sv, quoter, oracle, nativeUsd, hook, launcher, trader, seeder, attackerC, ifaces, urStyles, forkBlock, C };
+  return { name, cfg, provider, child, A, W, pm, sv, quoter, oracle, nativeUsd, hook, launcher, trader, seeder, attackerC, rejecter, displayFactory, ifaces, urStyles, forkBlock, C };
 }
 
 // ------------------------------------------------------------------ per-pool helpers
@@ -284,7 +300,7 @@ async function trade(env, P, { via, wallet, buy, exactIn, amount, limit, hookDat
       const ev = env.hook.interface.parseLog(log);
       if (ev?.name === "HookFee") {
         fee = ev.args.fee;
-        gross = ev.args.nativeGross;
+        gross = ev.args.curveAmount;
         rate = ev.args.feeBps;
         creatorShare = ev.args.creatorShare;
         referrer = ev.args.referrer;
@@ -296,29 +312,32 @@ async function trade(env, P, { via, wallet, buy, exactIn, amount, limit, hookDat
   return { rc, gas: rc.gasUsed, raw0, raw1, fee, gross, rate, creatorShare, referrer, graduated, userNative: nAfter - nBefore + cost, userCoin: cAfter - cBefore, block: rc.blockNumber };
 }
 
-/** Exactness of the hook fee against the trade's own native leg. Returns [ok, detail]. */
+/** Exactness of the hook fee, gen-7 definition: buys pay floor(cost * r) ON TOP of the curve cost,
+ *  sells pay floor(payout * r) out of the curve payout. Returns [ok, detail, dustWei]. */
 function feeExact(t, buy, exactIn, amount) {
   const r = t.rate;
+  const pct = (f, base) => (Number((f * 10n ** 10n) / base) / 1e8).toFixed(6);
   if (buy && exactIn) {
-    // gross = what the trader sent; fee = floor(gross * r); curve got gross - fee
-    const ok = t.gross === amount && t.fee === (amount * r) / BPS && -t.raw0 === amount - t.fee && -t.userNative === amount && t.userCoin === t.raw1;
-    return [ok, `in ${fmt(amount)} fee ${fmt(t.fee, 9)} = ${(Number((t.fee * 10n ** 8n) / amount) / 1e6).toFixed(6)}% (rate ${r} bps)`];
+    // the trader sends G; the curve takes cost = floor(G * B / (B + r)); fee = G - cost
+    const cost = -t.raw0;
+    const g7 = (cost * r) / BPS;
+    const dust = t.fee - g7;
+    const ok = cost === (amount * BPS) / (BPS + r) && t.fee === amount - cost && dust >= 0n && dust <= 2n && t.gross === cost && -t.userNative === amount && t.userCoin === t.raw1;
+    return [ok, `sent ${fmt(amount)} curve ${fmt(cost)} fee ${fmt(t.fee, 9)} = ${pct(t.fee, cost)}% of cost (gen-7 floor ${fmt(g7, 9)}, +${dust} wei)`, dust];
   }
   if (buy && !exactIn) {
     const cost = -t.raw0;
-    const ok = t.fee === ceilDiv(cost * r, BPS - r) && -t.userNative === cost + t.fee && t.userCoin === amount && t.raw1 === amount;
-    const exactFloor = ((cost + t.fee) * r) / BPS;
-    return [ok && absDiff(t.fee, exactFloor) <= 1n, `paid ${fmt(cost + t.fee)} fee ${fmt(t.fee, 9)} vs ${r}bps of paid ${fmt(exactFloor, 9)} (diff ${absDiff(t.fee, exactFloor)} wei)`];
+    const ok = t.fee === (cost * r) / BPS && t.gross === cost && -t.userNative === cost + t.fee && t.userCoin === amount && t.raw1 === amount;
+    return [ok, `curve ${fmt(cost)} fee ${fmt(t.fee, 9)} = ${pct(t.fee, cost)}% on top (exact gen-7)`, 0n];
   }
   if (!buy && exactIn) {
     const out = t.raw0;
-    const ok = t.fee === (out * r) / BPS && t.userNative === out - t.fee && -t.userCoin === amount;
-    return [ok, `curve out ${fmt(out)} fee ${fmt(t.fee, 9)} = ${(Number((t.fee * 10n ** 8n) / out) / 1e6).toFixed(6)}% (rate ${r} bps)`];
+    const ok = t.fee === (out * r) / BPS && t.gross === out && t.userNative === out - t.fee && -t.userCoin === amount;
+    return [ok, `curve payout ${fmt(out)} fee ${fmt(t.fee, 9)} = ${pct(t.fee, out)}% (exact gen-7)`, 0n];
   }
-  const net = amount;
-  const ok = t.fee === ceilDiv(net * r, BPS - r) && t.raw0 === net + t.fee && t.userNative === net;
-  const exactFloor = ((net + t.fee) * r) / BPS;
-  return [ok && absDiff(t.fee, exactFloor) <= 1n, `got ${fmt(net)} fee ${fmt(t.fee, 9)} vs ${r}bps of gross ${fmt(exactFloor, 9)} (diff ${absDiff(t.fee, exactFloor)} wei)`];
+  const gross = t.raw0;
+  const ok = t.fee === (gross * r) / BPS && gross - t.fee === amount && t.gross === gross && t.userNative === amount;
+  return [ok, `net ${fmt(amount)} curve payout ${fmt(gross)} fee ${fmt(t.fee, 9)} = floor(payout*r) exactly`, 0n];
 }
 
 async function quote(env, P, buy, exactIn, amount, hookData = "0x") {
@@ -351,9 +370,8 @@ async function revert(env, id) {
 }
 async function owedAll(env, P) {
   return {
-    router: await env.hook.owed(env.A.routerEoa),
-    protocol: await env.hook.owed(env.A.protocolEoa),
-    creator: await env.hook.owed(env.A.creator),
+    router: await env.hook.routerOwed(),
+    creator: P ? await env.hook.creatorOwed(P.id) : 0n,
     claims: await env.pm.balanceOf(env.hook.target, 0n),
   };
 }
@@ -364,7 +382,106 @@ function soldFromPrice(P, sqrtP) {
   return P.mintedA - amount1Delta(P.sqrtGrad, sqrtP, P.liqA, false);
 }
 
+const MIN_USABLE = TM.MIN_TICK + (-TM.MIN_TICK % SPACING);
+const FullMulDiv = (a, b, c) => (a * b) / c;
 // ------------------------------------------------------------------ the per-target proof
+const FEES = [200, 100, 50, 9000]; // bondingBps, postBps, creatorPostBps, sniperStartBps
+const V2_IFACE = new ethers.Interface([
+  "event PairCreated(address indexed token0, address indexed token1, address pair, uint256)",
+  "event Mint(address indexed sender, uint256 amount0, uint256 amount1)",
+  "event Swap(address indexed sender, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out, address indexed to)",
+  "event Sync(uint112 reserve0, uint112 reserve1)",
+  "function name() view returns (string)",
+  "function symbol() view returns (string)",
+  "function decimals() view returns (uint8)",
+  "function totalSupply() view returns (uint256)",
+  "function token0() view returns (address)",
+  "function token1() view returns (address)",
+  "function getReserves() view returns (uint112, uint112, uint32)",
+  "function update(address,address,uint256,uint256,uint256,uint256,uint256,uint256)",
+  "function init(uint256,uint256)",
+  "error NotHook()",
+]);
+const TOPIC = {
+  PairCreated: "0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9",
+  Sync: "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1",
+  Mint: "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f",
+  Swap: "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822",
+};
+
+/** V2 display events in a receipt, in order, decoded with the canonical Uniswap V2 ABI. */
+function displayLogs(rc, pair) {
+  return rc.logs
+    .filter((l) => pair && l.address.toLowerCase() === pair.toLowerCase())
+    .map((l) => ({ topic: l.topics[0], idx: l.index, ev: V2_IFACE.parseLog(l) }));
+}
+
+/** Checks one trade's display output: Sync then Swap, V2 shapes, trader amounts, reserves == pool price. */
+async function checkDisplay(env, P, t, buy, wallet) {
+  if (!P.pair) return [true, "no display pair (Robinhood)"];
+  const logs = displayLogs(t.rc, P.pair);
+  if (logs.length !== 2 || logs[0].topic !== TOPIC.Sync || logs[1].topic !== TOPIC.Swap) return [false, `logs ${logs.map((l) => l.topic.slice(0, 10)).join(",")}`];
+  const sync = logs[0].ev.args;
+  const sw = logs[1].ev.args;
+  const nIs0 = P.nativeIsToken0;
+  const rN = nIs0 ? sync[0] : sync[1];
+  const rC = nIs0 ? sync[1] : sync[0];
+  const nIn = nIs0 ? sw.amount0In : sw.amount1In;
+  const cIn = nIs0 ? sw.amount1In : sw.amount0In;
+  const nOut = nIs0 ? sw.amount0Out : sw.amount1Out;
+  const cOut = nIs0 ? sw.amount1Out : sw.amount0Out;
+  const user = await wallet.getAddress();
+  const amountsOk = buy ? nIn === -t.userNative && cOut === t.userCoin && cIn === 0n && nOut === 0n : cIn === -t.userCoin && nOut === t.userNative && nIn === 0n && cOut === 0n;
+  const s = await slot0(env, P);
+  const priceDiff = ppm(rC * (1n << 192n), rN * s.sqrtP * s.sqrtP);
+  const gr = await new ethers.Contract(P.pair, V2_IFACE, env.provider).getReserves();
+  const ok = amountsOk && sw.to === user && priceDiff < 0.01 && gr[0] === sync[0] && gr[1] === sync[1];
+  return [ok, `Sync r(native ${fmt(rN, 4)}, coin ${fmt(rC, 0)}) price vs pool ${priceDiff.toFixed(6)} ppm; Swap in/out match trader; to=${sw.to === user ? "trader" : sw.to}`];
+}
+
+async function launchCoin(env, wallet, target, firstBuy, fees, label = "Research V4 Coin") {
+  const txL = await env.launcher.connect(wallet).launch(label, "RV4", target, 0n, fees, { value: firstBuy, gasLimit: 15_000_000n });
+  const rcL = await txL.wait();
+  const ev = rcL.logs.map((l) => { try { return env.launcher.interface.parseLog(l); } catch { return null; } }).find((e) => e?.name === "Launched");
+  const P = makePool(env, ev.args.token, Number(ev.args.tickStart), Number(ev.args.tickGrad));
+  P.launchTs = BigInt((await env.provider.getBlock(rcL.blockNumber)).timestamp);
+  const st = await env.hook.pools(P.id);
+  P.liqA = st.liqA;
+  P.liqB = st.liqB;
+  P.sqrtGrad = st.sqrtGrad;
+  P.sqrtStart = TM.getSqrtRatioAtTick(P.tickStart);
+  P.mintedA = amount1Delta(P.sqrtGrad, P.sqrtStart, P.liqA, true);
+  P.mintedB = amount1Delta(TM.getSqrtRatioAtTick(MIN_USABLE), P.sqrtGrad, P.liqB, true);
+  P.pair = (await env.hook.displayPair(P.id)) === ethers.ZeroAddress ? null : await env.hook.displayPair(P.id);
+  if (P.pair) P.nativeIsToken0 = BigInt(env.cfg.wNative) < BigInt(P.token);
+  return { P, rcL, ev };
+}
+
+/** smallest gross with gross - floor(gross*r/B) == net (mirror of the hook's _grossForNet) */
+function grossForNet(net, r) {
+  let g = ceilDiv(net * BPS, BPS - r);
+  while (g > 0n && g - 1n - ((g - 1n) * r) / BPS >= net) g--;
+  return g;
+}
+
+/** A price-limited swap: preview, trade, and check fill == preview, fee on the filled part only, price == limit. */
+async function partialFill(env, P, { label, buy, amount, limit, wallet }) {
+  const r = await env.hook.currentFeeBps(P.id, env.trader.target);
+  let spec;
+  if (buy) spec = -((amount * BPS) / (BPS + r)); // the curve part of an exact-input buy
+  else spec = grossForNet(amount, r); // the curve payout for an exact-output sell
+  const preview = await env.hook.previewFill(P.id, buy, spec, limit);
+  const full = buy ? -spec : spec;
+  const t = await trade(env, P, { via: "direct", wallet, buy, exactIn: buy, amount, limit: buy ? 0n : 10n ** 30n, sqrtLimit: limit });
+  const s = await slot0(env, P);
+  const fill = buy ? -t.raw0 : t.raw0;
+  const fee = (fill * r) / BPS;
+  const userOk = buy ? -t.userNative === fill + fee : t.userNative === fill - fee;
+  const ok = fill === preview && fill < full && t.fee === fee && t.gross === fill && userOk && s.sqrtP === limit;
+  check(`partial fill ${label}: fills to the limit, fee only on the filled part (gen-7 exact), preview exact`, ok, `asked ${fmt(full)} curve, filled ${fmt(fill)} (preview ${fmt(preview)}), fee ${fmt(t.fee, 9)} @${r}bps, price == limit: ${s.sqrtP === limit}`);
+  return t;
+}
+
 async function runTarget(env, targetUsd) {
   CTX = `${env.name} $${targetUsd / 1000n}K`;
   const out = { chain: env.name, targetUsd: Number(targetUsd), nums: {} };
@@ -383,58 +500,83 @@ async function runTarget(env, targetUsd) {
   N.gen7 = { vN: vN.toString(), vT: vT.toString(), R: R.toString(), startMc: g7StartMc.toString(), endMc: g7EndMc.toString() };
   note(`target MC ${fmt(mc)} native; gen-7 start MC ${fmt(g7StartMc)} end MC ${fmt(g7EndMc)} raise R ${fmt(R)}; ticks start ${tickStart} grad ${tickGrad}`);
 
-  // ---- front-run: nobody can initialize a pool with our hook (before or after launch)
+  // ---- front-run: nobody can initialize a pool with our hook
   const nextTokenGuess = ethers.getCreateAddress({ from: env.launcher.target, nonce: 999 });
   const fakeKey = [ethers.ZeroAddress, nextTokenGuess, 0x800000, SPACING, env.hook.target];
   const rInit = await revertOf(() => env.attackerC.connect(env.W.attacker).tryInitialize.staticCall(fakeKey, TM.getSqrtRatioAtTick(Number(tickStart))), env.ifaces);
   check("outside PoolManager.initialize with our hook reverts (launch front-run impossible)", rInit && rInit.includes("OnlyThisHookMayInitialize"), rInit);
-  const rCreate = await revertOf(() => env.hook.connect(env.W.attacker).createPool.staticCall(nextTokenGuess, env.A.attacker, tickStart, tickGrad, 1n, 1n), env.ifaces);
+  const rCreate = await revertOf(() => env.hook.connect(env.W.attacker).createPool.staticCall(nextTokenGuess, env.A.attacker, tickStart, tickGrad, 1n, 1n, FEES), env.ifaces);
   check("hook.createPool from a non-launcher reverts", rCreate && rCreate.includes("NotLauncher"), rCreate);
 
-  // ---- atomic launch with the creator's first buy (5% of R)
+  // ---- per-coin rate caps (decision 4)
+  for (const [lbl, f] of [
+    ["bonding 2.01%", [201, 100, 50, 9000]],
+    ["post-grad 1.01%", [200, 101, 50, 9000]],
+    ["decay start 90.01%", [200, 100, 50, 9001]],
+    ["creator share above post-grad fee", [200, 100, 101, 9000]],
+    ["decay start below bonding", [200, 100, 50, 199]],
+  ]) {
+    const r = await revertOf(() => env.launcher.connect(env.W.creator).launch.staticCall("X", "X", target, 0n, f, { value: 0n }), env.ifaces);
+    check(`fee cap enforced at launch: ${lbl} reverts`, r && r.includes("FeeCapExceeded"), r);
+  }
+
+  // ---- atomic launch with the creator's first buy (5% of R), gen-7 fee on top
   const firstBuy = R / 20n;
   const o0 = await owedAll(env);
-  const txL = await env.launcher.connect(env.W.creator).launch("Research V4 Coin", "RV4", target, 0n, { value: firstBuy, gasLimit: 15_000_000n });
-  const rcL = await txL.wait();
-  const ev = rcL.logs.map((l) => { try { return env.launcher.interface.parseLog(l); } catch { return null; } }).find((e) => e?.name === "Launched");
-  const P = makePool(env, ev.args.token, Number(tickStart), Number(tickGrad));
-  const launchBlock = await env.provider.getBlock(rcL.blockNumber);
-  P.launchTs = BigInt(launchBlock.timestamp);
+  const { P, rcL, ev } = await launchCoin(env, env.W.creator, target, firstBuy, FEES);
   N.launchGas = rcL.gasUsed.toString();
-  check("atomic launch: token + init + A/B mint + first buy in one tx", ev && ev.args.firstBuyOut > 0n, `gas ${rcL.gasUsed} (block gas limit ${env.forkBlock.gasLimit}; ${(Number(rcL.gasUsed) * 100 / Number(env.forkBlock.gasLimit)).toFixed(2)}%)`);
-  check("launch gas fits an Arbitrum-style 32M per-tx cap and the BSC block", rcL.gasUsed < 32_000_000n && rcL.gasUsed < env.forkBlock.gasLimit, `${rcL.gasUsed}`);
+  check("atomic launch: token + init + A/B mint + first buy (+ display pair on BNB) in one tx", ev.args.firstBuyOut > 0n, `gas ${rcL.gasUsed} (block gas limit ${env.forkBlock.gasLimit})`);
+  check("launch gas fits a 32M per-tx cap and the block", rcL.gasUsed < 32_000_000n && rcL.gasUsed < env.forkBlock.gasLimit, `${rcL.gasUsed}`);
   const initLog = rcL.logs.map((l) => { try { return env.pm.interface.parseLog(l); } catch { return null; } }).find((e) => e?.name === "Initialize");
   check("pool initialized in the launch tx: native/coin, dynamic fee, our hook", initLog && initLog.args.id === P.id && initLog.args.currency0 === ethers.ZeroAddress && Number(initLog.args.fee) === 0x800000 && initLog.args.hooks === env.hook.target, `poolId ${P.id}`);
-  const st = await env.hook.pools(P.id);
-  P.liqA = st.liqA;
-  P.liqB = st.liqB;
-  P.sqrtGrad = st.sqrtGrad;
-  P.sqrtStart = TM.getSqrtRatioAtTick(P.tickStart);
-  P.mintedA = amount1Delta(P.sqrtGrad, P.sqrtStart, P.liqA, true);
-  P.mintedB = amount1Delta(TM.getSqrtRatioAtTick(TM.MIN_TICK + (-TM.MIN_TICK % SPACING)), P.sqrtGrad, P.liqB, true);
   const s0 = await slot0(env, P);
   check("LP fee is 0 (dynamic pool, never set)", s0.lpFee === 0, `lpFee ${s0.lpFee} protocolFee ${s0.protocolFee}`);
-  const firstFee = (firstBuy * 200n) / BPS;
   const o1 = await owedAll(env);
-  check("creator first buy pays exactly 2% (not the 90% launch fee)", o1.router - o0.router === firstFee, `first buy ${fmt(firstBuy)} fee ${fmt(o1.router - o0.router, 9)} expected ${fmt(firstFee, 9)}; got ${fmt(ev.args.firstBuyOut, 0)} coins`);
+  const fbCost = (firstBuy * BPS) / (BPS + 200n);
+  const fbFee = firstBuy - fbCost;
+  check("creator first buy: gen-7 fee 2% on top of the curve cost (not the 90% launch rate)", o1.router - o0.router === fbFee && fbFee - (fbCost * 200n) / BPS <= 2n, `sent ${fmt(firstBuy)} = cost ${fmt(fbCost)} + fee ${fmt(fbFee, 9)} (${(Number((fbFee * 10n ** 10n) / fbCost) / 1e8).toFixed(6)}% of cost, ${(Number((fbFee * 10n ** 10n) / firstBuy) / 1e8).toFixed(6)}% of sent)`);
   const creatorCoins = await P.coin.balanceOf(env.A.creator);
   check("creator holds 20M reserve + first-buy coins; hook holds 0 coins", creatorCoins === 20_000_000n * WAD + ev.args.firstBuyOut && (await P.coin.balanceOf(env.hook.target)) === 0n, `creator ${fmt(creatorCoins, 0)}`);
-  check("minted A = 850M and B = 130M within rounding (dust burned)", absDiff(P.mintedA, COINS_A) < 10n ** 6n && absDiff(P.mintedB, COINS_B) < 10n ** 6n, `A ${P.mintedA} B ${P.mintedB}`);
   const posA = await env.sv.getPositionInfo(P.id, env.hook.target, P.tickGrad, P.tickStart, ethers.ZeroHash);
-  const posB = await env.sv.getPositionInfo(P.id, env.hook.target, TM.MIN_TICK + (-TM.MIN_TICK % SPACING), P.tickGrad, ethers.ZeroHash);
-  check("positions A and B are owned by the hook-locker in the PoolManager", posA[0] === P.liqA && posB[0] === P.liqB, `liqA ${P.liqA} liqB ${P.liqB}`);
-  const rInit2 = await revertOf(() => env.attackerC.connect(env.W.attacker).tryInitialize.staticCall(P.key, P.sqrtStart), env.ifaces);
-  check("re-initialize of the live pool reverts", !!rInit2, rInit2);
+  const posB = await env.sv.getPositionInfo(P.id, env.hook.target, MIN_USABLE, P.tickGrad, ethers.ZeroHash);
+  check("positions A (850M) and B (130M) owned by the hook-locker", posA[0] === P.liqA && posB[0] === P.liqB && absDiff(P.mintedA, COINS_A) < 10n ** 6n && absDiff(P.mintedB, COINS_B) < 10n ** 6n, `liqA ${P.liqA} liqB ${P.liqB}`);
+  const stored = (await env.hook.pools(P.id)).fees;
+  check("per-coin rates stored at launch", stored.map(Number).join(",") === FEES.join(","), stored.map(Number).join(","));
+
+  // ---- display pair at launch (BNB) / none (Robinhood)
+  if (env.cfg.wNative) {
+    const pcLog = rcL.logs.find((l) => l.address.toLowerCase() === env.displayFactory.target.toLowerCase() && l.topics[0] === TOPIC.PairCreated);
+    const pc = pcLog && V2_IFACE.parseLog(pcLog);
+    const [t0, t1] = BigInt(P.token) < BigInt(env.cfg.wNative) ? [P.token, env.cfg.wNative] : [env.cfg.wNative, P.token];
+    check("BNB display: factory emits Uniswap V2 PairCreated(token0, token1, pair, length), tokens sorted", pc && pc.args.token0 === t0 && pc.args.token1 === t1 && pc.args.pair === P.pair && pc.args[3] === (await env.displayFactory.allPairsLength()), `pair ${P.pair} token0 ${t0.slice(0, 8)} token1 ${t1.slice(0, 8)}`);
+    const dl = displayLogs(rcL, P.pair);
+    const sync = dl[0]?.ev.args;
+    const mint = dl[1]?.ev.args;
+    const [rN0, rC0] = [FullMulDiv(P.liqA, Q96, P.sqrtStart), FullMulDiv(P.liqA, P.sqrtStart, Q96)];
+    const syncOk = sync && (P.nativeIsToken0 ? sync[0] === rN0 && sync[1] === rC0 : sync[1] === rN0 && sync[0] === rC0);
+    check("BNB display at launch: Sync then Mint (V2 order), sender = hook, initial virtual reserves; then the first buy's Sync + Swap", dl.length === 4 && dl[0].topic === TOPIC.Sync && dl[1].topic === TOPIC.Mint && dl[2].topic === TOPIC.Sync && dl[3].topic === TOPIC.Swap && syncOk && mint.sender === env.hook.target && mint.amount0 === sync[0] && mint.amount1 === sync[1], `native ${fmt(rN0)} coin ${fmt(rC0, 0)}; logs ${dl.map((l) => l.ev.name).join(",")}`);
+    check("BNB display reserves at launch == gen-7 virtual reserves (vN, vT) within tick rounding", ppm(rN0, vN) < 600 && ppm(rC0, vT) < 600, `native ${ppm(rN0, vN).toFixed(1)} ppm, coin ${ppm(rC0, vT).toFixed(1)} ppm`);
+    const pair = new ethers.Contract(P.pair, V2_IFACE, env.provider);
+    const [nm, sy, dc, ts, tk0, tk1, gr] = await Promise.all([pair.name(), pair.symbol(), pair.decimals(), pair.totalSupply(), pair.token0(), pair.token1(), pair.getReserves()]);
+    check("BNB display views mirror flap's pairs: name/symbol/decimals/token0/token1/getReserves/totalSupply=sqrt(r0*r1)", nm === "Uniswap V2" && sy === "UNI-V2" && Number(dc) === 18 && tk0 === t0 && tk1 === t1 && ts === TM.isqrt(gr[0] * gr[1]), `${nm} ${sy} ${dc} totalSupply ${fmt(ts, 2)}`);
+    const rW = await revertOf(() => pair.connect(env.W.attacker).update.staticCall(env.A.attacker, env.A.attacker, 1n, 0n, 0n, 1n, 1n, 1n), [V2_IFACE, ...env.ifaces]);
+    const rI = await revertOf(() => pair.connect(env.W.attacker).init.staticCall(1n, 1n), [V2_IFACE, ...env.ifaces]);
+    const rF = await revertOf(() => env.displayFactory.connect(env.W.attacker).createPair.staticCall(env.A.attacker), [env.displayFactory.interface]);
+    const rH = await revertOf(() => env.displayFactory.connect(env.W.deployer).setHook.staticCall(env.A.attacker), [env.displayFactory.interface]);
+    check("nobody but the hook can write to the display pair or factory", rW?.includes("NotHook") && rI?.includes("NotHook") && rF?.includes("NotHook") && rH?.includes("HookAlreadySet"), `${rW} / ${rI} / ${rF} / ${rH}`);
+  } else {
+    const anyV2 = rcL.logs.some((l) => [TOPIC.PairCreated, TOPIC.Sync, TOPIC.Mint].includes(l.topics[0]));
+    check("Robinhood: no display pair, no V2 events", P.pair === null && !anyV2);
+  }
 
   // ---- market cap path: start
   const v4StartMc = mcFromSqrt(P.sqrtStart, SUPPLY);
-  const idealStart = (await env.launcher.curveSqrtPrices(vN, vT))[0];
-  N.mcStart = { v4: v4StartMc.toString(), gen7: g7StartMc.toString(), ppm: ppm(v4StartMc, g7StartMc), idealTickRoundingPpm: ppm(mcFromSqrt(idealStart, SUPPLY), g7StartMc) };
-  check("start MC == gen-7 start MC within tick rounding (spacing 10 => <= ~500 ppm)", ppm(v4StartMc, g7StartMc) <= 501, `v4 ${fmt(v4StartMc)} gen-7 ${fmt(g7StartMc)} diff ${ppm(v4StartMc, g7StartMc)} ppm`);
+  N.mcStart = { v4: v4StartMc.toString(), gen7: g7StartMc.toString(), ppm: ppm(v4StartMc, g7StartMc) };
+  check("start MC == gen-7 start MC within tick rounding", ppm(v4StartMc, g7StartMc) <= 501, `v4 ${fmt(v4StartMc)} gen-7 ${fmt(g7StartMc)} diff ${ppm(v4StartMc, g7StartMc).toFixed(1)} ppm`);
 
   let snapLaunched = await snapshot(env);
 
-  // ---- anti-sniper: 90% -> 2% over 60 s, buys and sells, every caller
+  // ---- anti-sniper: start -> bonding over 60 s, buys and sells, gen-7 formula
   const sniper = [];
   for (const dt of [1n, 2n, 10n, 30n, 45n, 59n, 60n, 61n]) {
     for (const buy of [true, false]) {
@@ -443,27 +585,17 @@ async function runTarget(env, targetUsd) {
       if (buy) t = await trade(env, P, { via: "direct", wallet: env.W.bot, buy: true, exactIn: true, amount: R / 100n, limit: 0n, ts: P.launchTs + dt });
       else t = await trade(env, P, { via: "direct", wallet: env.W.creator, buy: false, exactIn: true, amount: 1_000_000n * WAD, limit: 0n, ts: P.launchTs + dt });
       const realDt = BigInt((await env.provider.getBlock(t.block)).timestamp) - P.launchTs;
-      const expected = realDt >= 60n ? 200n : 200n + ((9000n - 200n) * (60n - realDt)) / 60n;
+      const left = realDt >= 60n ? 0n : 60n - realDt;
+      const expected = 200n + ((9000n - 200n) * left) / 60n;
       const [ok, d] = feeExact(t, buy, true, buy ? R / 100n : 1_000_000n * WAD);
       sniper.push({ dt: Number(realDt), side: buy ? "buy" : "sell", rateBps: Number(t.rate), expectedBps: Number(expected) });
-      check(`anti-sniper t+${realDt}s ${buy ? "buy" : "sell"} rate ${expected} bps and exact`, t.rate === expected && ok, d);
+      check(`anti-sniper t+${realDt}s ${buy ? "buy" : "sell"} rate ${expected} bps, gen-7 exact`, t.rate === expected && ok, d);
       await revert(env, snap);
     }
   }
   N.sniper = sniper;
-  // a second, different caller (UR) in the window pays the same schedule
-  {
-    const snap = await snapshot(env);
-    await detectUrStyles(env, P);
-    const urName = Object.keys(env.cfg.urs)[0];
-    const t = await trade(env, P, { via: "ur", urName, wallet: env.W.buyer, buy: true, exactIn: true, amount: R / 100n, limit: 0n, ts: P.launchTs + 5n });
-    const realDt = BigInt((await env.provider.getBlock(t.block)).timestamp) - P.launchTs;
-    const expected = 200n + (8800n * (60n - realDt)) / 60n;
-    check(`anti-sniper applies through the UniversalRouter too (t+${realDt}s)`, t.rate === expected, `rate ${t.rate} bps`);
-    await revert(env, snap);
-  }
 
-  // ---- after the window: full matrix via UR(s) and direct callback, with V4Quoter equality
+  // ---- after the window: full matrix via UR(s) and direct callback, with V4Quoter equality + display
   snapLaunched = await revert(env, snapLaunched);
   let snapL2 = await snapshot(env);
   {
@@ -474,6 +606,7 @@ async function runTarget(env, targetUsd) {
   await detectUrStyles(env, P);
   const hookDataRef = coder.encode(["address"], [REF]);
   N.trades = [];
+  N.exactInBuyDustWei = [];
   const vias = [["direct", null], ...Object.keys(env.cfg.urs).map((n) => ["ur", n])];
   for (const [via, urName] of vias) {
     if (via === "ur" && !env.urStyles[urName]) {
@@ -483,12 +616,12 @@ async function runTarget(env, targetUsd) {
     for (const [buy, exactIn] of [[true, true], [true, false], [false, true], [false, false]]) {
       const wallet = env.W.buyer;
       let amount, limit;
-      if (buy && exactIn) [amount, limit] = [R / 50n, 0n];
+      if (buy && exactIn) [amount, limit] = [R / 50n + 12345n, 0n];
       else if (buy && !exactIn) [amount, limit] = [5_000_000n * WAD, R];
       else if (!buy && exactIn) [amount, limit] = [2_000_000n * WAD, 0n];
-      else [amount, limit] = [R / 200n, 100_000_000n * WAD];
-      const qd = via === "ur" ? hookDataRef : "0x";
+      else [amount, limit] = [R / 200n + 777n, 100_000_000n * WAD];
       const lbl = `${via === "ur" ? urName : "direct unlock callback"} ${buy ? "BUY" : "SELL"} exact${exactIn ? "In" : "Out"}`;
+      const qd = via === "ur" ? hookDataRef : "0x";
       const { q, gasEst } = await quote(env, P, buy, exactIn, amount, qd);
       let t;
       try {
@@ -498,38 +631,57 @@ async function runTarget(env, targetUsd) {
         check(`${lbl}: trade executes`, false, e.tradeRevert);
         continue;
       }
-      const [ok, d] = feeExact(t, buy, exactIn, amount);
-      check(`${lbl}: fee in native exactly 2% of the native leg`, ok && t.rate === 200n, d);
+      const [ok, d, dust] = feeExact(t, buy, exactIn, amount);
+      if (buy && exactIn) N.exactInBuyDustWei.push(Number(dust));
+      check(`${lbl}: fee in native, gen-7 definition, 2%`, ok && t.rate === 200n, d);
       check(`${lbl}: V4Quoter == executed`, q === quotedSide(t, buy, exactIn), `quote ${q} actual ${quotedSide(t, buy, exactIn)}`);
       if (via === "ur") check(`${lbl}: referrer from hookData emitted`, t.referrer === REF, t.referrer);
+      if (P.pair) {
+        const [dok, dd] = await checkDisplay(env, P, t, buy, wallet);
+        check(`${lbl}: BNB display emits V2 Sync + Swap in the same tx, reserves == pool price`, dok, dd);
+      }
       N.trades.push({ via: via === "ur" ? urName : "direct", side: buy ? "buy" : "sell", exactIn, gas: Number(t.gas), quoterGasEstimate: Number(gasEst) });
     }
   }
-  // partial fill with a price limit: exact-in buy is refused (fee was charged on the full input)
+  // exact-in buy rounding dust over many sizes (gen-7 fee + at most 2 wei)
   {
-    const s = await slot0(env, P);
-    const r = await revertOf(() => env.trader.connect(env.W.bot).swap.staticCall(P.key, true, -R, s.sqrtP - s.sqrtP / 100000n, "0x", { value: R }), env.ifaces);
-    check("exact-in buy that would only partly fill (price limit) reverts PartialFill", r && r.includes("PartialFill"), r);
-  }
-  // sell 100% of a balance (UR) and untaxed wallet-to-wallet transfer
-  {
-    const urName = Object.keys(env.cfg.urs).find((n) => env.urStyles[n]);
-    const bal = await P.coin.balanceOf(env.A.buyer);
-    const t = await trade(env, P, { via: "ur", urName, wallet: env.W.buyer, buy: false, exactIn: true, amount: bal, limit: 0n });
-    check("selling 100% of a wallet balance via UR works", (await P.coin.balanceOf(env.A.buyer)) === 0n && t.userNative > 0n, `sold ${fmt(bal, 0)} got ${fmt(t.userNative)}`);
-    const amt = 1_234_567n * WAD;
-    const before = await P.coin.balanceOf(env.A.attacker);
-    await (await P.coin.connect(env.W.creator).transfer(env.A.attacker, amt)).wait();
-    check("wallet-to-wallet transfer is untaxed", (await P.coin.balanceOf(env.A.attacker)) - before === amt, `${fmt(amt, 0)} sent and received`);
+    let maxDust = 0n;
+    for (let i = 1n; i <= 40n; i++) {
+      const G = (R * i) / 997n + i * 7919n;
+      const r = 200n;
+      const cost = (G * BPS) / (BPS + r);
+      const d = G - cost - (cost * r) / BPS;
+      if (d > maxDust) maxDust = d;
+    }
+    check("exact-in buy: fee - gen-7 floor(cost*2%) is 0..2 wei over 40 sizes (formula)", maxDust <= 2n, `max ${maxDust} wei`);
   }
 
-  // ---- liquidity lock: outside add (direct + canonical PositionManager), remove, donate
+  // ---- partial fills inside A (decision 3)
+  {
+    const snap = await snapshot(env);
+    const s = await slot0(env, P);
+    await partialFill(env, P, { label: "exact-in BUY, limit inside A", buy: true, amount: R, limit: s.sqrtP - s.sqrtP / 100n, wallet: env.W.bot });
+    const s2 = await slot0(env, P);
+    await partialFill(env, P, { label: "exact-out SELL, limit inside A", buy: false, amount: R, limit: s2.sqrtP + s2.sqrtP / 200n, wallet: env.W.bot });
+    const rq = await revertOf(() => env.quoter.quoteExactInputSingle.staticCall([P.key, true, R, "0x"]), env.ifaces);
+    note(`V4Quoter QuoteExactSingleParams has no price limit (poolKey, zeroForOne, exactAmount, hookData), so price-limited partial fills are quoted with hook.previewFill${rq ? " (" + rq + ")" : ""}`);
+    await revert(env, snap);
+  }
+  // crossing partial: from inside A to a limit inside B in one swap (graduates on the way)
+  {
+    const snap = await snapshot(env);
+    const limitB = P.sqrtGrad - P.sqrtGrad / 100n;
+    const t = await partialFill(env, P, { label: "exact-in BUY from A across the A/B boundary to a limit inside B", buy: true, amount: R * 3n, limit: limitB, wallet: env.W.bot });
+    check("crossing partial fill graduates in the same swap", t.graduated !== null);
+    await revert(env, snap);
+  }
+
+  // ---- liquidity lock (outside add via own callback + canonical PositionManager, remove, donate)
   {
     const r1 = await revertOf(() => env.attackerC.connect(env.W.attacker).tryAdd.staticCall(P.key, P.tickGrad, P.tickStart, 10n ** 18n), env.ifaces);
     check("outside addLiquidity via own unlock callback reverts", r1 && r1.includes("LiquidityIsLocked"), r1);
-    const r1b = await revertOf(() => env.attackerC.connect(env.W.attacker).tryAdd.staticCall(P.key, P.tickStart + 10, P.tickStart + 1000, 10n ** 18n, { value: WAD }), env.ifaces);
-    check("outside native-side addLiquidity (range above price) reverts", r1b && r1b.includes("LiquidityIsLocked"), r1b);
     const posm = new ethers.Contract(env.cfg.posm, POSM_ABI, env.W.attacker);
+    await (await P.coin.connect(env.W.creator).transfer(env.A.attacker, 1_000_000n * WAD)).wait();
     await (await P.coin.connect(env.W.attacker).approve(PERMIT2, ethers.MaxUint256)).wait();
     await (await new ethers.Contract(PERMIT2, PERMIT2_ABI, env.W.attacker).approve(P.token, env.cfg.posm, MAX_U160, 2n ** 47n)).wait();
     const actions = ethers.solidityPacked(["uint8", "uint8"], [ACT.MINT_POSITION, ACT.SETTLE_PAIR]);
@@ -540,25 +692,45 @@ async function runTarget(env, targetUsd) {
     const r2 = await revertOf(() => posm.modifyLiquidities.staticCall(coder.encode(["bytes", "bytes[]"], [actions, params]), 2n ** 40n), env.ifaces);
     check("outside addLiquidity via canonical PositionManager reverts", r2 && r2.includes("LiquidityIsLocked"), r2);
     const r3 = await revertOf(() => env.attackerC.connect(env.W.attacker).tryRemove.staticCall(P.key, P.tickGrad, P.tickStart, 1n), env.ifaces);
-    check("nobody can remove A (positions are keyed by owner = hook)", !!r3, r3);
-    const r3b = await revertOf(() => env.attackerC.connect(env.W.attacker).tryRemove.staticCall(P.key, TM.MIN_TICK + (-TM.MIN_TICK % SPACING), P.tickGrad, 1n), env.ifaces);
-    check("nobody can remove B", !!r3b, r3b);
+    check("nobody can remove A or B (positions keyed by owner = hook)", !!r3, r3);
     const r4 = await revertOf(() => env.attackerC.connect(env.W.attacker).tryDonate.staticCall(P.key, { value: WAD }), env.ifaces);
-    check("donate reverts (keeps graduation accounting exact)", r4 && r4.includes("DonateDisabled"), r4);
-    const fakeParams = [true, -1n, TM.MIN_SQRT_RATIO + 1n];
-    const r5 = await revertOf(() => env.hook.connect(env.W.attacker).beforeSwap.staticCall(env.A.attacker, P.key, fakeParams, "0x"), env.ifaces);
-    check("hook callbacks callable only by the PoolManager", r5 && r5.includes("NotPoolManager"), r5);
-    const r6 = await revertOf(() => env.launcher.connect(env.W.attacker).unlockCallback.staticCall("0x"), env.ifaces);
-    check("launcher callback not callable from outside", !!r6, r6);
-    const abiFns = env.hook.interface.fragments.filter((f) => f.type === "function" && f.stateMutability !== "view" && f.stateMutability !== "pure").map((f) => f.name);
-    check("hook has no liquidity-removal entry point (state-changing fns)", !abiFns.some((n) => /remove|withdraw|migrate|rescue|sweep|collect/i.test(n)), abiFns.join(","));
+    check("donate reverts", r4 && r4.includes("DonateDisabled"), r4);
+    const amt = 1_234_567n * WAD;
+    const before = await P.coin.balanceOf(env.A.payee);
+    await (await P.coin.connect(env.W.creator).transfer(env.A.payee, amt)).wait();
+    check("wallet-to-wallet transfer is untaxed", (await P.coin.balanceOf(env.A.payee)) - before === amt);
+    const urName = Object.keys(env.cfg.urs).find((n) => env.urStyles[n]);
+    const bal = await P.coin.balanceOf(env.A.buyer);
+    const t = await trade(env, P, { via: "ur", urName, wallet: env.W.buyer, buy: false, exactIn: true, amount: bal, limit: 0n });
+    check("selling 100% of a wallet balance via UR works", (await P.coin.balanceOf(env.A.buyer)) === 0n && t.userNative > 0n, `sold ${fmt(bal, 0)}`);
+  }
+
+  // ---- BNB display: failures never block a trade; gas added per swap
+  if (P.pair) {
+    const realCode = await env.provider.getCode(P.pair);
+    const once = async (code) => {
+      const snap = await snapshot(env);
+      if (code) await env.provider.send("anvil_setCode", [P.pair, code]);
+      const t = await trade(env, P, { via: "direct", wallet: env.W.bot, buy: true, exactIn: true, amount: R / 100n, limit: 0n });
+      const failed = t.rc.logs.some((l) => { try { return env.hook.interface.parseLog(l)?.name === "DisplayUpdateFailed"; } catch { return false; } });
+      await revert(env, snap);
+      return { t, failed };
+    };
+    const normal = await once(null);
+    const reverting = await once("0x60006000fd");
+    const burner = await once("0x5b600056");
+    const stop = await once("0x00");
+    check("display that REVERTS: the trade still succeeds (DisplayUpdateFailed logged)", reverting.t.rc.status === 1 && reverting.failed && reverting.t.fee === normal.t.fee, `gas ${reverting.t.gas}`);
+    check("display that burns ALL its gas (OOG): the trade still succeeds, capped at 60k", burner.t.rc.status === 1 && burner.failed && burner.t.gas - stop.t.gas < 62_000n, `gas ${burner.t.gas} (+${burner.t.gas - stop.t.gas} over an empty display)`);
+    N.displayGasPerSwap = Number(normal.t.gas - stop.t.gas);
+    check("display gas per swap measured", normal.t.gas > stop.t.gas, `display adds ${normal.t.gas - stop.t.gas} gas per swap (incl. reserve read + call); trade ${normal.t.gas} vs ${stop.t.gas} with an empty display`);
+    check("display code restored after the failure tests", (await env.provider.getCode(P.pair)) === realCode);
   }
 
   // ---- gas baseline: hookless pool with the same shape, same trades
-  const gasRows = await gasCompare(env, P, tickStart, tickGrad, R);
-  N.gas = gasRows;
+  N.gas = await gasCompare(env, P, tickStart, tickGrad, R);
 
-  // ---- walk the curve: MC path vs gen-7, graduation latch, 2% of raise, post-grad split
+  // ---- walk the curve: MC path vs gen-7, display reserves vs gen-7 virtual reserves, graduation
   snapL2 = await revert(env, snapL2);
   {
     const latest = BigInt((await env.provider.getBlock("latest")).timestamp);
@@ -566,115 +738,191 @@ async function runTarget(env, targetUsd) {
     await env.provider.send("evm_mine", []);
   }
   N.mcPath = [];
-  let nativeIntoCurve = 0n;
   for (const f of [10n, 25n, 50n, 75n, 90n, 99n]) {
     const s = await slot0(env, P);
     const soldNow = soldFromPrice(P, s.sqrtP);
     const want = (COINS_A * f) / 100n;
-    if (want > soldNow) {
-      const t = await trade(env, P, { via: "direct", wallet: env.W.bot, buy: true, exactIn: false, amount: want - soldNow, limit: R * 2n });
-      nativeIntoCurve += -t.raw0;
-    }
+    if (want > soldNow) await trade(env, P, { via: "direct", wallet: env.W.bot, buy: true, exactIn: false, amount: want - soldNow, limit: R * 2n });
     const s2 = await slot0(env, P);
     const sold = soldFromPrice(P, s2.sqrtP);
     const v4Mc = mcFromSqrt(s2.sqrtP, SUPPLY);
     const g7Mc = gen7.gen7MarketCapNative({ virtualNative: vN, virtualToken: vT, sold, totalSupply: SUPPLY });
     N.mcPath.push({ pctOfA: Number(f), sold: sold.toString(), v4Mc: v4Mc.toString(), gen7Mc: g7Mc.toString(), ppm: ppm(v4Mc, g7Mc) });
-    check(`MC at ${f}% of A == gen-7 MC at the same sold amount (tick rounding)`, ppm(v4Mc, g7Mc) <= 1000, `v4 ${fmt(v4Mc)} gen-7 ${fmt(g7Mc)} diff ${ppm(v4Mc, g7Mc)} ppm`);
+    check(`MC at ${f}% of A == gen-7 MC at the same sold amount (tick rounding)`, ppm(v4Mc, g7Mc) <= 1000, `v4 ${fmt(v4Mc)} gen-7 ${fmt(g7Mc)} diff ${ppm(v4Mc, g7Mc).toFixed(1)} ppm`);
+    if (P.pair && f === 50n) {
+      const gr = await new ethers.Contract(P.pair, V2_IFACE, env.provider).getReserves();
+      const rN = P.nativeIsToken0 ? gr[0] : gr[1];
+      const rC = P.nativeIsToken0 ? gr[1] : gr[0];
+      const g7N = gen7.curveNative(vN, vT, sold);
+      const g7T = vT - sold;
+      check("BNB display reserves at 50% of A == gen-7 virtual reserves (Y(s), vT - s) within tick rounding", ppm(rN, g7N) < 1000 && ppm(rC, g7T) < 1000, `native ${fmt(rN)} vs ${fmt(g7N)} (${ppm(rN, g7N).toFixed(1)} ppm); coin ${fmt(rC, 0)} vs ${fmt(g7T, 0)} (${ppm(rC, g7T).toFixed(1)} ppm)`);
+    }
   }
-  // just below the threshold: 1 coin left in A
   {
     const s = await slot0(env, P);
     const soldNow = soldFromPrice(P, s.sqrtP);
     const t = await trade(env, P, { via: "direct", wallet: env.W.bot, buy: true, exactIn: false, amount: P.mintedA - soldNow - WAD, limit: R * 2n });
-    nativeIntoCurve += -t.raw0;
-    const g = (await env.hook.pools(P.id)).graduated;
-    check("no graduation with 1 coin of A left (latch only at the threshold)", !g && t.graduated === null, `price ${fmt(mcFromSqrt((await slot0(env, P)).sqrtP, SUPPLY))} MC`);
+    check("no graduation with 1 coin of A left (latch only at the threshold)", !(await env.hook.pools(P.id)).graduated && t.graduated === null);
   }
   let snapPreGrad = await snapshot(env);
-  // variant: cross with an exact-OUTPUT buy (fee charged in afterSwap) - fee must use the 2% rate
+  // variant: cross exactly AT the A/B boundary with a price-limited exact-in buy
   {
-    const t = await trade(env, P, { via: "direct", wallet: env.W.bot, buy: true, exactIn: false, amount: 2n * WAD, limit: R });
-    check("crossing with exact-out buy: graduates in the same swap, swap fee at 2% (pre-grad rate)", t.graduated !== null && t.rate === 200n, `rate ${t.rate}`);
-    snapPreGrad = await revert(env, snapPreGrad);
+    const o2 = await owedAll(env, P);
+    const t = await partialFill(env, P, { label: "exact-in BUY with the limit exactly at the A/B boundary", buy: true, amount: R, limit: P.sqrtGrad, wallet: env.W.bot });
+    const o3 = await owedAll(env, P);
+    check("buy to exactly the A/B boundary graduates (price == top of A)", t.graduated !== null && (await slot0(env, P)).sqrtP === P.sqrtGrad);
+    const removed = (P.liqA * 200n) / BPS;
+    const expectedGradFee = amount0Delta(P.sqrtGrad, P.sqrtStart, removed, false);
+    const nativeInA = amount0Delta(P.sqrtGrad, P.sqrtStart, P.liqA, false);
+    if (t.graduated) {
+      const gf = t.graduated.gradFee;
+      check("graduation fee == native of exactly 2% of A's liquidity (exact V4 math) == floor(2% of A's raise) within 2 wei", gf === expectedGradFee && absDiff(gf, (nativeInA * 200n) / BPS) <= 2n, `${fmt(gf, 9)} vs 2% of ${fmt(nativeInA)} = ${fmt((nativeInA * 200n) / BPS, 9)}`);
+      check("graduation fee + crossing swap fee credited to the router bucket", o3.router - o2.router === gf + t.fee);
+      N.graduation = { nativeInA: nativeInA.toString(), gen7R: R.toString(), raiseVsRppm: ppm(nativeInA, R), gradFee: gf.toString(), twoPctOfRaise: ((nativeInA * 200n) / BPS).toString(), crossingSwapGas: Number(t.gas) };
+    }
+    check("native raise in A vs gen-7 R (tick rounding)", ppm(nativeInA, R) <= 1000, `A raise ${fmt(nativeInA)} gen-7 R ${fmt(R)} diff ${ppm(nativeInA, R).toFixed(1)} ppm`);
+    const posA2 = await env.sv.getPositionInfo(P.id, env.hook.target, P.tickGrad, P.tickStart, ethers.ZeroHash);
+    check("A keeps exactly 98% of its liquidity; B untouched", posA2[0] === P.liqA - removed);
+    const v4TopMc = mcFromSqrt(P.sqrtGrad, SUPPLY);
+    N.mcTop = { v4: v4TopMc.toString(), gen7: g7EndMc.toString(), ppmVsGen7: ppm(v4TopMc, g7EndMc) };
+    check("top-of-A MC == gen-7 graduation MC within tick rounding", ppm(v4TopMc, g7EndMc) <= 501, `v4 ${fmt(v4TopMc)} gen-7 ${fmt(g7EndMc)} diff ${ppm(v4TopMc, g7EndMc).toFixed(1)} ppm`);
   }
-  // main: cross with an exact-input buy via the UR
-  const o2 = await owedAll(env);
+  // ---- post-graduation: 1%, creator exactly 0.5% of volume, partial fills inside B and at the boundary
   const urName = Object.keys(env.cfg.urs).find((n) => env.urStyles[n]);
-  const tCross = await trade(env, P, { via: "ur", urName, wallet: env.W.buyer, buy: true, exactIn: true, amount: R / 50n, limit: 0n });
-  const o3 = await owedAll(env);
-  check("graduation latched in the crossing swap", tCross.graduated !== null && (await env.hook.pools(P.id)).graduated, `crossing swap gas ${tCross.gas}`);
-  N.crossingSwapGas = Number(tCross.gas);
-  const nativeInA = amount0Delta(P.sqrtGrad, P.sqrtStart, P.liqA, false);
-  const removed = (P.liqA * 200n) / BPS;
-  const expectedGradFee = amount0Delta(P.sqrtGrad, P.sqrtStart, removed, false);
-  if (tCross.graduated) {
-    const gf = tCross.graduated.gradFee;
-    check("graduation fee == native of exactly 2% of A's liquidity (exact V4 math)", gf === expectedGradFee && tCross.graduated.removed === removed, `${fmt(gf, 9)}`);
-    check("graduation fee == 2% of A's native raise (within 2 wei)", absDiff(gf, (nativeInA * 200n) / BPS) <= 2n, `fee ${gf} vs 2% of ${nativeInA} = ${(nativeInA * 200n) / BPS} (diff ${absDiff(gf, (nativeInA * 200n) / BPS)} wei)`);
-    check("graduation fee + crossing swap fee credited to the fee router", o3.router - o2.router === gf + tCross.fee, `${fmt(o3.router - o2.router, 9)}`);
-    N.graduation = { nativeInA: nativeInA.toString(), gen7R: R.toString(), raiseVsRppm: ppm(nativeInA, R), gradFee: gf.toString(), twoPctOfRaise: ((nativeInA * 200n) / BPS).toString() };
-  }
-  check("native raise in A vs gen-7 R (tick rounding)", ppm(nativeInA, R) <= 1000, `A raise ${fmt(nativeInA)} gen-7 R ${fmt(R)} diff ${ppm(nativeInA, R)} ppm`);
-  const posA2 = await env.sv.getPositionInfo(P.id, env.hook.target, P.tickGrad, P.tickStart, ethers.ZeroHash);
-  check("A keeps exactly 98% of its liquidity; B untouched", posA2[0] === P.liqA - removed && (await env.sv.getPositionInfo(P.id, env.hook.target, TM.MIN_TICK + (-TM.MIN_TICK % SPACING), P.tickGrad, ethers.ZeroHash))[0] === P.liqB, `A ${posA2[0]}`);
-  const v4TopMc = mcFromSqrt(P.sqrtGrad, SUPPLY);
-  N.mcTop = { v4: v4TopMc.toString(), gen7: g7EndMc.toString(), targetNative: mc.toString(), ppmVsGen7: ppm(v4TopMc, g7EndMc), ppmVsTarget: ppm(v4TopMc, mc) };
-  check("top-of-A MC == gen-7 graduation MC within tick rounding", ppm(v4TopMc, g7EndMc) <= 501, `v4 ${fmt(v4TopMc)} gen-7 ${fmt(g7EndMc)} diff ${ppm(v4TopMc, g7EndMc)} ppm; vs USD target ${fmt(mc)} native: ${ppm(v4TopMc, mc)} ppm`);
-  check("claims held by hook == sum owed", o3.claims === o3.router + o3.protocol + o3.creator, `${fmt(o3.claims)}`);
-
-  // ---- post-graduation: 1%, creator exactly 0.5%, latch once, still post-grad below threshold
-  const postTrades = [];
+  N.postGradTrades = [];
   for (const [via, buy, exactIn, amount, limit] of [
-    ["direct", true, true, R / 20n, 0n],
+    ["direct", true, true, R / 20n + 3n, 0n],
     ["ur", true, false, 3_000_000n * WAD, R],
     ["ur", false, true, 5_000_000n * WAD, 0n],
-    ["direct", false, false, R / 100n, 50_000_000n * WAD],
+    ["direct", false, false, R / 100n + 5n, 50_000_000n * WAD],
   ]) {
-    const wallet = env.W.bot;
-    const ob = await owedAll(env);
+    const ob = await owedAll(env, P);
     const { q } = await quote(env, P, buy, exactIn, amount);
-    const t = await trade(env, P, { via, urName, wallet, buy, exactIn, amount, limit });
-    const oa = await owedAll(env);
+    const t = await trade(env, P, { via, urName, wallet: env.W.bot, buy, exactIn, amount, limit });
+    const oa = await owedAll(env, P);
     const [ok, d] = feeExact(t, buy, exactIn, amount);
     const lbl = `post-grad ${via} ${buy ? "BUY" : "SELL"} exact${exactIn ? "In" : "Out"}`;
-    check(`${lbl}: fee exactly 1% of native leg`, ok && t.rate === 100n, d);
+    check(`${lbl}: fee 1%, gen-7 definition`, ok && t.rate === 100n, d);
     const cExp = (t.gross * 50n) / BPS;
-    check(`${lbl}: creator gets exactly 0.5% of native volume, protocol the rest, router 0`, oa.creator - ob.creator === cExp && oa.protocol - ob.protocol === t.fee - cExp && oa.router === ob.router, `volume ${fmt(t.gross)} creator ${fmt(oa.creator - ob.creator, 9)} protocol ${fmt(oa.protocol - ob.protocol, 9)}`);
-    check(`${lbl}: V4Quoter == executed`, q === quotedSide(t, buy, exactIn), `quote ${q}`);
-    check(`${lbl}: no second graduation`, t.graduated === null);
-    postTrades.push({ via, buy, exactIn, gas: Number(t.gas) });
-  }
-  N.postGradTrades = postTrades;
-  // fall back below the threshold: sell enough to push the price back into A
-  {
-    const bal = await P.coin.balanceOf(env.A.bot);
-    const t = await trade(env, P, { via: "direct", wallet: env.W.bot, buy: false, exactIn: true, amount: bal / 2n, limit: 0n });
-    const s = await slot0(env, P);
-    const below = s.sqrtP > P.sqrtGrad;
-    check("price fell back below the graduation threshold", below, `MC now ${fmt(mcFromSqrt(s.sqrtP, SUPPLY))} vs top ${fmt(v4TopMc)}`);
-    check("after falling back: still graduated, still 1%", (await env.hook.pools(P.id)).graduated && t.rate === 100n && (await env.hook.currentFeeBps(P.id, env.A.bot)) === 100n);
-    const ob = await owedAll(env);
-    const t2 = await trade(env, P, { via: "direct", wallet: env.W.bot, buy: true, exactIn: true, amount: R, limit: 0n });
-    const oa = await owedAll(env);
-    check("re-crossing the threshold does not graduate again or take another 2%", t2.graduated === null && oa.router === ob.router && t2.rate === 100n, `crossed again: ${(await slot0(env, P)).sqrtP <= P.sqrtGrad}`);
-  }
-  // ---- payouts from ERC6909 claims
-  {
-    const o = await owedAll(env);
-    for (const [who, addr] of [["fee router", env.A.routerEoa], ["protocol", env.A.protocolEoa], ["creator", env.A.creator]]) {
-      const before = await env.provider.getBalance(addr);
-      const owedNow = await env.hook.owed(addr);
-      const rc = await (await env.hook.connect(env.W.deployer).claim(addr)).wait();
-      const after = await env.provider.getBalance(addr);
-      check(`claim(${who}) pays exactly what is owed, in native (anyone can trigger)`, after - before === owedNow && (await env.hook.owed(addr)) === 0n, `${fmt(owedNow)} gas ${rc.gasUsed}`);
+    check(`${lbl}: creator gets exactly 0.5% of native volume, router bucket the rest`, oa.creator - ob.creator === cExp && oa.router - ob.router === t.fee - cExp, `volume ${fmt(t.gross)} creator ${fmt(oa.creator - ob.creator, 9)} router ${fmt(oa.router - ob.router, 9)}`);
+    check(`${lbl}: V4Quoter == executed; no second graduation`, q === quotedSide(t, buy, exactIn) && t.graduated === null, `quote ${q}`);
+    if (P.pair) {
+      const [dok, dd] = await checkDisplay(env, P, t, buy, env.W.bot);
+      check(`${lbl}: BNB display Sync + Swap, reserves == pool price (inside B)`, dok, dd);
     }
-    check("hook claims fully paid out", (await env.pm.balanceOf(env.hook.target, 0n)) === 0n);
-    check("hook never received coins", (await P.coin.balanceOf(env.hook.target)) === 0n && (await env.pm.balanceOf(env.hook.target, BigInt(P.token))) === 0n);
-    N.claimTotals = { router: o.router.toString(), protocol: o.protocol.toString(), creator: o.creator.toString() };
+    N.postGradTrades.push({ via, buy, exactIn, gas: Number(t.gas) });
+  }
+  {
+    const s = await slot0(env, P);
+    await partialFill(env, P, { label: "post-grad exact-in BUY, limit inside B", buy: true, amount: R * 2n, limit: s.sqrtP - s.sqrtP / 50n, wallet: env.W.bot });
+    const s2 = await slot0(env, P);
+    await partialFill(env, P, { label: "post-grad exact-out SELL, limit inside B", buy: false, amount: R * 2n, limit: s2.sqrtP + (P.sqrtGrad - s2.sqrtP) / 3n, wallet: env.W.bot });
+    await partialFill(env, P, { label: "post-grad exact-out SELL, limit exactly at the A/B boundary (from B)", buy: false, amount: R * 2n, limit: P.sqrtGrad, wallet: env.W.bot });
+    await partialFill(env, P, { label: "post-grad exact-out SELL from the boundary to a limit inside A", buy: false, amount: R * 5n, limit: P.sqrtGrad + P.sqrtGrad / 20n, wallet: env.W.bot });
+    check("after falling back into A: still graduated, still 1%", (await env.hook.pools(P.id)).graduated && (await env.hook.currentFeeBps(P.id, env.A.bot)) === 100n);
+    const ob = await owedAll(env, P);
+    const t2 = await trade(env, P, { via: "direct", wallet: env.W.bot, buy: true, exactIn: true, amount: R, limit: 0n });
+    const oa = await owedAll(env, P);
+    check("re-crossing the threshold does not graduate again or take another 2%", t2.graduated === null && oa.router - ob.router === t2.fee - (t2.gross * 50n) / BPS && t2.rate === 100n);
   }
 
-  // ---- Uniswap governance protocol fee (fee controller exists on both chains): effect on exactness
+  // ---- creator rights (decision 2): ledger per coin, claim(to), two-step transfer, owner has no power
+  {
+    const id = P.id;
+    const owed1 = await env.hook.creatorOwed(id);
+    const rSafe = await revertOf(() => env.hook.connect(env.W.safe).claimCreator.staticCall(id, env.A.safe), env.ifaces);
+    const rSafeP = await revertOf(() => env.hook.connect(env.W.safe).proposeCreator.staticCall(id, env.A.safe), env.ifaces);
+    const rAtt = await revertOf(() => env.hook.connect(env.W.attacker).claimCreator.staticCall(id, env.A.attacker), env.ifaces);
+    check("owner (Safe) and strangers cannot claim or move creator rights", rSafe?.includes("NotCreator") && rSafeP?.includes("NotCreator") && rAtt?.includes("NotCreator"), `${rSafe} / ${rSafeP} / ${rAtt}`);
+    const pb = await env.provider.getBalance(env.A.payee);
+    await (await env.hook.connect(env.W.creator).claimCreator(id, env.A.payee)).wait();
+    check("creator claims to ANOTHER address: exactly the owed amount arrives there", (await env.provider.getBalance(env.A.payee)) - pb === owed1 && (await env.hook.creatorOwed(id)) === 0n, `${fmt(owed1)} to payee`);
+    await (await env.hook.connect(env.W.creator).proposeCreator(id, env.A.creator2)).wait();
+    const rEarly = await revertOf(() => env.hook.connect(env.W.creator2).claimCreator.staticCall(id, env.A.creator2), env.ifaces);
+    const rWrong = await revertOf(() => env.hook.connect(env.W.attacker).acceptCreator.staticCall(id), env.ifaces);
+    check("proposed creator has no rights before accepting; others cannot accept", rEarly?.includes("NotCreator") && rWrong?.includes("NotPendingCreator"), `${rEarly} / ${rWrong}`);
+    await (await env.hook.connect(env.W.creator2).acceptCreator(id)).wait();
+    await trade(env, P, { via: "direct", wallet: env.W.bot, buy: true, exactIn: true, amount: R / 10n, limit: 0n });
+    const owed2 = await env.hook.creatorOwed(id);
+    const rOld = await revertOf(() => env.hook.connect(env.W.creator).claimCreator.staticCall(id, env.A.creator), env.ifaces);
+    const rOldP = await revertOf(() => env.hook.connect(env.W.creator).proposeCreator.staticCall(id, env.A.creator), env.ifaces);
+    check("after the transfer the OLD creator can no longer claim or propose", rOld?.includes("NotCreator") && rOldP?.includes("NotCreator"), `${rOld}`);
+    const c2b = await env.provider.getBalance(env.A.payee);
+    await (await env.hook.connect(env.W.creator2).claimCreator(id, env.A.payee)).wait();
+    check("NEW creator claims what accrued after the transfer", (await env.provider.getBalance(env.A.payee)) - c2b === owed2 && owed2 > 0n, fmt(owed2));
+    // a creator that is a contract rejecting native
+    await (await env.hook.connect(env.W.creator2).proposeCreator(id, env.rejecter.target)).wait();
+    await (await env.rejecter.connect(env.W.deployer).accept(env.hook.target, id)).wait();
+    await trade(env, P, { via: "direct", wallet: env.W.bot, buy: false, exactIn: true, amount: 10_000_000n * WAD, limit: 0n });
+    const owed3 = await env.hook.creatorOwed(id);
+    const rSelf = await revertOf(() => env.rejecter.connect(env.W.deployer).claimTo.staticCall(env.hook.target, id, env.rejecter.target), env.ifaces);
+    const eb = await env.provider.getBalance(env.A.payee);
+    await (await env.rejecter.connect(env.W.deployer).claimTo(env.hook.target, id, env.A.payee)).wait();
+    check("creator CONTRACT that rejects native: claiming to itself fails, claiming to an EOA works", !!rSelf && (await env.provider.getBalance(env.A.payee)) - eb === owed3 && owed3 > 0n, `self: ${rSelf}; to EOA ${fmt(owed3)}`);
+    N.creatorClaims = { first: owed1.toString(), afterTransfer: owed2.toString(), contractCreator: owed3.toString() };
+  }
+
+  // ---- per-coin rates (coin 2 with its own lower rates) + router timelock (decision 4)
+  {
+    const fees2 = [100, 50, 25, 5000];
+    const { P: P2 } = await launchCoin(env, env.W.creator2, target, 0n, fees2, "Coin Two");
+    const snap = await snapshot(env);
+    const t1 = await trade(env, P2, { via: "direct", wallet: env.W.bot, buy: true, exactIn: true, amount: R / 100n, limit: 0n, ts: P2.launchTs + 1n });
+    const realDt = BigInt((await env.provider.getBlock(t1.block)).timestamp) - P2.launchTs;
+    const exp1 = 100n + ((5000n - 100n) * (60n - realDt)) / 60n;
+    const [ok1] = feeExact(t1, true, true, R / 100n);
+    check(`coin 2 own rates: anti-sniper starts at 50% and decays to its 1% bonding rate (t+${realDt}s = ${exp1} bps)`, t1.rate === exp1 && ok1);
+    const t2 = await trade(env, P2, { via: "direct", wallet: env.W.bot, buy: true, exactIn: false, amount: 1_000_000n * WAD, limit: R, ts: P2.launchTs + 61n });
+    const [ok2, d2] = feeExact(t2, true, false, 1_000_000n * WAD);
+    check("coin 2 after the window: 1% bonding fee, gen-7 exact", t2.rate === 100n && ok2, d2);
+    await revert(env, snap);
+    const feesP1 = (await env.hook.pools(P.id)).fees.map(Number).join(",");
+    const feesP2 = (await env.hook.pools(P2.id)).fees.map(Number).join(",");
+
+    // router: permissionless claim to the current TreasuryRouter
+    const rOwed = await env.hook.routerOwed();
+    const tb = await env.provider.getBalance(env.A.treasury);
+    await (await env.hook.connect(env.W.attacker).claimRouter()).wait();
+    check("claimRouter (anyone) pays the router bucket to the current TreasuryRouter", (await env.provider.getBalance(env.A.treasury)) - tb === rOwed && rOwed > 0n, fmt(rOwed));
+    // timelock
+    const rNo = await revertOf(() => env.hook.connect(env.W.attacker).proposeTreasuryRouter.staticCall(env.A.attacker), env.ifaces);
+    check("non-owner cannot propose a new TreasuryRouter", rNo?.includes("NotOwner"), rNo);
+    await (await env.hook.connect(env.W.safe).proposeTreasuryRouter(env.A.treasury2)).wait();
+    const eta = await env.hook.routerEta();
+    const rNow = await revertOf(() => env.hook.connect(env.W.safe).executeTreasuryRouter.staticCall(), env.ifaces);
+    await setNextTs(env, eta - 60n);
+    await env.provider.send("evm_mine", []);
+    const rAlmost = await revertOf(() => env.hook.connect(env.W.safe).executeTreasuryRouter.staticCall(), env.ifaces);
+    check("timelock: execute right away and at 48h - 60s both revert", rNow?.includes("TimelockActive") && rAlmost?.includes("TimelockActive"), `${rNow} / ${rAlmost}`);
+    await (await env.hook.connect(env.W.safe).cancelTreasuryRouter()).wait();
+    await setNextTs(env, eta + 1n);
+    await env.provider.send("evm_mine", []);
+    const rCancelled = await revertOf(() => env.hook.connect(env.W.safe).executeTreasuryRouter.staticCall(), env.ifaces);
+    check("cancel works: a cancelled proposal cannot be executed later", rCancelled?.includes("NoPendingRouter"), rCancelled);
+    await (await env.hook.connect(env.W.safe).proposeTreasuryRouter(env.A.treasury2)).wait();
+    const eta2 = await env.hook.routerEta();
+    await setNextTs(env, eta2);
+    await env.provider.send("evm_mine", []);
+    const rStranger = await revertOf(() => env.hook.connect(env.W.attacker).executeTreasuryRouter.staticCall(), env.ifaces);
+    await (await env.hook.connect(env.W.safe).executeTreasuryRouter()).wait();
+    check("after 48 h only the owner executes; router changed", rStranger?.includes("NotOwner") && (await env.hook.treasuryRouter()) === env.A.treasury2, `eta ${eta2}`);
+    const after1 = (await env.hook.pools(P.id)).fees.map(Number).join(",");
+    const after2 = (await env.hook.pools(P2.id)).fees.map(Number).join(",");
+    check("existing coins keep their stored rates after the router change (owner cannot touch rates)", after1 === feesP1 && after2 === feesP2 && after2 === fees2.join(",") && (await env.hook.currentFeeBps(P.id, env.A.bot)) === 100n && (await env.hook.currentFeeBps(P2.id, env.A.bot)) === 100n, `coin1 [${after1}] (graduated: 1%), coin2 [${after2}] (bonding 1%)`);
+    const fnNames = env.hook.interface.fragments.filter((f) => f.type === "function" && !["view", "pure"].includes(f.stateMutability)).map((f) => f.name);
+    check("no function exists that changes rates, liquidity or creator balances for the owner", !fnNames.some((n) => /setFee|setRate|withdraw|rescue|sweep|remove|migrate|setCreator/i.test(n)), fnNames.join(","));
+    await trade(env, P, { via: "direct", wallet: env.W.bot, buy: true, exactIn: true, amount: R / 10n, limit: 0n });
+    const rOwed2 = await env.hook.routerOwed();
+    const t2b = await env.provider.getBalance(env.A.treasury2);
+    await (await env.hook.connect(env.W.attacker).claimRouter()).wait();
+    check("router bucket now pays the NEW TreasuryRouter", (await env.provider.getBalance(env.A.treasury2)) - t2b === rOwed2 && rOwed2 > 0n, fmt(rOwed2));
+    const claims = await env.pm.balanceOf(env.hook.target, 0n);
+    const sumOwed = (await env.hook.routerOwed()) + (await env.hook.creatorOwed(P.id)) + (await env.hook.creatorOwed(P2.id));
+    check("ERC6909 claims held by the hook == router bucket + creator buckets", claims === sumOwed, fmt(claims));
+    check("hook never received coins", (await P.coin.balanceOf(env.hook.target)) === 0n && (await env.pm.balanceOf(env.hook.target, BigInt(P.token))) === 0n);
+  }
+
+  // ---- Uniswap governance protocol fee forced on (fork only): fee + quoter + partial-fill simulation stay exact
   snapPreGrad = await revert(env, snapPreGrad);
   {
     const ctrl = await env.pm.protocolFeeController();
@@ -683,12 +931,13 @@ async function runTarget(env, targetUsd) {
     const signer = await env.provider.getSigner(ctrl);
     await (await env.pm.connect(signer).setProtocolFee(P.key, 1000 | (1000 << 12))).wait();
     await env.provider.send("anvil_stopImpersonatingAccount", [ctrl]);
-    const s = await slot0(env, P);
     const { q } = await quote(env, P, false, true, 1_000_000n * WAD);
     const t = await trade(env, P, { via: "direct", wallet: env.W.bot, buy: false, exactIn: true, amount: 1_000_000n * WAD, limit: 0n });
     const [ok] = feeExact(t, false, true, 1_000_000n * WAD);
-    check("with a 0.1% Uniswap protocol fee forced on (fork only): hook fee still exact, quoter still exact", s.protocolFee === (1000 | (1000 << 12)) && ok && q === t.userNative, `protocolFee ${s.protocolFee}`);
-    note("the Uniswap protocol fee (max 0.1%/direction, set by the fee controller) would come out of the curve, not out of our fee");
+    check("with a 0.1% Uniswap protocol fee forced on: hook fee still gen-7 exact, quoter still exact", ok && q === t.userNative);
+    const s = await slot0(env, P);
+    await partialFill(env, P, { label: "with the 0.1% protocol fee on: exact-in BUY, limit across into B", buy: true, amount: R, limit: P.sqrtGrad - P.sqrtGrad / 200n, wallet: env.W.bot });
+    void s;
   }
   await revert(env, snapStart);
   return out;

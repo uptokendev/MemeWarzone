@@ -104,7 +104,7 @@ contract MwzV4Launcher is IUnlockCallback {
         tickGrad = nearestGridTick(s1, spacing);
     }
 
-    function launch(string calldata name, string calldata symbol, uint256 targetUsdWad, uint256 minFirstBuyOut)
+    function launch(string calldata name, string calldata symbol, uint256 targetUsdWad, uint256 minFirstBuyOut, MwzLaunchHook.FeeConfig calldata fees)
         external
         payable
         returns (address token, PoolId id, uint256 firstBuyOut)
@@ -118,7 +118,7 @@ contract MwzV4Launcher is IUnlockCallback {
         MwzV4Token(token).transfer(address(hook), COINS_A + COINS_B);
         MwzV4Token(token).transfer(msg.sender, CREATOR_RESERVE);
 
-        PoolKey memory key = hook.createPool(token, msg.sender, tickStart, tickGrad, COINS_A, COINS_B);
+        PoolKey memory key = hook.createPool(token, msg.sender, tickStart, tickGrad, COINS_A, COINS_B, fees);
         id = key.toId();
 
         if (msg.value > 0) {
@@ -131,7 +131,8 @@ contract MwzV4Launcher is IUnlockCallback {
         _lock = 1;
     }
 
-    /// The creator's first buy: exact-input, all of msg.value, at the 2% bonding fee (sender == launcher).
+    /// The creator's first buy: exact-input, all of msg.value, at the coin's bonding rate (sender == launcher),
+    /// gen-7 definition (fee on top of the curve cost).
     function unlockCallback(bytes calldata data) external returns (bytes memory) {
         if (msg.sender != address(poolManager)) revert NotPoolManager();
         if (_lock != 2) revert Reentrancy(); // only inside launch()
