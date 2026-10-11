@@ -347,6 +347,38 @@ async function buildCampaignFromAddress(
   };
 }
 
+/**
+ * A generation 8 coin has no campaign contract: the URL address is its token, and its pool lives in the gen-8 hook.
+ * Only asked where the app has a gen-8 hook for the chain (VITE_EVM_GEN8_HOOK_<id>) and the address is not a campaign.
+ */
+async function buildGen8CampaignFromToken(
+  tokenAddress: string,
+  provider: ethers.AbstractProvider,
+  chainId: number,
+): Promise<CampaignInfo | null> {
+  const cfg = gen8AppConfig(chainId);
+  if (!cfg || !ethers.isAddress(tokenAddress)) return null;
+  const record = await readGen8PoolRecord({ provider, cfg, token: tokenAddress });
+  if (!record) return null;
+  const token = new Contract(tokenAddress, TOKEN_ABI, provider) as any;
+  const [name, symbol] = await Promise.all([safeContractRead(() => token.name(), "Unknown"), safeContractRead(() => token.symbol(), "")]);
+  const address = tokenAddress.toLowerCase();
+  return {
+    id: 0,
+    campaign: address,
+    token: address,
+    creator: String(record.creator).toLowerCase(),
+    name: String(name || "Unknown"),
+    symbol: String(symbol || ""),
+    logoURI: "/placeholder.svg",
+    metadataURI: `/api/token-metadata/${chainId}/${address}`,
+    xAccount: "",
+    website: "",
+    extraLink: "",
+    generation: 8,
+  };
+}
+
 async function hydrateCampaignCreatorFromContract(
   campaign: CampaignInfo,
   provider: ethers.AbstractProvider,
@@ -582,6 +614,10 @@ import { solanaProjectedSupplyRaw } from "../../shared/solanaCampaignCurve.mjs";
 import { useGen5Campaign } from "@/components/evm/useGen5Campaign";
 import { EvmGen5TradeNotes } from "@/components/evm/EvmGen5TradeNotes";
 import { EvmGen5CreatorPanel } from "@/components/evm/EvmGen5CreatorPanel";
+import { Gen8TradePanel } from "@/components/evm/Gen8TradePanel";
+import { Gen8CoinStatus, Gen8CreatorPanel } from "@/components/evm/Gen8CoinPanels";
+import { useGen8Coin } from "@/hooks/useGen8Coin";
+import { gen8AppConfig, readGen8PoolRecord } from "@/lib/evmGen8Client.mjs";
 import { evmCreatorBadge } from "@/lib/evmGen6.mjs";
 
 type TokenDetailsProps = { dbcLive?: Record<string, any> | null };
@@ -853,6 +889,10 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
   );
   // EVM generation-5 coins only; every older campaign reads as null and renders nothing new (E14).
   const gen5 = useGen5Campaign(isSolanaPage ? null : readProvider, Number(chainIdForStorage), isSolanaPage ? "" : resolvedCampaignAddress);
+  // EVM generation 8 coins only (null everywhere else, and no request where the app has no gen-8 hook for the chain):
+  // one Uniswap V4 pool before and after graduation, its own trade box and creator panel.
+  const gen8 = useGen8Coin(isSolanaPage ? null : Number(chainIdForStorage), isSolanaPage ? "" : resolvedCampaignAddress, wallet.account ? String(wallet.account) : null);
+  const gen8State = gen8.state;
   // Generation 6/5 is valued fully diluted: price x the token's total supply (founder 2026-10-01, the
   // DBC and pump.fun basis). Null for every older EVM coin, which keeps price x curve sold.
   const evmFullyDilutedSupply = useMemo(
@@ -1377,6 +1417,11 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
             } catch (resolveErr) {
               console.warn("[TokenDetails] cross-chain resolve failed; using page chain", resolveErr);
             }
+          }
+
+          // Generation 8: the address is a coin in a V4 pool of our hook, not a campaign contract.
+          if (!match) {
+            match = await buildGen8CampaignFromToken(param, loadProvider, loadChainId).catch(() => null);
           }
 
           // Last resort: small factory inventory (only when campaign not direct-readable).
@@ -5897,7 +5942,15 @@ const toSeconds = (ts: number): number => {
         </div>
 
         <aside className="flex flex-col gap-4 self-start xl:sticky xl:top-[calc(var(--mwz-topbar-offset)+16px)]">
-          {solanaGraduatedImportTrade ? (
+          {gen8State ? (
+            isXlUp ? (
+              <section aria-label="Trade" className={`${cp.card} flex flex-col gap-4 p-4`} data-gen8-trade="true">
+                <Gen8TradePanel chainId={Number(chainIdForStorage)} state={gen8State} symbol={tokenData.ticker} onTraded={() => { gen8.refresh(); void unifiedMarket.refresh().catch(() => undefined); }} />
+                <Gen8CoinStatus chainId={Number(chainIdForStorage)} state={gen8State} explorerBase={getExplorerBase(chainIdForStorage)} nativeUsd={nativeUsd ?? null} />
+                <Gen8CreatorPanel chainId={Number(chainIdForStorage)} state={gen8State} onDone={() => gen8.refresh()} />
+              </section>
+            ) : null
+          ) : solanaGraduatedImportTrade ? (
             isXlUp ? (
               <section aria-label="Trade" className={`${cp.card} flex flex-col gap-4 p-4`} data-graduated-import-trade="solana">
                 <ImportedTradePanel item={solanaGraduatedImportItem} graduated onTraded={refreshAfterSolanaGraduatedImportTrade} />
@@ -6418,7 +6471,19 @@ const toSeconds = (ts: number): number => {
           setMobileTradeOpen(true);
         }}
       />
-      {solanaGraduatedImportTrade && mobileTradeOpen && !isXlUp ? (
+      {gen8State && mobileTradeOpen && !isXlUp ? (
+        <div className="fixed inset-0 z-50 xl:hidden" data-mobile-trade-sheet="gen8">
+          <button type="button" className="absolute inset-0 bg-black/70" aria-label="Close trade sheet" onClick={() => setMobileTradeOpen(false)} />
+          <div
+            className="absolute inset-x-0 bottom-0 flex max-h-[92dvh] flex-col gap-4 overflow-y-auto rounded-t-2xl border border-border/70 bg-background p-4"
+            style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
+          >
+            <Gen8TradePanel key={tradeTab} chainId={Number(chainIdForStorage)} state={gen8State} symbol={tokenData.ticker} initialSide={tradeTab} onTraded={() => gen8.refresh()} />
+            <Gen8CoinStatus chainId={Number(chainIdForStorage)} state={gen8State} explorerBase={getExplorerBase(chainIdForStorage)} nativeUsd={nativeUsd ?? null} />
+            <Gen8CreatorPanel chainId={Number(chainIdForStorage)} state={gen8State} onDone={() => gen8.refresh()} />
+          </div>
+        </div>
+      ) : solanaGraduatedImportTrade && mobileTradeOpen && !isXlUp ? (
         <div className="fixed inset-0 z-50 xl:hidden" data-mobile-trade-sheet="graduated-import-solana">
           <button type="button" className="absolute inset-0 bg-black/70" aria-label="Close trade sheet" onClick={() => setMobileTradeOpen(false)} />
           <div
