@@ -4,9 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MemeWarzone — Secure Multichain Memecoin Launchpad</title>
-    <meta name="description" content="Secure memecoin launchpad on BNB + Solana. Launch, trade, compete and earn with MemeWarzone." />
+    <meta name="description" content="Memecoin launchpad on BNB Chain, Solana and Robinhood Chain. Launch on a bonding curve, trade, compete in coin battles and earn with MemeWarzone." />
     <meta name="author" content="MemeWarzone Launchpad" />
-    <link rel="canonical" href="https://app.memewar.zone/" />
 
     <!--
       Default site OG/Twitter card (homepage + any SPA route without its own tags).
@@ -18,21 +17,21 @@
     <meta property="og:site_name" content="MemeWarzone" />
     <meta property="og:url" content="https://app.memewar.zone/" />
     <meta property="og:title" content="MemeWarzone — Secure Memecoin Launchpad" />
-    <meta property="og:description" content="Launch. Trade. Compete. Earn. Built for creators, traders & communities on BNB + Solana." />
+    <meta property="og:description" content="Launch, trade, compete and earn. Built for creators, traders and communities on BNB Chain, Solana and Robinhood Chain." />
     <meta property="og:image" content="https://app.memewar.zone/assets/og-20260825.png" />
     <meta property="og:image:secure_url" content="https://app.memewar.zone/assets/og-20260825.png" />
     <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="MemeWarzone — Secure Memecoin Launchpad. No BS. Just Rewards. Built for creators, traders and communities on BNB + Solana." />
+    <meta property="og:image:alt" content="MemeWarzone, a secure memecoin launchpad. Built for creators, traders and communities on BNB Chain, Solana and Robinhood Chain." />
 
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:site" content="@memewarzone" />
     <meta name="twitter:creator" content="@memewarzone" />
     <meta name="twitter:title" content="MemeWarzone — Secure Memecoin Launchpad" />
-    <meta name="twitter:description" content="Launch. Trade. Compete. Earn. Built for creators, traders & communities on BNB + Solana." />
+    <meta name="twitter:description" content="Launch, trade, compete and earn. Built for creators, traders and communities on BNB Chain, Solana and Robinhood Chain." />
     <meta name="twitter:image" content="https://app.memewar.zone/assets/og-20260825.png" />
-    <meta name="twitter:image:alt" content="MemeWarzone — Secure Memecoin Launchpad. No BS. Just Rewards. Built for creators, traders and communities on BNB + Solana." />
+    <meta name="twitter:image:alt" content="MemeWarzone, a secure memecoin launchpad. Built for creators, traders and communities on BNB Chain, Solana and Robinhood Chain." />
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -48,6 +47,43 @@
     <!-- Google tag (gtag.js). Initialization is self-hosted so CSP can remain strict. -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-C4MH8V5EHY"></script>
     <script src="/gtag-init.js"></script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Organization",
+          "@id": "https://memewar.zone/#organization",
+          "name": "MemeWarzone",
+          "url": "https://memewar.zone",
+          "logo": "https://app.memewar.zone/images/mw.png",
+          "sameAs": ["https://x.com/memewarzone"]
+        },
+        {
+          "@type": "SoftwareApplication",
+          "@id": "https://app.memewar.zone/#app",
+          "name": "MemeWarzone",
+          "applicationCategory": "FinanceApplication",
+          "operatingSystem": "Web",
+          "url": "https://app.memewar.zone",
+          "description": "Memecoin launchpad on BNB Chain, Solana and Robinhood Chain with bonding-curve launches, coin battles and leagues.",
+          "publisher": { "@id": "https://memewar.zone/#organization" }
+        },
+        {
+          "@type": "WebSite",
+          "@id": "https://app.memewar.zone/#website",
+          "name": "MemeWarzone",
+          "url": "https://app.memewar.zone",
+          "publisher": { "@id": "https://memewar.zone/#organization" },
+          "potentialAction": {
+            "@type": "SearchAction",
+            "target": { "@type": "EntryPoint", "urlTemplate": "https://app.memewar.zone/coins?q={search_term_string}" },
+            "query-input": "required name=search_term_string"
+          }
+        }
+      ]
+    }
+    </script>
   </head>
 
   <body>

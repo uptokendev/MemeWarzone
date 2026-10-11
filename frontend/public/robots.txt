@@ -1,14 +1,26 @@
 User-agent: Googlebot
 Allow: /
+Disallow: /r/
+Disallow: /embed/
 
 User-agent: Bingbot
 Allow: /
+Disallow: /r/
+Disallow: /embed/
 
 User-agent: Twitterbot
 Allow: /
+Disallow: /r/
+Disallow: /embed/
 
 User-agent: facebookexternalhit
 Allow: /
+Disallow: /r/
+Disallow: /embed/
 
 User-agent: *
 Allow: /
+Disallow: /r/
+Disallow: /embed/
+
+Sitemap: https://app.memewar.zone/sitemap.xml
