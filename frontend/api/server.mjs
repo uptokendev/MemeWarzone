@@ -148,7 +148,7 @@ import {
   recruiterMePayouts,
   recruiterMeWalletLink,
 } from "./dev-fix/recruiter-payouts.js";
-import { routingCreateAuthorization, routingStatus, routingTradeAuthorization } from "./dev-fix/route-auth.js";
+import { routingCreateAuthorization, routingGen8CreateAuthorization, routingStatus, routingTradeAuthorization } from "./dev-fix/route-auth.js";
 import {
   launchpadPreflightBuy,
   launchpadPreflightCreate,
@@ -644,6 +644,7 @@ router.all("/attribution/wallet-connect", wrap(attributionWalletConnect));
 router.all("/attribution/wallet/:wallet", wrap(attributionWallet));
 router.all("/routing/status", wrap(routingStatus));
 router.all("/routing/create-authorization", wrap(routingCreateAuthorization));
+router.all("/routing/gen8/create-authorization", wrap(routingGen8CreateAuthorization));
 router.all("/routing/trade-authorization", wrap(routingTradeAuthorization));
 router.all("/recruiter-routing/status", wrap(routingStatus));
 router.all("/recruiter-routing/create-authorization", wrap(routingCreateAuthorization));
