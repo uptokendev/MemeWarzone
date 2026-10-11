@@ -622,7 +622,7 @@ Gen-8 (both before and after graduation, one panel):
   (D9). If the widget is to support gen-8 coins, the import swap build gains a V4 hook-pool path via UniversalRouter.
 - The Solana CREATE / BUY / SELL shape rule in CLAUDE.md is untouched (EVM only).
 
-### 6.3 Indexer ingestion [Decided: sources; Open: table split D14]
+### 6.3 Indexer ingestion [Decided: sources and table split D14]
 
 Today (`realtime-indexer/src/`):
 
@@ -674,7 +674,7 @@ Ably (`realtime-indexer/src/ably.ts`): unchanged channel and event names. Before
 `trade`, `stats_patch`, `candle_upsert`; after `market_trade`, `market_stats_patch`, `market_candle_upsert`;
 `market_stage_changed` at graduation; `league:<chain>` `campaign_created`, `campaign_patch`. Consumers
 (`useCurveTrades.ts`, `useUnifiedMarket.ts`, `useTokenStatsRealtime.ts`, `useLeagueRealtimeBase.ts`) need no change if
-D14 is taken as recommended.
+D14 decided by the founder 2026-10-11: split at the graduation block (option A).
 
 Fee accruals (D1 = A): per `HookFee`, profile from the wallet link at trade time (the `dbcFeeAccruals.ts` SQL), slices
 as `dbcFeeSplit.ts`, idempotent on `(tx, log_index)`; a route worker calls `claimRouter` then
@@ -860,7 +860,7 @@ graduation the hook fee is 1% (D13), of which the creator gets exactly 0.5% of v
 widget partner is involved (today CrypticPump), MemeWarzone's 0.5% is split in half with the partner: partner 0.25%,
 MemeWarzone 0.25%. The partner share is paid off chain from MemeWarzone's share (the hook stays partner-agnostic;
 attribution as today, by the widget build fingerprint). The creator's 0.5% is never reduced. Confirmed: the Major
-War League scores battles and check-ins, not trade volume. Still open: D14.
+War League scores battles and check-ins, not trade volume. D14 decided 2026-10-11: split at the graduation block (A). No open decisions remain.
 
 
 | # | Decision | Options | Recommendation |
