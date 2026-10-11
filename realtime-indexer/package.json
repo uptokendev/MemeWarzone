@@ -32,6 +32,7 @@
     "test:solana-graduation-decode": "tsx --test src/tests/solanaGraduationEventDecode.test.ts",
     "test:solana-graduation-binding": "tsx --test src/tests/solanaGraduationQuoteBinding.test.ts src/tests/solanaQuoteAssetMeta.test.ts",
     "test:solana-market-stats": "tsx --test src/tests/solanaMarketStats.test.ts",
+    "test:partner-token-stats": "tsx --test src/tests/partnerTokenStats.test.ts",
     "test:dbc-indexer": "tsx --test src/tests/dbcIndexer.test.ts",
     "test:dbc-fee-routing": "tsx --test src/tests/dbcFeeRouting.test.ts",
     "test:dbc-fee-routing-integration": "tsx --test src/tests/dbcFeeRouting.integration.test.ts",

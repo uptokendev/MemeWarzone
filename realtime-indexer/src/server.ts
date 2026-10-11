@@ -31,6 +31,7 @@ import { resolveMarketIdentity, resolveMarketIdentityOrPassthrough } from "./mar
 import { runGraduationReconcilerOnce } from "./graduationReconciler.js";
 import { ensureDexPoolForCampaign } from "./marketApi.js";
 import { registerLpFeesRoutes } from "./lpFeesRoutes.js";
+import { registerPartnerRoutes } from "./partnerApi.js";
 import { runTopazPoolIndexerOnce } from "./topazPoolIndexer.js";
 import { parseWalletAddressOrNull, walletEqualsSql } from "./walletAddress.js";
 import type { Request, Response, NextFunction, RequestHandler } from "express";
@@ -355,6 +356,10 @@ const corsOptions: cors.CorsOptions = {
   origin: (origin, cb) => cb(null, isAllowedOrigin(origin)),
   credentials: false,
 };
+
+// Partner read-only stats (CrypticPump). Mounted before the global CORS so partner origins are
+// allowed on /api/partner only, not on every indexer route.
+registerPartnerRoutes(app);
 
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
