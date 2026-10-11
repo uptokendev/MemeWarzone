@@ -120,3 +120,34 @@ test("helpers escape and link drops unsafe hrefs", () => {
   assert.equal(link("http://a.test", "bad"), "bad");
   assert.equal(link('/x"><img src=x>', "t"), '<a href="/x&quot;&gt;&lt;img src=x&gt;">t</a>');
 });
+
+test("link rejects control characters and backslashes anywhere", () => {
+  for (const bad of ["/\t/evil.com", "/\n/evil.com", "/\r/evil.com", "/\\evil.com", "/a\\b", "/a\u0000b", "/a\u007fb", "https://a.test/\tx"]) {
+    assert.equal(link(bad, "t"), "t", JSON.stringify(bad));
+  }
+});
+
+test("tags inside HTML comments are not touched", () => {
+  const sample = '<!-- example: <meta property="og:title" content="EXAMPLE" /> <link rel="canonical" href="https://example.invalid/" /> -->';
+  const withComment = shell.replace("<title>", `${sample}\n    <title>`);
+  assert.notEqual(withComment, shell);
+  const out = injectSeo(withComment, { ...base, canonical: null, og: { title: "Real" } });
+  assert.ok(out.includes(sample));
+  assert.match(out, /<meta property="og:title" content="Real" \/>/);
+  assert.equal(count(out, 'content="Real"'), 2); // og:title + twitter:title
+});
+
+test("unquoted attribute values are recognised", () => {
+  const html = "<!doctype html><html><head><title>a</title><meta name=description content=old><link rel=canonical href=/old><meta property=og:title content=old></head><body><div id=\"root\"></div></body></html>";
+  const out = injectSeo(html, { title: "t", description: "new", canonical: "https://x.test/", og: { title: "N" } });
+  assert.equal((out.match(/name=description|name="description"/g) || []).length, 1);
+  assert.equal((out.match(/rel=canonical|rel="canonical"/g) || []).length, 1);
+  assert.equal((out.match(/og:title/g) || []).length, 1);
+  assert.ok(!out.includes("content=old"));
+});
+
+test("$& in descriptions and og values stays literal", () => {
+  const out = injectSeo(shell, { ...base, description: "a $& b $1", og: { title: "$&", description: "$`" } });
+  assert.ok(out.includes('name="description" content="a $&amp; b $1"'));
+  assert.ok(out.includes('property="og:title" content="$&amp;"'));
+});

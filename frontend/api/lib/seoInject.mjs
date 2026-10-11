@@ -21,6 +21,7 @@ export function ul(items) {
 /** Same-origin path ("/x") or https URL only; anything else renders as plain text. */
 export function link(href, text) {
   const h = String(href ?? "");
+  if (/[\u0000-\u001f\u007f\\]/.test(h)) return esc(text);
   const ok = (h.startsWith("/") && !h.startsWith("//") && !h.startsWith("/\\")) || /^https:\/\/[^\s]/i.test(h);
   return ok ? `<a href="${esc(h)}">${esc(text)}</a>` : esc(text);
 }
@@ -37,17 +38,32 @@ function jsonForScript(obj) {
 const TAG = (name) => new RegExp(`<${name}\\b(?:[^>"']|"[^"]*"|'[^']*')*>`, "gi");
 
 function hasAttr(tag, attr, value) {
-  const re = new RegExp(`\\s${attr}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i");
+  const re = new RegExp(`\\s${attr}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'>]+))`, "i");
   const m = re.exec(tag);
-  return !!m && (m[1] ?? m[2]) === value;
+  return !!m && (m[1] ?? m[2] ?? m[3]) === value;
+
+}
+
+/** Offsets of comment and script/style regions, where tag-like text is not real markup. */
+function maskedRanges(html) {
+  const ranges = [];
+  const re = /<!--[\s\S]*?(?:-->|$)|<(script|style)\b[\s\S]*?(?:<\/\1\s*>|$)/gi;
+  let m;
+  while ((m = re.exec(html))) ranges.push([m.index, m.index + m[0].length]);
+  return ranges;
+}
+
+function inRanges(ranges, offset) {
+  return ranges.some(([a, b]) => offset >= a && offset < b);
 }
 
 /** Removes every matching tag; returns [html, removedCount, indexOfFirst]. */
 function removeTags(html, name, attr, value) {
   let first = -1;
   let n = 0;
+  const masked = maskedRanges(html);
   const out = html.replace(TAG(name), (tag, offset) => {
-    if (!hasAttr(tag, attr, value)) return tag;
+    if (inRanges(masked, offset) || !hasAttr(tag, attr, value)) return tag;
     if (first < 0) first = offset;
     n += 1;
     return "";
@@ -58,8 +74,9 @@ function removeTags(html, name, attr, value) {
 /** Replaces the first matching tag with `tagHtml`, drops further duplicates. Returns null if none matched. */
 function replaceTag(html, name, attr, value, tagHtml) {
   let seen = false;
-  const out = html.replace(TAG(name), (tag) => {
-    if (!hasAttr(tag, attr, value)) return tag;
+  const masked = maskedRanges(html);
+  const out = html.replace(TAG(name), (tag, offset) => {
+    if (inRanges(masked, offset) || !hasAttr(tag, attr, value)) return tag;
     if (seen) return "";
     seen = true;
     return tagHtml;
@@ -130,7 +147,8 @@ export function injectSeo(shell, opts = {}) {
     const re = /<script\b[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>[\s\S]*?<\/script>/gi;
     let lastEnd = -1;
     let m;
-    while ((m = re.exec(html))) lastEnd = m.index + m[0].length;
+    const masked = maskedRanges(html).filter(([a]) => html.startsWith("<!--", a));
+    while ((m = re.exec(html))) if (!inRanges(masked, m.index)) lastEnd = m.index + m[0].length;
     if (lastEnd >= 0) html = `${html.slice(0, lastEnd)}\n    ${blocks}${html.slice(lastEnd)}`;
     else html = insertInHead(html, blocks);
   }
