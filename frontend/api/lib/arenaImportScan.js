@@ -78,10 +78,11 @@ function rpcUrl(chainId) {
     return env("BSC_TESTNET_RPC_URL", "VITE_PUBLIC_RPC_97") || "https://bsc-testnet-rpc.publicnode.com";
   }
   if (id === 4663) {
-    return env("ROBINHOOD_MAINNET_RPC_URL", "ROBINHOOD_RPC_URL", "VITE_PUBLIC_RPC_4663") || "https://rpc.mainnet.chain.robinhood.com";
+    // Server env only, like the other Robinhood readers: the app's VITE_ RPC is a browser setting.
+    return env("ROBINHOOD_MAINNET_RPC_URL", "ROBINHOOD_RPC_URL") || "https://rpc.mainnet.chain.robinhood.com";
   }
   if (id === 46630) {
-    return env("ROBINHOOD_TESTNET_RPC_URL", "VITE_PUBLIC_RPC_46630");
+    return env("ROBINHOOD_TESTNET_RPC_URL");
   }
   return "";
 }
