@@ -6,6 +6,7 @@ import { PublicKey } from "@solana/web3.js";
 import { publishCandle, publishStats, publishTrade } from "./ably.js";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
+import { sharedHeadSlotCache } from "./headSlotCache.js";
 import { createLeagueFeedPublisher } from "./leagueFeed.js";
 import { candleUpsertPayload } from "./candlePublish.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
@@ -222,8 +223,9 @@ async function setState(poolAddress: string, nextSlot: number) {
   );
 }
 
+// head only sets the lookback start for pools without a graduation slot, so a few seconds old is fine.
 async function getHeadSlot(): Promise<number> {
-  return rpc<number>("getSlot", [{ commitment: "confirmed" }]);
+  return sharedHeadSlotCache.get(() => rpc<number>("getSlot", [{ commitment: "confirmed" }]));
 }
 
 async function getSignatures(address: string, fromSlot: number, currentState: number): Promise<RpcSignature[]> {
