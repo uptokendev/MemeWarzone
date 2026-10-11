@@ -20,10 +20,19 @@
  *    ones as archive. Chunk 5,000 (about 38 min), 8 calls: a provider with deeper logs reaches about
  *    5 h, publicnode stops at the depth it allows (the older chunks failing is tolerated once a
  *    newer chunk answered). BSC_IMPORT_LOGS_CHUNK raises the chunk for a provider with a bigger range.
+ *
+ * Uniswap V4 pools (founder, 2026-10-12: gen-8 and Pons coins, most Robinhood memecoins) are named by
+ * a 32-byte pool id. The PositionManager gives the pool key for the id's first 25 bytes; the key is
+ * accepted only when keccak256(abi.encode(key)) is the id. Swaps are PoolManager logs filtered on the
+ * indexed id. Their amounts are the swapper's deltas (positive = received), the opposite of V3.
+ * A pool quoted in a token (stock token, PONS, U) is converted with that token's current USD price
+ * (DexScreener, else GeckoTerminal; 60 s cache): the item then carries quoteAmount and quoteSymbol
+ * and its nativeAmount is volumeUsd / native USD. No price means a throw.
  *  A pass that finds no swap at all throws, so a quiet coin shows GeckoTerminal's 24 h list.
  */
 
 import { ethers } from "ethers";
+import { dexScreenerChainSlug, geckoTerminalNetwork } from "./arenaImportMarketFeed.js";
 
 const ITEM_CAP = 40;
 const RESULT_TTL_MS = 5_000;
@@ -38,6 +47,25 @@ const LOG_PLAN = {
   4663: { chunk: 100_000, calls: 8 },
   56: { chunk: 5_000, calls: 8 },
 };
+
+const POOL_MANAGER = {
+  4663: "0x8366a39cc670b4001a1121b8f6a443a643e40951",
+  56: "0x28e2ea090877bf75740558f6bfb36a5ffee9e9df",
+};
+const POSITION_MANAGER = {
+  4663: "0x58daec3116aae6d93017baaea7749052e8a04fa7",
+  56: "0x7a4a5c919ae2541aed11041a1aeee68f1287f95b",
+};
+const NATIVE_SYMBOL = { 4663: "ETH", 56: "BNB" };
+const QUOTE_PRICE_TTL_MS = 60_000;
+const V4_ABI = [
+  "function poolKeys(bytes25) view returns (address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks)",
+  "function symbol() view returns (string)",
+  "event Swap(bytes32 indexed id, address indexed sender, int128 amount0, int128 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick, uint24 fee)",
+];
+const v4Iface = new ethers.Interface(V4_ABI);
+export const SWAP_V4_TOPIC = v4Iface.getEvent("Swap").topicHash;
+const isPoolId = (v) => /^0x[0-9a-fA-F]{64}$/.test(String(v || ""));
 
 const POOL_ABI = [
   "function token0() view returns (address)",
@@ -73,10 +101,17 @@ const units = (raw, decimals) => Number(ethers.formatUnits(raw < 0n ? -raw : raw
 
 /** One Swap log -> { coinDelta (pool's change, in raw units), nativeRaw } or null when it has no coin leg. */
 export function decodeSwap(log, { coinIs0 }) {
-  const parsed = iface.parseLog({ topics: log.topics, data: log.data });
-  if (!parsed) return null;
   let coin;
   let native;
+  if (log.topics[0] === SWAP_V4_TOPIC) {
+    // The swapper's deltas: the pool's change is the opposite sign.
+    const parsed = v4Iface.parseLog({ topics: log.topics, data: log.data });
+    coin = -(coinIs0 ? parsed.args.amount0 : parsed.args.amount1);
+    native = -(coinIs0 ? parsed.args.amount1 : parsed.args.amount0);
+    return coin === 0n || native === 0n ? null : { coinDelta: coin, nativeRaw: native };
+  }
+  const parsed = iface.parseLog({ topics: log.topics, data: log.data });
+  if (!parsed) return null;
   if (V3_TOPICS.includes(log.topics[0])) {
     const [a0, a1] = [parsed.args.amount0, parsed.args.amount1];
     coin = coinIs0 ? a0 : a1;
@@ -91,9 +126,45 @@ export function decodeSwap(log, { coinIs0 }) {
   return { coinDelta: coin, nativeRaw: native };
 }
 
+/** USD price of a quote token: DexScreener's deepest pair of it, else GeckoTerminal. Cached 60 s. */
+export function createQuotePriceSource({ fetchImpl = fetch, now = () => Date.now() } = {}) {
+  const cache = new Map();
+  const inflight = new Map();
+  async function lookup(chainId, token) {
+    const slug = dexScreenerChainSlug(chainId);
+    if (slug) {
+      const res = await fetchImpl(`https://api.dexscreener.com/tokens/v1/${slug}/${token}`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(8_000) }).catch(() => null);
+      const json = res?.ok ? await res.json().catch(() => null) : null;
+      let best = null;
+      for (const pair of Array.isArray(json) ? json : []) {
+        if (lower(pair?.baseToken?.address) !== lower(token) || !(Number(pair?.priceUsd) > 0)) continue;
+        if (!best || (Number(pair?.liquidity?.usd) || 0) > (Number(best?.liquidity?.usd) || 0)) best = pair;
+      }
+      if (best) return { priceUsd: Number(best.priceUsd), symbol: best.baseToken.symbol || null };
+    }
+    const network = geckoTerminalNetwork(chainId);
+    if (network) {
+      const res = await fetchImpl(`https://api.geckoterminal.com/api/v2/networks/${network}/tokens/${token}`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(8_000) }).catch(() => null);
+      const a = (res?.ok ? await res.json().catch(() => null) : null)?.data?.attributes;
+      if (Number(a?.price_usd) > 0) return { priceUsd: Number(a.price_usd), symbol: a.symbol || null };
+    }
+    throw new Error("No USD price for the quote token");
+  }
+  return async function quoteUsdPrice(chainId, token) {
+    const key = `${chainId}:${lower(token)}`;
+    const hit = cache.get(key);
+    if (hit && now() - hit.at < QUOTE_PRICE_TTL_MS) return hit.value;
+    if (!inflight.has(key)) {
+      inflight.set(key, lookup(chainId, token).then((value) => { cache.set(key, { at: now(), value }); return value; }).finally(() => inflight.delete(key)));
+    }
+    return inflight.get(key);
+  };
+}
+
 export function createEvmImportTrades({
   providerFor,
   nativeUsdPrice = async () => 0,
+  quoteUsdPrice = createQuotePriceSource(),
   now = () => Date.now(),
   env = process.env,
 } = {}) {
@@ -114,6 +185,7 @@ export function createEvmImportTrades({
   async function poolMeta(key, provider, chainId, pairAddress, tokenAddress) {
     const hit = meta.get(key);
     if (hit) return hit;
+    if (isPoolId(pairAddress)) return v4Meta(key, provider, chainId, pairAddress, tokenAddress);
     const pool = new ethers.Contract(pairAddress, POOL_ABI, provider);
     const [t0, t1] = await Promise.all([pool.token0(), pool.token1()]);
     const native = WRAPPED_NATIVE[Number(chainId)];
@@ -127,14 +199,40 @@ export function createEvmImportTrades({
     const isV2 = isV3 ? false : await pool.getReserves().then(() => true, () => false);
     if (!isV3 && !isV2) throw new Error("Unsupported pool type");
     const coinDecimals = Number(await new ethers.Contract(tokenAddress, POOL_ABI, provider).decimals());
-    const value = { kind: isV3 ? "v3" : "v2", coinIs0, coinDecimals };
+    const value = { kind: isV3 ? "v3" : "v2", coinIs0, coinDecimals, address: pairAddress, topics: [SWAP_TOPICS], quoteDecimals: 18, quoteToken: null };
     meta.set(key, value);
     return value;
   }
 
-  async function logsBetween(provider, address, from, to) {
+  async function v4Meta(key, provider, chainId, poolId, tokenAddress) {
+    const manager = POOL_MANAGER[Number(chainId)];
+    const positions = new ethers.Contract(POSITION_MANAGER[Number(chainId)], V4_ABI, provider);
+    const k = await positions.poolKeys("0x" + poolId.slice(2, 52));
+    const [c0, c1, fee, spacing, hooks] = [k.currency0, k.currency1, k.fee, k.tickSpacing, k.hooks];
+    const hash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["address", "address", "uint24", "int24", "address"], [c0, c1, fee, spacing, hooks]));
+    if (hash !== poolId.toLowerCase()) throw new Error("Pool key does not match the pool id");
+    const sides = [lower(c0), lower(c1)];
+    const coin = lower(tokenAddress);
+    if (!sides.includes(coin)) throw new Error("Token is not in this pool");
+    const coinIs0 = sides[0] === coin;
+    const quote = coinIs0 ? c1 : c0;
+    const isNative = lower(quote) === ethers.ZeroAddress || lower(quote) === WRAPPED_NATIVE[Number(chainId)];
+    const erc20 = (a) => new ethers.Contract(a, [...POOL_ABI, ...V4_ABI], provider);
+    const coinDecimals = Number(await erc20(tokenAddress).decimals());
+    let quoteDecimals = 18;
+    let quoteSymbol = NATIVE_SYMBOL[Number(chainId)];
+    if (!isNative) {
+      quoteDecimals = Number(await erc20(quote).decimals());
+      quoteSymbol = await erc20(quote).symbol().catch(() => null);
+    }
+    const value = { kind: "v4", coinIs0, coinDecimals, address: manager, topics: [SWAP_V4_TOPIC, poolId.toLowerCase()], quoteDecimals, quoteToken: isNative ? null : quote, quoteSymbol };
+    meta.set(key, value);
+    return value;
+  }
+
+  async function logsBetween(provider, address, from, to, topics) {
     calls += 1;
-    const logs = await provider.getLogs({ address, fromBlock: from, toBlock: to, topics: [SWAP_TOPICS] });
+    const logs = await provider.getLogs({ address, fromBlock: from, toBlock: to, topics });
     return logs.map((l) => ({ ...l, logIndex: Number(l.index ?? l.logIndex) }));
   }
 
@@ -146,7 +244,7 @@ export function createEvmImportTrades({
       const lo = Math.max(from, hi - chunk + 1);
       let logs;
       try {
-        logs = await logsBetween(provider, address, lo, hi);
+        logs = await logsBetween(provider, address, lo, hi, m.topics);
       } catch (error) {
         // Older chunks beyond the provider's depth are given up on; the newest chunk must answer.
         if (!tolerateDeep || i === 0) throw error;
@@ -171,20 +269,23 @@ export function createEvmImportTrades({
     let st = state.get(key);
     if (st && head > st.head) {
       // Only the blocks since the last pass; a gap too wide for the budget starts over.
-      const gap = await scan(provider, pairAddress, st.head + 1, head, m, { chunk, maxCalls, want: Infinity });
+      const gap = await scan(provider, m.address, st.head + 1, head, m, { chunk, maxCalls, want: Infinity });
       if (gap.reachedFrom) {
         const known = new Set(st.swaps.map((s) => `${s.txHash}:${s.logIndex}`));
         st = { head, swaps: [...gap.found.filter((s) => !known.has(`${s.txHash}:${s.logIndex}`)), ...st.swaps].slice(0, ITEM_CAP) };
       } else st = null;
     } else if (st) st = { ...st, head: Math.max(st.head, head) };
     if (!st) {
-      const first = await scan(provider, pairAddress, Math.max(0, head - chunk * maxCalls + 1), head, m, { chunk, maxCalls, want: ITEM_CAP, tolerateDeep: true });
+      const first = await scan(provider, m.address, Math.max(0, head - chunk * maxCalls + 1), head, m, { chunk, maxCalls, want: ITEM_CAP, tolerateDeep: true });
       st = { head, swaps: first.found.slice(0, ITEM_CAP) };
     }
     state.set(key, st);
     if (!st.swaps.length) throw new Error("No swaps in the scanned window");
 
     const nativeUsd = st.swaps.length ? Number(await nativeUsdPrice(chainId).catch(() => 0)) || 0 : 0;
+    // A token quote is priced in USD now (current price, not the price at the swap).
+    const quotePrice = m.quoteToken ? (await quoteUsdPrice(chainId, m.quoteToken)).priceUsd : 0;
+    if (m.quoteToken && !(quotePrice > 0)) throw new Error("No USD price for the quote token");
     const items = await Promise.all(
       st.swaps.map(async (s) => {
         if (!txFrom.has(s.txHash)) {
@@ -199,7 +300,9 @@ export function createEvmImportTrades({
           blockTime.set(s.blockNumber, Number(block.timestamp));
           if (blockTime.size > MAX_CACHED_BLOCKS) blockTime.delete(blockTime.keys().next().value);
         }
-        const nativeAmount = units(s.nativeRaw, 18);
+        const quoteAmount = units(s.nativeRaw, m.quoteDecimals);
+        const volumeUsd = m.quoteToken ? quoteAmount * quotePrice : nativeUsd > 0 ? quoteAmount * nativeUsd : null;
+        const nativeAmount = m.quoteToken ? (nativeUsd > 0 ? volumeUsd / nativeUsd : null) : quoteAmount;
         return {
           txHash: s.txHash,
           // The pool's coin balance going up is a sell, going down a buy.
@@ -207,7 +310,9 @@ export function createEvmImportTrades({
           maker: txFrom.get(s.txHash),
           tokenAmount: units(s.coinDelta, m.coinDecimals),
           nativeAmount,
-          volumeUsd: nativeUsd > 0 ? nativeAmount * nativeUsd : null,
+          volumeUsd,
+          quoteAmount,
+          quoteSymbol: "quoteSymbol" in m ? m.quoteSymbol : NATIVE_SYMBOL[Number(chainId)],
           blockTime: blockTime.get(s.blockNumber),
           blockNumber: s.blockNumber,
         };
@@ -219,7 +324,7 @@ export function createEvmImportTrades({
   /** Newest trades first. Throws when the chain cannot be read (the caller falls back). */
   async function trades({ chainId, pairAddress, tokenAddress }) {
     if (!isEvmImportTradeChain(chainId)) throw new Error("No on-chain trade source for this chain");
-    if (!ethers.isAddress(pairAddress) || !ethers.isAddress(tokenAddress)) throw new Error("Invalid pool or token address");
+    if (!(ethers.isAddress(pairAddress) || isPoolId(pairAddress)) || !ethers.isAddress(tokenAddress)) throw new Error("Invalid pool or token address");
     const key = `${Number(chainId)}:${lower(pairAddress)}:${lower(tokenAddress)}`;
     const hit = pools.get(key);
     if (hit && now() - hit.at < RESULT_TTL_MS) return hit.trades;
