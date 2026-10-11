@@ -50,3 +50,11 @@ id = "generic-api-key"
   condition = "AND"
   regexes = [ '''DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263''' ]
   paths = [ '''^docs/release/IMPORT_CREATOR_FEES_GO_LIVE\.md$''' ]
+
+  # STASH's public Robinhood token contract, used as the fixture in the import DEX probe tests
+  # (const TOKEN = "0x..."). It is not a credential. Scoped to the exact address and the one test.
+  [[rules.allowlists]]
+  description = "Known false positive: STASH public Robinhood token address in the DEX probe tests"
+  condition = "AND"
+  regexes = [ '''(?i)0xe7dec18b0b29c8e02fb90a5dce413b3bc66e8251''' ]
+  paths = [ '''^frontend/api/lib/arenaImportScanDexProbes\.test\.mjs$''' ]
