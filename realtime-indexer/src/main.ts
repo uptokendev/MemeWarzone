@@ -1,3 +1,4 @@
+import "./rpcUsagePreload.js";
 import { startCanonicalCandleMaterializerLoop } from "./canonicalCandleMaterializer.js";
 import { startCanonicalCandleRealtimeLoop } from "./canonicalCandleRealtime.js";
 import { startSupportedFactoryDiscoveryLoop } from "./factoryDiscovery.js";

@@ -1,3 +1,4 @@
+import "./rpcUsagePreload.js";
 import express from "express";
 import type { Request, Response, NextFunction, RequestHandler } from "express";
 import { ablyRest, tokenChannel, warroomChannel } from "./ably.js";
