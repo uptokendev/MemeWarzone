@@ -462,3 +462,15 @@ export async function upsertGen8RewardEvent(db: Queryable, a: Gen8AccrualRow, ep
     ],
   );
 }
+
+/** How many different swap senders a wallet's gen-8 trades came through, counting `current` (audit C-M4, F9). */
+export async function gen8DistinctSwapSenders(db: Queryable, chainId: number, wallet: string, current: string): Promise<number> {
+  const r = await db.query(
+    `select count(distinct s)::int as n from (
+       select swap_sender as s from public.evm_gen8_fee_accruals where chain_id = $1 and trader = $2 and kind = 'trade' and swap_sender is not null
+       union all select $3::text
+     ) x`,
+    [chainId, wallet.toLowerCase(), current.toLowerCase()],
+  );
+  return Number(r.rows[0]?.n ?? 1);
+}

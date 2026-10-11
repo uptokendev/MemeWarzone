@@ -45,6 +45,9 @@ export type Gen8Event =
   | (Pos & { kind: "RouterProposalCancelled"; router: string })
   | (Pos & { kind: "DisplayUpdateFailed"; poolId: string })
   | (Pos & { kind: "Routed"; runId: bigint; accrualRoot: string; caller: string; run: { total: bigint; bondingFees: bigint; gradFees: bigint; weeklyLeague: bigint; monthlyLeague: bigint; recruiter: bigint; squad: bigint; airdrop: bigint; protocol: bigint } })
+  | (Pos & { kind: "OwnershipTransferStarted"; previous: string; next: string; source: "hook" | "launcher" })
+  | (Pos & { kind: "OwnershipTransferred"; previous: string; next: string; source: "hook" | "launcher" })
+  | (Pos & { kind: "OperatorUpdated"; previous: string; next: string; paused: boolean | null; source: "splitter" | "choice_vault" })
   | (Pos & { kind: "CoinRegistered"; poolId: string; token: string; creator: string; choice: number; creatorPct: number })
   | (Pos & { kind: "Swap"; poolId: string; sender: string; amount0: bigint; amount1: bigint; sqrtPriceX96: bigint; liquidity: bigint; tick: number; fee: number });
 
@@ -81,6 +84,10 @@ export function decodeGen8Log(log: LogLike, addrs: Gen8Addresses): Gen8Event | n
         return { ...pos, kind: "CreatePauseUpdated", paused: Boolean(a.paused) };
       case "CreateSignerUpdated":
         return { ...pos, kind: "CreateSignerUpdated", previous: lc(a.previous), next: lc(a.next) };
+      case "OwnershipTransferStarted":
+        return { ...pos, kind: "OwnershipTransferStarted", previous: lc(a.current), next: lc(a.next), source: "launcher" };
+      case "OwnershipTransferred":
+        return { ...pos, kind: "OwnershipTransferred", previous: lc(a.previous), next: lc(a.next), source: "launcher" };
       default:
         return null;
     }
@@ -119,11 +126,19 @@ export function decodeGen8Log(log: LogLike, addrs: Gen8Addresses): Gen8Event | n
         return { ...pos, kind: "RouterProposalCancelled", router: lc(a.router) };
       case "DisplayUpdateFailed":
         return { ...pos, kind: "DisplayUpdateFailed", poolId: lc(a.id) };
+      case "OwnershipTransferStarted":
+        return { ...pos, kind: "OwnershipTransferStarted", previous: lc(a.current), next: lc(a.next), source: "hook" };
+      case "OwnershipTransferred":
+        return { ...pos, kind: "OwnershipTransferred", previous: lc(a.previous), next: lc(a.next), source: "hook" };
       default:
         return null;
     }
   }
   if (addrs.splitter && address === lc(addrs.splitter)) {
+    if (t0 === GEN8_TOPICS.SplitterOperatorUpdated) {
+      const o = GEN8_SPLITTER_IFACE.parseLog(raw)!.args as any;
+      return { ...pos, kind: "OperatorUpdated", previous: lc(o.previous), next: lc(o.next), paused: null, source: "splitter" };
+    }
     if (t0 !== GEN8_TOPICS.Routed) return null;
     const a = GEN8_SPLITTER_IFACE.parseLog(raw)!.args as any;
     const r = a.run;
@@ -138,6 +153,7 @@ export function decodeGen8Log(log: LogLike, addrs: Gen8Addresses): Gen8Event | n
     const a = parsed.args as any;
     if (parsed.name === "CoinRegistered") return { ...pos, kind: "CoinRegistered", poolId: lc(a.id), token: lc(a.token), creator: lc(a.creator), choice: Number(a.choice), creatorPct: Number(a.creatorPct) };
     if (parsed.name === "CreatorTransferred") return { ...pos, kind: "CreatorTransferred", poolId: lc(a.id), previous: lc(a.previous), next: lc(a.next), source: "choice_vault" };
+    if (parsed.name === "OperatorUpdated") return { ...pos, kind: "OperatorUpdated", previous: "", next: lc(a.operator), paused: Boolean(a.paused), source: "choice_vault" };
   }
   return null;
 }

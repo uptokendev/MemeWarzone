@@ -107,3 +107,118 @@ export function intEnv(value: unknown, fallback: number, min: number, max = Numb
   if (!String(value ?? "").trim() || !Number.isFinite(n)) return fallback;
   return Math.max(min, Math.min(max, Math.trunc(n)));
 }
+
+// ------------------------------------------------------------------ reorg safety (audit C-M5, F10)
+
+export type Gen8HeadTag = "finalized" | "safe" | "latest";
+
+/**
+ * The block tag the gen-8 loops (ingest, holder census, side pools) read up to. Default: `finalized` on BNB (56, 97;
+ * fast finality, about 2 blocks / 1 s behind on 2026-10-12) and `safe` on Robinhood (4663, 46630; the block whose
+ * batch is posted to Ethereum, about 9.6 minutes behind on 2026-10-12). A block at or below these tags cannot be
+ * reorganised away, so nothing the indexer writes (trades, accruals, League rows, recruiter credit) can turn into a
+ * phantom. EVM_GEN8_HEAD_TAG_<id> (or EVM_GEN8_HEAD_TAG) = finalized | safe | latest overrides it; `latest` is the old
+ * behaviour (EVM_GEN8_CONFIRMATIONS blocks behind the head) and is meant for local chains only.
+ */
+export function gen8HeadTag(chainId: number, env: NodeJS.ProcessEnv = process.env): Gen8HeadTag {
+  const raw = String(env[`EVM_GEN8_HEAD_TAG_${chainId}`] || env.EVM_GEN8_HEAD_TAG || "").trim().toLowerCase();
+  if (raw === "finalized" || raw === "safe" || raw === "latest") return raw;
+  return chainId === 4663 || chainId === 46630 ? "safe" : "finalized";
+}
+
+export type Gen8HeadProvider = {
+  getBlockNumber(): Promise<number>;
+  getBlock(tag: any): Promise<{ number?: number | bigint | null } | null>;
+};
+
+/**
+ * The highest block the gen-8 loops may ingest. Fails closed: when the RPC cannot answer the tag, the pass throws
+ * (logged, retried next tick) instead of falling back to the unsafe head.
+ */
+export async function gen8SafeHead(provider: Gen8HeadProvider, chainId: number, env: NodeJS.ProcessEnv = process.env): Promise<number> {
+  const tag = gen8HeadTag(chainId, env);
+  if (tag === "latest") return (await provider.getBlockNumber()) - intEnv(env.EVM_GEN8_CONFIRMATIONS, 1, 0, 64);
+  const b = await provider.getBlock(tag);
+  const n = b?.number;
+  if (n === null || n === undefined || !Number.isFinite(Number(n))) throw new Error(`gen8: the RPC for chain ${chainId} did not return the '${tag}' block`);
+  return Number(n);
+}
+
+// ------------------------------------------------------------------ recruiter / squad link eligibility (audit C-M4, F9)
+
+/**
+ * UniversalRouters a linked trade may come through, per mainnet: the routers the app and the swap widget build for
+ * (frontend/shared/evmGen8Swap.mjs GEN8_KNOWN_ROUTERS, the first entry is the app's default) and Uniswap's canonical
+ * ones on the chain. Testnets and local chains: env only.
+ */
+export const GEN8_LINK_ROUTERS: Record<number, readonly string[]> = {
+  56: ["0xdc264714f68d84cf29bc605589405e78bdbe7c9f", "0x1906c1d672b88cd1b9ac7593301ca990f94eae07", "0x8b844f885672f333bc0042cb669255f93a4c1e6b"],
+  4663: ["0x8876789976decbfcbbbe364623c63652db8c0904", "0x204faca1764b154221e35c0d20abb3c525710498"],
+};
+
+function addressList(raw: unknown): string[] {
+  return String(raw ?? "")
+    .split(/[\s,;]+/)
+    .map((s) => s.trim())
+    .filter((s) => /^0x[0-9a-fA-F]{40}$/.test(s))
+    .map((s) => s.toLowerCase());
+}
+
+export type Gen8LinkPolicy = { routers: Set<string>; deny: Set<string>; maxSwapSenders: number };
+
+/**
+ * Who can carry a recruiter / squad link (finding C-M4: a relayer or 4337 bundler sends many users' trades from one
+ * wallet). A trade is linked only when
+ *   - its swap sender (PoolManager Swap.sender = HookFee.swapSender) is an allowed router: GEN8_LINK_ROUTERS, the
+ *     chain's EVM_GEN8_UNIVERSAL_ROUTER_<id> (the router the API builds for), our launcher (creator first buy) and
+ *     escrow, plus EVM_GEN8_LINK_ROUTERS_<id>;
+ *   - tx.to is that same router (the signer called the router itself: no forwarder, multicall, EntryPoint or 7702
+ *     self-call in between, so tx.from is the trader and not a relayer);
+ *   - tx.from is not on EVM_GEN8_LINK_DENY_<id> / EVM_GEN8_LINK_DENY (known bundler and relayer wallets);
+ *   - tx.from has not traded through EVM_GEN8_LINK_MAX_SWAP_SENDERS (4) or more different swap senders (a wallet
+ *     that submits through many contracts is a relayer, not a person).
+ * Otherwise the trade is UNLINKED (airdrop share), as a wallet without a link.
+ */
+export function gen8LinkPolicy(cfg: Gen8ChainConfig, env: NodeJS.ProcessEnv = process.env): Gen8LinkPolicy {
+  const routers = new Set<string>([
+    ...(GEN8_LINK_ROUTERS[cfg.chainId] ?? []),
+    ...addressList(env[`EVM_GEN8_UNIVERSAL_ROUTER_${cfg.chainId}`]),
+    ...addressList(env[`EVM_GEN8_LINK_ROUTERS_${cfg.chainId}`]),
+    cfg.launcher.address,
+    ...(cfg.escrow ? [cfg.escrow] : []),
+  ]);
+  const deny = new Set<string>([...addressList(env.EVM_GEN8_LINK_DENY), ...addressList(env[`EVM_GEN8_LINK_DENY_${cfg.chainId}`])]);
+  return { routers, deny, maxSwapSenders: intEnv(env.EVM_GEN8_LINK_MAX_SWAP_SENDERS, 4, 2, 1_000) };
+}
+
+export type Gen8LinkCheck = { linkable: boolean; reason: string | null };
+
+/** The pure part of the rule above (the many-senders count is passed in). */
+export function gen8LinkCheck(policy: Gen8LinkPolicy, t: { txFrom: string; txTo: string | null; swapSender: string; distinctSwapSenders: number }): Gen8LinkCheck {
+  const from = t.txFrom.toLowerCase();
+  const sender = t.swapSender.toLowerCase();
+  if (!policy.routers.has(sender)) return { linkable: false, reason: "swap_sender_not_allowed" };
+  if (!t.txTo || t.txTo.toLowerCase() !== sender) return { linkable: false, reason: "tx_to_is_not_the_router" };
+  if (policy.deny.has(from)) return { linkable: false, reason: "tx_from_denylisted" };
+  if (t.distinctSwapSenders >= policy.maxSwapSenders) return { linkable: false, reason: "tx_from_uses_many_swap_senders" };
+  return { linkable: true, reason: null };
+}
+
+// ------------------------------------------------------------------ league exclusion (audit D-L2, F12)
+
+/**
+ * League exclusion of a gen-8 trade (audit 10.2, D-L2 / F12): the trade counts for no trader League when tx.from OR
+ * the swap sender is the coin's current creator or its hook creator (the human creator for keep coins, our choice
+ * vault for choice coins), or when the swap came through the escrow, the launcher (the creator's first buy) or the
+ * choice vault (buybacks). Matching the swap sender as well catches a creator trading from a contract wallet.
+ */
+export function gen8LeagueExcluded(cfg: Pick<Gen8ChainConfig, "launcher" | "escrow" | "choiceVault">, pool: { creator: string; hookCreator: string | null }, txFrom: string, swapSender: string): boolean {
+  const from = txFrom.toLowerCase();
+  const sender = swapSender.toLowerCase();
+  const creatorSide = new Set([pool.creator, pool.hookCreator].filter((a): a is string => Boolean(a)).map((a) => a.toLowerCase()));
+  if (creatorSide.has(from) || creatorSide.has(sender)) return true;
+  if (cfg.escrow && sender === cfg.escrow) return true;
+  if (sender === cfg.launcher.address) return true;
+  if (cfg.choiceVault && (sender === cfg.choiceVault || from === cfg.choiceVault)) return true;
+  return false;
+}

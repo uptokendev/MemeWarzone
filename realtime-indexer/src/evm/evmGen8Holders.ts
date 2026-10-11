@@ -10,7 +10,7 @@
  * market_stats.holders (campaigns-base.js already prefers market_stats.holders over the buyer count).
  */
 import { ethers } from "ethers";
-import { intEnv, type Gen8ChainConfig } from "./evmGen8Config.js";
+import { gen8SafeHead, intEnv, type Gen8ChainConfig } from "./evmGen8Config.js";
 import type { Queryable } from "./evmGen8Store.js";
 import { INFINITY_VAULT } from "./evmGen8SidePools.js";
 
@@ -60,6 +60,7 @@ type DbWithConnect = Queryable & { connect?: () => Promise<Tx> };
 
 export type HolderProvider = {
   getBlockNumber(): Promise<number>;
+  getBlock(tag: "finalized" | "safe" | "latest"): Promise<{ number?: number | null } | null>;
   getLogs(filter: { address: string[]; topics: string[]; fromBlock: number; toBlock: number }): Promise<Array<{ address: string; topics: readonly string[]; data: string; blockNumber: number }>>;
 };
 
@@ -115,8 +116,7 @@ export async function runGen8HolderCensusOnce(opts: { db: DbWithConnect; cfg: Ge
     [cfg.chainId, cfg.hook.address],
   );
   if (!tokensRes.rows.length) return { tokens: 0, applied: 0, to: null };
-  const confirmations = intEnv(env.EVM_GEN8_CONFIRMATIONS, 1, 0, 64);
-  const head = (await provider.getBlockNumber()) - confirmations;
+  const head = await gen8SafeHead(provider, cfg.chainId, env); // F10: finalized (BNB) / safe (Robinhood)
   const span = intEnv(env.EVM_GEN8_HOLDER_CHUNK, 2_000, 1, 50_000);
   const perCall = intEnv(env.EVM_GEN8_HOLDER_ADDRESSES_PER_CALL, 100, 1, 1_000);
   // next block per token: one past its cursor, or its launch block (the mint to the launcher is in the launch tx).

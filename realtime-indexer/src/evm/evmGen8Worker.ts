@@ -2,7 +2,10 @@
  * Starts every gen-8 loop (ingest, holder census, side-pool watcher, fee routing). Nothing starts, and no RPC or DB
  * call is made, unless EVM_GEN8_LAUNCHER_<id> and EVM_GEN8_HOOK_<id> are set for at least one chain.
  *   EVM_GEN8_RPC_<id>             optional RPC for gen-8 (default: the chain's indexer RPC, BSC_RPC_HTTP_<id> / ROBINHOOD_RPC_HTTP_<id>)
- *   EVM_GEN8_POLL_MS              ingest interval (4000)          EVM_GEN8_CONFIRMATIONS  blocks behind head (1)
+ *   EVM_GEN8_POLL_MS              ingest interval (4000)          EVM_GEN8_HEAD_TAG_<id>  finalized (BNB) / safe (Robinhood) / latest
+ *   EVM_GEN8_CONFIRMATIONS        blocks behind head, only with EVM_GEN8_HEAD_TAG_<id>=latest (1)
+ *   EVM_GEN8_LINK_ROUTERS_<id> / EVM_GEN8_LINK_DENY(_<id>) / EVM_GEN8_LINK_MAX_SWAP_SENDERS: link eligibility (evmGen8Config.ts)
+ *   EVM_GEN8_ROUTER_CLAIMERS_<id>: wallets besides the splitter operator allowed to claimRouter() without an alert
  *   EVM_GEN8_HOLDERS_POLL_MS      holder census interval (15000)  EVM_GEN8_SIDE_POLL_MS   side-pool watcher interval (60000)
  *   EVM_GEN8_SIDE_POOLS=0         turns the side-pool watcher off
  *   EVM_GEN8_FEE_ROUTING_ENABLED / _SEND / EVM_GEN8_OPERATOR_KEY_<id>: evmGen8FeeRouting.ts

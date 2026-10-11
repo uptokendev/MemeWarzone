@@ -190,3 +190,6 @@ export async function swap(env: Gen8Local, coin: { key: unknown[]; coin: ethers.
   const tx = await (env.trader.connect(w) as any).swap(coin.key, o.buy, o.exactIn ? -o.amount : o.amount, 0n, o.hookData ?? "0x", { value, gasLimit: 5_000_000n });
   return tx.wait();
 }
+
+/** Deploy any artifact by name (tests that need a second instance of a helper contract). */
+export const deployArtifact = deploy;

@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import { ethers } from "ethers";
-import { artifactsAvailable, deployGen8Local, launchCoin, startAnvil, swap, WAD } from "./gen8/gen8LocalChain.js";
+import { artifactsAvailable, deployArtifact, deployGen8Local, launchCoin, startAnvil, swap, WAD } from "./gen8/gen8LocalChain.js";
 import { gen8SchemaFiles } from "./gen8/gen8TestDb.js";
 
 const PG16 = "/usr/lib/postgresql/16/bin";
@@ -40,6 +40,10 @@ test("gen-8 indexer end to end on a local chain", { skip: runnable ? false : "ge
       EVM_GEN8_LAUNCHER_97: `${A.launcher}@${startBlock}`, EVM_GEN8_HOOK_97: `${A.hook}@${startBlock}`, EVM_GEN8_POOL_MANAGER_97: A.pm,
       EVM_GEN8_SPLITTER_97: `${A.splitter}@${startBlock}`, EVM_GEN8_CHOICE_VAULT_97: A.vault, EVM_GEN8_RESERVE_LOCK_97: A.lock, EVM_GEN8_ESCROW_97: A.escrow,
       EVM_GEN8_CONFIRMATIONS: "0", EVM_GEN8_LOG_CHUNK: "5000", EVM_GEN8_SIDE_FACTORIES_97: "v2:0x000000000000000000000000000000000000beef",
+      // F10: anvil's finalized block is 64 behind; this test runs at the head (evmGen8Reorg.integration.test.ts covers the tag).
+      EVM_GEN8_HEAD_TAG_97: "latest",
+      // F9: the test router stands in for the app's UniversalRouter; F11: the operator is set before the start block.
+      EVM_GEN8_LINK_ROUTERS_97: (await env.trader.getAddress()).toLowerCase(), EVM_GEN8_ROUTER_CLAIMERS_97: env.operator.address.toLowerCase(),
     };
     const db = pg.pool;
     // Recruiter links: `linked` -> standard recruiter, `og` -> OG recruiter; buyer and other stay unlinked.
@@ -257,9 +261,29 @@ test("gen-8 indexer end to end on a local chain", { skip: runnable ? false : "ge
     await catchUp();
     assert.equal((await db.query(`select status from public.evm_gen8_route_runs where run_id = 4`)).rows[0].status, "confirmed");
     assert.equal((await db.query(`select count(*)::int as n from public.evm_gen8_fee_accruals where run_id is null`)).rows[0].n, 0, "the flushed bucket is fully routed");
-    const neverFire = (await db.query(`select metadata->>'kind' as kind from public.reward_alerts where metadata->>'kind' in ('gen8_accrual_mismatch','gen8_run_rows_mismatch','gen8_run_without_claim')`)).rows;
-    assert.deepEqual(neverFire, [], "the should-never-fire alerts did not fire");
+    const neverFire = (await db.query(`select metadata->>'kind' as kind from public.reward_alerts where metadata->>'kind' in ('gen8_accrual_mismatch','gen8_run_rows_mismatch','gen8_run_without_claim','gen8_routed_differs_from_plan')`)).rows;
+    assert.deepEqual(neverFire, [], "the should-never-fire alerts did not fire (every Routed equals its plan)");
     assert.ok((await db.query(`select 1 from public.reward_alerts where metadata->>'kind' = 'gen8_router_not_splitter'`)).rows.length === 1, "router change alerted");
+    // F11: the control events and the third party's claimRouter() in run 2 are alerted; our own claims and the A4 flush are not.
+    const kinds = async () => (await db.query(`select metadata->>'kind' as kind from public.reward_alerts`)).rows.map((r) => r.kind);
+    const k1 = await kinds();
+    assert.equal(k1.filter((k) => k === "gen8_foreign_router_claim").length, 1, `one foreign claim (run 2): ${k1.join(",")}`);
+    assert.ok(k1.includes("gen8_router_proposed") && k1.includes("gen8_router_changed"), "RouterProposed and RouterChanged alerted");
+    await (await (env.splitter.connect(env.safe) as any).setOperator(env.operator.address)).wait();
+    await (await (env.hook.connect(env.safe) as any).transferOwnership(env.other.address)).wait();
+    await catchUp();
+    const k2 = await kinds();
+    assert.ok(k2.includes("gen8_splitter_operator_updated"), "splitter OperatorUpdated alerted");
+    assert.ok(k2.includes("gen8_ownership_transfer_started"), "hook OwnershipTransferStarted alerted");
+
+    // ---- F9: a linked wallet's trade through a router that is not on the allow list carries no link
+    const trader2 = await deployArtifact(env.deployer, "V4DirectTrader", [await env.pm.getAddress()]);
+    const viaOther = await (await (trader2.connect(env.linked) as any).swap(coin2.key, true, -(WAD / 900n), 0n, "0x", { value: WAD / 900n, gasLimit: 5_000_000n })).wait();
+    await catchUp();
+    const otherRouterRow = (await db.query(`select profile, recruiter, squad, airdrop, swap_sender from public.evm_gen8_fee_accruals where tx_hash = $1`, [viaOther.hash.toLowerCase()])).rows[0];
+    assert.equal(otherRouterRow.swap_sender, (await trader2.getAddress()).toLowerCase());
+    assert.equal(otherRouterRow.profile, "standard_unlinked", "not an allowed router: unlinked");
+    assert.ok(otherRouterRow.recruiter === "0" && BigInt(otherRouterRow.airdrop) > 0n);
 
     // ---- side pool: a hookless V4 pool of our coin
     const pmSigner = env.pm.connect(env.buyer) as any;

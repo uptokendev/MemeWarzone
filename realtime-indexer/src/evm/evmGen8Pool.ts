@@ -15,12 +15,14 @@
  * Inert without EVM_GEN8_LAUNCHER_<id> + EVM_GEN8_HOOK_<id> (evmGen8Config.ts).
  */
 import { ethers } from "ethers";
-import { configuredGen8Chains, intEnv, type Gen8ChainConfig } from "./evmGen8Config.js";
+import { configuredGen8Chains, gen8LeagueExcluded, gen8LinkCheck, gen8LinkPolicy, gen8SafeHead, intEnv, type Gen8ChainConfig, type Gen8LinkPolicy } from "./evmGen8Config.js";
+export { gen8LeagueExcluded } from "./evmGen8Config.js";
 import { GEN8_TOPICS, gen8PoolId } from "./evmGen8Abi.js";
 import { decodeGen8Log, groupByTx, joinSwapsWithFees, traderNative, type Gen8Event, type JoinedSwap, type LogLike } from "./evmGen8Decode.js";
 import { gen8GraduationSlices, gen8TradeSlices } from "./evmGen8Fees.js";
 import { gen8PoolHoldings, gen8Progress, marketCapWei, nativePerCoin, nativePerCoinWei, rawToDecimal } from "./evmGen8Math.js";
 import {
+  gen8DistinctSwapSenders,
   insertGen8Accrual,
   insertGen8CurveTrade,
   insertGen8DexTrade,
@@ -39,15 +41,15 @@ import {
   type Gen8PoolRow,
   type Queryable,
 } from "./evmGen8Store.js";
-import { recordRoutedRun } from "./evmGen8FeeRouting.js";
+import { gen8KnownClaimers, recordRoutedRun } from "./evmGen8FeeRouting.js";
 
 export const GEN8_ALERT_REWARD_TYPE = "gen8_hook";
 
 export type Gen8Provider = {
   getBlockNumber(): Promise<number>;
   getLogs(filter: { address?: string | string[]; topics?: Array<string | string[] | null>; fromBlock: number; toBlock: number }): Promise<Array<LogLike & { blockHash?: string | null }>>;
-  getBlock(n: number): Promise<{ timestamp: number | bigint; hash?: string | null } | null>;
-  getTransaction(hash: string): Promise<{ from: string } | null>;
+  getBlock(n: number | "finalized" | "safe" | "latest"): Promise<{ timestamp: number | bigint; hash?: string | null; number?: number | null } | null>;
+  getTransaction(hash: string): Promise<{ from: string; to?: string | null } | null>;
 };
 
 /** Where gen-8 meets the live pipeline. Production: indexer.ts / ably.ts / milestones.ts (defaultGen8Sinks). */
@@ -100,7 +102,9 @@ export async function defaultGen8Sinks(db: Queryable): Promise<Gen8Sinks> {
   };
 }
 
-type Ctx = { cfg: Gen8ChainConfig; db: Queryable; provider: Gen8Provider; sinks: Gen8Sinks; env: NodeJS.ProcessEnv };
+type Ctx = { cfg: Gen8ChainConfig; db: Queryable; provider: Gen8Provider; sinks: Gen8Sinks; env: NodeJS.ProcessEnv; linkPolicy?: Gen8LinkPolicy };
+
+type TxInfo = { from: string; to: string | null };
 
 export function gen8Cursor(cfg: Gen8ChainConfig): string {
   return `gen8:${cfg.hook.address}`;
@@ -191,16 +195,17 @@ export async function ingestGen8Range(ctx: Ctx, fromBlock: number, toBlock: numb
 
   // 4. per transaction, in log order
   const idSet = new Set(ids);
-  const txFrom = new Map<string, string>();
-  const fromOf = async (tx: string): Promise<string> => {
-    const hit = txFrom.get(tx);
+  const txInfo = new Map<string, TxInfo>();
+  const txOf = async (tx: string): Promise<TxInfo> => {
+    const hit = txInfo.get(tx);
     if (hit) return hit;
     const t = await provider.getTransaction(tx);
     if (!t?.from) throw new Error(`gen8: transaction ${tx} not found`);
-    const from = String(t.from).toLowerCase();
-    txFrom.set(tx, from);
-    return from;
+    const info = { from: String(t.from).toLowerCase(), to: t.to ? String(t.to).toLowerCase() : null };
+    txInfo.set(tx, info);
+    return info;
   };
+  const policy = ctx.linkPolicy ?? gen8LinkPolicy(cfg, ctx.env);
 
   for (const [txHash, txEvents] of groupByTx(events)) {
     const { joined, orphanSwaps, orphanFees } = joinSwapsWithFees(txEvents, idSet);
@@ -221,13 +226,13 @@ export async function ingestGen8Range(ctx: Ctx, fromBlock: number, toBlock: numb
       if (act.joined) {
         const pool = pools.get(act.joined.swap.poolId) || (await loadGen8Pool(db, cfg.chainId, act.joined.swap.poolId));
         if (!pool) continue;
-        const wrote = await applyTrade(ctx, pool, act.joined, await fromOf(txHash), await timeOf(act.joined.swap.blockNumber), blockHashes.get(`${txHash}:${act.joined.swap.logIndex}`) ?? null);
+        const wrote = await applyTrade(ctx, pool, act.joined, await txOf(txHash), policy, await timeOf(act.joined.swap.blockNumber), blockHashes.get(`${txHash}:${act.joined.swap.logIndex}`) ?? null);
         result.trades += 1;
         if (wrote === "curve_trades") result.curveTrades += 1;
         if (wrote === "dex_trades") result.dexTrades += 1;
       } else if (act.event) {
         result.events += 1;
-        const grad = await applyEvent(ctx, act.event, pools, await timeOf(act.event.blockNumber));
+        const grad = await applyEvent(ctx, act.event, pools, await timeOf(act.event.blockNumber), txOf, txEvents);
         if (grad) result.graduations += 1;
       }
     }
@@ -303,6 +308,15 @@ async function applyLaunches(ctx: Ctx, events: Gen8Event[], timeOf: (n: number) 
   return n;
 }
 
+async function linkedProfile(db: Queryable, cfg: Gen8ChainConfig, policy: Gen8LinkPolicy, tx: TxInfo, swapSender: string, at: Date) {
+  const profile = await resolveGen8Profile(db, tx.from, at);
+  if (profile === "standard_unlinked") return profile;
+  const quick = gen8LinkCheck(policy, { txFrom: tx.from, txTo: tx.to, swapSender, distinctSwapSenders: 0 });
+  if (!quick.linkable) return "standard_unlinked";
+  const n = await gen8DistinctSwapSenders(db, cfg.chainId, tx.from, swapSender);
+  return gen8LinkCheck(policy, { txFrom: tx.from, txTo: tx.to, swapSender, distinctSwapSenders: n }).linkable ? profile : "standard_unlinked";
+}
+
 /** The pool's price state after a swap, from Swap.sqrtPriceX96 (exact; never the fill VWAP). */
 function priceState(pool: Gen8PoolRow, sqrtPriceX96: bigint, graduated: boolean) {
   const price = nativePerCoin(sqrtPriceX96);
@@ -311,8 +325,9 @@ function priceState(pool: Gen8PoolRow, sqrtPriceX96: bigint, graduated: boolean)
   return { price, mcap, progress, priceWei: nativePerCoinWei(sqrtPriceX96) };
 }
 
-async function applyTrade(ctx: Ctx, pool: Gen8PoolRow, j: JoinedSwap, txFrom: string, blockTime: Date, blockHash: string | null): Promise<"curve_trades" | "dex_trades" | null> {
+async function applyTrade(ctx: Ctx, pool: Gen8PoolRow, j: JoinedSwap, tx: TxInfo, policy: Gen8LinkPolicy, blockTime: Date, blockHash: string | null): Promise<"curve_trades" | "dex_trades" | null> {
   const { cfg, db, sinks } = ctx;
+  const txFrom = tx.from;
   const tsSec = Math.floor(blockTime.getTime() / 1000);
   const phase = j.fee.graduated ? "post" : "bonding";
   const viaEscrow = Boolean(cfg.escrow && j.fee.swapSender === cfg.escrow);
@@ -321,8 +336,9 @@ async function applyTrade(ctx: Ctx, pool: Gen8PoolRow, j: JoinedSwap, txFrom: st
   // audit 10.2: league exclusion = tx.from is the current creator, or the swap came through the escrow. Also the
   // launcher's first buy (the creator's) and the choice vault's buybacks (operator-sent, burned coins; excluded from
   // league volume and trader stats like creator and escrow trades; PENDING FOUNDER CONFIRMATION, step-2 finding).
+  // D-L2 / F12: also the hook creator, and the swap sender as well as tx.from (gen8LeagueExcluded).
   const viaChoiceVault = Boolean(cfg.choiceVault && j.fee.swapSender === cfg.choiceVault);
-  const leagueExcluded = txFrom === pool.creator || viaEscrow || viaLauncher || viaChoiceVault;
+  const leagueExcluded = gen8LeagueExcluded(cfg, pool, txFrom, j.fee.swapSender);
   const state = priceState(pool, j.swap.sqrtPriceX96, j.fee.graduated);
   if (j.anomalies.length) {
     await sinks.raiseAlert({ severity: "warning", kind: "gen8_swap_anomaly", chainId: cfg.chainId, subject: `${j.swap.txHash}:${j.swap.logIndex}`, title: "Gen-8 swap and fee log disagree", message: `${j.anomalies.join(", ")} on ${j.swap.txHash} log ${j.swap.logIndex}` });
@@ -340,7 +356,9 @@ async function applyTrade(ctx: Ctx, pool: Gen8PoolRow, j: JoinedSwap, txFrom: st
   // D1 accrual (idempotent on the HookFee log) and, in the bonding phase, the reward_events row.
   // Buybacks (swap sender = our creator-choice vault) are attributed UNLINKED, like the Solana DBC buyback whose
   // operator wallet is unlinked. PENDING FOUNDER CONFIRMATION (step-2 finding, 2026-10-11).
-  const profile = phase === "bonding" ? (viaChoiceVault ? "standard_unlinked" : await resolveGen8Profile(db, txFrom, blockTime)) : null;
+  // C-M4 / F9: a recruiter / squad link counts only for a trade the wallet sent itself through an allowed router
+  // (gen8LinkPolicy); relayed, bundled or forwarded trades are unlinked.
+  const profile = phase === "bonding" ? (viaChoiceVault ? "standard_unlinked" : await linkedProfile(db, cfg, policy, tx, j.fee.swapSender, blockTime)) : null;
   const accrual: Gen8AccrualRow = {
     chainId: cfg.chainId, hook: cfg.hook.address, poolId: pool.poolId, token: pool.token, txHash: j.fee.txHash, logIndex: j.fee.logIndex, swapLogIndex: j.swap.logIndex,
     blockNumber: j.fee.blockNumber, blockTime, kind: "trade", phase, trader: txFrom, swapSender: j.fee.swapSender,
@@ -441,7 +459,7 @@ async function applyTrade(ctx: Ctx, pool: Gen8PoolRow, j: JoinedSwap, txFrom: st
   return "dex_trades";
 }
 
-async function applyEvent(ctx: Ctx, e: Gen8Event, pools: Map<string, Gen8PoolRow>, at: Date): Promise<boolean> {
+async function applyEvent(ctx: Ctx, e: Gen8Event, pools: Map<string, Gen8PoolRow>, at: Date, txOf?: (tx: string) => Promise<TxInfo>, txEvents: Gen8Event[] = []): Promise<boolean> {
   const { cfg, db, sinks } = ctx;
   const kind = e.address === cfg.hook.address ? "gen8_hook" : e.address === cfg.launcher.address ? "gen8_launcher" : cfg.splitter && e.address === cfg.splitter.address ? "gen8_splitter" : "gen8_choice_vault";
   const poolIdOf = (e as any).poolId as string | undefined;
@@ -473,11 +491,54 @@ async function applyEvent(ctx: Ctx, e: Gen8Event, pools: Map<string, Gen8PoolRow
       return false;
     }
     case "Routed": {
-      await recordRoutedRun(db, cfg, e, at, (a) => sinks.raiseAlert({ ...a, kind: a.kind }));
+      await recordRoutedRun(db, cfg, e, at, (a) => sinks.raiseAlert({ ...a, kind: a.kind }), ctx.env);
       return false;
     }
     case "RouterProposed":
       if (fresh) await sinks.raiseAlert({ severity: "critical", kind: "gen8_router_proposed", chainId: cfg.chainId, subject: `${e.router}:${e.eta}`, title: `Gen-8 hook: new TreasuryRouter proposed on chain ${cfg.chainId}`, message: `RouterProposed(${e.router}), executable at ${new Date(Number(e.eta) * 1000).toISOString()}. Tx ${e.txHash}.` });
+      return false;
+    case "RouterClaimed": {
+      // F11 (audit C-M1 / C-M2): a claim not sent by our operator (or a listed claimer) is a foreign claim. It moves
+      // no money anywhere else (the bucket always goes to the current router), but it can stall a planned run, so it
+      // is reported. The A4 flush inside a router change (same transaction as RouterChanged) is the Safe's own.
+      if (!fresh || !txOf) return false;
+      if (txEvents.some((x) => x.kind === "RouterChanged" && x.txHash === e.txHash)) return false;
+      const tx = await txOf(e.txHash);
+      const known = await gen8KnownClaimers(db, cfg.chainId, cfg.splitter?.address ?? null, ctx.env);
+      if (!known.has(tx.from)) {
+        await sinks.raiseAlert({
+          severity: "warning", kind: "gen8_foreign_router_claim", chainId: cfg.chainId, subject: e.txHash,
+          title: `Gen-8 hook: claimRouter() sent by an unknown wallet on chain ${cfg.chainId}`,
+          message: `RouterClaimed(${e.router}, ${e.amount}) in ${e.txHash} was sent by ${tx.from}, not by the splitter operator${known.size ? ` (${[...known].join(", ")})` : " (no operator indexed yet; set EVM_GEN8_ROUTER_CLAIMERS_" + cfg.chainId + ")"}. The money went to the router; a planned run may need a re-plan.`,
+        });
+      }
+      return false;
+    }
+    case "RouterChanged":
+      if (fresh) await sinks.raiseAlert({ severity: "critical", kind: "gen8_router_changed", chainId: cfg.chainId, subject: `${e.previous}:${e.next}`, title: `Gen-8 hook: TreasuryRouter changed on chain ${cfg.chainId}`, message: `RouterChanged(${e.previous} -> ${e.next}) in ${e.txHash}.` });
+      return false;
+    case "RouterProposalCancelled":
+      if (fresh) await sinks.raiseAlert({ severity: "warning", kind: "gen8_router_proposal_cancelled", chainId: cfg.chainId, subject: e.txHash, title: `Gen-8 hook: TreasuryRouter proposal cancelled on chain ${cfg.chainId}`, message: `RouterProposalCancelled(${e.router}) in ${e.txHash}.` });
+      return false;
+    case "OwnershipTransferStarted":
+    case "OwnershipTransferred":
+      if (fresh) {
+        await sinks.raiseAlert({
+          severity: "critical", kind: e.kind === "OwnershipTransferStarted" ? "gen8_ownership_transfer_started" : "gen8_ownership_transferred", chainId: cfg.chainId, subject: `${e.source}:${e.txHash}`,
+          title: `Gen-8 ${e.source}: ownership ${e.kind === "OwnershipTransferStarted" ? "transfer started" : "transferred"} on chain ${cfg.chainId}`,
+          message: `${e.kind}(${e.previous} -> ${e.next}) on the ${e.source} ${e.address} in ${e.txHash}.`,
+        });
+      }
+      return false;
+    case "OperatorUpdated":
+      if (fresh) {
+        const initial = e.source === "splitter" && /^0x0{40}$/.test(e.previous);
+        await sinks.raiseAlert({
+          severity: initial ? "info" : e.source === "splitter" ? "critical" : "warning", kind: e.source === "splitter" ? "gen8_splitter_operator_updated" : "gen8_choice_vault_operator_updated", chainId: cfg.chainId, subject: e.txHash,
+          title: `Gen-8 ${e.source === "splitter" ? "MwzFeeSplitter" : "choice vault"} operator ${initial ? "set" : "changed"} on chain ${cfg.chainId}`,
+          message: e.source === "splitter" ? `OperatorUpdated(${e.previous} -> ${e.next}) in ${e.txHash}.` : `OperatorUpdated(${e.next}, paused ${e.paused}) in ${e.txHash}.`,
+        });
+      }
       return false;
     case "RouterFlushFailed":
       if (fresh) await sinks.raiseAlert({ severity: "critical", kind: "gen8_router_flush_failed", chainId: cfg.chainId, subject: e.txHash, title: `Gen-8 hook: router flush failed on chain ${cfg.chainId}`, message: `RouterFlushFailed(${e.router}, ${e.amount}) in ${e.txHash}.` });
@@ -566,8 +627,8 @@ async function applyGraduation(ctx: Ctx, pool: Gen8PoolRow, e: Extract<Gen8Event
 
 export async function runGen8ChainOnce(ctx: Ctx, opts: { maxBlocks?: number } = {}): Promise<{ from: number; to: number; result: Gen8RangeResult } | null> {
   const { cfg, db, provider, env } = ctx;
-  const confirmations = intEnv(env.EVM_GEN8_CONFIRMATIONS, 1, 0, 64);
-  const head = (await provider.getBlockNumber()) - confirmations;
+  // F10 (audit C-M5): only up to the finalized (BNB) / safe (Robinhood) block, never a block that can be reorganised.
+  const head = await gen8SafeHead(provider, cfg.chainId, env);
   const cursor = gen8Cursor(cfg);
   const stored = await getCursor(db, cfg.chainId, cursor);
   const from = Math.max(stored, cfg.startBlock);

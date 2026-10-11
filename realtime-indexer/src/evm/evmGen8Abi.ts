@@ -13,6 +13,9 @@ export const GEN8_LAUNCHER_EVENTS = [
   "event LaunchMetadata(address indexed token, bytes32 indexed id, string name, string symbol, string logoURI, string xAccount, string website, string extraLink, bytes32 metadataHash)",
   "event CreatePauseUpdated(bool paused)",
   "event CreateSignerUpdated(address indexed previous, address indexed next)",
+  // Control events (audit C-L5, F11): the indexer alerts on each one. Same signatures on the hook.
+  "event OwnershipTransferStarted(address indexed current, address indexed next)",
+  "event OwnershipTransferred(address indexed previous, address indexed next)",
 ] as const;
 
 export const GEN8_HOOK_EVENTS = [
@@ -28,16 +31,20 @@ export const GEN8_HOOK_EVENTS = [
   "event RouterChanged(address indexed previous, address indexed next)",
   "event RouterProposalCancelled(address indexed router)",
   "event DisplayUpdateFailed(bytes32 indexed id)",
+  "event OwnershipTransferStarted(address indexed current, address indexed next)",
+  "event OwnershipTransferred(address indexed previous, address indexed next)",
 ] as const;
 
 export const GEN8_SPLITTER_EVENTS = [
+  "event OperatorUpdated(address indexed previous, address indexed next)",
   "event Routed(uint256 indexed runId, bytes32 indexed accrualRoot, address indexed caller, (uint256 total, uint256 bondingFees, uint256 gradFees, uint256 weeklyLeague, uint256 monthlyLeague, uint256 recruiter, uint256 squad, uint256 airdrop, uint256 protocol) run)",
 ] as const;
 
-/** Choice vault: only the creator hand-over matters to the indexer (owner of a choice coin). */
+/** Choice vault: the creator hand-over (owner of a choice coin) and its operator key (alert only). */
 export const GEN8_CHOICE_VAULT_EVENTS = [
   "event CoinRegistered(bytes32 indexed id, address indexed token, address indexed creator, uint8 choice, uint8 creatorPct)",
   "event CreatorTransferred(bytes32 indexed id, address indexed previous, address indexed next)",
+  "event OperatorUpdated(address indexed operator, bool paused)",
 ] as const;
 
 export const V4_POOL_MANAGER_EVENTS = [
@@ -97,6 +104,10 @@ export const GEN8_TOPICS = {
   RouterProposalCancelled: topic(GEN8_HOOK_IFACE, "RouterProposalCancelled"),
   DisplayUpdateFailed: topic(GEN8_HOOK_IFACE, "DisplayUpdateFailed"),
   Routed: topic(GEN8_SPLITTER_IFACE, "Routed"),
+  SplitterOperatorUpdated: topic(GEN8_SPLITTER_IFACE, "OperatorUpdated"),
+  VaultOperatorUpdated: topic(GEN8_CHOICE_VAULT_IFACE, "OperatorUpdated"),
+  OwnershipTransferStarted: topic(GEN8_HOOK_IFACE, "OwnershipTransferStarted"),
+  OwnershipTransferred: topic(GEN8_HOOK_IFACE, "OwnershipTransferred"),
   CoinRegistered: topic(GEN8_CHOICE_VAULT_IFACE, "CoinRegistered"),
   Swap: topic(V4_POOL_MANAGER_IFACE, "Swap"),
   Initialize: topic(V4_POOL_MANAGER_IFACE, "Initialize"),

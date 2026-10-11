@@ -43,6 +43,30 @@ type Alert = (a: { severity: "critical" | "warning" | "info"; kind: string; chai
 
 const big = (v: unknown) => BigInt(String(v ?? "0").split(".")[0] || "0");
 
+/**
+ * Wallets allowed to call hook.claimRouter() (audit C-M1 / F11 foreign-claim alert): the splitter operator as indexed
+ * from its OperatorUpdated events, plus EVM_GEN8_ROUTER_CLAIMERS_<id> (the Safe, a backup operator).
+ */
+export async function gen8KnownClaimers(db: Queryable, chainId: number, splitter: string | null, env: NodeJS.ProcessEnv = process.env): Promise<Set<string>> {
+  const out = new Set<string>(
+    String(env[`EVM_GEN8_ROUTER_CLAIMERS_${chainId}`] || "")
+      .split(/[\s,;]+/)
+      .map((s) => s.trim().toLowerCase())
+      .filter((s) => /^0x[0-9a-f]{40}$/.test(s)),
+  );
+  if (splitter) {
+    const r = await db.query(
+      `select args->>'next' as next from public.evm_campaign_events
+        where chain_id = $1 and contract_address = $2 and event_name = 'OperatorUpdated'
+        order by block_number desc, log_index desc limit 1`,
+      [chainId, splitter],
+    );
+    const op = String(r.rows[0]?.next || "").toLowerCase();
+    if (/^0x[0-9a-f]{40}$/.test(op) && op !== "0x0000000000000000000000000000000000000000") out.add(op);
+  }
+  return out;
+}
+
 export type Gen8Claim = { blockNumber: number; logIndex: number; txHash: string; amount: bigint; bondingFees: bigint; gradFees: bigint; cumulative: bigint };
 
 /** RouterClaimed events paying the splitter (claimRouter or the A4 flush), in order, with the cumulative amount. */
@@ -92,14 +116,54 @@ function sumRows(rows: any[]) {
   return { B, G, T };
 }
 
+const RUN_FIELDS = [
+  ["total", "total"], ["bonding_fees", "bondingFees"], ["grad_fees", "gradFees"], ["weekly_league", "weeklyLeague"], ["monthly_league", "monthlyLeague"],
+  ["recruiter", "recruiter"], ["squad", "squad"], ["airdrop", "airdrop"], ["protocol", "protocol"],
+] as const;
+
+/**
+ * F11 (audit C-L3): what a Routed event did differently from the run we planned (amounts, accrualRoot, caller).
+ * `planned` is the evm_gen8_route_runs row before the event (null: no plan at all). `operators` are the wallets that
+ * may call route() for us (the plan's caller, else the indexed splitter operator / EVM_GEN8_ROUTER_CLAIMERS_<id>).
+ */
+export function routedPlanDifferences(planned: Record<string, any> | null | undefined, e: Pick<RoutedEvent, "run" | "accrualRoot" | "caller">, operators: Set<string>): string[] {
+  if (!planned || planned.status === "confirmed") return planned ? [] : ["no plan for this run"];
+  const diffs: string[] = [];
+  for (const [col, key] of RUN_FIELDS) {
+    const want = planned[col];
+    const got = e.run[key];
+    if (want === null || want === undefined || big(want) !== got) diffs.push(`${col} planned ${want ?? "none"} routed ${got}`);
+  }
+  if (String(planned.accrual_root || "").toLowerCase() !== e.accrualRoot.toLowerCase()) diffs.push(`accrualRoot planned ${planned.accrual_root ?? "none"} routed ${e.accrualRoot}`);
+  const expected = planned.caller ? new Set([String(planned.caller).toLowerCase()]) : operators;
+  if (!expected.has(e.caller.toLowerCase())) diffs.push(`caller ${e.caller} is not ${expected.size ? [...expected].join(" / ") : "a known operator"}`);
+  return diffs;
+}
+
 /** Called by the ingest loop for every Routed log of the splitter. Idempotent. */
-export async function recordRoutedRun(db: Queryable, cfg: Gen8ChainConfig, e: RoutedEvent, _at: Date, alert?: Alert) {
+export async function recordRoutedRun(db: Queryable, cfg: Gen8ChainConfig, e: RoutedEvent, _at: Date, alert?: Alert, env: NodeJS.ProcessEnv = process.env) {
   if (!cfg.splitter) return;
   const splitter = cfg.splitter.address;
   const runId = Number(e.runId);
   const r = e.run;
-  const prior = await db.query(`select status, leaves, accrual_root from public.evm_gen8_route_runs where chain_id = $1 and splitter_address = $2 and run_id = $3`, [cfg.chainId, splitter, runId]);
+  const prior = await db.query(
+    `select status, leaves, accrual_root, total, bonding_fees, grad_fees, weekly_league, monthly_league, recruiter, squad, airdrop, protocol, caller, tx_hash
+       from public.evm_gen8_route_runs where chain_id = $1 and splitter_address = $2 and run_id = $3`,
+    [cfg.chainId, splitter, runId],
+  );
   const planned = prior.rows[0];
+  // F11: every Routed is compared with our plan; a run nobody planned, or one that differs, is a critical alert (a
+  // stolen operator key or the Safe routing by hand). A re-scan of an already confirmed run compares nothing.
+  if (!planned || planned.status !== "confirmed") {
+    const diffs = routedPlanDifferences(planned, e, await gen8KnownClaimers(db, cfg.chainId, splitter, env));
+    if (diffs.length) {
+      await alert?.({
+        severity: "critical", kind: "gen8_routed_differs_from_plan", chainId: cfg.chainId, subject: `${runId}:${e.txHash}`,
+        title: `Gen-8 run ${runId} was routed differently from our plan on chain ${cfg.chainId}`,
+        message: `Routed in ${e.txHash} by ${e.caller}: ${diffs.join("; ")}.`,
+      });
+    }
+  }
   await db.query(
     `insert into public.evm_gen8_route_runs(
        chain_id, splitter_address, run_id, status, total, bonding_fees, grad_fees, weekly_league, monthly_league, recruiter, squad, airdrop, protocol,
@@ -161,6 +225,8 @@ export type Gen8RouteChain = {
   sendRoute(args: { runId: bigint; expectedPaid: bigint; recruiter: bigint; squad: bigint; airdrop: bigint; root: string }): Promise<string>;
   waitReceipt(hash: string): Promise<{ status: number } | null>;
   headBlock(): Promise<number>;
+  /** F11: true while the node still knows the transaction (mined or in its mempool), false once it is dropped. */
+  txKnown?(hash: string): Promise<boolean>;
 };
 
 export function ethersRouteChain(cfg: Gen8ChainConfig, provider: ethers.JsonRpcProvider, signer: ethers.Signer | null): Gen8RouteChain {
@@ -202,6 +268,9 @@ export function ethersRouteChain(cfg: Gen8ChainConfig, provider: ethers.JsonRpcP
       return r ? { status: Number(r.status) } : null;
     },
     headBlock: () => provider.getBlockNumber(),
+    async txKnown(hash) {
+      return (await provider.getTransaction(hash)) !== null;
+    },
   };
 }
 
@@ -225,6 +294,12 @@ export async function runGen8RoutePass(opts: {
   minWei?: bigint;
   alert?: Alert;
   mismatchMemory?: Map<string, number>;
+  /** F11: consecutive PaidMismatch re-plans per chain; an alert after `paidMismatchAlertAfter` (3) in a row. */
+  paidMismatchStreak?: Map<string, number>;
+  paidMismatchAlertAfter?: number;
+  /** F11: a sent route() with no receipt for this long is checked: dropped -> re-planned and re-sent, else alerted. */
+  dropAfterMs?: number;
+  now?: () => number;
 }): Promise<Gen8RoutePass> {
   const { db, cfg, chain } = opts;
   if (!cfg.splitter) return { status: "skipped", reason: "no-splitter" };
@@ -235,13 +310,29 @@ export async function runGen8RoutePass(opts: {
   const n = Math.min(indexedThrough, await chain.headBlock());
 
   // A sent run waiting for its Routed event (or that failed) blocks a new plan.
-  const open = await db.query(`select run_id, tx_hash from public.evm_gen8_route_runs where chain_id = $1 and splitter_address = $2 and status = 'sent' order by run_id desc limit 1`, [cfg.chainId, splitter]);
+  const open = await db.query(`select run_id, tx_hash, updated_at from public.evm_gen8_route_runs where chain_id = $1 and splitter_address = $2 and status = 'sent' order by run_id desc limit 1`, [cfg.chainId, splitter]);
   if (open.rows[0]) {
-    const receipt = open.rows[0].tx_hash ? await chain.waitReceipt(String(open.rows[0].tx_hash)).catch(() => null) : null;
+    const sentTx = open.rows[0].tx_hash ? String(open.rows[0].tx_hash) : null;
+    const receipt = sentTx ? await chain.waitReceipt(sentTx).catch(() => null) : null;
+    const setFailed = (why: string) =>
+      db.query(`update public.evm_gen8_route_runs set status = 'failed', error = $4, updated_at = now() where chain_id = $1 and splitter_address = $2 and run_id = $3 and status = 'sent'`, [cfg.chainId, splitter, open.rows[0].run_id, why]);
+    const ageMs = open.rows[0].updated_at ? (opts.now ?? Date.now)() - new Date(open.rows[0].updated_at).getTime() : 0;
+    const dropAfter = opts.dropAfterMs ?? 15 * 60_000;
     if (receipt && receipt.status === 0) {
-      await db.query(`update public.evm_gen8_route_runs set status = 'failed', error = 'reverted', updated_at = now() where chain_id = $1 and splitter_address = $2 and run_id = $3 and status = 'sent'`, [cfg.chainId, splitter, open.rows[0].run_id]);
+      await setFailed("reverted");
+    } else if (!receipt && sentTx && ageMs > dropAfter && chain.txKnown) {
+      // F11 (audit C-L5): a route() transaction that never got a receipt. Dropped from the mempool: mark it failed
+      // and re-plan now (route() takes runs + 1 and expectedPaid, so a late copy of the old one can only revert).
+      // Still pending: alert, keep waiting.
+      const known = await chain.txKnown(sentTx).catch(() => true);
+      if (known) {
+        await opts.alert?.({ severity: "warning", kind: "gen8_route_stuck", chainId: cfg.chainId, subject: sentTx, title: `Gen-8 route() pending for ${Math.round(ageMs / 60_000)} minutes on chain ${cfg.chainId}`, message: `Run ${open.rows[0].run_id}: ${sentTx} has no receipt yet and is still known to the node. Check the operator's gas price.` });
+        return { status: "skipped", reason: "run-sent-awaiting-routed", detail: { runId: String(open.rows[0].run_id), tx: sentTx, stuck: true } };
+      }
+      await setFailed("dropped");
+      await opts.alert?.({ severity: "warning", kind: "gen8_route_dropped", chainId: cfg.chainId, subject: sentTx, title: `Gen-8 route() transaction dropped on chain ${cfg.chainId}`, message: `Run ${open.rows[0].run_id}: ${sentTx} had no receipt after ${Math.round(ageMs / 60_000)} minutes and the node no longer knows it. The run is re-planned and re-sent.` });
     } else {
-      return { status: "skipped", reason: "run-sent-awaiting-routed", detail: { runId: String(open.rows[0].run_id), tx: open.rows[0].tx_hash } };
+      return { status: "skipped", reason: "run-sent-awaiting-routed", detail: { runId: String(open.rows[0].run_id), tx: sentTx } };
     }
   }
 
@@ -287,7 +378,16 @@ export async function runGen8RoutePass(opts: {
     return { status: "skipped", reason: "accruals-do-not-match-claim", detail: { claim: cut.txHash, indexed: { B: sums.B.toString(), G: sums.G.toString(), T: sums.T.toString() }, chain: { B: B.toString(), G: G.toString(), T: T.toString() } } };
   }
   opts.mismatchMemory?.delete(`${cfg.chainId}`);
-  if (T < minWei) return { status: "skipped", reason: "below-minimum", detail: { total: T.toString(), minWei: minWei.toString() } };
+  if (T < minWei) {
+    // Audit C-M2 (off-chain part of F4): a foreign claim of a dust bucket would otherwise park the worker for good
+    // (pending dust < minimum, and claim-first never claims while something is pending). When the hook holds enough
+    // to reach the minimum, claim it too: the next pass plans one run over both claims.
+    if (opts.send && s.routerOwed > 0n && T + s.routerOwed >= minWei && s.treasuryRouter === splitter && (!opts.operatorAddress || opts.operatorAddress.toLowerCase() === s.operator)) {
+      const c = await chain.sendClaim();
+      return { status: "claimed", txHash: c.hash, blockNumber: c.blockNumber };
+    }
+    return { status: "skipped", reason: "below-minimum", detail: { total: T.toString(), minWei: minWei.toString() } };
+  }
 
   // 4. Amounts (step-2 aggregate rule) within bands(B, G).
   const agg = emptyProfileSums();
@@ -320,20 +420,22 @@ export async function runGen8RoutePass(opts: {
     await db.query(
       `insert into public.evm_gen8_route_runs(
          chain_id, splitter_address, run_id, status, plan_block, total, bonding_fees, grad_fees, weekly_league, monthly_league,
-         recruiter, squad, airdrop, protocol, rounding_airdrop, carried, accrual_root, leaf_count, leaves, tx_hash, error, updated_at
-       ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18,$19::jsonb,$20,null,now())
+         recruiter, squad, airdrop, protocol, rounding_airdrop, carried, accrual_root, leaf_count, leaves, tx_hash, caller, error, updated_at
+       ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18,$19::jsonb,$20,$21,null,now())
        on conflict (chain_id, splitter_address, run_id) do update set
          status = excluded.status, plan_block = excluded.plan_block, total = excluded.total, bonding_fees = excluded.bonding_fees,
          grad_fees = excluded.grad_fees, weekly_league = excluded.weekly_league, monthly_league = excluded.monthly_league,
          recruiter = excluded.recruiter, squad = excluded.squad, airdrop = excluded.airdrop, protocol = excluded.protocol,
          rounding_airdrop = excluded.rounding_airdrop, carried = excluded.carried, accrual_root = excluded.accrual_root,
-         leaf_count = excluded.leaf_count, leaves = excluded.leaves, tx_hash = excluded.tx_hash, error = null, updated_at = now()
+         leaf_count = excluded.leaf_count, leaves = excluded.leaves, tx_hash = excluded.tx_hash, caller = excluded.caller, error = null, updated_at = now()
        where public.evm_gen8_route_runs.status in ('dry_run', 'failed')`,
       [
         cfg.chainId, splitter, runId.toString(), status, n, T.toString(), B.toString(), G.toString(), bands.weekly.toString(), bands.monthly.toString(),
         plan.recruiter.toString(), plan.squad.toString(), plan.airdrop.toString(), protocol.toString(), plan.rounding.toString(),
         JSON.stringify({}),
         root, leaves.length, JSON.stringify(leavesJson), txHash,
+        // F11: the wallet expected to send route(); recordRoutedRun compares Routed.caller with it.
+        opts.operatorAddress ? opts.operatorAddress.toLowerCase() : null,
       ],
     );
   };
@@ -353,11 +455,20 @@ export async function runGen8RoutePass(opts: {
     const data = String((error as any)?.data ?? (error as any)?.info?.error?.data ?? "");
     const paidMismatch = data.startsWith(PAID_MISMATCH_SELECTOR) || /PaidMismatch|3897fc19/.test(msg);
     await writePlan("dry_run", null);
+    if (paidMismatch && opts.paidMismatchStreak) {
+      // F11: one PaidMismatch is a race; several in a row means someone keeps claiming between our plan and route.
+      const streak = (opts.paidMismatchStreak.get(`${cfg.chainId}`) ?? 0) + 1;
+      opts.paidMismatchStreak.set(`${cfg.chainId}`, streak);
+      if (streak >= (opts.paidMismatchAlertAfter ?? 3)) {
+        await opts.alert?.({ severity: "critical", kind: "gen8_paid_mismatch_repeated", chainId: cfg.chainId, subject: `${runId}:${streak}`, title: `Gen-8 route() hit PaidMismatch ${streak} times in a row on chain ${cfg.chainId}`, message: `Run ${runId}: every route() since the last success reverted PaidMismatch (a claim landed between plan and route). Look for foreign claimRouter() calls (gen8_foreign_router_claim).` });
+      }
+    }
     await db.query(`update public.evm_gen8_route_runs set error = $4 where chain_id = $1 and splitter_address = $2 and run_id = $3`, [cfg.chainId, splitter, runId.toString(), msg.slice(0, 500)]);
     // PaidMismatch: someone claimed after our read; the next pass re-plans up to the newer claim.
     return { status: "skipped", reason: paidMismatch ? "paid-mismatch-replan" : "route-simulation-or-send-failed", detail: { error: msg.slice(0, 300) } };
   }
   await writePlan("sent", hash);
+  opts.paidMismatchStreak?.delete(`${cfg.chainId}`);
   return { ...planned, status: "sent", txHash: hash };
 }
 
@@ -407,6 +518,9 @@ export function startEvmGen8FeeRoutingWorker(opts: { db: Queryable; providerFor:
     // keep default
   }
   const mismatchMemory = new Map<string, number>();
+  const paidMismatchStreak = new Map<string, number>();
+  const paidMismatchAlertAfter = intEnv(env.EVM_GEN8_PAID_MISMATCH_ALERT_AFTER, 3, 1);
+  const dropAfterMs = intEnv(env.EVM_GEN8_ROUTE_DROP_MINUTES, 15, 1) * 60_000;
   void (async () => {
     const watchdog = await import("./payoutWatchdogWorker.js");
     const alert = (a: any) => watchdog.raiseAlert(opts.db as any, { ...a, rewardType: GEN8_ROUTING_ALERT_TYPE });
@@ -429,7 +543,7 @@ export function startEvmGen8FeeRoutingWorker(opts: { db: Queryable; providerFor:
         if (running) return;
         running = true;
         try {
-          const r = await runGen8RoutePass({ db: opts.db, cfg, chain, send: Boolean(send && operator), operatorAddress: operator ? await operator.getAddress() : null, minWei, alert, mismatchMemory });
+          const r = await runGen8RoutePass({ db: opts.db, cfg, chain, send: Boolean(send && operator), operatorAddress: operator ? await operator.getAddress() : null, minWei, alert, mismatchMemory, paidMismatchStreak, paidMismatchAlertAfter, dropAfterMs });
           console.log("[gen8-fee] pass", { chainId: cfg.chainId, ...r });
           await checkGen8Backlog(opts.db, cfg, backlogHours, alert);
         } catch (error) {
