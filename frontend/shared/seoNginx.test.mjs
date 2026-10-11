@@ -168,6 +168,11 @@ test("robots map", () => {
 test("embed, assets and index.html routing", () => {
   assert.deepEqual([pickLocation("/embed/chart/101/x").mod, pickLocation("/embed/chart/101/x").pattern], ["^~", "/embed/chart/"]);
   assert.deepEqual([pickLocation("/embed/other").mod, pickLocation("/embed/other").pattern], ["^~", "/embed/"]);
+  for (const p of ["/api/arena/battles", "/api/price/bnb-usd", "/api/arena/league?chainId=56".split("?")[0]]) {
+    const l = pickLocation(p);
+    assert.deepEqual([l.mod, l.pattern], ["^~", "/api/"], p);
+    assert.deepEqual(dirsOf(l, "try_files")[0].args, ["/index.html", "=404"]);
+  }
   assert.deepEqual([pickLocation("/assets/x.js").mod, pickLocation("/assets/x.js").pattern], ["^~", "/assets/"]);
   const idx = pickLocation("/index.html");
   assert.equal(isRedirect(idx), false);
@@ -186,15 +191,16 @@ test("header sets per location", () => {
       assert.equal(d.args.at(-1), "always", `${l.mod} ${l.pattern} ${d.args[0]}`);
     }
   }
-  const defaults = [find("=", "/"), find("^~", "/embed/"), find("", "/"), locations.find((l) => l.mod === "~" && dirsOf(l, "try_files").length)];
+  const defaults = [find("=", "/"), find("^~", "/embed/"), find("^~", "/api/"), find("", "/"), locations.find((l) => l.mod === "~" && dirsOf(l, "try_files").length)];
   for (const l of defaults) {
     assert.ok(l, "default-set location missing");
     assert.deepEqual(headerNames(l), DEFAULT_SET, `${l.mod} ${l.pattern}`);
     assert.match(val(l, "Content-Security-Policy").args[1], /^frame-ancestors 'none'$/);
     assert.equal(val(l, "X-Frame-Options").args[1], "DENY");
-    if (l.pattern !== "/embed/") assert.equal(val(l, "X-Robots-Tag").args[1], "$robots_tag", l.pattern);
+    if (l.pattern !== "/embed/" && l.pattern !== "/api/") assert.equal(val(l, "X-Robots-Tag").args[1], "$robots_tag", l.pattern);
   }
   assert.equal(val(find("^~", "/embed/"), "X-Robots-Tag").args[1], "noindex");
+  assert.equal(val(find("^~", "/api/"), "X-Robots-Tag").args[1], "noindex");
   const chart = find("^~", "/embed/chart/");
   assert.deepEqual(headerNames(chart), ["Content-Security-Policy", "X-Robots-Tag"]);
   assert.match(val(chart, "Content-Security-Policy").args[1], /crypticpump\.com/);
