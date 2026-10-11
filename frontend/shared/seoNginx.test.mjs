@@ -252,8 +252,8 @@ test("renderer proxy directives and @spa fallback", () => {
     assert.deepEqual(one(l, "proxy_intercept_errors"), ["on"]);
     const ep = dirsOf(l, "error_page");
     assert.equal(ep.length, 1);
-    assert.deepEqual(ep[0].args, ["401", "403", "408", "429", "500", "502", "503", "504", "=", "@spa"]);
-    assert.ok(!ep[0].args.includes("404"));
+    assert.deepEqual(ep[0].args, ["401", "403", "404", "408", "429", "500", "502", "503", "504", "=", "@spa"]);
+    assert.ok(!ep[0].args.includes("410"));
     const hidden = dirsOf(l, "proxy_hide_header").map((d) => d.args[0]).sort();
     assert.deepEqual(hidden, ["Access-Control-Allow-Credentials", "Access-Control-Allow-Origin", "Content-Security-Policy", "Set-Cookie", "Strict-Transport-Security", "X-Frame-Options", "X-Powered-By"].sort());
     assert.ok(!hidden.includes("X-Robots-Tag"));
