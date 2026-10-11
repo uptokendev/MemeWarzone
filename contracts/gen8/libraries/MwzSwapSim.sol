@@ -42,11 +42,13 @@ library MwzSwapSim {
     /// @notice What a swap will fill before its price limit stops it: the input the pool consumes, fee included
     /// (exact input, amountSpecified < 0) or the output it pays (exact output, amountSpecified > 0).
     /// Returns 0 when the limit is already passed (the swap itself then reverts in the PoolManager).
-    function simulate(IPoolManager pm, PoolId id, int24 tickGrad, int24 tickStart, bool zeroForOne, int256 amountSpecified, uint160 limit)
+    /// @dev `poolManager` is an address (not IPoolManager) so the library ABI stays plain for tooling.
+    function simulate(address poolManager, PoolId id, int24 tickGrad, int24 tickStart, bool zeroForOne, int256 amountSpecified, uint160 limit)
         public
         view
         returns (uint256)
     {
+        IPoolManager pm = IPoolManager(poolManager);
         Sim memory m;
         uint24 protocolFee;
         (m.sqrtP, m.tick, protocolFee,) = pm.getSlot0(id);

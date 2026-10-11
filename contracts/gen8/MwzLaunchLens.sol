@@ -51,7 +51,7 @@ contract MwzLaunchLens {
     function previewFill(PoolId id, bool zeroForOne, int256 amountSpecified, uint160 limit) external view returns (uint256) {
         (address creator,,, int24 tickGrad, int24 tickStart,,,,) = hook.pools(id);
         if (creator == address(0)) revert UnknownPool();
-        return MwzSwapSim.simulate(poolManager, id, tickGrad, tickStart, zeroForOne, amountSpecified, limit);
+        return MwzSwapSim.simulate(address(poolManager), id, tickGrad, tickStart, zeroForOne, amountSpecified, limit);
     }
 
     /// @notice gen-7 exact-output sell definition: the curve payout that leaves `net` to the trader at `rate`.

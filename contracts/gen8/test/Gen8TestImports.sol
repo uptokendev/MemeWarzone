@@ -6,3 +6,4 @@ pragma solidity 0.8.26;
 import {PoolManager} from "@uniswap/v4-core/src/PoolManager.sol";
 import {GraduationOracle} from "../../GraduationOracle.sol";
 import {CommunityRewardsVault} from "../../CommunityRewardsVault.sol";
+import {V4Quoter} from "@uniswap/v4-periphery/src/lens/V4Quoter.sol";

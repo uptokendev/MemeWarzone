@@ -529,7 +529,7 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
             uint256 cost = FullMath.mulDiv(g, BPS, BPS + rate);
             uint256 fee = g - cost;
             if (!_noLimit(params)) {
-                uint256 fill = MwzSwapSim.simulate(poolManager, id, st.tickGrad, st.tickStart, true, -cost.toInt256(), params.sqrtPriceLimitX96);
+                uint256 fill = MwzSwapSim.simulate(address(poolManager), id, st.tickGrad, st.tickStart, true, -cost.toInt256(), params.sqrtPriceLimitX96);
                 if (fill < cost) {
                     cost = fill; // partial fill: the limit stops the curve; fee only on what fills
                     fee = (fill * rate) / BPS;
@@ -545,7 +545,7 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
             uint256 gross = MwzFeeMath.grossForNet(net, rate);
             uint256 fee = gross - net;
             if (!_noLimit(params)) {
-                uint256 fill = MwzSwapSim.simulate(poolManager, id, st.tickGrad, st.tickStart, false, gross.toInt256(), params.sqrtPriceLimitX96);
+                uint256 fill = MwzSwapSim.simulate(address(poolManager), id, st.tickGrad, st.tickStart, false, gross.toInt256(), params.sqrtPriceLimitX96);
                 if (fill < gross) {
                     gross = fill;
                     fee = (fill * rate) / BPS;

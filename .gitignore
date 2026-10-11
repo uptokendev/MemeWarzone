@@ -127,3 +127,4 @@ deployments/fork-rehearsal/
 cache-gen8
 artifacts-gen8
 typechain-types-gen8
+reports/gen8/local-*.json
