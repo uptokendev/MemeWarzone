@@ -32,8 +32,8 @@ function bps(part, whole) {
 }
 
 /** Pure decode, exported for tests: the probe's Result struct into the scan's evidence. */
-export function decodeRoundTrip(raw, amountIn) {
-  const [r] = probeInterface.decodeFunctionResult("probe", raw);
+export function decodeRoundTrip(raw, amountIn, fn = "probe") {
+  const [r] = probeInterface.decodeFunctionResult(fn, raw);
   const tokenOut = BigInt(r.tokenOut);
   const tokenReceived = BigInt(r.tokenReceived);
   const tokenIntoPool = BigInt(r.tokenIntoPool);
@@ -73,6 +73,90 @@ export async function simulateRoundTrip(provider, { kind, pool, router, weth, to
   }
   try {
     return decodeRoundTrip(raw, BigInt(amountIn));
+  } catch (error) {
+    return { ran: false, error: `decode: ${String(error?.message || error).slice(0, 180)}` };
+  }
+}
+
+const coder = ethers.AbiCoder.defaultAbiCoder();
+const BALANCE_OF = new ethers.Interface(["function balanceOf(address) view returns (uint256)"]);
+// OpenZeppelin v5 ERC20Storage (namespaced); Solady's balance slot seed.
+const OZ5_ERC20_STORAGE = "0x52c63247e1f47db19d5ce0460030c497f067ca4cebf71ba98eeadabe20bace00";
+const SOLADY_BALANCE_SEED = 0x87a211a2n;
+
+/** Every balance-slot layout we try, as holder -> storage slot. */
+function balanceSlotCandidates() {
+  const mapping = (i) => ({ label: `mapping@${i}`, slotFor: (holder) => ethers.keccak256(coder.encode(["address", "uint256"], [holder, i])) });
+  // Common layouts first (plain OZ / WETH9 / OZ v5 / Solady / OZ upgradeable v4 at 51), then the rest of 0..110.
+  const first = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 51, 52, 101];
+  const out = first.map(mapping);
+  out.push({ label: "oz5-namespaced", slotFor: (holder) => ethers.keccak256(coder.encode(["address", "bytes32"], [holder, OZ5_ERC20_STORAGE])) });
+  out.push({ label: "solady", slotFor: (holder) => ethers.keccak256(ethers.solidityPacked(["address", "uint96"], [holder, SOLADY_BALANCE_SEED])) });
+  for (let i = 11; i <= 110; i += 1) if (!first.includes(i)) out.push(mapping(i));
+  return out;
+}
+
+const balanceSlotCache = new Map();
+
+/**
+ * Where `token` keeps an address's balance, found by setting a candidate slot in an eth_call override and reading
+ * balanceOf back. Cached per token. Returns { label, slotFor } or null (unknown layout: no simulation).
+ */
+export async function findBalanceSlot(provider, token) {
+  const key = String(token).toLowerCase();
+  if (balanceSlotCache.has(key)) return balanceSlotCache.get(key);
+  const marker = 0x5eed5eedn;
+  const data = BALANCE_OF.encodeFunctionData("balanceOf", [PROBE_ADDRESS]);
+  let found = null;
+  for (const candidate of balanceSlotCandidates()) {
+    const slot = candidate.slotFor(PROBE_ADDRESS);
+    try {
+      const raw = await provider.send("eth_call", [{ to: token, data }, "latest", { [token]: { stateDiff: { [slot]: ethers.toBeHex(marker, 32) } } }]);
+      if (BigInt(raw) === marker) {
+        found = candidate;
+        break;
+      }
+    } catch {
+      // try the next layout
+    }
+  }
+  balanceSlotCache.set(key, found);
+  return found;
+}
+
+/**
+ * Uniswap V4 round trip (probeV4): buy with `quoteIn` of the pool's quote currency, sell everything back, both
+ * through the UniversalRouter. A native quote is sent as value; an ERC20 quote is preset on the probe through its
+ * balance slot, so a coin quoted in a stock token or PONS is tested with that token, as a wallet would trade it.
+ */
+export async function simulateRoundTripV4(provider, { router, permit2, poolManager, key, coinIs0, quoteIn }) {
+  const quote = coinIs0 ? key.currency1 : key.currency0;
+  const native = quote === ethers.ZeroAddress;
+  const overrides = {
+    [PROBE_ADDRESS]: { code: IMPORT_SWAP_PROBE_RUNTIME },
+    [PROBE_ORIGIN]: { balance: ethers.toQuantity(ethers.parseEther("10")) },
+  };
+  if (!native) {
+    const layout = await findBalanceSlot(provider, quote);
+    if (!layout) return { ran: false, error: `quote token ${quote} balance layout unknown` };
+    overrides[quote] = { stateDiff: { [layout.slotFor(PROBE_ADDRESS)]: ethers.toBeHex(quoteIn, 32) } };
+  }
+  const args = [router, permit2, poolManager, [key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks], coinIs0, quoteIn];
+  const call = {
+    from: PROBE_ORIGIN,
+    to: PROBE_ADDRESS,
+    value: ethers.toQuantity(native ? quoteIn : 0n),
+    data: probeInterface.encodeFunctionData("probeV4", [args]),
+    gas: ethers.toQuantity(8_000_000),
+  };
+  let raw;
+  try {
+    raw = await provider.send("eth_call", [call, "latest", overrides]);
+  } catch (error) {
+    return { ran: false, error: String(error?.shortMessage || error?.message || error).slice(0, 200) };
+  }
+  try {
+    return { ...decodeRoundTrip(raw, BigInt(quoteIn), "probeV4"), quoteToken: native ? "native" : quote };
   } catch (error) {
     return { ran: false, error: `decode: ${String(error?.message || error).slice(0, 180)}` };
   }

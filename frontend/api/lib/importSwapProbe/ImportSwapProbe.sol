@@ -61,6 +61,14 @@ interface IV3PoolLike {
         returns (int256 amount0, int256 amount1);
 }
 
+interface IPermit2Like {
+    function approve(address token, address spender, uint160 amount, uint48 expiration) external;
+}
+
+interface IUniversalRouterLike {
+    function execute(bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external payable;
+}
+
 contract ImportSwapProbe {
     uint8 internal constant KIND_V2 = 2;
     uint8 internal constant KIND_V3 = 3;
@@ -77,6 +85,100 @@ contract ImportSwapProbe {
         uint256 tokenIntoPool; // the pool's token balance increase on the sell (sell tax = received minus this)
         uint256 nativeBack; // wrapped native returned by the sell
         bytes sellError;
+    }
+
+    /// Uniswap V4 pool key; currency address(0) is the chain's native coin.
+    struct PoolKey {
+        address currency0;
+        address currency1;
+        uint24 fee;
+        int24 tickSpacing;
+        address hooks;
+    }
+
+    /// V4Router ExactInputSingleParams, UniversalRouter params layout v2.1 (the routers we pin use v2.1).
+    struct ExactInputSingleParams {
+        PoolKey poolKey;
+        bool zeroForOne;
+        uint128 amountIn;
+        uint128 amountOutMinimum;
+        uint256 minHopPriceX36;
+        bytes hookData;
+    }
+
+    struct V4Args {
+        address router; // UniversalRouter, layout v2.1
+        address permit2;
+        address poolManager;
+        PoolKey key;
+        bool coinIs0;
+        uint256 quoteIn; // native: msg.value; ERC20: preset on this address through a balance override
+    }
+
+    receive() external payable {}
+
+    /**
+     * Uniswap V4 round trip through the UniversalRouter (V4_SWAP: SWAP_EXACT_IN_SINGLE, SETTLE_ALL, TAKE_ALL), the way
+     * a wallet trades: ERC20 legs are pulled by Permit2 with transferFrom, and the pool's hook sees the router as
+     * sender. Robinhood V4 coins are often quoted in a stock token or PONS: the caller presets that balance here.
+     * Returns the quote amount spent so the loss is measured in quote units.
+     */
+    function probeV4(V4Args calldata a) external payable returns (Result memory r) {
+        address coin = a.coinIs0 ? a.key.currency0 : a.key.currency1;
+        address quote = a.coinIs0 ? a.key.currency1 : a.key.currency0;
+        uint256 pmBefore = IERC20Like(coin).balanceOf(a.poolManager);
+        try this.v4Step(a, quote, coin, a.quoteIn) {
+            r.buyOk = true;
+        } catch {
+            return r;
+        }
+        uint256 pmAfter = IERC20Like(coin).balanceOf(a.poolManager);
+        r.tokenOut = pmBefore > pmAfter ? pmBefore - pmAfter : 0;
+        r.tokenReceived = IERC20Like(coin).balanceOf(address(this));
+        if (r.tokenReceived == 0) return r;
+        uint256 quoteBefore = _balance(quote);
+        pmBefore = pmAfter;
+        try this.v4Step(a, coin, quote, r.tokenReceived) {
+            r.sellOk = true;
+            pmAfter = IERC20Like(coin).balanceOf(a.poolManager);
+            r.tokenIntoPool = pmAfter > pmBefore ? pmAfter - pmBefore : 0;
+            uint256 quoteAfter = _balance(quote);
+            r.nativeBack = quoteAfter > quoteBefore ? quoteAfter - quoteBefore : 0;
+        } catch (bytes memory err) {
+            r.sellError = err;
+        }
+    }
+
+    /// One exact-input swap of `amountIn` of `tokenIn` for `tokenOut` in the pool, through the router.
+    function v4Step(V4Args calldata a, address tokenIn, address tokenOut, uint256 amountIn) external {
+        require(msg.sender == address(this), "self");
+        require(amountIn <= type(uint128).max, "amount");
+        if (tokenIn != address(0)) {
+            _approve(tokenIn, a.permit2, amountIn);
+            IPermit2Like(a.permit2).approve(tokenIn, a.router, uint160(amountIn), uint48(block.timestamp + 600));
+        }
+        bytes[] memory params = new bytes[](3);
+        params[0] = abi.encode(
+            ExactInputSingleParams({
+                poolKey: a.key,
+                zeroForOne: tokenIn == a.key.currency0,
+                amountIn: uint128(amountIn),
+                amountOutMinimum: 0,
+                minHopPriceX36: 0,
+                hookData: ""
+            })
+        );
+        params[1] = abi.encode(tokenIn, amountIn); // SETTLE_ALL(currency, maxAmount)
+        params[2] = abi.encode(tokenOut, uint256(0)); // TAKE_ALL(currency, minAmount)
+        bytes[] memory inputs = new bytes[](1);
+        inputs[0] = abi.encode(abi.encodePacked(uint8(0x06), uint8(0x0c), uint8(0x0f)), params);
+        IUniversalRouterLike(a.router).execute{value: tokenIn == address(0) ? amountIn : 0}(
+            hex"10", inputs, block.timestamp
+        );
+    }
+
+    function _balance(address token) internal view returns (uint256) {
+        return token == address(0) ? address(this).balance : IERC20Like(token).balanceOf(address(this));
     }
 
     function probe(uint8 kind, address pool, address router, address weth, address token, uint256 v2FeeBps, uint24 v3Fee)

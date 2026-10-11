@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { ethers } from "ethers";
 
-import { classifyScan, importScannerChainFamily, probeV2Pool, probeV3Pool, simulationFindings } from "./arenaImportScan.js";
+import { classifyScan, importScannerChainFamily, MIN_POOL_NATIVE, probeV2Pool, probeV3Pool, probeV4Pool, simulationFindings } from "./arenaImportScan.js";
 import { IMPORT_SWAP_PROBE_ABI } from "./importSwapProbe/importSwapProbeArtifact.js";
 import { decodeRoundTrip, revertReason } from "./importSwapProbe/simulateRoundTrip.js";
 
@@ -19,6 +19,7 @@ const ADDRS = {
   weth: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
   router: "0xCaf681a66D020601342297493863E78C959E5cb2",
   fees: [100, 500, 3000, 10000],
+  minDepth: 0n,
 };
 const POOL_1PCT = "0xD1c3AFDFec3b9933fb1826B667A12923911F4463";
 const POOL_03PCT = "0x00000000000000000000000000000000000000Aa";
@@ -110,7 +111,9 @@ test("PancakeSwap V2: pair lookup, round-trip quotes, honeypot signal", async ()
   const paths = [];
   const contract = (sellFails) => (address) => address === V2.factory
     ? { getPair: async () => PAIR }
-    : { getAmountsOut: async (amountIn, p) => { paths.push([amountIn, p]); if (sellFails && p[0] === TOKEN) throw Object.assign(new Error("revert"), { code: "CALL_EXCEPTION" }); return [amountIn, 5n * 10n ** 18n]; } };
+    : address === V2.weth
+      ? { balanceOf: async () => 10n ** 18n }
+      : { getAmountsOut: async (amountIn, p) => { paths.push([amountIn, p]); if (sellFails && p[0] === TOKEN) throw Object.assign(new Error("revert"), { code: "CALL_EXCEPTION" }); return [amountIn, 5n * 10n ** 18n]; } };
   const simulate = async () => ({ ran: true, buyOk: true, sellOk: true });
   const ok = await probeV2Pool(null, TOKEN, V2, { contract: contract(false), simulate });
   assert.deepEqual([ok.pair, ok.buyQuoteOk, ok.sellQuoteOk], [PAIR, true, true]);
@@ -180,4 +183,76 @@ test("an RPC error on a quote is unknown, never a honeypot; a simulated sell bea
   assert.match(source, /pool\.buyQuoteOk === true && pool\.sellQuoteOk === false && !soldInSimulation\) reasons\.push\("honeypot_sell_failed"\)/);
   assert.match(source, /pool\.sellQuoteOk === null && !soldInSimulation\) warnings\.push\("sell_quote_unavailable"\)/);
   assert.equal(classifyScan({ reasons: [], warnings: ["sell_quote_unavailable"] }).status, "needs_review");
+});
+
+test("a leftover pool below the depth floor is not the coin's market", async () => {
+  const { deps } = fakes({ pools: { 3000: POOL_03PCT }, depth: { [POOL_03PCT]: MIN_POOL_NATIVE - 1n } });
+  const dust = await probeV3Pool(null, TOKEN, { ...ADDRS, minDepth: undefined }, deps);
+  assert.equal(dust.pair, null);
+});
+
+const V4_ADDRS = {
+  poolManager: "0x8366a39cc670b4001a1121b8f6a443a643e40951",
+  positionManager: "0x58daec3116aae6d93017baaea7749052e8a04fa7",
+  quoter: "0x8dc178efb8111bb0973dd9d722ebeff267c98f94",
+  router: "0x8876789976decbfcbbbe364623c63652db8c0904",
+};
+const PFE = "0x7066A64c24e4206CD62E83bf198c1E7EB361F51e";
+const COIN = "0x1a95c10E4839033686225eaad3ac348F0d8eDC4F";
+// PFEAGLE's real pool on Robinhood: the key hashes to the pool id DexScreener lists.
+const PFEAGLE_KEY = [COIN, PFE, 0, 200, "0xE5e702641Ea86F4ae6cC3cDaeD2B886f976Be044"];
+const PFEAGLE_POOL_ID = "0xcdc900b2ea9f6640f0cc454213c364643ab1c2a2f029d268169b75b94f1a9a70";
+
+function v4Fakes({ key = PFEAGLE_KEY, sellFails = false } = {}) {
+  const quotes = [];
+  const sims = [];
+  const contract = (address) => {
+    if (address === V4_ADDRS.positionManager) return { poolKeys: async () => key };
+    if (address === V4_ADDRS.quoter) {
+      return {
+        quoteExactInputSingle: {
+          staticCall: async ([, zeroForOne, amount]) => {
+            quotes.push({ zeroForOne, amount });
+            if (sellFails && zeroForOne === true) throw Object.assign(new Error("revert"), { code: "CALL_EXCEPTION" });
+            return [5n * 10n ** 18n, 0n];
+          },
+        },
+      };
+    }
+    if (address === PFE) return { decimals: async () => 18n };
+    throw new Error(`unexpected ${address}`);
+  };
+  const simulateV4 = async (_provider, args) => {
+    sims.push(args);
+    return { ran: true, buyOk: true, sellOk: !sellFails, buyTaxBps: 0, sellTaxBps: 0, roundTripLossBps: 590 };
+  };
+  const findPools = async () => [{ poolId: PFEAGLE_POOL_ID, liquidityUsd: 44434, quoteUsd: 150 }];
+  return { deps: { addresses: V4_ADDRS, contract, simulateV4, findPools }, quotes, sims };
+}
+
+test("V4: the pool key is proven against the pool id, the quote token is sized to about $3, sold through the router", async () => {
+  const { deps, quotes, sims } = v4Fakes();
+  const r = await probeV4Pool(null, 4663, COIN, deps);
+  assert.equal(r.pair, PFEAGLE_POOL_ID);
+  assert.equal(r.quoteToken, PFE);
+  assert.deepEqual([r.buyQuoteOk, r.sellQuoteOk], [true, true]);
+  // $3 of PFE at $150 = 0.02 PFE; the coin is currency0, so buying is currency1 -> currency0 (zeroForOne false).
+  assert.equal(quotes[0].zeroForOne, false);
+  assert.equal(quotes[0].amount, 2n * 10n ** 16n);
+  assert.equal(sims.length, 1);
+  assert.equal(sims[0].coinIs0, true);
+  assert.equal(sims[0].router, V4_ADDRS.router);
+});
+
+test("V4: a key that does not hash to the listed pool id is not trusted", async () => {
+  const { deps } = v4Fakes({ key: [COIN, PFE, 3000, 60, "0x0000000000000000000000000000000000000000"] });
+  const r = await probeV4Pool(null, 4663, COIN, deps);
+  assert.equal(r.pair, null);
+  assert.equal(r.skipped, "v4_pool_key_unknown");
+});
+
+test("V4: a reverted sell quote is the honeypot signal, unless the simulated router sell went through", async () => {
+  const { deps } = v4Fakes({ sellFails: true });
+  const r = await probeV4Pool(null, 4663, COIN, deps);
+  assert.deepEqual([r.buyQuoteOk, r.sellQuoteOk, r.simulation.sellOk], [true, false, false]);
 });
