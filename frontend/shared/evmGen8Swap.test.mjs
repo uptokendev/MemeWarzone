@@ -11,6 +11,8 @@ import {
   PERMIT2_ADDRESS,
   UR_COMMANDS,
   UR_MSG_SENDER,
+  UR_NATIVE,
+  assertGen8NativeRefund,
   buildGen8RouterCall,
   decodeGen8RouterCall,
   encodeGen8V4SwapInput,
@@ -98,6 +100,31 @@ for (const layout of ["v2.0", "v2.1"]) {
     assert.deepEqual(d.sweep, { token: ZERO, recipient: UR_MSG_SENDER, amountMin: 0n });
   });
 }
+
+test("F14: exact-output native buy ends with SWEEP(address(0) = native, address(1) = msg.sender, 0), byte for byte", () => {
+  for (const layout of ["v2.0", "v2.1"]) {
+    const call = buildGen8RouterCall({ router: ROUTER, layout, poolKey: KEY, side: "buy", exactIn: false, amount: 10n ** 24n, limit: 5n * 10n ** 17n, deadline: 1n });
+    assert.equal(call.commands, "0x1004", "V4_SWAP (0x10) then SWEEP (0x04)");
+    assert.equal(call.inputs.length, 2);
+    assert.equal(call.inputs[1], `0x${"00".repeat(32)}${"00".repeat(31)}01${"00".repeat(32)}`, "abi.encode(address(0), address(1), uint256(0))");
+    assert.equal(UR_NATIVE, ZERO);
+    assert.equal(UR_MSG_SENDER, "0x0000000000000000000000000000000000000001");
+    assert.doesNotThrow(() => assertGen8NativeRefund(decodeGen8RouterCall(call.data, layout)));
+  }
+  // exact-input buys and sells need no sweep: the router is paid exactly what it settles
+  const buy = buildGen8RouterCall({ router: ROUTER, layout: "v2.1", poolKey: KEY, side: "buy", amount: 1n, limit: 0n, deadline: 1n });
+  assert.doesNotThrow(() => assertGen8NativeRefund(decodeGen8RouterCall(buy.data, "v2.1")));
+  const sell = buildGen8RouterCall({ router: ROUTER, layout: "v2.1", poolKey: KEY, side: "sell", exactIn: false, amount: 1n, limit: 9n, deadline: 1n });
+  assert.equal(sell.commands, "0x10", "an exact-output sell pays coins, no native to sweep");
+  assert.doesNotThrow(() => assertGen8NativeRefund(decodeGen8RouterCall(sell.data, "v2.1")));
+});
+
+test("F14 guard: a hand-built exact-output native buy without the SWEEP, or sweeping elsewhere, is refused", () => {
+  const noSweep = { commands: [UR_COMMANDS.V4_SWAP], swap: { exactIn: false, zeroForOne: true }, sweep: null };
+  assert.throws(() => assertGen8NativeRefund(noSweep), /sweep unspent native/);
+  const elsewhere = { commands: [UR_COMMANDS.V4_SWAP, UR_COMMANDS.SWEEP], swap: { exactIn: false, zeroForOne: true }, sweep: { token: ZERO, recipient: getAddress("0x0000000000000000000000000000000000000002"), amountMin: 0n } };
+  assert.throws(() => assertGen8NativeRefund(elsewhere), /sweep unspent native/, "address(2) = the router itself");
+});
 
 test("the two layouts are not interchangeable: the v2.1 single params carry one more word", () => {
   const a = encodeGen8V4SwapInput({ layout: "v2.0", poolKey: KEY, side: "buy", amount: 1n, limit: 0n });

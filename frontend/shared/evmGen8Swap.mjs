@@ -18,8 +18,11 @@
 import { AbiCoder, Interface, getAddress, getBytes, solidityPacked, zeroPadValue } from "ethers";
 
 export const PERMIT2_ADDRESS = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
+/** UniversalRouter recipient sentinel: Constants.MSG_SENDER (address(1)) pays out to the caller of execute(). */
 export const UR_MSG_SENDER = "0x0000000000000000000000000000000000000001";
-const NATIVE = "0x0000000000000000000000000000000000000000";
+/** UniversalRouter / V4 native sentinel: Constants.ETH = address(0) (SWEEP of address(0) sends the router's native). */
+export const UR_NATIVE = "0x0000000000000000000000000000000000000000";
+const NATIVE = UR_NATIVE;
 
 /** UniversalRouter command bytes (Commands.sol). */
 export const UR_COMMANDS = Object.freeze({ SWEEP: 0x04, PERMIT2_PERMIT: 0x0a, V4_SWAP: 0x10 });
@@ -267,6 +270,21 @@ export function decodeGen8RouterCall(data, layout) {
   return out;
 }
 
+/**
+ * F14: an exact-output buy pays `limit` native up front and the swap settles only what it costs, so the rest stays in
+ * the router unless the same call sweeps it back. Every such call must end with SWEEP(native, msg.sender, 0). Throws
+ * on a decoded call (decodeGen8RouterCall) that would leave native behind; exact-input and sell calls pass.
+ */
+export function assertGen8NativeRefund(decoded) {
+  const s = decoded?.swap;
+  if (!s || s.exactIn || !s.zeroForOne) return;
+  const w = decoded.sweep;
+  const last = decoded.commands[decoded.commands.length - 1];
+  if (!w || last !== UR_COMMANDS.SWEEP || w.token !== NATIVE || w.recipient !== UR_MSG_SENDER || w.amountMin !== 0n) {
+    throw new Error("an exact-output native buy must sweep unspent native back to the payer");
+  }
+}
+
 /** EIP-712 typed data of a Permit2 PermitSingle (AllowanceTransfer), for wallet.signTypedData. */
 export function gen8PermitTypedData({ chainId, token, amount, nonce, spender, nowSec, seconds = GEN8_PERMIT_SECONDS }) {
   const a = BigInt(amount);
@@ -354,3 +372,4 @@ export function gen8CreatorShareWei({ graduated, curveWei, feeWei, creatorBondin
   }
   return (BigInt(feeWei) * BigInt(creatorBondingBps)) / 10_000n;
 }
+

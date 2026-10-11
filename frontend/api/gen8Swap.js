@@ -28,6 +28,7 @@ import {
   PERMIT2_ABI,
   PERMIT2_ADDRESS,
   V4_QUOTER_ABI,
+  assertGen8NativeRefund,
   buildGen8RouterCall,
   decodeGen8RouterCall,
   gen8BuyFeeSplit,
@@ -274,6 +275,12 @@ export async function gen8SwapBuildCore(input, deps = {}) {
   // What leaves the API is exactly one swap in this coin's pool with the quoted bounds (a self-check of the encoder).
   const decoded = decodeGen8RouterCall(call.data, setup.router.layout);
   if (decoded.swap?.poolKey.currency1 !== token || decoded.swap.poolKey.hooks !== setup.hook || decoded.swap.amount !== amountIn) {
+    throw new Gen8SwapError(500, "GEN8_BUILD_MISMATCH", "The swap could not be built.");
+  }
+  // F14: a native buy never leaves unspent native in the router (exact output ends with SWEEP to the payer).
+  try {
+    assertGen8NativeRefund(decoded);
+  } catch {
     throw new Gen8SwapError(500, "GEN8_BUILD_MISMATCH", "The swap could not be built.");
   }
 

@@ -182,6 +182,42 @@ async function runChain(chainId, port, { display, extraRouters = [] }) {
     assert.equal(swap.decodeGen8RouterCall(sell.call.data, cfg.router.layout).permit.permitSingle.details.amount, sellAmount, "permit for exactly the sell");
     r.sellGas = Number(sell.receipt.gasUsed);
 
+    // ---- F14: native left in the router. Exact input settles exactly msg.value (nothing left); exact output pays
+    // the limit up front and the encoder's SWEEP(native, msg.sender, 0) returns the unspent part in the same call.
+    const routerAddr = cfg.router.address;
+    const routerBal = (tag) => provider.getBalance(routerAddr, tag);
+    assert.equal(await routerBal(buy.receipt.blockNumber), await routerBal(buy.receipt.blockNumber - 1), "exact-input buy leaves no native in the router");
+    const quoter = new ethers.Contract(cfg.quoter, swap.V4_QUOTER_ABI, provider);
+    const pk = qBuy.poolKey;
+    const pkTuple = [pk.currency0, pk.currency1, pk.fee, pk.tickSpacing, pk.hooks];
+    const coinsWanted = 2_000_000n * WAD;
+    const [costIn] = await quoter.quoteExactOutputSingle.staticCall([pkTuple, true, coinsWanted, swap.gen8HookData(swap.GEN8_REFERRER_APP)]);
+    const limitIn = (BigInt(costIn) * 10_500n) / 10_000n;
+    const exactOutCall = (withSweep, deadline) => {
+      const c = swap.buildGen8RouterCall({ router: routerAddr, layout: cfg.router.layout, poolKey: pk, side: "buy", exactIn: false, amount: coinsWanted, limit: limitIn, deadline, hookData: swap.gen8HookData(swap.GEN8_REFERRER_APP) });
+      if (withSweep) return c;
+      // the control: the same swap with the SWEEP dropped
+      const ur = new ethers.Interface(swap.UNIVERSAL_ROUTER_ABI);
+      return { to: c.to, value: c.value, data: ur.encodeFunctionData("execute", ["0x10", [c.inputs[0]], deadline]) };
+    };
+    const nowTs = BigInt((await provider.getBlock("latest")).timestamp);
+    const routerBefore = await routerBal("latest");
+    const eo = await client.sendGen8Tx({ signer: buyer, chainId, tx: exactOutCall(true, nowTs + 600n), floor: 400_000n });
+    assert.equal(await tokenDelta(provider, token, buyer.address, eo), coinsWanted, "exact-output buy: exactly the coins asked for");
+    assert.equal(await routerBal(eo.blockNumber), 0n, "router holds no native after the exact-output buy");
+    const spent = -(await nativeDelta(provider, buyer.address, eo));
+    assert.equal(spent, BigInt(costIn) - routerBefore, "payer paid the quoted cost; the unspent part of the limit came back");
+    assert.ok(limitIn - BigInt(costIn) > 0n);
+    r.exactOutRefundWei = (limitIn - BigInt(costIn)).toString();
+    // control: without the SWEEP the unspent native stays in the router (what F14 prevents), then is swept back
+    const [costIn2] = await quoter.quoteExactOutputSingle.staticCall([pkTuple, true, coinsWanted, swap.gen8HookData(swap.GEN8_REFERRER_APP)]);
+    const bad = await client.sendGen8Tx({ signer: buyer, chainId, tx: exactOutCall(false, nowTs + 600n), floor: 400_000n });
+    assert.equal(await routerBal(bad.blockNumber), limitIn - BigInt(costIn2), "control: without SWEEP the router keeps limit - cost");
+    const urIface = new ethers.Interface(swap.UNIVERSAL_ROUTER_ABI);
+    const sweepBack = urIface.encodeFunctionData("execute", ["0x04", [ethers.AbiCoder.defaultAbiCoder().encode(["address", "address", "uint256"], [swap.UR_NATIVE, swap.UR_MSG_SENDER, 0n])], nowTs + 600n]);
+    await client.sendGen8Tx({ signer: buyer, chainId, tx: { to: routerAddr, data: sweepBack, value: 0n } });
+    assert.equal(await routerBal("latest"), 0n);
+
     // ---- every other known router of the chain (BNB docs main = layout v2.0)
     for (const address of extraRouters) {
       const alt = { ...cfg, router: swap.gen8RouterFor(chainId, { EVM_GEN8_UNIVERSAL_ROUTER_56: address, EVM_GEN8_UNIVERSAL_ROUTER_4663: address }) };

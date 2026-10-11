@@ -42,7 +42,9 @@ import {
   PERMIT2_ABI,
   PERMIT2_ADDRESS,
   V4_QUOTER_ABI,
+  assertGen8NativeRefund,
   buildGen8RouterCall,
+  decodeGen8RouterCall,
   gen8BuyFeeSplit,
   gen8CreatorShareWei,
   gen8HookData,
@@ -444,7 +446,7 @@ export async function previewGen8Fill({ provider, cfg, poolId, zeroForOne, amoun
 /** The UniversalRouter call for a quoted trade (exact input). */
 export function buildGen8TradeCall({ cfg, quote, deadline, permit = null, referrer = GEN8_REFERRER_APP }) {
   if (!cfg?.router) throw new Error("No Uniswap router is configured for this chain.");
-  return buildGen8RouterCall({
+  const call = buildGen8RouterCall({
     router: cfg.router.address,
     layout: cfg.router.layout,
     poolKey: quote.poolKey,
@@ -456,6 +458,9 @@ export function buildGen8TradeCall({ cfg, quote, deadline, permit = null, referr
     hookData: gen8HookData(referrer),
     permit,
   });
+  // F14: no native buy may leave unspent native in the router.
+  assertGen8NativeRefund(decodeGen8RouterCall(call.data, cfg.router.layout));
+  return call;
 }
 
 /**
