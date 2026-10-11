@@ -1,6 +1,8 @@
 import { ethers } from "ethers";
 import { Connection, PublicKey } from "@solana/web3.js";
 
+import { PROBE_KIND, simulateRoundTrip } from "./importSwapProbe/simulateRoundTrip.js";
+
 const ERC20_ABI = [
   "function name() view returns (string)",
   "function symbol() view returns (string)",
@@ -22,6 +24,7 @@ const V3_QUOTER_ABI = [
 const BALANCE_ABI = ["function balanceOf(address) view returns (uint256)"];
 const V2_FACTORY_ABI = ["function getPair(address tokenA,address tokenB) view returns (address pair)"];
 const V2_ROUTER_ABI = ["function getAmountsOut(uint256 amountIn,address[] path) view returns (uint256[] amounts)"];
+const PROBE_AMOUNT_IN = 10n ** 15n; // 0.001 wrapped native: quotes and the simulated round trip
 
 const ZERO = ethers.ZeroAddress;
 
@@ -106,6 +109,8 @@ const ROBINHOOD_V3_DEFAULTS = {
     factory: "0x1f7d7550B1b028f7571E69A784071F0205FD2EfA",
     quoter: "0x33e885eD0Ec9bF04EcfB19341582aADCb4c8A9E7",
     weth: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+    // SwapRouter02; verified on chain 2026-10-11: factory() and WETH9() match the two above.
+    router: "0xCaf681a66D020601342297493863E78C959E5cb2",
   },
 };
 
@@ -116,6 +121,7 @@ function uniswapV3Addresses(chainId) {
     factory: env(`ROBINHOOD_V3_FACTORY_ADDRESS_${id}`, `VITE_ROBINHOOD_V3_FACTORY_ADDRESS_${id}`) || fallback.factory || "",
     quoter: env(`ROBINHOOD_V3_QUOTER_ADDRESS_${id}`, `VITE_ROBINHOOD_V3_QUOTER_ADDRESS_${id}`) || fallback.quoter || "",
     weth: env(`ROBINHOOD_WETH_ADDRESS_${id}`, `VITE_ROBINHOOD_WETH_ADDRESS_${id}`) || fallback.weth || "",
+    router: env(`ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_${id}`, `VITE_ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_${id}`) || fallback.router || "",
     fees: [100, 500, 3000, 10000],
   };
 }
@@ -123,19 +129,22 @@ function uniswapV3Addresses(chainId) {
 /**
  * BNB memecoins trade on PancakeSwap, not Topaz (four.meme graduates to Pancake). BSC mainnet
  * only; verified on chain 2026-10-11: QuoterV2.factory() = the V3 factory, Router.factory() = the
- * V2 factory, both report WBNB (same factories as projectImportBnbMarket.js).
+ * V2 factory, SmartRouter.factory()/factoryV2() = both, all report WBNB (same factories as
+ * projectImportBnbMarket.js).
  */
 const PANCAKE_BSC = {
   v3: {
     factory: "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865",
     quoter: "0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997",
     weth: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",
+    router: "0x13f4EA83D0bd40E75C8222255bc855a974568Dd4",
     fees: [100, 500, 2500, 10000],
   },
   v2: {
     factory: "0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73",
     router: "0x10ED43C718714eb63d5aA57B78B54704E256024E",
     weth: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",
+    feeBps: 25,
   },
 };
 
@@ -178,6 +187,8 @@ export function classifyScan({ reasons = [], warnings = [] } = {}) {
     "no_pancake_pool",
     "pancake_getPool_failed",
     "pancakeswap_buy_quote_failed",
+    // The simulated buy reverted: sellability could not be shown, a reviewer decides.
+    "buy_simulation_failed",
     "supply_unreadable",
     "zero_supply",
   ]);
@@ -293,14 +304,20 @@ export async function probeV3Pool(provider, token, addrs, deps = {}) {
       return 0n;
     }
   };
-  const bought = await quote(addrs.weth, token, ethers.parseEther("0.001"));
+  const bought = await quote(addrs.weth, token, PROBE_AMOUNT_IN);
   // Sell back what the buy would have returned, so the sell is sized to the pool like a real round trip.
   const sold = await quote(token, addrs.weth, bought > 0n ? bought : 10n ** 15n);
+  const simulation = bought > 0n && ethers.isAddress(addrs.router)
+    ? await (deps.simulate || simulateRoundTrip)(provider, {
+      kind: PROBE_KIND.V3, pool: best.pool, router: addrs.router, weth: addrs.weth, token, amountIn: PROBE_AMOUNT_IN, v3Fee: best.fee,
+    })
+    : null;
   return {
     pair: best.pool,
     fee: best.fee,
     buyQuoteOk: bought > 0n,
     sellQuoteOk: sold > 0n,
+    simulation,
     factory: addrs.factory,
     quoter: addrs.quoter,
     weth: addrs.weth,
@@ -326,9 +343,40 @@ export async function probeV2Pool(provider, token, addrs, deps = {}) {
       return 0n;
     }
   };
-  const bought = await quote([addrs.weth, token], ethers.parseEther("0.001"));
+  const bought = await quote([addrs.weth, token], PROBE_AMOUNT_IN);
   const sold = await quote([token, addrs.weth], bought > 0n ? bought : 10n ** 15n);
-  return { pair: String(pair), buyQuoteOk: bought > 0n, sellQuoteOk: sold > 0n, factory: addrs.factory, router: addrs.router, weth: addrs.weth };
+  const simulation = bought > 0n
+    ? await (deps.simulate || simulateRoundTrip)(provider, {
+      kind: PROBE_KIND.V2, pool: String(pair), router: addrs.router, weth: addrs.weth, token, amountIn: PROBE_AMOUNT_IN, v2FeeBps: addrs.feeBps,
+    })
+    : null;
+  return { pair: String(pair), buyQuoteOk: bought > 0n, sellQuoteOk: sold > 0n, simulation, factory: addrs.factory, router: addrs.router, weth: addrs.weth };
+}
+
+/**
+ * What the simulated round trip adds to the scan. A sell that fails through the public router, or
+ * a tax above the threshold, is a reviewable finding, not a hard decline: a same-block sell also
+ * trips legitimate anti-bot cooldowns, and a hard decline is never rescanned. A simulation that
+ * could not run is recorded and changes nothing (the quote evidence stands).
+ */
+export const SWAP_TAX_REVIEW_BPS = 1000;
+export const ROUND_TRIP_LOSS_REVIEW_BPS = 2500;
+
+export function simulationFindings(simulation) {
+  const reasons = [];
+  const warnings = [];
+  if (!simulation) return { reasons, warnings };
+  if (!simulation.ran) warnings.push("swap_simulation_unavailable");
+  else if (!simulation.buyOk) warnings.push("buy_simulation_failed");
+  else if (!simulation.sellOk) reasons.push("sell_simulation_failed");
+  else if (
+    (simulation.buyTaxBps ?? 0) > SWAP_TAX_REVIEW_BPS
+    || (simulation.sellTaxBps ?? 0) > SWAP_TAX_REVIEW_BPS
+    || (simulation.roundTripLossBps ?? 0) > ROUND_TRIP_LOSS_REVIEW_BPS
+  ) {
+    reasons.push("swap_tax_high");
+  }
+  return { reasons, warnings };
 }
 
 /** Robinhood: Uniswap V3. Probe skips are prefixed so the review reasons name the venue. */
@@ -402,6 +450,9 @@ export async function scanEvm(chainId, token) {
       pool.pair = String(pool.pair);
       if (pool.buyQuoteOk && !pool.sellQuoteOk) reasons.push("honeypot_sell_failed");
       if (!pool.buyQuoteOk) warnings.push(pool.venue ? `${pool.venue.split("_")[0]}_buy_quote_failed` : "topaz_buy_quote_failed");
+      const simulated = simulationFindings(pool.simulation);
+      reasons.push(...simulated.reasons);
+      warnings.push(...simulated.warnings);
     }
 
     return finalizeScan({
@@ -413,6 +464,7 @@ export async function scanEvm(chainId, token) {
         owner,
         pool: pool.pair || null,
         ...(pool.venue ? { venue: pool.venue, poolFee: pool.fee ?? null } : {}),
+        ...(pool.simulation ? { swapSimulation: pool.simulation } : {}),
         buyQuoteOk: Boolean(pool.buyQuoteOk),
         sellQuoteOk: Boolean(pool.sellQuoteOk),
         warnings,
