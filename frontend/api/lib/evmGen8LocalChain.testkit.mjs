@@ -90,6 +90,57 @@ export async function startAnvil(port = Number(process.env.GEN8_API_ANVIL_PORT |
   };
 }
 
+/**
+ * A local anvil fork of a mainnet (read-only: nothing is ever sent to the forked network), so Uniswap's own
+ * UniversalRouter, V4Quoter, Permit2 and PoolManager are the real ones. Pinned a few blocks behind the tip. BSC full
+ * nodes keep state for about a minute, so the EIP-2935 history slots anvil reads on every mined block are seeded locally
+ * (scripts/gen8/fork-suite/lib.mjs on build/evm-gen8). The RPC URL never appears in errors.
+ */
+export async function startAnvilFork({ rpc, port, chainId }) {
+  const head = await fetch(rpc, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] }) });
+  const forkBlock = BigInt((await head.json()).result) - 3n;
+  const proc = spawn(ANVIL, ["--fork-url", rpc, "--fork-block-number", String(forkBlock), "--port", String(port), "--chain-id", String(chainId), "--silent", "--no-rate-limit", "--timeout", "45000", "--retries", "8", "--code-size-limit", "200000"], { stdio: "ignore" });
+  const url = `http://127.0.0.1:${port}`;
+  const network = ethers.Network.from(chainId);
+  const rpcLocal = async (body) => (await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
+  let up = false;
+  for (let i = 0; i < 240 && !up; i += 1) {
+    try {
+      await rpcLocal({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params: [] });
+      up = true;
+    } catch {
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+  if (!up) {
+    proc.kill("SIGTERM");
+    throw new Error(`anvil fork of chain ${chainId} did not start`);
+  }
+  const HISTORY = "0x0000F90827F1C53a10cb7A02335B175320002935";
+  const code = (await rpcLocal({ jsonrpc: "2.0", id: 1, method: "eth_getCode", params: [HISTORY, "latest"] })).result;
+  if (code && code !== "0x") {
+    for (let start = 0; start < 8191; start += 512) {
+      const batch = [];
+      for (let i = start; i < Math.min(start + 512, 8191); i += 1) batch.push({ jsonrpc: "2.0", id: i, method: "anvil_setStorageAt", params: [HISTORY, `0x${i.toString(16)}`, `0x${"0".repeat(63)}1`] });
+      await rpcLocal(batch);
+    }
+  }
+  return {
+    url,
+    chainId,
+    forkBlock,
+    provider: () => {
+      const p = new ethers.JsonRpcProvider(url, network, { staticNetwork: network, batchMaxCount: 1, cacheTimeout: -1 });
+      p.pollingInterval = 50;
+      return p;
+    },
+    stop: async () => {
+      proc.kill("SIGTERM");
+      await new Promise((r) => setTimeout(r, 300));
+    },
+  };
+}
+
 export function testWallets(provider, n = 10) {
   return Array.from({ length: n }, (_, i) => new ethers.Wallet(ethers.keccak256(ethers.toUtf8Bytes(`mwz-gen8-api-test-${i}`)), provider));
 }
@@ -111,14 +162,19 @@ function mineHookSalt(deployerAddr, initCode) {
   }
 }
 
-/** The full stack. apiSigner is the launcher's createSigner (the key the API signs with in the test). */
-export async function deployGen8Local(provider) {
+/**
+ * The full stack. apiSigner is the launcher's createSigner (the key the API signs with in the test).
+ * opts.poolManager: use that PoolManager (a mainnet fork's canonical one, so Uniswap's own UniversalRouter, V4Quoter
+ * and Permit2 on the fork trade our pools) instead of deploying a local one. opts.display false: no display pair
+ * factory (Robinhood).
+ */
+export async function deployGen8Local(provider, opts = {}) {
   const ws = testWallets(provider, 10);
   for (const w of ws) await provider.send("anvil_setBalance", [w.address, ethers.toBeHex(10_000n * WAD)]);
   const [deployer, safe, apiSigner, creator, buyer, operator, other] = ws;
   // ethers caches nonces per wallet; use NonceManager so back-to-back deploys do not collide.
   const d = new ethers.NonceManager(deployer);
-  const pm = await deploy(d, "PoolManager", [deployer.address]);
+  const pm = opts.poolManager ? new ethers.Contract(opts.poolManager, findArtifact("PoolManager").abi, d) : await deploy(d, "PoolManager", [deployer.address]);
   const feed = await deploy(d, "MockPriceFeed", [8, 600n * 10n ** 8n]);
   const oracle = await deploy(d, "GraduationOracle", [await feed.getAddress(), 3600]);
   const swapSim = await deploy(d, "MwzSwapSim");
@@ -129,18 +185,20 @@ export async function deployGen8Local(provider) {
   const monthly = await deploy(d, "NativeSink");
   const recruiter = await deploy(d, "NativeSink");
   const protocol = await deploy(d, "NativeSink");
+  const withDisplay = opts.display !== false;
   const nonce = await provider.getTransactionCount(deployer.address);
-  const nSplitter = nonce + 3;
+  // community vault, hook (CREATE2), display setHook (when there is a display factory), then the splitter
+  const nSplitter = nonce + (withDisplay ? 3 : 2);
   const splitterAddr = ethers.getCreateAddress({ from: deployer.address, nonce: nSplitter });
   const launcherAddr = ethers.getCreateAddress({ from: deployer.address, nonce: nSplitter + 3 });
   const community = await deploy(d, "CommunityRewardsVault", [safe.address, splitterAddr]);
   const hookArt = findArtifact("MwzLaunchHook");
   const hookFactory = new ethers.ContractFactory(hookArt.abi, linked(hookArt, libs), d);
-  const initCode = (await hookFactory.getDeployTransaction(await pm.getAddress(), launcherAddr, safe.address, splitterAddr, await displayFactory.getAddress())).data;
+  const initCode = (await hookFactory.getDeployTransaction(await pm.getAddress(), launcherAddr, safe.address, splitterAddr, withDisplay ? await displayFactory.getAddress() : ethers.ZeroAddress)).data;
   const { salt, address: hookAddr } = mineHookSalt(await c2.getAddress(), initCode);
   await (await c2.deploy(salt, initCode)).wait();
   const hook = new ethers.Contract(hookAddr, hookArt.abi, d);
-  await (await displayFactory.setHook(hookAddr)).wait();
+  if (withDisplay) await (await displayFactory.setHook(hookAddr)).wait();
   const splitter = await deploy(d, "MwzFeeSplitter", [hookAddr, safe.address, await weekly.getAddress(), await monthly.getAddress(), await recruiter.getAddress(), await community.getAddress(), await protocol.getAddress(), operator.address]);
   const vault = await deploy(d, "MwzCreatorChoiceVault", [safe.address, hookAddr, launcherAddr, 24 * 3600]);
   const reserveLock = await deploy(d, "MwzReserveLock", [hookAddr, launcherAddr, await vault.getAddress()]);
