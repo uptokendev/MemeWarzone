@@ -1,0 +1,638 @@
+[
+  {
+    "inputs": [
+      {
+        "internalType": "contract IMwzLaunchHook",
+        "name": "hook_",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "admin_",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "weeklyLeagueVault_",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "monthlyLeagueTreasury_",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "recruiterRewardsVault_",
+        "type": "address"
+      },
+      {
+        "internalType": "contract IMwzCommunityRewardsVault",
+        "name": "communityRewardsVault_",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "protocolRevenueVault_",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "operator_",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "constructor"
+  },
+  {
+    "inputs": [],
+    "name": "BadRunId",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NotAdmin",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NotOperator",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NothingToRoute",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OutOfBand",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ReentrancyGuardReentrantCall",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "SendFailed",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "Underfunded",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "UnexpectedSender",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ZeroAddress",
+    "type": "error"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "previous",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "next",
+        "type": "address"
+      }
+    ],
+    "name": "OperatorUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "runId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "accrualRoot",
+        "type": "bytes32"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "caller",
+        "type": "address"
+      },
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "total",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "bondingFees",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "gradFees",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "weeklyLeague",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "monthlyLeague",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "recruiter",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "squad",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "airdrop",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "protocol",
+            "type": "uint256"
+          }
+        ],
+        "indexed": false,
+        "internalType": "struct MwzFeeSplitter.Run",
+        "name": "run",
+        "type": "tuple"
+      }
+    ],
+    "name": "Routed",
+    "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "BPS",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "GRAD_RSA_MAX_BPS",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "GRAD_RSA_MIN_BPS",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "LEAGUE_BPS",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "SQUAD_MAX_BPS",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "TRADE_RSA_MAX_BPS",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "TRADE_RSA_MIN_BPS",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "WEEKLY_LEAGUE_BPS",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "admin",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "bondingFees",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "gradFees",
+        "type": "uint256"
+      }
+    ],
+    "name": "bands",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "weekly",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "monthly",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "rsaMin",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "rsaMax",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "squadMax",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "pure",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "communityRewardsVault",
+    "outputs": [
+      {
+        "internalType": "contract IMwzCommunityRewardsVault",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "hook",
+    "outputs": [
+      {
+        "internalType": "contract IMwzLaunchHook",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "monthlyLeagueTreasury",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "operator",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "pending",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "total",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "bondingFees",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "gradFees",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "poolManager",
+    "outputs": [
+      {
+        "internalType": "contract IPoolManager",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "protocolRevenueVault",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "recruiterRewardsVault",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "runId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "recruiter",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "squad",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "airdrop",
+        "type": "uint256"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "accrualRoot",
+        "type": "bytes32"
+      }
+    ],
+    "name": "route",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "total",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "bondingFees",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "gradFees",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "weeklyLeague",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "monthlyLeague",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "recruiter",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "squad",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "airdrop",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "protocol",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct MwzFeeSplitter.Run",
+        "name": "r",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "routedAmount",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "routedBondingFees",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "routedGradFees",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "runs",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "next",
+        "type": "address"
+      }
+    ],
+    "name": "setOperator",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "weeklyLeagueVault",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "stateMutability": "payable",
+    "type": "receive"
+  }
+]

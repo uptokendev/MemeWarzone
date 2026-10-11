@@ -1,0 +1,90 @@
+[
+  {
+    "inputs": [
+      {
+        "internalType": "int24",
+        "name": "tickGrad",
+        "type": "int24"
+      },
+      {
+        "internalType": "int24",
+        "name": "tickStart",
+        "type": "int24"
+      },
+      {
+        "internalType": "int24",
+        "name": "tick",
+        "type": "int24"
+      },
+      {
+        "internalType": "bool",
+        "name": "lte",
+        "type": "bool"
+      }
+    ],
+    "name": "nextTick",
+    "outputs": [
+      {
+        "internalType": "int24",
+        "name": "next",
+        "type": "int24"
+      },
+      {
+        "internalType": "bool",
+        "name": "initialized",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "pure",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "poolManager",
+        "type": "address"
+      },
+      {
+        "internalType": "PoolId",
+        "name": "id",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "int24",
+        "name": "tickGrad",
+        "type": "int24"
+      },
+      {
+        "internalType": "int24",
+        "name": "tickStart",
+        "type": "int24"
+      },
+      {
+        "internalType": "bool",
+        "name": "zeroForOne",
+        "type": "bool"
+      },
+      {
+        "internalType": "int256",
+        "name": "amountSpecified",
+        "type": "int256"
+      },
+      {
+        "internalType": "uint160",
+        "name": "limit",
+        "type": "uint160"
+      }
+    ],
+    "name": "simulate",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+]

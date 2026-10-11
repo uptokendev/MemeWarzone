@@ -298,3 +298,44 @@ contract BadDisplay {
         while (true) {}
     }
 }
+
+/// A payout recipient that, while the PoolManager is unlocked by the hook's own payout, swaps in the same pool from its
+/// receive() (sells coins it holds) and settles its own deltas. Proves that a reentrant swap during a payout keeps the
+/// hook's accounting exact (audit A14).
+contract SwapOnReceive {
+    using BalanceDeltaLibrary for BalanceDelta;
+
+    IPoolManager public immutable pm;
+    PoolKey internal _key;
+    uint256 public sellAmount;
+    bool public swapped;
+    int128 public out0;
+
+    constructor(IPoolManager _pm) {
+        pm = _pm;
+    }
+
+    function arm(PoolKey calldata key, uint256 amount) external {
+        _key = key;
+        sellAmount = amount;
+    }
+
+    function accept(IMwzHookCreatorRights hook, bytes32 id) external {
+        hook.acceptCreator(id);
+    }
+
+    function claim(IMwzHookCreatorRights hook, bytes32 id) external returns (uint256) {
+        return hook.claimCreator(id, address(this));
+    }
+
+    receive() external payable {
+        if (swapped || sellAmount == 0 || msg.sender != address(pm)) return;
+        swapped = true;
+        BalanceDelta d = pm.swap(_key, SwapParams(false, -int256(sellAmount), TickMath.MAX_SQRT_PRICE - 1), "");
+        out0 = d.amount0();
+        pm.sync(_key.currency1);
+        IERC20(Currency.unwrap(_key.currency1)).transfer(address(pm), uint256(uint128(-d.amount1())));
+        pm.settle();
+        pm.take(_key.currency0, address(this), uint256(uint128(d.amount0())));
+    }
+}

@@ -454,6 +454,45 @@ describe("gen8 MwzLaunchHook", function () {
     });
   });
 
+  describe("edge behaviour the audit relies on", () => {
+    it("a swap made from inside a payout (the PoolManager is unlocked by the hook) keeps I4 exact (A14)", async () => {
+      const { env, P } = await loadFixture(graduated);
+      const r = await (await ethers.getContractFactory("SwapOnReceive")).deploy(await env.pm.getAddress());
+      await (await env.hook.connect(env.creator).proposeCreator(P.id, await r.getAddress())).wait();
+      await (await r.accept(await env.hook.getAddress(), P.id)).wait();
+      await (await P.coin.connect(env.creator).transfer(await r.getAddress(), 5_000_000n * WAD)).wait();
+      await trade(env, P, { wallet: env.bot, buy: true, exactIn: true, amount: WAD });
+      await (await r.arm(P.key, 1_000_000n * WAD)).wait();
+      const owed = await env.hook.creatorOwed(P.id);
+      const rc = await (await r.claim(await env.hook.getAddress(), P.id)).wait();
+      expect(await r.swapped()).to.eq(true);
+      const fee = rc!.logs.map((l: any) => { try { return env.hook.interface.parseLog(l); } catch { return null; } }).find((x: any) => x?.name === "HookFee");
+      expect(fee.args.buy).to.eq(false);
+      expect(fee.args.fee).to.eq((fee.args.curveAmount * 100n) / BPS);
+      // the reentrant sell's creator share accrued after the ledger was zeroed for the payout
+      expect(await env.hook.creatorOwed(P.id)).to.eq(fee.args.creatorShare);
+      expect(await ethers.provider.getBalance(await r.getAddress())).to.be.gte(owed);
+      const l = await ledgers(env, [P.id]);
+      expect(l.claims).to.eq(l.sum);
+    });
+
+    it("oversized swaps without a price limit revert PartialFill instead of mis-charging; a 1-wei buy pays 1 wei and gets nothing", async () => {
+      const { env, P } = await loadFixture(afterWindow);
+      // exact-output sell asking more native than the pool holds
+      await (await P.coin.connect(env.creator).approve(await env.trader.getAddress(), ethers.MaxUint256)).wait();
+      const r = await revertOf(() => env.trader.connect(env.creator).swap.staticCall(P.key, false, nativeTargetA(P) * 10n, 0n, "0x"), env);
+      expect(r).to.match(/PartialFill/);
+      // an exact-output buy of more coins than the pool holds reverts inside the PoolManager (as on any V4 pool)
+      const poolCoins = await P.coin.balanceOf(await env.pm.getAddress());
+      const rOut = await revertOf(() => env.trader.connect(env.bot).swap.staticCall(P.key, true, poolCoins + 1n, 0n, "0x", { value: 10n ** 24n }), env);
+      expect(rOut).to.eq("selector " + ethers.id("SafeCastOverflow()").slice(0, 10));
+      const t = await trade(env, P, { wallet: env.bot, buy: true, exactIn: true, amount: 1n });
+      expect([t.fee, t.curve, t.userCoin]).to.deep.eq([1n, 0n, 0n]);
+      const l = await ledgers(env, [P.id]);
+      expect(l.claims).to.eq(l.sum);
+    });
+  });
+
   describe("router bucket, timelock and A4 flush (I10)", () => {
     it("claimRouter is permissionless, pays the current router and records routerPaid; nothing owed reverts", async () => {
       const { env, P } = await loadFixture(graduated);

@@ -120,18 +120,26 @@ describe("gen8 invariants (seeded property runs)", function () {
         const wasGrad = (await env.hook.pools(P.id)).graduated;
         const pr = await env.lens.progress(P.id);
         const left = pr.nativeTargetA > pr.nativeInA ? pr.nativeTargetA - pr.nativeInA : 0n;
+        let action = "";
         try {
           if (roll < 0.25) {
             // exact-input buy; sometimes big enough to graduate
             const amount = R() < 0.15 ? left + WAD / 10n : big(left / 3n + WAD / 5n) + 1000n;
             const user = pick(users);
+            action = `buy exactIn ${amount} grad=${wasGrad}`;
             const t = await trade(env, P, { wallet: user, buy: true, exactIn: true, amount });
             await checkTrade(P, t, true, true, amount, wasGrad, false, label);
             stats.trades++;
             if (t.graduated) stats.grads++;
           } else if (roll < 0.4) {
-            const amount = big(20_000_000n * WAD) + WAD;
+            // never ask for more coins than the pool holds (the PoolManager's own math overflows on such a request,
+            // as for any V4 pool: SafeCastOverflow); cap at 90% of the coins left in the pool
+            const poolCoins = await P.coin.balanceOf(await env.pm.getAddress());
+            const cap = (poolCoins * 9n) / 10n;
+            let amount = big(20_000_000n * WAD) + WAD;
+            if (amount > cap) amount = cap;
             const user = pick(users);
+            action = `buy exactOut ${amount} grad=${wasGrad} poolCoins ${poolCoins}`;
             const t = await trade(env, P, { wallet: user, buy: true, exactIn: false, amount, limit: 10_000n * WAD });
             await checkTrade(P, t, true, false, amount, wasGrad, false, label);
             stats.trades++;
@@ -141,6 +149,7 @@ describe("gen8 invariants (seeded property runs)", function () {
             const bal = await P.coin.balanceOf(user.address);
             if (bal < WAD) { stats.skipped++; continue; }
             const amount = big(bal) + 1n;
+            action = `sell exactIn ${amount} grad=${wasGrad}`;
             const t = await trade(env, P, { wallet: user, buy: false, exactIn: true, amount });
             await checkTrade(P, t, false, true, amount, wasGrad, false, label);
             stats.trades++;
@@ -150,6 +159,7 @@ describe("gen8 invariants (seeded property runs)", function () {
             if (bal < 1000n * WAD) { stats.skipped++; continue; }
             const q = await quote(quoter, P, false, true, bal / 2n);
             const amount = big(q / 2n) + 1n;
+            action = `sell exactOut ${amount} grad=${wasGrad}`;
             const t = await trade(env, P, { wallet: user, buy: false, exactIn: false, amount, limit: 10n ** 30n });
             await checkTrade(P, t, false, false, amount, wasGrad, false, label);
             stats.trades++;
@@ -164,6 +174,7 @@ describe("gen8 invariants (seeded property runs)", function () {
             const amount = buy ? 1000n * WAD : WAD * 1000n;
             const r = await env.lens.currentFeeBps(P.id, await env.trader.getAddress());
             const spec = buy ? -((amount * BPS) / (BPS + r)) : await env.lens.grossForNet(amount, r);
+            action = `limited ${buy ? "buy" : "sell"} ${amount} limit ${limit} spec ${spec} grad=${wasGrad}`;
             const preview = await env.lens.previewFill(P.id, buy, spec, limit);
             const t = await trade(env, P, { wallet: user, buy, exactIn: buy, amount, limit: buy ? 0n : 10n ** 30n, sqrtLimit: limit });
             const fill = buy ? -t.raw0 : t.raw0;
@@ -240,7 +251,7 @@ describe("gen8 invariants (seeded property runs)", function () {
           const why = await revertOf(async () => { throw e; }, env);
           // the only legitimate failures in this generator: a wallet without enough coins or native for a random size
           if (why && /ERC20InsufficientBalance|insufficient funds|doesn't have enough funds/i.test(why)) { stats.skipped++; continue; }
-          throw new Error(`${label}: unexpected revert: ${why}`);
+          throw new Error(`${label}: unexpected revert: ${why} (action: ${action || "other"})`);
         }
         await checkAll(label);
       }

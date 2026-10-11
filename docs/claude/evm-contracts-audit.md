@@ -136,3 +136,18 @@ native waits for a permissionless `flush()` that unwraps and forwards; other ERC
   `frontend/api/lib/financeFeeRoutingEvm.js` / `financeFeeRoutingOwnership.js`, vault `Deposit.from` becomes the
   forwarder for router routes, lift the API harvest pause (`LP_HARVEST_PAUSED_CHAIN_IDS`), add the forwarder to
   `config/verification/mainnet-contracts.json`.
+
+## EVM generation 8 (Uniswap V4 hook), step 1 (2026-10-11, branch `build/evm-gen8`)
+
+Production contracts in `contracts/gen8/`, own build `hardhat.gen8.config.ts` (solc 0.8.26, cancun, via-IR; v4-core
+1.0.2 / v4-periphery 1.0.3 pinned exactly). Internal audit, invariants, A1-A15, deviations V1-V12, events for the
+indexer and the dry-run deploy order: `docs/evm-launch/GEN8_INTERNAL_AUDIT.md`. Facts worth keeping:
+
+- The D1 splitter bands need each run split into bonding and graduation fees; the hook records them per payee in
+  `routerPaid(router)` (deviation V1). Run amounts must be computed from aggregate sums (`MwzFeeSplitter.bands`), not by
+  summing per-trade floors, or a run misses the lower band by a few wei and reverts.
+- A payout recipient runs while the PoolManager is unlocked by the hook and can swap in our pool from `receive()`;
+  safe because every swap books itself (tested).
+- The Robinhood gen-7 GraduationOracle allows 90,000 s price age; the gen-8 launcher bound is 2 days.
+- Fork suite: `node scripts/gen8/fork-suite/run-fork-suite.mjs` (746/746 on BSC + RH, $30K + $50K), equivalence with the
+  702 research checks: `compare-with-research.mjs`. Never the standard anvil keys on forks (EIP-7702 sweeper on BSC).
