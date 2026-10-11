@@ -247,3 +247,29 @@ test("side pools: V2 / V3 / Solidly / V4 creation logs of our coin are found, ou
   assert.ok(sideFactories(56, {}).length >= 4);
   assert.deepEqual(sideFactories(4663, { EVM_GEN8_SIDE_FACTORIES_4663: `v2:${f2},bad:0x1` }), [{ venue: "v2", address: f2 }]);
 });
+
+test("side pools: PancakeSwap Infinity CL Initialize / Swap, verified defaults, Infinity Vault and pools are not holders", async () => {
+  const { INFINITY_CL_IFACE, INFINITY_VAULT, DEFAULT_FACTORIES } = await import("../evm/evmGen8SidePools.js");
+  assert.equal(SIDE_TOPICS.infinityInitialize, "0x426cc62fe6a33a40ba2788c2c87a9c34ee4582b95bc9fa5a7bb7ae70b750b99c", "step-2 topic0");
+  assert.equal(SIDE_TOPICS.pairCreated, "0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9");
+  assert.equal(SIDE_TOPICS.v3PoolCreated, "0x783cca1c0412dd0d695e784568c96da2e9c22ff989357a2e8b1d9b2b4e6b7118");
+  assert.equal(SIDE_TOPICS.solidlyPoolCreated, "0x2128d88d14c80cb081c1252a5acff7a264671bf199ce226b53788fb26065005e");
+  assert.equal(GEN8_TOPICS.Initialize, "0xdd466e674ea557f56295e2d0218a125ea4b4f0f6f3307b95f85e6110838d6438");
+  const coin = "0x00000000000000000000000000000000000000c0";
+  const cl = "0xa0ffb9c1ce1fe56963b0321b32e7a0302114058b";
+  const id = ethers.id("inf-pool");
+  const init = INFINITY_CL_IFACE.encodeEventLog("Initialize", [id, ethers.ZeroAddress, coin, ethers.ZeroAddress, 2500, ethers.ZeroHash, Q96, 0]);
+  const found = findSidePools([{ address: cl, topics: init.topics, data: init.data, blockNumber: 1, transactionHash: "0x01" }], { tokens: new Set([coin]), factories: [{ venue: "infinity_cl", address: cl }], poolManager: A.poolManager, hook: A.hook });
+  assert.deepEqual(found.map((p) => [p.venue, p.poolKey, p.other, p.fee]), [["infinity_cl", id, ethers.ZeroAddress, 2500]]);
+  const sw = INFINITY_CL_IFACE.encodeEventLog("Swap", [id, coin, -5, 77, Q96, 1, 0, 2500, 0]);
+  assert.equal(String(sw.topics[0]), SIDE_TOPICS.infinitySwap);
+  assert.equal(sideSwapCoinVolume({ address: cl, topics: sw.topics, data: sw.data, blockNumber: 1, transactionHash: "0x" }, { venue: "infinity_cl", coinIsToken0: false }), 77n);
+  // built-in defaults (verified on chain 2026-10-11)
+  const d56 = sideFactories(56, {}).map((f) => `${f.venue}:${f.address}`);
+  for (const x of ["v2:0xca143ce32fe78f1f7019d7d551a6402fc5350c73", "v3_pancake:0x0bfbcf9fa4f9c56b0f40a671ad40e0805a091865", "v2:0x8909dc15e40173ff4699343b6eb8132c65e18ec6", "v3:0xdb1d10011ad0ff90774d0c6bb92e5c5c8b4461f7", "solidly:0x65e6cd0ef5d3467030103cf3d433034e570b5784", "infinity_cl:0xa0ffb9c1ce1fe56963b0321b32e7a0302114058b"]) assert.ok(d56.includes(x), x);
+  const d4663 = sideFactories(4663, {}).map((f) => `${f.venue}:${f.address}`);
+  for (const x of ["v2:0x8bceaa40b9acdfaedf85adf4ff01f5ad6517937f", "v3:0x1f7d7550b1b028f7571e69a784071f0205fd2efa", "v2:0x02a84c1b3bbd7401a5f7fa98a384ebc70bb5749e", "v3_pancake:0x0bfbcf9fa4f9c56b0f40a671ad40e0805a091865", "infinity_cl:0xee04c68742e6bf434be8039580d2e89bbe55bc6f"]) assert.ok(d4663.includes(x), x);
+  assert.equal(DEFAULT_FACTORIES[97], undefined, "testnets: env only");
+  const cfg56 = evmGen8Config(56, { EVM_GEN8_LAUNCHER_56: `${A.launcher}@1`, EVM_GEN8_HOOK_56: `${A.hook}@1` }).config!;
+  assert.ok(gen8HolderExclusions(cfg56).some((x) => x.wallet === INFINITY_VAULT[56] && x.reason === "pancake_infinity_vault"));
+});

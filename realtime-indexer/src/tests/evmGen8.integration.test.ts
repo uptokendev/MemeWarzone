@@ -182,6 +182,12 @@ test("gen-8 indexer end to end on a local chain", { skip: runnable ? false : "ge
     await provider.send("evm_increaseTime", [120]);
     for (let i = 0; i < 5; i += 1) await swap(env, coin2, i % 2 ? env.linked : env.buyer, { buy: true, exactIn: true, amount: WAD / 700n + BigInt(i) * 12_345n });
     await catchUp();
+    // Founder decision 2026-10-11: `other` owns recruiter row REC1 but has no link of its own -> UNLINKED, no fee share.
+    await swap(env, coin2, env.other, { buy: true, exactIn: true, amount: WAD / 900n });
+    await catchUp();
+    const ownerRows = (await db.query(`select profile, recruiter, squad, airdrop from public.evm_gen8_fee_accruals where trader = $1 and kind = 'trade' and phase = 'bonding'`, [env.other.address.toLowerCase()])).rows;
+    assert.ok(ownerRows.length >= 1);
+    assert.ok(ownerRows.every((r) => r.profile === "standard_unlinked" && r.recruiter === "0" && r.squad === "0" && BigInt(r.airdrop) > 0n), "a recruiter's own wallet without a link is unlinked");
     const sent2 = await runGen8RoutePass({ db, cfg, chain: routeChain, send: true, operatorAddress: env.operator.address, minWei: 0n });
     assert.equal(sent2.status, "sent", JSON.stringify(sent2));
     await catchUp();

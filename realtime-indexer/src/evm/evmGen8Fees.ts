@@ -13,14 +13,7 @@
  *   rsaMin <= recruiter + squad + airdrop <= rsaMax and squad <= squadMax, from bands(B, G) of the run totals.
  * rsaMin = floor(1500 B / 10000) + floor(1750 G / 10000). The sum of per-trade floors can be BELOW that by up to one
  * wei per trade, so a run built by summing per-trade slices reverts OutOfBand. The run amounts are therefore computed
- * from aggregate sums: per profile, the summed fee, then one floor per (profile, bucket). That can still sit a few wei
- * under rsaMin (one floor per profile instead of one per run); planRunAmounts tops the run up to rsaMin with the
- * difference in the airdrop bucket and records it as rounding. A larger gap means the indexer is missing fees and the
- * run is refused.
- *
- * The run amounts are cumulative: target = aggregate(all fees covered by every run so far + this one) minus what the
- * confirmed runs already paid per bucket. A rounding top-up or a capped run is then corrected by the next run, and
- * nothing is ever paid twice.
+ * from aggregate sums with one floor per pot on the run's summed numerators (aggregateRunAmounts, the step-2 rule).
  */
 import { ethers } from "ethers";
 import { profileBps, type DbcFeeProfile } from "../dbc/dbcFeeSplit.js";
@@ -36,8 +29,6 @@ export const TRADE_RSA_MAX_BPS = 1_750n;
 export const GRAD_RSA_MIN_BPS = 1_750n;
 export const GRAD_RSA_MAX_BPS = 2_000n;
 export const SQUAD_MAX_BPS = 250n;
-/** Largest rounding gap the planner tops up (one wei per profile and bucket floor, with margin). */
-export const MAX_ROUNDING_WEI = 16n;
 
 const floorBps = (amount: bigint, bps: bigint) => (amount * bps) / BPS;
 
@@ -119,61 +110,46 @@ export function addToSums(sums: ProfileSums, row: { kind: "trade" | "graduation"
   return sums;
 }
 
-/** Recruiter / squad / airdrop owed for the given fee sums: one floor per (profile, bucket), never per trade. */
-export function aggregateTargets(sums: ProfileSums): { recruiter: bigint; squad: bigint; airdrop: bigint } {
-  let recruiter = 0n;
-  let squad = 0n;
-  let airdrop = 0n;
-  for (const p of GEN8_PROFILES) {
-    const t = profileBps(p);
-    const g = gradProfileBps(p);
-    recruiter += floorBps(sums.bonding[p], t.recruiter) + floorBps(sums.grad[p], g.recruiter);
-    squad += floorBps(sums.bonding[p], t.squad) + floorBps(sums.grad[p], g.squad);
-    airdrop += floorBps(sums.bonding[p], t.airdrop) + floorBps(sums.grad[p], g.airdrop);
-  }
-  return { recruiter, squad, airdrop };
-}
-
 /** The naive run (sum of per-trade floors). Kept only to prove in the tests why it is not used. */
 export function perTradeFloorSum(rows: Array<{ recruiter: bigint; squad: bigint; airdrop: bigint }>) {
   return rows.reduce((acc, r) => ({ recruiter: acc.recruiter + r.recruiter, squad: acc.squad + r.squad, airdrop: acc.airdrop + r.airdrop }), { recruiter: 0n, squad: 0n, airdrop: 0n });
 }
 
-export type RunPlan =
-  | { ok: true; recruiter: bigint; squad: bigint; airdrop: bigint; roundingAirdrop: bigint; carried: { recruiter: bigint; squad: bigint; airdrop: bigint } }
-  | { ok: false; reason: string; recruiter: bigint; squad: bigint; airdrop: bigint };
+export type RunAmounts = { recruiter: bigint; squad: bigint; airdrop: bigint; rsa: bigint; rounding: bigint };
 
 /**
- * Fit the cumulative targets (owed minus paid) into this run's band. Order of the checks: squad cap, then the upper
- * bound (excess carried to the next run: airdrop first, then recruiter, then squad), then the lower bound (rounding
- * top-up into airdrop, at most MAX_ROUNDING_WEI; a bigger gap refuses the run: fees in the run that the indexer has
- * not attributed yet).
+ * The run amounts, exactly the aggregate rule proven in the step-2 fork suite (scripts/gen8/fork-suite/step2.mjs
+ * aggregateRun, build/evm-gen8 e1a7c8ac): over the run's rows only (the rows between two Routed events),
+ *   recruiter = floor(sum of fee x recruiter bps / 10000)            (one floor on the summed numerator)
+ *   squad     = min(floor(sum of fee x squad bps / 10000), squadMax)
+ *   rsa       = floor((recruiter + squad + airdrop numerators) / 10000) clamped into [rsaMin, rsaMax]
+ *   airdrop   = rsa - recruiter - squad (the rounding remainder lands here; if negative, recruiter gives it back)
+ * Bonding rows use the trade profile bps, graduation rows the graduation bps of the creator's profile stored at launch;
+ * post-graduation rows add nothing (their router part is protocol).
  */
-export function planRunAmounts(target: { recruiter: bigint; squad: bigint; airdrop: bigint }, bands: Pick<Bands, "rsaMin" | "rsaMax" | "squadMax">, maxRounding = MAX_ROUNDING_WEI): RunPlan {
-  let recruiter = target.recruiter > 0n ? target.recruiter : 0n;
-  let squad = target.squad > 0n ? target.squad : 0n;
-  let airdrop = target.airdrop > 0n ? target.airdrop : 0n;
-  const carried = { recruiter: 0n, squad: 0n, airdrop: 0n };
-  if (squad > bands.squadMax) {
-    carried.squad += squad - bands.squadMax;
-    squad = bands.squadMax;
+export function aggregateRunAmounts(sums: ProfileSums, bands: Pick<Bands, "rsaMin" | "rsaMax" | "squadMax">): RunAmounts {
+  let nRec = 0n;
+  let nSq = 0n;
+  let nAir = 0n;
+  for (const p of GEN8_PROFILES) {
+    const t = profileBps(p);
+    const g = gradProfileBps(p);
+    nRec += sums.bonding[p] * t.recruiter + sums.grad[p] * g.recruiter;
+    nSq += sums.bonding[p] * t.squad + sums.grad[p] * g.squad;
+    nAir += sums.bonding[p] * t.airdrop + sums.grad[p] * g.airdrop;
   }
-  let over = recruiter + squad + airdrop - bands.rsaMax;
-  if (over > 0n) {
-    const cut = (have: bigint) => (over < have ? over : have);
-    const a = cut(airdrop); airdrop -= a; carried.airdrop += a; over -= a;
-    const r = cut(recruiter); recruiter -= r; carried.recruiter += r; over -= r;
-    const s = cut(squad); squad -= s; carried.squad += s; over -= s;
+  let rsa = (nRec + nSq + nAir) / BPS;
+  if (rsa < bands.rsaMin) rsa = bands.rsaMin;
+  if (rsa > bands.rsaMax) rsa = bands.rsaMax;
+  let recruiter = nRec / BPS;
+  let squad = nSq / BPS;
+  if (squad > bands.squadMax) squad = bands.squadMax;
+  let airdrop = rsa - recruiter - squad;
+  if (airdrop < 0n) {
+    recruiter += airdrop;
+    airdrop = 0n;
   }
-  const sum = recruiter + squad + airdrop;
-  let roundingAirdrop = 0n;
-  if (sum < bands.rsaMin) {
-    const gap = bands.rsaMin - sum;
-    if (gap > maxRounding) return { ok: false, reason: `run ${gap.toString()} wei under rsaMin: fees not attributed yet`, recruiter, squad, airdrop };
-    roundingAirdrop = gap;
-    airdrop += gap;
-  }
-  return { ok: true, recruiter, squad, airdrop, roundingAirdrop, carried };
+  return { recruiter, squad, airdrop, rsa, rounding: airdrop - nAir / BPS };
 }
 
 export const PROFILE_CODE: Record<Gen8Profile, number> = { standard_linked: 0, standard_unlinked: 1, og_linked: 2 };
@@ -184,9 +160,10 @@ export const PROFILE_CODE: Record<Gen8Profile, number> = { standard_linked: 0, s
  *     uint256 chainId, address splitter, uint256 runId, bytes32 txHash, uint256 logIndex, uint8 kind,
  *     address trader, uint8 profile, uint256 fee, uint256 weekly, uint256 monthly, uint256 recruiter, uint256 squad,
  *     uint256 airdrop, uint256 protocol))))
- * kind 0 = bonding HookFee, 1 = Graduated, 2 = post-graduation HookFee, 3 = the run's rounding top-up (txHash 0,
- * logIndex 0, trader 0, airdrop = the top-up). Double hashing as OpenZeppelin StandardMerkleTree (no second preimage).
- * Leaves are sorted by (blockNumber, logIndex) (rounding last); pairs are hashed sorted (commutative, as
+ * kind 0 = bonding HookFee, 1 = Graduated, 2 = post-graduation HookFee, 3 = the run's totals (txHash 0, logIndex 0,
+ * trader 0, profile 255, fee = B + G, weekly / monthly / recruiter / squad / airdrop = the run amounts sent to route(),
+ * protocol = the run's rounding remainder in airdrop). Double hashing as OpenZeppelin StandardMerkleTree.
+ * Leaves are sorted by (blockNumber, logIndex) (the totals leaf last); pairs are hashed sorted (commutative, as
  * OpenZeppelin MerkleProof); an odd node is paired with itself.
  */
 export type Gen8Leaf = {

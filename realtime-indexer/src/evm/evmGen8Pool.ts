@@ -319,7 +319,8 @@ async function applyTrade(ctx: Ctx, pool: Gen8PoolRow, j: JoinedSwap, txFrom: st
   const viaLauncher = j.fee.swapSender === cfg.launcher.address;
   const creatorBuyKind = j.side === "buy" ? (viaLauncher ? "first_buy" : viaEscrow ? "escrow" : null) : null;
   // audit 10.2: league exclusion = tx.from is the current creator, or the swap came through the escrow. Also the
-  // launcher's first buy (the creator's) and the choice vault's buybacks (operator-sent, burned coins).
+  // launcher's first buy (the creator's) and the choice vault's buybacks (operator-sent, burned coins; excluded from
+  // league volume and trader stats like creator and escrow trades; PENDING FOUNDER CONFIRMATION, step-2 finding).
   const viaChoiceVault = Boolean(cfg.choiceVault && j.fee.swapSender === cfg.choiceVault);
   const leagueExcluded = txFrom === pool.creator || viaEscrow || viaLauncher || viaChoiceVault;
   const state = priceState(pool, j.swap.sqrtPriceX96, j.fee.graduated);
@@ -337,7 +338,9 @@ async function applyTrade(ctx: Ctx, pool: Gen8PoolRow, j: JoinedSwap, txFrom: st
   pool.lastSqrtPriceX96 = j.swap.sqrtPriceX96;
 
   // D1 accrual (idempotent on the HookFee log) and, in the bonding phase, the reward_events row.
-  const profile = phase === "bonding" ? await resolveGen8Profile(db, txFrom, blockTime) : null;
+  // Buybacks (swap sender = our creator-choice vault) are attributed UNLINKED, like the Solana DBC buyback whose
+  // operator wallet is unlinked. PENDING FOUNDER CONFIRMATION (step-2 finding, 2026-10-11).
+  const profile = phase === "bonding" ? (viaChoiceVault ? "standard_unlinked" : await resolveGen8Profile(db, txFrom, blockTime)) : null;
   const accrual: Gen8AccrualRow = {
     chainId: cfg.chainId, hook: cfg.hook.address, poolId: pool.poolId, token: pool.token, txHash: j.fee.txHash, logIndex: j.fee.logIndex, swapLogIndex: j.swap.logIndex,
     blockNumber: j.fee.blockNumber, blockTime, kind: "trade", phase, trader: txFrom, swapSender: j.fee.swapSender,
@@ -351,10 +354,13 @@ async function applyTrade(ctx: Ctx, pool: Gen8PoolRow, j: JoinedSwap, txFrom: st
   const curveDec = rawToDecimal(j.fee.curveAmount);
   const coinDec = rawToDecimal(j.coinRaw);
   const fill = coinDec > 0 ? curveDec / coinDec : null;
-  try {
-    await sinks.recordTradeActivity(txFrom, blockTime);
-  } catch (e) {
-    console.warn("[gen8] trade activity mark failed", { chainId: cfg.chainId, token: pool.token, wallet: txFrom }, e);
+  // Buybacks are not a trader's activity (no attribution activity mark for the operator wallet).
+  if (!viaChoiceVault) {
+    try {
+      await sinks.recordTradeActivity(txFrom, blockTime);
+    } catch (e) {
+      console.warn("[gen8] trade activity mark failed", { chainId: cfg.chainId, token: pool.token, wallet: txFrom }, e);
+    }
   }
   await db.query(
     `insert into public.campaign_activity (chain_id, campaign_address, last_activity_at, updated_at) values ($1,$2,$3,now())

@@ -138,10 +138,10 @@ create table if not exists public.evm_gen8_route_runs (
 -- Side pools (6.8): pools of our coins that do not use our hook. Never counted anywhere; alerts only.
 create table if not exists public.evm_gen8_side_pools (
   chain_id integer not null,
-  pool_key text not null,                    -- pair / pool address, or the V4 pool id
+  pool_key text not null,                    -- pair / pool address, or the V4 / Infinity CL pool id
   token_address text not null,
-  venue text not null,                       -- v2 | v3 | v3_pancake | solidly | v4
-  factory_address text not null,             -- factory, or the PoolManager for v4
+  venue text not null,                       -- v2 | v3 | v3_pancake | solidly | v4 | infinity_cl
+  factory_address text not null,             -- factory, or the PoolManager (v4) / CLPoolManager (infinity_cl)
   other_token text,
   fee integer,
   hooks text,
@@ -155,7 +155,7 @@ create table if not exists public.evm_gen8_side_pools (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   primary key (chain_id, pool_key),
-  constraint evm_gen8_side_pools_venue_chk check (venue in ('v2', 'v3', 'v3_pancake', 'solidly', 'v4'))
+  constraint evm_gen8_side_pools_venue_chk check (venue in ('v2', 'v3', 'v3_pancake', 'solidly', 'v4', 'infinity_cl'))
 );
 create index if not exists evm_gen8_side_pools_token_idx on public.evm_gen8_side_pools (chain_id, token_address);
 
@@ -168,7 +168,8 @@ create table if not exists public.evm_gen8_side_pool_volume (
   primary key (chain_id, pool_key, hour)
 );
 
--- Holder census exclusions per chain (PoolManager, hook, 0xdEaD, launcher, reserve lock, escrow, choice vault).
+-- Holder census exclusions per chain (PoolManager, hook, 0xdEaD, launcher, reserve lock, escrow, choice vault,
+-- PancakeSwap Infinity Vault, and every side-pool contract the watcher finds).
 create table if not exists public.evm_gen8_holder_exclusions (
   chain_id integer not null,
   wallet text not null,

@@ -5,12 +5,14 @@
  * balance deltas and moves the coins' sync cursors in ONE database transaction, so a crash never applies a range twice.
  *
  * Holder count = positive balances minus the exclusion list (PoolManager, hook, 0xdEaD, launcher, reserve lock, escrow,
- * choice vault; the coin itself and 0x0 never count), written to evm_gen8_pools.holder_count and, once graduated, to
+ * choice vault, PancakeSwap Infinity Vault, and every side-pool contract the watcher found: V2 pairs, V3 and Topaz
+ * pools; the coin itself and 0x0 never count), written to evm_gen8_pools.holder_count and, once graduated, to
  * market_stats.holders (campaigns-base.js already prefers market_stats.holders over the buyer count).
  */
 import { ethers } from "ethers";
 import { intEnv, type Gen8ChainConfig } from "./evmGen8Config.js";
 import type { Queryable } from "./evmGen8Store.js";
+import { INFINITY_VAULT } from "./evmGen8SidePools.js";
 
 const TRANSFER_IFACE = new ethers.Interface(["event Transfer(address indexed from, address indexed to, uint256 value)"]);
 export const TRANSFER_TOPIC = TRANSFER_IFACE.getEvent("Transfer")!.topicHash;
@@ -27,6 +29,8 @@ export function gen8HolderExclusions(cfg: Gen8ChainConfig): Array<{ wallet: stri
   if (cfg.reserveLock) out.push({ wallet: cfg.reserveLock, reason: "reserve_lock" });
   if (cfg.escrow) out.push({ wallet: cfg.escrow, reason: "escrow" });
   if (cfg.choiceVault) out.push({ wallet: cfg.choiceVault, reason: "choice_vault" });
+  // PancakeSwap Infinity Vault: holds the coins of every Infinity pool (step-2 fork suite finding).
+  if (INFINITY_VAULT[cfg.chainId]) out.push({ wallet: INFINITY_VAULT[cfg.chainId]!, reason: "pancake_infinity_vault" });
   return out.map((x) => ({ wallet: x.wallet.toLowerCase(), reason: x.reason }));
 }
 
@@ -95,6 +99,14 @@ export async function runGen8HolderCensusOnce(opts: { db: DbWithConnect; cfg: Ge
       [cfg.chainId, x.wallet, x.reason],
     );
   }
+  // Side-pool contracts found by the watcher (it also inserts them as it finds them; this is the backstop).
+  await db.query(
+    `insert into public.evm_gen8_holder_exclusions(chain_id, wallet, reason)
+     select chain_id, pool_key, 'side_pool_' || venue from public.evm_gen8_side_pools
+      where chain_id = $1 and venue in ('v2', 'v3', 'v3_pancake', 'solidly')
+     on conflict (chain_id, wallet) do nothing`,
+    [cfg.chainId],
+  );
   const tokensRes = await db.query(
     `select p.token_address, p.launch_block, s.last_block
        from public.evm_gen8_pools p

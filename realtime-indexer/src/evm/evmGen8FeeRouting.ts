@@ -8,26 +8,25 @@
  *      total T = pending.total + routerOwed, B = pending.B + pendingBondingFees, G = pending.G + pendingGradFees.
  *   2. The accrual rows not yet covered by a run, up to N, must add up to exactly T, B and G. Otherwise the indexer is
  *      missing logs and nothing is planned (alert after repeated mismatches).
- *   3. Targets from aggregate sums (evmGen8Fees.aggregateTargets over every fee covered so far plus this run) minus what
- *      the confirmed runs paid; fitted into bands(B, G) read from the splitter (and checked against the local copy).
+ *   3. Amounts from the rows of this run only (since the last Routed), one floor per pot on their summed numerators,
+ *      clamped into bands(B, G) read from the splitter (and checked against the local copy): aggregateRunAmounts.
  *   4. accrualRoot over the planned rows (leaf format in evmGen8Fees.ts), stored with the plan.
  *   5. Dry run (default): the plan is written as status 'dry_run' and logged. Send mode (EVM_GEN8_FEE_ROUTING_SEND=1
  *      and EVM_GEN8_OPERATOR_KEY_<id>): staticCall first, then route(runs + 1, ...), status 'sent' with the hash.
  * A run is confirmed only by its Routed event (recordRoutedRun, called by the ingest loop): the run's actual amounts are
  * written from the event and every uncovered accrual row before the Routed log is assigned to it (rows the run's claim
- * swept in after the plan are flagged run_late: covered by the money, not in that run's root; the cumulative targets
- * pay their recruiter / squad / airdrop share in the next run).
+ * swept in after the plan are flagged run_late: covered by the money, not in that run's root; their recruiter / squad /
+ * airdrop share stayed in protocol for that run, which the run_late flag makes visible for a manual true-up).
  */
 import { ethers } from "ethers";
 import { configuredGen8Chains, intEnv, truthyEnv, type Gen8ChainConfig } from "./evmGen8Config.js";
 import { GEN8_HOOK_IFACE, GEN8_SPLITTER_ABI } from "./evmGen8Abi.js";
 import {
   addToSums,
-  aggregateTargets,
+  aggregateRunAmounts,
   emptyProfileSums,
   gen8LeafHash,
   merkleRoot,
-  planRunAmounts,
   splitterBands,
   type Gen8Leaf,
   type Gen8Profile,
@@ -211,31 +210,20 @@ export async function runGen8RoutePass(opts: {
     sumRouter += big(r.router_amount);
   }
   if (sumB !== B || sumG !== G || sumRouter !== T) {
-    const mem = opts.mismatchMemory;
-    const key = `${cfg.chainId}`;
-    const count = (mem?.get(key) ?? 0) + 1;
-    mem?.set(key, count);
-    if (count >= 3) {
-      await opts.alert?.({ severity: "warning", kind: "gen8_accrual_mismatch", chainId: cfg.chainId, title: `Gen-8 fee accruals do not match the splitter on chain ${cfg.chainId}`, message: `At block ${n}: indexed B ${sumB} G ${sumG} T ${sumRouter}; on chain B ${B} G ${G} T ${T}. No run planned.` });
-    }
+    // Read at the block the indexer is complete through, so any difference is a real gap (step-2 rule: alert on it).
+    opts.mismatchMemory?.set(`${cfg.chainId}`, (opts.mismatchMemory.get(`${cfg.chainId}`) ?? 0) + 1);
+    await opts.alert?.({
+      severity: "critical", kind: "gen8_accrual_mismatch", chainId: cfg.chainId,
+      title: `Gen-8 fee accruals differ from the hook ledger on chain ${cfg.chainId}`,
+      message: `At block ${n}: indexed B ${sumB} G ${sumG} T ${sumRouter}; hook + splitter (pendingBondingFees / pendingGradFees / routerOwed + pending()) B ${B} G ${G} T ${T}. No run planned.`,
+    });
     return { status: "skipped", reason: "accruals-do-not-match-chain", detail: { block: n, indexed: { B: sumB.toString(), G: sumG.toString(), T: sumRouter.toString() }, chain: { B: B.toString(), G: G.toString(), T: T.toString() } } };
   }
   opts.mismatchMemory?.delete(`${cfg.chainId}`);
 
-  // Cumulative targets: every fee covered by a confirmed run plus this run, minus what confirmed runs paid.
-  const coveredRes = await db.query(
-    `select kind, phase, profile, coalesce(sum(fee), 0)::text as fee
-       from public.evm_gen8_fee_accruals
-      where chain_id = $1 and hook_address = $2 and run_id is not null and run_id <= $3
-      group by kind, phase, profile`,
-    [cfg.chainId, cfg.hook.address, lastConfirmed.toString()],
-  );
+  // The run covers exactly the rows since the last Routed event (step-2 rule); one floor per pot on their sums.
   const sums = emptyProfileSums();
-  for (const r of coveredRes.rows) addToSums(sums, { kind: r.kind, phase: r.phase, profile: (r.profile as Gen8Profile) || null, fee: big(r.fee) });
   for (const r of rows) addToSums(sums, { kind: r.kind, phase: r.phase, profile: (r.profile as Gen8Profile) || null, fee: big(r.fee) });
-  const owed = aggregateTargets(sums);
-  const paid = { recruiter: big(confirmed.rows[0]?.r), squad: big(confirmed.rows[0]?.q), airdrop: big(confirmed.rows[0]?.a) };
-  const target = { recruiter: owed.recruiter - paid.recruiter, squad: owed.squad - paid.squad, airdrop: owed.airdrop - paid.airdrop };
 
   const bands = await s.bands(B, G);
   const local = splitterBands(B, G);
@@ -243,11 +231,7 @@ export async function runGen8RoutePass(opts: {
     await opts.alert?.({ severity: "critical", kind: "gen8_bands_mismatch", chainId: cfg.chainId, title: "MwzFeeSplitter.bands differs from the indexer copy", message: `bands(${B}, ${G}) on chain ${JSON.stringify(bands, (_k, v) => (typeof v === "bigint" ? v.toString() : v))}` });
     return { status: "skipped", reason: "bands-mismatch" };
   }
-  const plan = planRunAmounts(target, bands);
-  if (!plan.ok) {
-    await opts.alert?.({ severity: "warning", kind: "gen8_run_out_of_band", chainId: cfg.chainId, title: `Gen-8 splitter run refused on chain ${cfg.chainId}`, message: plan.reason });
-    return { status: "skipped", reason: "out-of-band", detail: { reason: plan.reason } };
-  }
+  const plan = aggregateRunAmounts(sums, bands);
 
   const runId = s.runs + 1n;
   const leaves: Gen8Leaf[] = rows.map((r) => ({
@@ -256,15 +240,14 @@ export async function runGen8RoutePass(opts: {
     profile: (r.profile as Gen8Profile) || null, fee: big(r.fee), weekly: big(r.league_weekly), monthly: big(r.league_monthly),
     recruiter: big(r.recruiter), squad: big(r.squad), airdrop: big(r.airdrop), protocol: big(r.protocol),
   }));
-  if (plan.roundingAirdrop > 0n) {
-    leaves.push({ chainId: cfg.chainId, splitter, runId, txHash: ethers.ZeroHash, logIndex: 0, kind: 3, trader: ethers.ZeroAddress, profile: null, fee: 0n, weekly: 0n, monthly: 0n, recruiter: 0n, squad: 0n, airdrop: plan.roundingAirdrop, protocol: 0n });
-  }
+  // The run's totals leaf: the root also commits to the amounts route() is given.
+  leaves.push({ chainId: cfg.chainId, splitter, runId, txHash: ethers.ZeroHash, logIndex: 0, kind: 3, trader: ethers.ZeroAddress, profile: null, fee: B + G, weekly: bands.weekly, monthly: bands.monthly, recruiter: plan.recruiter, squad: plan.squad, airdrop: plan.airdrop, protocol: plan.rounding });
   const root = merkleRoot(leaves.map(gen8LeafHash));
   const leavesJson = leaves.map((l) => ({ ...l, runId: l.runId.toString(), fee: l.fee.toString(), weekly: l.weekly.toString(), monthly: l.monthly.toString(), recruiter: l.recruiter.toString(), squad: l.squad.toString(), airdrop: l.airdrop.toString(), protocol: l.protocol.toString() }));
   const protocol = T - bands.weekly - bands.monthly - plan.recruiter - plan.squad - plan.airdrop;
   const planned: Gen8RoutePass = {
     status: "planned", runId: runId.toString(), total: T.toString(), bondingFees: B.toString(), gradFees: G.toString(),
-    recruiter: plan.recruiter.toString(), squad: plan.squad.toString(), airdrop: plan.airdrop.toString(), roundingAirdrop: plan.roundingAirdrop.toString(), root, leaves: leaves.length,
+    recruiter: plan.recruiter.toString(), squad: plan.squad.toString(), airdrop: plan.airdrop.toString(), roundingAirdrop: plan.rounding.toString(), root, leaves: leaves.length,
   };
   const writePlan = async (status: "dry_run" | "sent", txHash: string | null) => {
     await db.query(
@@ -281,8 +264,8 @@ export async function runGen8RoutePass(opts: {
        where public.evm_gen8_route_runs.status in ('dry_run', 'failed')`,
       [
         cfg.chainId, splitter, runId.toString(), status, n, T.toString(), B.toString(), G.toString(), bands.weekly.toString(), bands.monthly.toString(),
-        plan.recruiter.toString(), plan.squad.toString(), plan.airdrop.toString(), protocol.toString(), plan.roundingAirdrop.toString(),
-        JSON.stringify({ recruiter: plan.carried.recruiter.toString(), squad: plan.carried.squad.toString(), airdrop: plan.carried.airdrop.toString() }),
+        plan.recruiter.toString(), plan.squad.toString(), plan.airdrop.toString(), protocol.toString(), plan.rounding.toString(),
+        JSON.stringify({}),
         root, leaves.length, JSON.stringify(leavesJson), txHash,
       ],
     );

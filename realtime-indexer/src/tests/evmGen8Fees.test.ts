@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ethers } from "ethers";
 import {
-  aggregateTargets,
+  aggregateRunAmounts,
   addToSums,
   emptyProfileSums,
   gen8GraduationSlices,
@@ -14,9 +14,7 @@ import {
   gen8TradeSlices,
   merkleProof,
   merkleRoot,
-  MAX_ROUNDING_WEI,
   perTradeFloorSum,
-  planRunAmounts,
   splitterBands,
   verifyProof,
   type Gen8Leaf,
@@ -75,8 +73,7 @@ test("THE FAILURE: summing per-trade floors misses rsaMin by wei, so route() wou
   // THE FIX: one floor over the aggregate
   const sums = emptyProfileSums();
   for (const _ of rows) addToSums(sums, { kind: "trade", phase: "bonding", profile: "standard_unlinked", fee: 7n });
-  const plan = planRunAmounts(aggregateTargets(sums), splitterBands(B, 0n));
-  assert.ok(plan.ok);
+  const plan = aggregateRunAmounts(sums, splitterBands(B, 0n));
   assert.equal(plan.airdrop, 1_050n);
   assert.equal(routeWouldPass(B, 0n, total, plan), null);
 });
@@ -121,47 +118,39 @@ test("random runs (realistic fees, graduation fees): per-trade floors fail when 
       total += g;
     }
     if (edge && routeWouldPass(B, G, total, perTradeFloorSum(rows)) !== null) naiveFailures += 1;
-    const plan = planRunAmounts(aggregateTargets(sums), splitterBands(B, G));
-    assert.ok(plan.ok, `run ${run}`);
-    assert.ok(plan.roundingAirdrop <= 6n, `rounding ${plan.roundingAirdrop}`);
+    const plan = aggregateRunAmounts(sums, splitterBands(B, G));
+    assert.ok(plan.rounding >= 0n && plan.rounding <= 2n, `rounding ${plan.rounding}`);
+    assert.equal(plan.recruiter + plan.squad + plan.airdrop, plan.rsa);
     assert.equal(routeWouldPass(B, G, total, plan), null, `run ${run}`);
   }
   assert.ok(naiveFailures > edgeRuns / 2, `the naive sum reverts in most band-minimum runs (${naiveFailures} / ${edgeRuns})`);
 });
 
-test("cumulative runs: what all runs pay equals the aggregate target of all fees, never more", () => {
+test("aggregate rule (step-2 fork suite): one floor per pot on summed numerators, squad cap, airdrop takes the remainder", () => {
+  // 3 linked trades of 7 wei: recruiter floor(3 x 7 x 1250 / 10000) = 2 (per trade it would be 0 + 0 + 0)
   const sums = emptyProfileSums();
-  const paid = { recruiter: 0n, squad: 0n, airdrop: 0n };
-  for (const fees of [[7n, 7n, 13n], [1n, 9_999n], [123_456_789n]]) {
-    let B = 0n;
-    for (const fee of fees) {
-      addToSums(sums, { kind: "trade", phase: "bonding", profile: "standard_linked", fee });
-      B += fee;
-    }
-    const owed = aggregateTargets(sums);
-    const plan = planRunAmounts({ recruiter: owed.recruiter - paid.recruiter, squad: owed.squad - paid.squad, airdrop: owed.airdrop - paid.airdrop }, splitterBands(B, 0n));
-    assert.ok(plan.ok);
-    paid.recruiter += plan.recruiter;
-    paid.squad += plan.squad;
-    paid.airdrop += plan.airdrop;
-  }
-  const owed = aggregateTargets(sums);
-  // A run never pays more than is owed to recruiters / squads; what one run's squad cap (or band) holds back is carried
-  // to the next run (here 1 wei of squad is still carried after the last run); rounding top-ups go to airdrop.
-  assert.equal(paid.recruiter, owed.recruiter);
-  assert.ok(owed.squad - paid.squad >= 0n && owed.squad - paid.squad <= 2n, `squad carried ${owed.squad - paid.squad}`);
-  assert.ok(paid.airdrop - owed.airdrop >= 0n && paid.airdrop - owed.airdrop <= 6n, "only rounding top-ups go beyond, a few wei, into airdrop");
-});
-
-test("planRunAmounts: cap at rsaMax (carried), squad cap, refusal on a real gap", () => {
-  const capped = planRunAmounts({ recruiter: 200n, squad: 50n, airdrop: 100n }, { rsaMin: 100n, rsaMax: 300n, squadMax: 40n });
-  assert.ok(capped.ok);
-  assert.deepEqual([capped.recruiter, capped.squad, capped.airdrop], [200n, 40n, 60n]);
-  assert.deepEqual(capped.carried, { recruiter: 0n, squad: 10n, airdrop: 40n });
-  const refused = planRunAmounts({ recruiter: 0n, squad: 0n, airdrop: 0n }, { rsaMin: MAX_ROUNDING_WEI + 1n, rsaMax: 1_000n, squadMax: 10n });
-  assert.equal(refused.ok, false);
-  const topped = planRunAmounts({ recruiter: 0n, squad: 0n, airdrop: 0n }, { rsaMin: 3n, rsaMax: 10n, squadMax: 1n });
-  assert.ok(topped.ok && topped.airdrop === 3n && topped.roundingAirdrop === 3n);
+  for (const fee of [7n, 7n, 7n]) addToSums(sums, { kind: "trade", phase: "bonding", profile: "standard_linked", fee });
+  const b = splitterBands(21n, 0n);
+  const r = aggregateRunAmounts(sums, b);
+  assert.equal(r.recruiter, 2n);
+  assert.equal(r.squad, 0n);
+  assert.equal(r.rsa, 3n, "floor(21 x 1500 / 10000)");
+  assert.equal(r.airdrop, 1n, "the rounding remainder goes to airdrop");
+  // squad capped at squadMax
+  const capped = aggregateRunAmounts(sums, { rsaMin: 0n, rsaMax: 100n, squadMax: 0n });
+  assert.equal(capped.squad, 0n);
+  // rsa clamped down to rsaMax; airdrop negative -> recruiter gives it back
+  const tight = aggregateRunAmounts(sums, { rsaMin: 0n, rsaMax: 1n, squadMax: 10n });
+  assert.deepEqual([tight.recruiter, tight.squad, tight.airdrop], [1n, 0n, 0n]);
+  // graduation rows use the graduation bps of the profile (OG 1750 / 250)
+  const g = emptyProfileSums();
+  addToSums(g, { kind: "graduation", phase: "bonding", profile: "og_linked", fee: 10_000n });
+  const gr = aggregateRunAmounts(g, splitterBands(0n, 10_000n));
+  assert.deepEqual([gr.recruiter, gr.squad, gr.airdrop], [1_750n, 250n, 0n]);
+  // post-graduation rows add nothing
+  const p = emptyProfileSums();
+  addToSums(p, { kind: "trade", phase: "post", profile: "standard_unlinked", fee: 10_000n });
+  assert.equal(aggregateRunAmounts(p, splitterBands(0n, 0n)).rsa, 0n);
 });
 
 test("accrualRoot: leaves hash deterministically, every proof verifies, any change moves the root", () => {

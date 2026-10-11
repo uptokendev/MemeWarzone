@@ -20,6 +20,8 @@ export const GEN8_REWARD_SOURCE = "gen8_hook";
  * The DBC link SQL (dbc/dbcFeeAccruals.ts resolveTraderProfile) for EVM wallets: the recruiter link active at the
  * trade time, OG when the recruiter is OG, otherwise unlinked (also on a missing link). EVM addresses compare
  * case-insensitively, as rewards/creditRecruiterEarnings.ts does.
+ * Founder decision 2026-10-11: a wallet that owns a recruiter row but has no link is UNLINKED (no fee share), the
+ * Solana DBC rule, not the API route-decision rule. Pinned in src/tests/evmGen8.integration.test.ts.
  */
 const LINK_SQL_EVM = `
 select r.is_og

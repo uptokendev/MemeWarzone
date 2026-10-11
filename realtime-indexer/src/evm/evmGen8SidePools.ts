@@ -6,10 +6,13 @@
  *
  * Sources per chain:
  *   - Uniswap V4 PoolManager Initialize with our coin as currency0 or currency1 and any key other than ours;
- *   - V2 PairCreated, V3 PoolCreated (Uniswap and PancakeSwap), Solidly-style PoolCreated (Topaz) on the factories in
- *     EVM_GEN8_SIDE_FACTORIES_<id> ("v2:0x..,v3:0x..,v3_pancake:0x..,solidly:0x.."), defaulting to the factories known
- *     on that chain (BSC: PancakeSwap V2/V3 and Uniswap V2/V3, plus TOPAZ_FACTORY_ADDRESS_56 when set; Robinhood 4663:
- *     Uniswap V3). Robinhood's Uniswap V2 and PancakeSwap factories are not known to this repo: set them by env.
+ *   - V2 PairCreated, V3 PoolCreated (Uniswap and PancakeSwap), Solidly-style PoolCreated (Topaz) on the factories,
+ *     and PancakeSwap Infinity CL Initialize on its CLPoolManager. EVM_GEN8_SIDE_FACTORIES_<id>
+ *     ("v2:0x..,v3:0x..,v3_pancake:0x..,solidly:0x..,infinity_cl:0x..") replaces the built-in list below, which was
+ *     taken from the official Uniswap (deployments.json) and PancakeSwap (developer docs) address pages and checked
+ *     read-only on chain on 2026-10-11 (code present; recent creation logs or a sample pair whose factory() matches).
+ * Side-pool contracts that hold coins (V2 pairs, V3 / Topaz pools) and the PancakeSwap Infinity Vault are added to
+ * evm_gen8_holder_exclusions (V4 and Infinity CL pools hold their coins in the PoolManager / Vault).
  * Volume = coins moved (raw) per swap, summed per hour. Alerts: a new side pool (warning), and side volume over 24 h of
  * at least EVM_GEN8_SIDE_ALERT_SHARE_BPS of our pool's 24 h coin volume and at least EVM_GEN8_SIDE_ALERT_MIN_COINS.
  */
@@ -20,7 +23,7 @@ import type { Queryable } from "./evmGen8Store.js";
 
 export const GEN8_SIDE_ALERT_TYPE = "gen8_side_pool";
 
-export type SideVenue = "v2" | "v3" | "v3_pancake" | "solidly" | "v4";
+export type SideVenue = "v2" | "v3" | "v3_pancake" | "solidly" | "v4" | "infinity_cl";
 export type SideFactory = { venue: Exclude<SideVenue, "v4">; address: string };
 
 export const SIDE_IFACE = new ethers.Interface([
@@ -31,6 +34,11 @@ export const SIDE_IFACE = new ethers.Interface([
   "event Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)",
   "event Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick, uint128 protocolFeesToken0, uint128 protocolFeesToken1)",
 ]);
+/** PancakeSwap Infinity CLPoolManager (infinity-core ICLPoolManager). */
+export const INFINITY_CL_IFACE = new ethers.Interface([
+  "event Initialize(bytes32 indexed id, address indexed currency0, address indexed currency1, address hooks, uint24 fee, bytes32 parameters, uint160 sqrtPriceX96, int24 tick)",
+  "event Swap(bytes32 indexed id, address indexed sender, int128 amount0, int128 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick, uint24 fee, uint16 protocolFee)",
+]);
 const topicOf = (sig: string) => ethers.id(sig);
 export const SIDE_TOPICS = {
   pairCreated: topicOf("PairCreated(address,address,address,uint256)"),
@@ -39,17 +47,33 @@ export const SIDE_TOPICS = {
   v2Swap: topicOf("Swap(address,uint256,uint256,uint256,uint256,address)"),
   v3Swap: topicOf("Swap(address,address,int256,int256,uint160,uint128,int24)"),
   pancakeV3Swap: topicOf("Swap(address,address,int256,int256,uint160,uint128,int24,uint128,uint128)"),
+  infinityInitialize: topicOf("Initialize(bytes32,address,address,address,uint24,bytes32,uint160,int24)"),
+  infinitySwap: topicOf("Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24,uint16)"),
 };
 
-/** Factories known in this repo or in the canonical deployments (BSC: PancakeSwap docs, as projectImportBnbMarket.js). */
-const DEFAULT_FACTORIES: Record<number, SideFactory[]> = {
+/** PancakeSwap Infinity Vault per chain (holds every Infinity pool's coins; CLPoolManager.vault() checked on chain). */
+export const INFINITY_VAULT: Record<number, string> = {
+  56: "0x238a358808379702088667322f80ac48bad5e6c4",
+  4663: "0x4f922d5b15e6691e0469663e4f5c4177f23c5faf",
+};
+
+/** Built-in factories (official address pages, verified read-only on chain 2026-10-11; see the module comment). */
+export const DEFAULT_FACTORIES: Record<number, SideFactory[]> = {
   56: [
     { venue: "v2", address: "0xca143ce32fe78f1f7019d7d551a6402fc5350c73" }, // PancakeSwap V2
-    { venue: "v3_pancake", address: "0x0bfbcf9fa4f9c56b0f40a671ad40e0805a091865" }, // PancakeSwap V3
-    { venue: "v2", address: "0x8909dc15e40173ff4699343b6eb8132c65e18ec6" }, // Uniswap V2 (BNB Chain)
-    { venue: "v3", address: "0xdb1d10011ad0ff90774d0c6bb92e5c5c8b4461f7" }, // Uniswap V3 (BNB Chain)
+    { venue: "v3_pancake", address: "0x0bfbcf9fa4f9c56b0f40a671ad40e0805a091865" }, // PancakeSwap V3 (pool deployer 0x41ff9aa7...)
+    { venue: "v2", address: "0x8909dc15e40173ff4699343b6eb8132c65e18ec6" }, // Uniswap V2
+    { venue: "v3", address: "0xdb1d10011ad0ff90774d0c6bb92e5c5c8b4461f7" }, // Uniswap V3
+    { venue: "solidly", address: "0x65e6cd0ef5d3467030103cf3d433034e570b5784" }, // Topaz (gen-6/7 graduation venue)
+    { venue: "infinity_cl", address: "0xa0ffb9c1ce1fe56963b0321b32e7a0302114058b" }, // PancakeSwap Infinity CLPoolManager
   ],
-  4663: [{ venue: "v3", address: "0x1f7d7550b1b028f7571e69a784071f0205fd2efa" }], // Uniswap V3 (evmGraduationKeeper KNOWN_V3)
+  4663: [
+    { venue: "v2", address: "0x8bceaa40b9acdfaedf85adf4ff01f5ad6517937f" }, // Uniswap V2
+    { venue: "v3", address: "0x1f7d7550b1b028f7571e69a784071f0205fd2efa" }, // Uniswap V3
+    { venue: "v2", address: "0x02a84c1b3bbd7401a5f7fa98a384ebc70bb5749e" }, // PancakeSwap V2
+    { venue: "v3_pancake", address: "0x0bfbcf9fa4f9c56b0f40a671ad40e0805a091865" }, // PancakeSwap V3 (pool deployer 0x41ff9aa7...)
+    { venue: "infinity_cl", address: "0xee04c68742e6bf434be8039580d2e89bbe55bc6f" }, // PancakeSwap Infinity CLPoolManager
+  ],
 };
 
 export function sideFactories(chainId: number, env: NodeJS.ProcessEnv = process.env): SideFactory[] {
@@ -58,13 +82,13 @@ export function sideFactories(chainId: number, env: NodeJS.ProcessEnv = process.
   if (raw) {
     for (const part of raw.split(",")) {
       const [venue, address] = part.trim().split(":").map((s) => s.trim());
-      if (["v2", "v3", "v3_pancake", "solidly"].includes(venue) && /^0x[0-9a-fA-F]{40}$/.test(address || "")) out.push({ venue: venue as SideFactory["venue"], address: address!.toLowerCase() });
+      if (["v2", "v3", "v3_pancake", "solidly", "infinity_cl"].includes(venue) && /^0x[0-9a-fA-F]{40}$/.test(address || "")) out.push({ venue: venue as SideFactory["venue"], address: address!.toLowerCase() });
     }
     return out;
   }
   out.push(...(DEFAULT_FACTORIES[chainId] || []));
-  const topaz = String(env[`TOPAZ_FACTORY_ADDRESS_${chainId}`] || "").trim();
-  if (/^0x[0-9a-fA-F]{40}$/.test(topaz)) out.push({ venue: "solidly", address: topaz.toLowerCase() });
+  const topaz = String(env[`TOPAZ_FACTORY_ADDRESS_${chainId}`] || "").trim().toLowerCase();
+  if (/^0x[0-9a-f]{40}$/.test(topaz) && !out.some((f) => f.address === topaz)) out.push({ venue: "solidly", address: topaz });
   return out;
 }
 
@@ -93,6 +117,16 @@ export function findSidePools(logs: L[], input: { tokens: Set<string>; factories
     }
     const f = byAddr.get(address);
     if (!f) continue;
+    if (f.venue === "infinity_cl") {
+      if (t0 !== SIDE_TOPICS.infinityInitialize) continue;
+      const a = INFINITY_CL_IFACE.parseLog({ topics: [...log.topics], data: log.data })!.args as any;
+      const c0 = String(a.currency0).toLowerCase();
+      const c1 = String(a.currency1).toLowerCase();
+      const token = input.tokens.has(c0) ? c0 : input.tokens.has(c1) ? c1 : null;
+      if (!token) continue;
+      out.push({ ...base, poolKey: String(a.id).toLowerCase(), token, venue: "infinity_cl", factory: address, other: token === c0 ? c1 : c0, fee: Number(a.fee), hooks: String(a.hooks).toLowerCase() });
+      continue;
+    }
     const t1 = ethers.getAddress(ethers.dataSlice(log.topics[1]!, 12)).toLowerCase();
     const t2 = ethers.getAddress(ethers.dataSlice(log.topics[2]!, 12)).toLowerCase();
     const token = input.tokens.has(t1) ? t1 : input.tokens.has(t2) ? t2 : null;
@@ -118,6 +152,10 @@ export function sideSwapCoinVolume(log: L, pool: { venue: SideVenue; coinIsToken
   const abs = (v: bigint) => (v < 0n ? -v : v);
   if (pool.venue === "v4") {
     const a = V4_POOL_MANAGER_IFACE.parseLog({ topics: [...log.topics], data: log.data })!.args as any;
+    return abs(BigInt(pool.coinIsToken0 ? a.amount0 : a.amount1));
+  }
+  if (pool.venue === "infinity_cl") {
+    const a = INFINITY_CL_IFACE.parseLog({ topics: [...log.topics], data: log.data })!.args as any;
     return abs(BigInt(pool.coinIsToken0 ? a.amount0 : a.amount1));
   }
   if (t0 === SIDE_TOPICS.v2Swap) {
@@ -158,7 +196,7 @@ export async function runGen8SidePoolWatcherOnce(opts: {
     const creation: L[] = [];
     creation.push(...(await provider.getLogs({ address: cfg.poolManager, topics: [GEN8_TOPICS.Initialize], fromBlock: from, toBlock: to })));
     if (factories.length) {
-      creation.push(...(await provider.getLogs({ address: factories.map((f) => f.address), topics: [[SIDE_TOPICS.pairCreated, SIDE_TOPICS.v3PoolCreated, SIDE_TOPICS.solidlyPoolCreated]], fromBlock: from, toBlock: to })));
+      creation.push(...(await provider.getLogs({ address: factories.map((f) => f.address), topics: [[SIDE_TOPICS.pairCreated, SIDE_TOPICS.v3PoolCreated, SIDE_TOPICS.solidlyPoolCreated, SIDE_TOPICS.infinityInitialize]], fromBlock: from, toBlock: to })));
     }
     for (const p of findSidePools(creation, { tokens, factories, poolManager: cfg.poolManager, hook: cfg.hook.address })) {
       const ins = await db.query(
@@ -166,6 +204,13 @@ export async function runGen8SidePoolWatcherOnce(opts: {
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) on conflict (chain_id, pool_key) do nothing returning 1`,
         [cfg.chainId, p.poolKey, p.token, p.venue, p.factory, p.other, p.fee, p.hooks, p.block, p.tx],
       );
+      // Pool contracts that hold our coin are not holders (V4 / Infinity pools hold theirs in the PoolManager / Vault).
+      if (p.venue === "v2" || p.venue === "v3" || p.venue === "v3_pancake" || p.venue === "solidly") {
+        await db.query(
+          `insert into public.evm_gen8_holder_exclusions(chain_id, wallet, reason) values ($1,$2,$3) on conflict (chain_id, wallet) do nothing`,
+          [cfg.chainId, p.poolKey, `side_pool_${p.venue}`],
+        );
+      }
       if (ins.rows.length) {
         created += 1;
         await opts.alert({
@@ -177,15 +222,15 @@ export async function runGen8SidePoolWatcherOnce(opts: {
       }
     }
     // Swaps of every known side pool in the range.
-    const side = await db.query(`select pool_key, token_address, venue, other_token from public.evm_gen8_side_pools where chain_id = $1`, [cfg.chainId]);
-    const pools = new Map<string, { venue: SideVenue; token: string; coinIsToken0: boolean }>();
+    const side = await db.query(`select pool_key, token_address, venue, other_token, factory_address from public.evm_gen8_side_pools where chain_id = $1`, [cfg.chainId]);
+    const pools = new Map<string, { venue: SideVenue; token: string; coinIsToken0: boolean; factory: string }>();
     for (const r of side.rows) {
       const token = String(r.token_address);
       const other = String(r.other_token || "");
-      pools.set(String(r.pool_key), { venue: r.venue as SideVenue, token, coinIsToken0: BigInt(token) < BigInt(other || "0x" + "f".repeat(40)) });
+      pools.set(String(r.pool_key), { venue: r.venue as SideVenue, token, coinIsToken0: BigInt(token) < BigInt(other || "0x" + "f".repeat(40)), factory: String(r.factory_address) });
     }
     const swapLogs: Array<{ log: L; key: string }> = [];
-    const addrPools = [...pools.entries()].filter(([, p]) => p.venue !== "v4").map(([k]) => k);
+    const addrPools = [...pools.entries()].filter(([, p]) => p.venue !== "v4" && p.venue !== "infinity_cl").map(([k]) => k);
     for (let i = 0; i < addrPools.length; i += 100) {
       const chunk = addrPools.slice(i, i + 100);
       for (const log of await provider.getLogs({ address: chunk, topics: [[SIDE_TOPICS.v2Swap, SIDE_TOPICS.v3Swap, SIDE_TOPICS.pancakeV3Swap]], fromBlock: from, toBlock: to })) {
@@ -196,6 +241,16 @@ export async function runGen8SidePoolWatcherOnce(opts: {
     for (let i = 0; i < v4Ids.length; i += 50) {
       for (const log of await provider.getLogs({ address: cfg.poolManager, topics: [GEN8_TOPICS.Swap, v4Ids.slice(i, i + 50)], fromBlock: from, toBlock: to })) {
         swapLogs.push({ log, key: String(log.topics[1]).toLowerCase() });
+      }
+    }
+    // Infinity CL pools: Swap on the CLPoolManager, topic1 = pool id.
+    const byManager = new Map<string, string[]>();
+    for (const [k, p] of pools) if (p.venue === "infinity_cl") byManager.set(p.factory, [...(byManager.get(p.factory) || []), k]);
+    for (const [manager, ids] of byManager) {
+      for (let i = 0; i < ids.length; i += 50) {
+        for (const log of await provider.getLogs({ address: manager, topics: [SIDE_TOPICS.infinitySwap, ids.slice(i, i + 50)], fromBlock: from, toBlock: to })) {
+          swapLogs.push({ log, key: String(log.topics[1]).toLowerCase() });
+        }
       }
     }
     const times = new Map<number, number>();
