@@ -11,6 +11,7 @@ import {
   markAllPrepareNotificationsRead,
   markPrepareNotificationRead,
 } from "@/lib/prepareNotifications";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 function notifyChanged() {
   try {
@@ -58,12 +59,12 @@ export function usePrepareNotificationCenter(walletAddress?: string | null, limi
     void run();
     const onChange = () => void run();
     window.addEventListener("mwz:notifications-changed", onChange as EventListener);
-    const timer = window.setInterval(run, 30000);
+    const stopPolling = setVisibleInterval(run, 30000);
 
     return () => {
       cancelled = true;
       window.removeEventListener("mwz:notifications-changed", onChange as EventListener);
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [refresh]);
 

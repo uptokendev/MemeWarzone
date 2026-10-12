@@ -2,6 +2,7 @@ import { Contract, ethers } from "ethers";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getReadProvider } from "@/lib/readProvider";
 import { coerceSupportedChainId, type SupportedChainId } from "@/lib/chainConfig";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 const PAIR_ABI = [
   "function token0() view returns (address)",
@@ -143,11 +144,11 @@ export function useDexPairTrades(args: Args) {
     };
 
     load();
-    const t = setInterval(load, pollIntervalMs);
+    const stopPolling = setVisibleInterval(load, pollIntervalMs);
 
     return () => {
       cancelled = true;
-      clearInterval(t);
+      stopPolling();
     };
   }, [enabled, tokenAddress, pairAddress, chainId, lookbackBlocks, pollIntervalMs]);
 

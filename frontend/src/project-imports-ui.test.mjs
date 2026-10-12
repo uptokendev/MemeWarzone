@@ -106,7 +106,7 @@ test("imported project route mounts owner-manageable surface and refreshes manua
   assert.match(tokenEntry, /import ImportedTokenPage from "\.\/ImportedTokenPage"/);
   assert.match(tokenEntry, /if \(project\) return <>/);
   assert.match(tokenEntry, /<ImportedTokenPage/);
-  assert.match(tokenEntry, /window\.setInterval\(\(\) => \{ void refresh\(\); \}, 10_000\)/);
+  assert.match(tokenEntry, /setVisibleInterval\(\(\) => \{ void refresh\(\); \}, 10_000\)/);
   assert.match(liveTokenEntry, /import TokenDetails from "\.\/TokenDetails"/);
 });
 

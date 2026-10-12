@@ -23,6 +23,45 @@ test("frontpage unknown bonding progress is a dash, not 0%", () => {
   assert.match(card, /progress == null\s*\n\s*\? "—"/);
 });
 
+test("BNB and Robinhood leftover display polls pause on idle via setVisibleInterval", () => {
+  const files = [
+    "src/hooks/useDexPairTrades.ts",
+    "src/lib/useImportWalletBalances.ts",
+    "src/pages/TokenDetailsEntry.tsx",
+    "src/components/home/SafeFeaturedCampaigns.tsx",
+    "src/hooks/useWarRoom.ts",
+    "src/hooks/useEmbedChartMarket.ts",
+    "src/hooks/useBnbUsdPrice.ts",
+    "src/hooks/useEthUsdPrice.ts",
+    "src/hooks/useRobinhoodBeatTheMarket.ts",
+    "src/components/token/TokenSafetyStatusButton.tsx",
+    "src/hooks/useTokenStatsRealtime.ts",
+    "src/components/token/TokenComments.tsx",
+    "src/components/home/AirdropStrip.tsx",
+    "src/components/arena/useBattlePrizePool.ts",
+    "src/components/arena/BuyInPopup.tsx",
+    "src/components/arena/BattleVoteControls.tsx",
+    "src/components/arena/TournamentVoteControls.tsx",
+    "src/components/arena/TournamentBoostControls.tsx",
+    "src/components/arena/TournamentFinalSalvoControls.tsx",
+    "src/components/arena/IncomingChallengeListener.tsx",
+    "src/hooks/useTournamentCommandState.ts",
+    "src/hooks/useLeagueRealtimeBase.ts",
+    "src/hooks/useProfileStream.ts",
+    "src/hooks/usePrepareNotificationCenter.ts",
+  ];
+  for (const rel of files) {
+    const src = read(rel);
+    assert.match(src, /setVisibleInterval/, rel);
+    assert.doesNotMatch(src, /window\.setInterval\(\(\) => \{ void refresh\(\); \}, 10_000\)/, rel);
+  }
+  const dex = read("src/hooks/useDexPairTrades.ts");
+  assert.match(dex, /getReadProvider/);
+  assert.match(dex, /setVisibleInterval\(load, pollIntervalMs\)/);
+  const balances = read("src/lib/useImportWalletBalances.ts");
+  assert.match(balances, /setVisibleInterval\(\(\) => void load\(\), 15_000\)/);
+});
+
 test("idle session parks the app wallet without provider.disconnect", () => {
   const idle = read("src/lib/idleSession.mjs");
   const evm = read("src/hooks/useWallet.ts");

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isSolanaChainId, type SupportedChainId } from "@/lib/chainConfig";
 import { useAblyTokenChannel } from "@/hooks/useAblyTokenChannel";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 const API_BASE = String(import.meta.env.VITE_REALTIME_API_BASE || "").replace(/\/$/, "");
 const ENABLE_TOKEN_POLLING = String(import.meta.env.VITE_ENABLE_TOKEN_POLLING || "").trim() === "1";
@@ -206,9 +207,9 @@ export function useTokenStatsRealtime(campaignAddress?: string, chainId?: number
     pull(ac.signal);
 
     if (!enabled || !campaignAddress || !ENABLE_TOKEN_POLLING) return () => ac.abort();
-    const t = setInterval(() => pull(ac.signal), 60_000);
+    const stopPolling = setVisibleInterval(() => pull(ac.signal), 60_000);
     return () => {
-      clearInterval(t);
+      stopPolling();
       ac.abort();
     };
   }, [enabled, campaignAddress, cid, pull]);

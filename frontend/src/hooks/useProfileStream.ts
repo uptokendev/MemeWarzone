@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/apiBase";
 import { profileStreamFor } from "../../shared/profileStreams.mjs";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 export type ProfileStream = {
   platform: "kick";
@@ -35,12 +36,10 @@ export function useProfileStream(wallet: string | null | undefined): ProfileStre
     };
 
     void load();
-    const id = window.setInterval(() => {
-      if (document.visibilityState === "visible") void load();
-    }, POLL_MS);
+    const stopPolling = setVisibleInterval(() => { void load(); }, POLL_MS);
     return () => {
       cancelled = true;
-      window.clearInterval(id);
+      stopPolling();
     };
   }, [wallet, configured]);
 

@@ -23,6 +23,7 @@ import { useSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
 import { isTestnetCampaignsEnabled } from "@/features/postgrad/apiClient";
 import { useNativeUsdPrice } from "@/hooks/useNativeUsdPrice";
 import { useLeagueRealtime } from "@/hooks/useLeagueRealtime";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 import { BNB_CHAIN_ID, BNB_TESTNET_CHAIN_ID, getDefaultChainId, type SupportedChainId } from "@/lib/chainConfig";
 import { liveCampaignKey, pickLiveNumeric } from "@/lib/liveMarketMerge";
 import LaunchCampaignArtifact from "@/abi/LaunchCampaign.json";
@@ -662,8 +663,7 @@ export function SafeFeaturedCampaigns({ className = "" }: { className?: string }
 
   // Continuous soft rank poll (even while Ably is connected).
   useEffect(() => {
-    const id = window.setInterval(() => softPollRef.current(), FEATURED_SOFT_POLL_MS);
-    return () => window.clearInterval(id);
+    return setVisibleInterval(() => softPollRef.current(), FEATURED_SOFT_POLL_MS);
   }, [chainId]);
 
   // Initial / chain-switch hard load (full hydrate once). Soft updates never remount the board.

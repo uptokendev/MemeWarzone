@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { fetchArenaStakeStatus } from "@/features/postgrad/apiClient";
 import { presentChallengeResponsePopup } from "@/lib/arena/challengePopupPresentation.mjs";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 import type { Battle } from "@/features/postgrad/contracts";
 
 export function BuyInPopup({
@@ -42,10 +43,10 @@ export function BuyInPopup({
       }
     }
     void tick();
-    const timer = window.setInterval(() => void tick(), 8000);
+    const stopPolling = setVisibleInterval(() => void tick(), 8000);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [open, battle, walletAddress, onSettled]);
 

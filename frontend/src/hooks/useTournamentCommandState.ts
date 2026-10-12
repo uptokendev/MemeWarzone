@@ -16,6 +16,7 @@ import { useArenaEventDetails } from "@/hooks/useArenaEventFeed";
 import { useArenaWarPool } from "@/hooks/useArenaWarPoolFeed";
 import type { BattleRealtimeMetrics } from "@/lib/arena/battleRealtime";
 import { fetchArenaBattleMetrics } from "@/lib/arena/battleRealtimeApi";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 import { signArenaWalletAction } from "@/lib/arena/signArenaWalletAction";
 import {
   presentAuthoritativeRemaining,
@@ -166,10 +167,10 @@ export function useTournamentCommandState(
       setMetricsByBattleId(Object.fromEntries(results));
     };
     void load();
-    const timer = setInterval(() => void load(), 15_000);
+    const stopPolling = setVisibleInterval(() => void load(), 15_000);
     return () => {
       active = false;
-      clearInterval(timer);
+      stopPolling();
     };
   }, [battleIdKey, live, loadMetrics]);
 

@@ -8,6 +8,7 @@ import { signArenaWalletAction } from "@/lib/arena/signArenaWalletAction";
 import { isSolanaChainId } from "@/lib/chainConfig";
 import { fetchBattleVoteState, submitBattleFreeVote, type BattleVotePayload } from "@/lib/arena/battleVoteClient";
 import { battleDurationLabel } from "@/lib/arena/battleDuration";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 function shortToken(value?: string | null) {
   const token = String(value || "").trim();
@@ -59,10 +60,10 @@ export function useBattleVote({ battleId, chainId }: { battleId: string; chainId
     const controller = new AbortController();
     setLoading(true);
     void refresh(controller.signal);
-    const timer = window.setInterval(() => void refresh(), 15_000);
+    const stopPolling = setVisibleInterval(() => void refresh(), 15_000);
     return () => {
       controller.abort();
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [refresh]);
 

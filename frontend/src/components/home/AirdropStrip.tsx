@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Gift } from "lucide-react";
 
 import { apiFetch } from "@/lib/apiBase";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 type PoolRow = {
   ok: boolean;
@@ -51,10 +52,10 @@ export function AirdropStrip() {
         if (!cancelled) setRows(results.filter((row): row is PoolRow => Boolean(row?.ok)));
       });
     void load();
-    const timer = window.setInterval(() => void load(), 5 * 60_000);
+    const stopPolling = setVisibleInterval(() => void load(), 5 * 60_000);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, []);
 

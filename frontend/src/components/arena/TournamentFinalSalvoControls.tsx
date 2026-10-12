@@ -9,6 +9,7 @@ import { presentFinalSalvoState } from "@/lib/arena/finalSalvoPresentation.mjs";
 import { signArenaWalletAction } from "@/lib/arena/signArenaWalletAction";
 import { tournamentVoteMatchRef } from "@/lib/arena/tournamentVotePresentation.mjs";
 import { isSolanaChainId } from "@/lib/chainConfig";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 type Match = {
   id?: string | null;
@@ -63,11 +64,11 @@ export function TournamentFinalSalvoControls({
     const controller = new AbortController();
     setLoading(true);
     void refresh(controller.signal);
-    const refreshTimer = window.setInterval(() => void refresh(), 5_000);
+    const stopPolling = setVisibleInterval(() => void refresh(), 5_000);
     const clockTimer = window.setInterval(() => setClockTick((value) => value + 1), 1_000);
     return () => {
       controller.abort();
-      window.clearInterval(refreshTimer);
+      stopPolling();
       window.clearInterval(clockTimer);
     };
   }, [refresh]);

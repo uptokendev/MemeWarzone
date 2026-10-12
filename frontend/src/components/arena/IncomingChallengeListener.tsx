@@ -23,6 +23,7 @@ import {
   upsertChallengePopup,
 } from "@/lib/arena/challengePopupPresentation.mjs";
 import { isEvmAddress, isSolanaAddress } from "@/lib/address";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 import { getAllowedChainIds, isEvmChainId, isSolanaChainId, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
 import type { Battle } from "@/features/postgrad/contracts";
 
@@ -218,14 +219,12 @@ export function IncomingChallengeListener() {
     window.addEventListener("focus", onFocus);
     window.addEventListener("online", onFocus);
     document.addEventListener("visibilitychange", onVisible);
-    const timer = window.setInterval(() => {
-      if (document.visibilityState !== "hidden") void poll();
-    }, POLL_MS);
+    const stopPolling = setVisibleInterval(() => { void poll(); }, POLL_MS);
     return () => {
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("online", onFocus);
       document.removeEventListener("visibilitychange", onVisible);
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [poll]);
 

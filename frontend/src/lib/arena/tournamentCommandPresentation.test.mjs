@@ -114,7 +114,7 @@ test("tournament command preserves opt-in, buy-in, claims, standings, bracket, a
   assert.match(hook, /action: "arena_tournament_opt_in"/);
   assert.match(registration, /ArenaBuyInButton/);
   assert.match(hook, /fetchArenaBattleMetrics/);
-  assert.match(hook, /setInterval\(\(\) => void load\(\), 15_000\)/);
+  assert.match(hook, /setVisibleInterval\(\(\) => void load\(\), 15_000\)/);
   assert.match(hook, /loadMetrics/);
   assert.doesNotMatch(page, /useAblyBattleChannel|useBattleWallRealtime/);
   assert.doesNotMatch(page, /mwz-hud-frame/);
