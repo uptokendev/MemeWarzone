@@ -3,7 +3,7 @@ import { badMethod, getQuery, json } from "../server/http.js";
 import { getRpcUrls, getServerReadProvider } from "./lib/getServerReadProvider.js";
 import { parseGen5QuoteParams, readGen5CampaignState } from "./lib/evmGen5CampaignState.js";
 import { gen8ConfigFor } from "./lib/evmGen8Config.js";
-import { readGen8CampaignState, readGen8Pool } from "./lib/evmGen8CampaignState.js";
+import { gen8IndexedCampaignState, readGen8CampaignState, readGen8IndexedPool, readGen8Pool } from "./lib/evmGen8CampaignState.js";
 
 /**
  * GET /api/evm/campaign-state?chainId=56|4663&campaign=0x..[&wallet=0x..][&buyNativeWei=..|&buyTokens=..|&sellTokens=..]
@@ -25,6 +25,15 @@ const MAX_CACHE_ENTRIES = 2000;
 function cacheMs() {
   const n = Number(process.env.EVM_CAMPAIGN_STATE_CACHE_MS);
   return Number.isFinite(n) && n >= 0 ? n : 10_000;
+}
+
+async function gen8Db(deps) {
+  if (deps.db !== undefined) return deps.db;
+  try {
+    return (await import("../server/db.js")).pool;
+  } catch {
+    return null;
+  }
 }
 
 export function clearEvmCampaignStateCache() {
@@ -75,11 +84,21 @@ export async function evmCampaignStateHandler(req, res, deps = {}) {
     let state = null;
     if (gen8Cfg) {
       const findPool = deps.readGen8Pool || readGen8Pool;
+      let hookReadFailed = false;
       const gen8Pool = await findPool({ provider, cfg: gen8Cfg, token: campaign }).catch((error) => {
-        console.warn("[api/evm/campaign-state] gen-8 pool read failed; trying the campaign reader", error?.shortMessage || error?.message || error);
+        console.warn("[api/evm/campaign-state] gen-8 pool read failed; trying the indexer, then the campaign reader", error?.shortMessage || error?.message || error);
+        hookReadFailed = true;
         return null;
       });
-      if (gen8Pool) state = await (deps.readGen8State || readGen8CampaignState)({ provider, cfg: gen8Cfg, token: campaign, wallet: wallet || null, pool: gen8Pool });
+      // The indexer's open_at / last_phase stand in for what the chain read cannot answer (fix round 2026-10-12).
+      const loadIndexed = deps.loadGen8Indexed || (async () => readGen8IndexedPool(await gen8Db(deps), chainId, campaign));
+      if (gen8Pool) {
+        const indexed = await loadIndexed().catch(() => null);
+        state = await (deps.readGen8State || readGen8CampaignState)({ provider, cfg: gen8Cfg, token: campaign, wallet: wallet || null, pool: gen8Pool, indexed });
+      } else if (hookReadFailed) {
+        const indexed = await loadIndexed().catch(() => null);
+        if (indexed) return json(res, 200, { chainId, ...gen8IndexedCampaignState({ cfg: gen8Cfg, indexed }), cached: false });
+      }
     }
     if (!state) state = await read({ provider, campaignAddress: campaign, wallet: wallet || null, quoteParams });
     const value = { chainId, ...state };

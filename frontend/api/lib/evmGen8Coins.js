@@ -10,10 +10,13 @@ import { ethers } from "ethers";
 import { EVM_GEN8_FACTORY_GENERATION, GEN8_TRADE_PATH, gen8PoolId, gen8PoolKey } from "../../shared/evmGen8.mjs";
 import { gen8ConfigFor } from "./evmGen8Config.js";
 
-const HOOK_POOLS_ABI = ["function pools(bytes32) view returns (address creator, uint40 launchTime, bool graduated, int24 tickGrad, int24 tickStart, uint128 liqA, uint128 liqB, uint160 sqrtGrad, tuple(uint16,uint16,uint16,uint16,uint16) fees)"];
+// build/evm-gen8 20d95e0a: openAt (was launchTime) and a tenth field graduatedAt. Read by name only.
+const HOOK_POOLS_ABI = ["function pools(bytes32) view returns (address creator, uint40 openAt, bool graduated, int24 tickGrad, int24 tickStart, uint128 liqA, uint128 liqB, uint160 sqrtGrad, tuple(uint16,uint16,uint16,uint16,uint16) fees, uint40 graduatedAt)"];
 
 /**
- * Returns { token, poolId, poolKey, graduated|null, source } for a gen-8 coin, or null. Never throws.
+ * Returns { token, poolId, poolKey, graduated|null, source } for a gen-8 coin, or null. Never throws. `graduated` is the
+ * one-time latch only (campaigns.graduated_at_chain or hook pools().graduated), not the platform status (latch AND
+ * post phase, see gen8PlatformStatus); no caller decides anything from it today.
  * deps: { db, getProvider(chainId), env }
  */
 export async function findGen8Coin({ chainId, address, db = null, getProvider = null, env = process.env }) {
@@ -54,9 +57,9 @@ export async function findGen8Coin({ chainId, address, db = null, getProvider = 
     if (!provider) return null;
     const hook = new ethers.Contract(cfg.hook, HOOK_POOLS_ABI, provider);
     const p = await hook.pools(gen8PoolId(token, cfg.hook));
-    const creator = p.creator ?? p[0];
+    const creator = p.creator;
     if (!creator || creator === ethers.ZeroAddress) return null;
-    return answer("hook", Boolean(p.graduated ?? p[2]));
+    return answer("hook", Boolean(p.graduated));
   } catch (error) {
     console.warn("[gen8] hook lookup failed", error?.shortMessage || error?.message || error);
     return null;

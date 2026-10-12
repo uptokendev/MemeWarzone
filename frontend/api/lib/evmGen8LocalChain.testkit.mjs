@@ -5,6 +5,9 @@
  * / reserve lock / launcher at predicted addresses. Fresh deterministic keys funded with anvil_setBalance; nothing
  * touches a public network.
  *
+ * The launch request is the fix-round tuple (build/evm-gen8 20d95e0a): the 13 fields, then uint64 openAt; the API's
+ * launchRequest JSON (gen8LaunchRequestJson) is passed to launcher.launch as is.
+ *
  * GEN8_ARTIFACTS (default ~/mwz-wt/evm-gen8/artifacts-gen8) must hold `npx hardhat --config hardhat.gen8.config.ts
  * compile`; ANVIL_BIN (default ~/.foundry/bin/anvil). Tests skip when either is missing.
  */
@@ -77,7 +80,9 @@ export async function startAnvil(port = Number(process.env.GEN8_API_ANVIL_PORT |
   return {
     url,
     chainId,
-    provider: () => new ethers.JsonRpcProvider(url, network, { staticNetwork: network, batchMaxCount: 1 }),
+    // cacheTimeout -1: no 250 ms request cache, so back-to-back sends from one wallet never reuse a nonce and a time
+    // jump is seen at once.
+    provider: () => new ethers.JsonRpcProvider(url, network, { staticNetwork: network, batchMaxCount: 1, cacheTimeout: -1 }),
     stop: async () => {
       proc.kill("SIGTERM");
       await new Promise((r) => setTimeout(r, 150));
@@ -139,7 +144,8 @@ export async function deployGen8Local(provider) {
   const splitter = await deploy(d, "MwzFeeSplitter", [hookAddr, safe.address, await weekly.getAddress(), await monthly.getAddress(), await recruiter.getAddress(), await community.getAddress(), await protocol.getAddress(), operator.address]);
   const vault = await deploy(d, "MwzCreatorChoiceVault", [safe.address, hookAddr, launcherAddr, 24 * 3600]);
   const reserveLock = await deploy(d, "MwzReserveLock", [hookAddr, launcherAddr, await vault.getAddress()]);
-  const launcher = await deploy(d, "MwzV4Launcher", [await pm.getAddress(), hookAddr, await oracle.getAddress(), await reserveLock.getAddress(), await vault.getAddress(), safe.address, apiSigner.address, 50n * WAD, 50_000n * WAD]);
+  // F6 (build/evm-gen8 20d95e0a): the BNB production oracle band, $10 to $100,000, as test/gen8/fixtures/gen8.ts.
+  const launcher = await deploy(d, "MwzV4Launcher", [await pm.getAddress(), hookAddr, await oracle.getAddress(), await reserveLock.getAddress(), await vault.getAddress(), safe.address, apiSigner.address, 10n * WAD, 100_000n * WAD]);
   if ((await splitter.getAddress()) !== splitterAddr || (await launcher.getAddress()) !== launcherAddr) throw new Error("predicted address drift");
   const lens = await deploy(d, "MwzLaunchLens", [hookAddr], libs);
   const escrow = await deploy(d, "MwzCreatorEscrow", [hookAddr]);
@@ -181,4 +187,10 @@ export async function directSwap(local, poolKey, wallet, { buy, amount }) {
   }
   const tx = await local.trader.connect(wallet).swap(key, buy, -amount, 0n, "0x", { value: buy ? amount : 0n, gasLimit: 5_000_000n });
   return tx.wait();
+}
+
+/** Moves the local chain's clock forward and mines a block (anvil). */
+export async function advanceTime(provider, seconds) {
+  await provider.send("evm_increaseTime", [Number(seconds)]);
+  await provider.send("evm_mine", []);
 }

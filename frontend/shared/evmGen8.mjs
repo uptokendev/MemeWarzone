@@ -168,6 +168,28 @@ export function gen8Progress({ liqA, tickStart, tickGrad, sqrtPriceX96, graduate
   return { soldRaw, capacityRaw, bps, pct: bps / 100, complete: false };
 }
 
+/**
+ * F1 (2026-10-12): the pool's current phase from its price, as MwzLaunchLens.progress.postPhase and the indexer's
+ * gen8PricePhase: post when sqrtPriceX96 <= sqrtAtTick(tickGrad) (V4 price is coins per native, so the coin price is at
+ * or past the graduation price), else bonding. Null price (no swap read) = null.
+ */
+export function gen8PostPhase(sqrtPriceX96, tickGrad) {
+  if (sqrtPriceX96 == null || tickGrad == null) return null;
+  return BigInt(sqrtPriceX96) <= sqrtAtTick(Number(tickGrad));
+}
+
+/**
+ * The platform status of a gen-8 coin (founder 2026-10-12, the indexer's gen8PlatformStatus): 'graduated' only when
+ * the one-time latch is set (Graduated event, evm_gen8_pools.graduated_block, hook pools().graduated) AND the pool is
+ * in its post phase now; a latched coin whose price fell back into range A is 'bonding' again.
+ */
+export function gen8PlatformStatus({ latched, postPhase }) {
+  return latched && postPhase === true ? "graduated" : "bonding";
+}
+
+/** MwzReserveLock.RESERVE_RELEASE_DELAY: the creator reserve releases no earlier than graduatedAt + 1 h. */
+export const GEN8_RESERVE_RELEASE_DELAY_SECONDS = 3600;
+
 /** LiquidityAmounts.getLiquidityForAmount1(sqrtA, sqrtB, amount1) (v4-periphery). */
 export function liquidityForAmount1(sqrtA, sqrtB, amount1) {
   let a = BigInt(sqrtA);
@@ -189,11 +211,16 @@ function nextSqrtFromAmount0In(sqrtP, L, amountIn) {
 
 // ------------------------------------------------------------------ fees
 
-/** MwzFeeMath.rate: the bps a swap pays now (launcher's first buy: the bonding rate). */
-export function gen8FeeRate({ graduated, isLauncher = false, launchTime, nowTs, fees = GEN8_RATES }) {
-  if (graduated) return Number(fees.postBps);
+/**
+ * MwzFeeMath.rate: the bps a swap pays now (launcher's first buy: the bonding rate). F1 (2026-10-12): the post rate
+ * applies when the swap STARTS at or past the graduation price (`postPhase`, see gen8PostPhase), not when the latch is
+ * set; `graduated` is the older name of the same input. B: the 60 s launch decay runs from `openAt` (older name
+ * `launchTime`).
+ */
+export function gen8FeeRate({ graduated = false, postPhase, isLauncher = false, launchTime, openAt, nowTs, fees = GEN8_RATES }) {
+  if (postPhase ?? graduated) return Number(fees.postBps);
   if (isLauncher) return Number(fees.bondingBps);
-  const end = Number(launchTime) + GEN8_RATES.sniperWindowSeconds;
+  const end = Number(openAt ?? launchTime) + GEN8_RATES.sniperWindowSeconds;
   if (Number(nowTs) >= end) return Number(fees.bondingBps);
   let left = end - Number(nowTs);
   if (left > GEN8_RATES.sniperWindowSeconds) left = GEN8_RATES.sniperWindowSeconds;
@@ -307,7 +334,13 @@ export function gen8FirstBuyEstimate({ valueWei, tickStart, tickGrad }) {
 
 // ------------------------------------------------------------------ create authorization (D3)
 
-/** The LaunchRequest fields in MwzV4Launcher order; values normalised (strings, bigint, numbers). */
+/**
+ * B scheduled open (MwzV4Launcher.MAX_OPEN_DELAY): a launch whose openAt is later than block time + 30 days reverts
+ * OpenAtTooFar; openAt 0 or not after the block time opens trading at once.
+ */
+export const GEN8_MAX_OPEN_DELAY_SECONDS = 30 * 24 * 60 * 60;
+
+/** The LaunchRequest fields in MwzV4Launcher order (openAt last); values normalised (strings, bigint, numbers). */
 export function normalizeGen8LaunchRequest(r) {
   return {
     name: String(r.name ?? ""),
@@ -323,17 +356,18 @@ export function normalizeGen8LaunchRequest(r) {
     firstBuyValue: BigInt(r.firstBuyValue ?? 0),
     minFirstBuyOut: BigInt(r.minFirstBuyOut ?? 0),
     salt: BigInt(r.salt),
+    openAt: BigInt(r.openAt ?? 0),
   };
 }
 
-/** MwzV4Launcher.hashRequest. */
+/** MwzV4Launcher.hashRequest: abi.encode of the 13 gen-8 words, then uint64 openAt (B, 2026-10-12). */
 export function gen8HashRequest(request) {
   const r = normalizeGen8LaunchRequest(request);
   const h = (s) => keccak256(toUtf8Bytes(s));
   return keccak256(
     coder.encode(
-      ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256", "uint8", "uint8", "uint256", "uint256", "uint256"],
-      [h(r.name), h(r.symbol), h(r.logoURI), h(r.xAccount), h(r.website), h(r.extraLink), r.metadataHash, r.targetUsd, r.feeChoice, r.feeCreatorPct, r.firstBuyValue, r.minFirstBuyOut, r.salt],
+      ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256", "uint8", "uint8", "uint256", "uint256", "uint256", "uint64"],
+      [h(r.name), h(r.symbol), h(r.logoURI), h(r.xAccount), h(r.website), h(r.extraLink), r.metadataHash, r.targetUsd, r.feeChoice, r.feeCreatorPct, r.firstBuyValue, r.minFirstBuyOut, r.salt, r.openAt],
     ),
   );
 }
@@ -368,6 +402,7 @@ export function gen8LaunchRequestJson(request) {
     firstBuyValue: r.firstBuyValue.toString(),
     minFirstBuyOut: r.minFirstBuyOut.toString(),
     salt: r.salt.toString(),
+    openAt: r.openAt.toString(),
   };
 }
 
@@ -379,4 +414,67 @@ export function gen8LaunchRequestJson(request) {
 export function gen8MetadataHash({ name, symbol, logoURI, xAccount, website, extraLink, description = "" }) {
   const record = { v: 1, name: String(name ?? ""), symbol: String(symbol ?? ""), logoURI: String(logoURI ?? ""), xAccount: String(xAccount ?? ""), website: String(website ?? ""), extraLink: String(extraLink ?? ""), description: String(description ?? "") };
   return keccak256(toUtf8Bytes(JSON.stringify(record))).toLowerCase();
+}
+
+// ------------------------------------------------------------------ revert reasons (fix round 2026-10-12)
+
+/**
+ * Custom errors of the gen-8 contracts the API and the app explain to a user, by selector (bytes4 of
+ * keccak256("Name()"); pinned against contracts/gen8/abi at build/evm-gen8 20d95e0a in shared/evmGen8.test.mjs).
+ * The fix round added OpenAtTooFar / BadOpenAt / TradingNotOpen (B), PriceAboveStart (F2), PriceBelowGraduation /
+ * PoolManagerUnlocked / ReserveTooEarly (F1 reserve lock), NotRouterCaller (F4) and BadClaimDeadline (F5).
+ */
+export const GEN8_REVERTS = Object.freeze({
+  "0xd795d50f": { name: "OpenAtTooFar", contract: "MwzV4Launcher", message: "Trading can open at most 30 days after the launch." },
+  "0xc8a77a2c": { name: "BadOpenAt", contract: "MwzLaunchHook", message: "The trading open time is outside the allowed window (now to 30 days ahead)." },
+  "0xe09f0331": { name: "TradingNotOpen", contract: "MwzLaunchHook", message: "Trading on this coin has not opened yet." },
+  "0x2fcb916e": { name: "PriceAboveStart", contract: "MwzLaunchHook", message: "This sell is larger than the bonding range can take back. Sell a smaller amount." },
+  "0x40ffbed0": { name: "PriceBelowGraduation", contract: "MwzReserveLock", message: "The creator reserve unlocks only while the price is at or past the graduation price." },
+  "0x0e1475a4": { name: "PoolManagerUnlocked", contract: "MwzReserveLock", message: "The creator reserve cannot be released inside a swap. Send the release as its own transaction." },
+  "0x7710b1e4": { name: "ReserveTooEarly", contract: "MwzReserveLock", message: "The creator reserve unlocks one hour after graduation." },
+  "0x544df468": { name: "NotRouterCaller", contract: "MwzLaunchHook", message: "Only the fee router, its operator or the owner can claim the router fees." },
+  "0x289c4adf": { name: "BadClaimDeadline", contract: "MwzCreatorChoiceVault", message: "The holder batch claim deadline must be at least 7 days after it becomes executable and at most 365 days ahead." },
+  "0xd66173a5": { name: "NotGraduated", contract: "MwzReserveLock", message: "The creator reserve unlocks after graduation." },
+  "0x2d4e6abe": { name: "CreatePaused", contract: "MwzV4Launcher", message: "New generation 8 launches are paused." },
+  "0x0f05f5bf": { name: "AuthorizationExpired", contract: "MwzV4Launcher", message: "The create authorization expired. Request a new one." },
+  "0x22be437f": { name: "AuthorizationReplayed", contract: "MwzV4Launcher", message: "This create authorization was already used. Request a new one." },
+  "0x2ce87eeb": { name: "InvalidAuthorization", contract: "MwzV4Launcher", message: "The create authorization does not match this launch request." },
+  "0xc4747426": { name: "FirstBuyTooLarge", contract: "MwzV4Launcher", message: "The first buy is above 70% of the supply." },
+  "0xae0f6505": { name: "FirstBuyTooSmall", contract: "MwzV4Launcher", message: "The first buy returns fewer coins than the slippage bound. Request a new authorization." },
+  "0xb4b5c195": { name: "OraclePriceUnavailable", contract: "MwzV4Launcher", message: "The graduation oracle has no fresh price right now." },
+  "0x6fe5b27e": { name: "OraclePriceOutOfBand", contract: "MwzV4Launcher", message: "The graduation oracle price is outside the launcher's band." },
+  "0xf7139e33": { name: "UnknownPool", contract: "MwzLaunchHook", message: "This coin has no generation 8 pool." },
+});
+
+const V4_WRAPPED_ERROR = "0x90bfb865"; // WrappedError(address target, bytes4 selector, bytes reason, bytes details), v4-core CustomRevert
+
+function revertDataOf(errorOrData) {
+  if (typeof errorOrData === "string") return errorOrData;
+  const e = errorOrData || {};
+  for (const v of [e.data, e.error?.data, e.info?.error?.data, e.revert?.data]) {
+    if (typeof v === "string" && /^0x[0-9a-fA-F]{8}/.test(v)) return v;
+  }
+  const m = String(e.shortMessage || e.message || "").match(/0x[0-9a-fA-F]{8,}/);
+  return m ? m[0] : null;
+}
+
+/**
+ * The gen-8 custom error behind a revert: { selector, name, contract, message } or null. Takes the revert data (0x
+ * hex) or an ethers error. A hook revert inside a swap arrives wrapped by the PoolManager (WrappedError); its inner
+ * reason is unwrapped.
+ */
+export function gen8RevertReason(errorOrData) {
+  const data = revertDataOf(errorOrData);
+  if (!data || data.length < 10) return null;
+  let selector = data.slice(0, 10).toLowerCase();
+  if (selector === V4_WRAPPED_ERROR) {
+    try {
+      const [, , reason] = coder.decode(["address", "bytes4", "bytes", "bytes"], `0x${data.slice(10)}`);
+      if (typeof reason === "string" && reason.length >= 10) selector = reason.slice(0, 10).toLowerCase();
+    } catch {
+      return null;
+    }
+  }
+  const hit = GEN8_REVERTS[selector];
+  return hit ? { selector, ...hit } : null;
 }

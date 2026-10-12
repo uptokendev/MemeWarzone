@@ -6,8 +6,12 @@ import test from "node:test";
 import { AbiCoder, Wallet, getBytes, hashMessage, keccak256, verifyMessage } from "ethers";
 import {
   GEN8_CREATE_AUTH_TYPE, GEN8_TARGET_FAST_USD, GEN8_TARGET_TEST_USD, Q96, gen8AuthorizationPayload, gen8ExactInBuySplit, gen8FeeRate,
-  gen8HashRequest, gen8MarketCapWei, gen8MetadataHash, gen8PoolId, gen8PoolKey, gen8Progress, isGen8TargetAllowed, nativePerCoinWei, sqrtAtTick,
+  gen8HashRequest, gen8LaunchRequestJson, gen8MarketCapWei, gen8MetadataHash, gen8PlatformStatus, gen8PoolId, gen8PoolKey, gen8PostPhase, gen8Progress,
+  isGen8TargetAllowed, nativePerCoinWei, sqrtAtTick, GEN8_REVERTS, gen8RevertReason,
 } from "./evmGen8.mjs";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 const coder = AbiCoder.defaultAbiCoder();
 
@@ -46,6 +50,23 @@ test("progress: 0 at the start, complete at or past the top of A, graduated = co
   assert.ok(mid.capacityRaw > 849_999_999n * 10n ** 18n && mid.capacityRaw <= 850_000_001n * 10n ** 18n, "A holds 850M coins");
 });
 
+test("F1 phase and platform status: post at or past the graduation price; graduated = latch AND post", () => {
+  const tickGrad = 221110;
+  const g = sqrtAtTick(tickGrad);
+  assert.equal(gen8PostPhase(g, tickGrad), true, "exactly at the graduation price is post");
+  assert.equal(gen8PostPhase(g - 1n, tickGrad), true);
+  assert.equal(gen8PostPhase(g + 1n, tickGrad), false, "back inside range A");
+  assert.equal(gen8PostPhase(null, tickGrad), null);
+  assert.equal(gen8PlatformStatus({ latched: true, postPhase: true }), "graduated");
+  assert.equal(gen8PlatformStatus({ latched: true, postPhase: false }), "bonding", "forced latch, price back in A");
+  assert.equal(gen8PlatformStatus({ latched: true, postPhase: null }), "bonding");
+  assert.equal(gen8PlatformStatus({ latched: false, postPhase: true }), "bonding");
+  // The fee follows the price, not the latch; the decay runs from openAt.
+  assert.equal(gen8FeeRate({ graduated: true, postPhase: false, openAt: 1000, nowTs: 2000 }), 200);
+  assert.equal(gen8FeeRate({ postPhase: true, openAt: 1000, nowTs: 1000 }), 100);
+  assert.equal(gen8FeeRate({ postPhase: false, openAt: 5000, nowTs: 5030 }), 200 + Math.floor((8800 * 30) / 60));
+});
+
 test("fee rate: launch window 90% -> 2% over 60 s, launcher 2%, graduated 1%", () => {
   assert.equal(gen8FeeRate({ graduated: false, launchTime: 1000, nowTs: 1000 }), 9000);
   assert.equal(gen8FeeRate({ graduated: false, launchTime: 1000, nowTs: 1030 }), 200 + Math.floor((8800 * 30) / 60));
@@ -67,11 +88,18 @@ test("targets: $30K / $50K everywhere, $150 on testnets and local only", () => {
 test("create authorization payload: the launcher's abi.encode layout, personal-signed", async () => {
   const req = { name: "N", symbol: "S", logoURI: "L", xAccount: "X", website: "W", extraLink: "E", metadataHash: gen8MetadataHash({ name: "N" }), targetUsd: GEN8_TARGET_FAST_USD, feeChoice: 3, feeCreatorPct: 40, firstBuyValue: 5n, minFirstBuyOut: 7n, salt: 9n };
   const h = (s) => keccak256(new TextEncoder().encode(s));
-  const reqHash = keccak256(coder.encode(
-    ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256", "uint8", "uint8", "uint256", "uint256", "uint256"],
-    [h("N"), h("S"), h("L"), h("X"), h("W"), h("E"), req.metadataHash, req.targetUsd, 3, 40, 5n, 7n, 9n],
+  const hashWith = (openAt) => keccak256(coder.encode(
+    ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256", "uint8", "uint8", "uint256", "uint256", "uint256", "uint64"],
+    [h("N"), h("S"), h("L"), h("X"), h("W"), h("E"), req.metadataHash, req.targetUsd, 3, 40, 5n, 7n, 9n, openAt],
   ));
+  const reqHash = hashWith(0n);
+  // B: openAt is the 14th word; absent = 0 (open now).
   assert.equal(gen8HashRequest(req), reqHash);
+  assert.equal(gen8HashRequest({ ...req, openAt: 0 }), reqHash);
+  assert.equal(gen8HashRequest({ ...req, openAt: "1790000000" }), hashWith(1_790_000_000n));
+  assert.notEqual(gen8HashRequest({ ...req, openAt: 1_790_000_000 }), reqHash, "openAt is signed");
+  assert.equal(gen8LaunchRequestJson({ ...req, openAt: 1_790_000_000n }).openAt, "1790000000", "decimal string, last field");
+  assert.deepEqual(Object.keys(gen8LaunchRequestJson(req)).slice(-2), ["salt", "openAt"]);
   const launcher = "0x00000000000000000000000000000000000000c8";
   const creator = "0x00000000000000000000000000000000000000d8";
   const payload = gen8AuthorizationPayload({ chainId: 56, launcher, creator, request: req, deadline: 123 });
@@ -81,4 +109,28 @@ test("create authorization payload: the launcher's abi.encode layout, personal-s
   assert.equal(verifyMessage(getBytes(payload), sig), w.address);
   assert.equal(hashMessage(getBytes(payload)).length, 66);
   assert.notEqual(gen8AuthorizationPayload({ chainId: 4663, launcher, creator, request: req, deadline: 123 }), payload, "chain-bound");
+});
+
+test("revert catalogue: selectors are bytes4(keccak(Name())), the fix-round errors are named, PoolManager-wrapped reasons unwrap", () => {
+  const want = {
+    OpenAtTooFar: "0xd795d50f", BadOpenAt: "0xc8a77a2c", TradingNotOpen: "0xe09f0331", PriceAboveStart: "0x2fcb916e", PriceBelowGraduation: "0x40ffbed0",
+    PoolManagerUnlocked: "0x0e1475a4", ReserveTooEarly: "0x7710b1e4", NotRouterCaller: "0x544df468", BadClaimDeadline: "0x289c4adf",
+  };
+  for (const [name, sel] of Object.entries(want)) assert.equal(GEN8_REVERTS[sel]?.name, name, name);
+  for (const [sel, e] of Object.entries(GEN8_REVERTS)) assert.equal(keccak256(new TextEncoder().encode(`${e.name}()`)).slice(0, 10), sel, e.name);
+  assert.equal(gen8RevertReason("0xe09f0331").name, "TradingNotOpen");
+  assert.equal(gen8RevertReason({ data: "0x7710b1e4" }).message, "The creator reserve unlocks one hour after graduation.");
+  assert.equal(gen8RevertReason({ shortMessage: 'execution reverted (unknown custom error) (data="0x2fcb916e")' }).name, "PriceAboveStart");
+  // v4-core WrappedError(hook, beforeSwap/afterSwap selector, reason, details)
+  const wrapped = "0x90bfb865" + coder.encode(["address", "bytes4", "bytes", "bytes"], ["0x00000000000000000000000000000000000028ec", "0xb47b2fb1", "0x2fcb916e", "0x"]).slice(2);
+  assert.equal(gen8RevertReason(wrapped).name, "PriceAboveStart");
+  assert.equal(gen8RevertReason("0x12345678"), null);
+  assert.equal(gen8RevertReason(null), null);
+  // Cross-check against the contracts' ABIs when the build/evm-gen8 worktree is on disk.
+  const abiDir = path.join(path.dirname(process.env.GEN8_ARTIFACTS || path.join(os.homedir(), "mwz-wt/gen8-abi/artifacts-gen8")), "contracts/gen8/abi");
+  if (fs.existsSync(abiDir)) {
+    const names = new Set();
+    for (const f of fs.readdirSync(abiDir)) for (const e of JSON.parse(fs.readFileSync(path.join(abiDir, f), "utf8")).filter((x) => x.type === "error" && x.inputs.length === 0)) names.add(e.name);
+    for (const e of Object.values(GEN8_REVERTS)) assert.ok(names.has(e.name), `${e.name} is in the gen-8 ABIs`);
+  }
 });

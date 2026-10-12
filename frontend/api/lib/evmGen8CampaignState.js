@@ -6,6 +6,12 @@
  * launch window 90% -> 2% over 60 s, 2% bonding, 1% after graduation), the creator ledger (claimable in the hook or,
  * for holders / split / buyback coins, in the creator-choice vault), the creator reserve and the creator buy escrow.
  *
+ * Fix round 2026-10-12 (build/evm-gen8 20d95e0a): hook pools() names openAt (was launchTime) and gains graduatedAt as a
+ * tenth field; the lens progress() tuple gains postPhase and graduatedAt (second and third), and tradingOpen() is new.
+ * Every read below is by name. The phase is the PRICE's (F1: post when sqrtPriceX96 <= sqrtAtTick(tickGrad)); the
+ * platform status is graduated only when the latch is set AND the phase is post; the creator reserve releases from
+ * graduatedAt + 1 h while latched and post. When the price cannot be read, evm_gen8_pools.last_phase / open_at stand in.
+ *
  * A gen-8 coin is recognised by its pool: id = keccak256(abi.encode(native, token, dynamic fee, 10, hook)) and
  * hook.pools(id).creator != 0. Quotes are not served here: the trade panel quotes through Uniswap's V4Quoter with
  * the pool key returned below (design 6.2); trading is never signed by the API (D3).
@@ -14,13 +20,16 @@ import { ethers } from "ethers";
 import {
   GEN8_FEE_CHOICE_NAMES,
   GEN8_RATES,
+  GEN8_RESERVE_RELEASE_DELAY_SECONDS,
   GEN8_TOTAL_SUPPLY,
   GEN8_TRADE_PATH,
   WAD,
   gen8FeeRate,
   gen8MarketCapWei,
+  gen8PlatformStatus,
   gen8PoolId,
   gen8PoolKey,
+  gen8PostPhase,
   gen8Progress,
   nativePerCoinWei,
 } from "../../shared/evmGen8.mjs";
@@ -29,15 +38,17 @@ const ZERO = ethers.ZeroAddress;
 const POOLS_SLOT = 6n; // v4-core StateLibrary.POOLS_SLOT
 
 export const GEN8_HOOK_STATE_ABI = [
-  "function pools(bytes32) view returns (address creator, uint40 launchTime, bool graduated, int24 tickGrad, int24 tickStart, uint128 liqA, uint128 liqB, uint160 sqrtGrad, tuple(uint16 bondingBps, uint16 postBps, uint16 creatorPostBps, uint16 sniperStartBps, uint16 creatorBondingBps) fees)",
+  "function pools(bytes32) view returns (address creator, uint40 openAt, bool graduated, int24 tickGrad, int24 tickStart, uint128 liqA, uint128 liqB, uint160 sqrtGrad, tuple(uint16 bondingBps, uint16 postBps, uint16 creatorPostBps, uint16 sniperStartBps, uint16 creatorBondingBps) fees, uint40 graduatedAt)",
   "function creatorOwed(bytes32) view returns (uint256)",
   "function pendingCreator(bytes32) view returns (address)",
   "function displayPair(bytes32) view returns (address)",
 ];
 const POOL_MANAGER_ABI = ["function extsload(bytes32 slot) view returns (bytes32)"];
-const LENS_ABI = [
-  "function progress(bytes32 id) view returns (tuple(bool graduated, uint160 sqrtPriceX96, uint256 coinsSoldFromA, uint256 coinsInA, uint256 nativeInA, uint256 nativeTargetA))",
+export const GEN8_LENS_ABI = [
+  "function progress(bytes32 id) view returns (tuple(bool graduated, bool postPhase, uint40 graduatedAt, uint160 sqrtPriceX96, uint256 coinsSoldFromA, uint256 coinsInA, uint256 nativeInA, uint256 nativeTargetA))",
+  "function tradingOpen(bytes32 id) view returns (bool open, uint256 openAt)",
 ];
+const LENS_ABI = GEN8_LENS_ABI;
 const CHOICE_VAULT_ABI = [
   "function cfg(bytes32) view returns (address creator, uint8 choice, uint8 creatorPct, address token)",
   "function creatorBalance(bytes32) view returns (uint256)",
@@ -89,18 +100,24 @@ export async function readGen8Pool({ provider, cfg, token }) {
   const p = await hook.pools(poolId);
   const creator = p.creator ?? p[0];
   if (!creator || creator === ZERO) return null;
-  const fees = p.fees ?? p[8];
+  const fees = p.fees;
+  const openAt = Number(p.openAt);
+  const graduatedAt = Number(p.graduatedAt);
   return {
     poolId,
     hook,
     creator: ethers.getAddress(creator),
-    launchTime: Number(p.launchTime ?? p[1]),
-    graduated: Boolean(p.graduated ?? p[2]),
-    tickGrad: Number(p.tickGrad ?? p[3]),
-    tickStart: Number(p.tickStart ?? p[4]),
-    liqA: BigInt(p.liqA ?? p[5]),
-    liqB: BigInt(p.liqB ?? p[6]),
-    sqrtGrad: BigInt(p.sqrtGrad ?? p[7]),
+    // B: when trading opens (the launch block time when not scheduled). launchTime is the older name, kept for callers.
+    openAt,
+    launchTime: openAt,
+    // The one-time latch (Graduated event) and its block time (0 before; the reserve releases from it + 1 h).
+    graduated: Boolean(p.graduated),
+    graduatedAt: graduatedAt > 0 ? graduatedAt : null,
+    tickGrad: Number(p.tickGrad),
+    tickStart: Number(p.tickStart),
+    liqA: BigInt(p.liqA),
+    liqB: BigInt(p.liqB),
+    sqrtGrad: BigInt(p.sqrtGrad),
     fees: {
       bondingBps: Number(fees.bondingBps ?? fees[0]),
       postBps: Number(fees.postBps ?? fees[1]),
@@ -122,7 +139,41 @@ async function readSqrtPrice({ provider, cfg, poolId }) {
  * reader where the fields mean the same thing (supported, generation, creator, token, tradeFee, economics,
  * graduation, creatorClaims, viewer), plus `gen8` with the pool key, phase and trade path.
  */
-export async function readGen8CampaignState({ provider, cfg, token, wallet = null, pool = null }) {
+/**
+ * The phase, open and reserve fields of a gen-8 coin (all unix seconds), from its hook record `p`, the pool price (or
+ * the lens's postPhase, or the indexer's last_phase), and the block time. Exported for the indexer-only fallback.
+ *   openAt            number   when trading opens
+ *   tradingOpen       boolean  now >= openAt (the lens tradingOpen() when it was read)
+ *   latched           boolean  the one-time graduation latch (hook pools().graduated)
+ *   postPhase         boolean|null  the price is at or past the graduation price now (null: price unknown)
+ *   graduatedAt       number|null   the latch time
+ *   platformStatus    'graduated' | 'bonding'  graduated only when latched AND postPhase
+ *   reserveReleaseAt  number|null   graduatedAt + 3600 (MwzReserveLock.RESERVE_RELEASE_DELAY)
+ *   reserveReleasable boolean  latched AND postPhase AND now >= reserveReleaseAt (release() also needs its own tx)
+ */
+export function gen8PhaseFields({ openAt, latched, graduatedAt, postPhase, now, lensTradingOpen = null }) {
+  const open = Number(openAt) || 0;
+  const gradAt = graduatedAt ? Number(graduatedAt) : null;
+  const post = postPhase === true ? true : postPhase === false ? false : null;
+  const reserveReleaseAt = latched && gradAt ? gradAt + GEN8_RESERVE_RELEASE_DELAY_SECONDS : null;
+  return {
+    openAt: open,
+    tradingOpen: typeof lensTradingOpen === "boolean" ? lensTradingOpen : Number(now) >= open,
+    latched: Boolean(latched),
+    postPhase: post,
+    graduatedAt: latched ? gradAt : null,
+    platformStatus: gen8PlatformStatus({ latched: Boolean(latched), postPhase: post }),
+    reserveReleaseAt,
+    reserveReleasable: Boolean(latched && post === true && reserveReleaseAt !== null && Number(now) >= reserveReleaseAt),
+  };
+}
+
+/**
+ * `indexed` (optional): the indexer's view of the pool ({ openAt, lastPhase, graduatedBlock, graduatedAt }, unix
+ * seconds; readGen8IndexedPool), used only for what the chain read could not answer (the phase when neither the
+ * PoolManager nor the lens answered).
+ */
+export async function readGen8CampaignState({ provider, cfg, token, wallet = null, pool = null, indexed = null }) {
   const tokenAddress = ethers.getAddress(token);
   const p = pool || (await readGen8Pool({ provider, cfg, token: tokenAddress }));
   if (!p) return null;
@@ -130,21 +181,44 @@ export async function readGen8CampaignState({ provider, cfg, token, wallet = nul
   const now = Number(block.timestamp);
   const lens = cfg.lens ? new ethers.Contract(cfg.lens, LENS_ABI, provider) : null;
 
-  const [owedR, pendingR, displayR, slotR, lensR] = await Promise.all([
+  const [owedR, pendingR, displayR, slotR, lensR, openR] = await Promise.all([
     settle(p.hook.creatorOwed(p.poolId)),
     settle(p.hook.pendingCreator(p.poolId)),
     settle(p.hook.displayPair(p.poolId)),
     settle(readSqrtPrice({ provider, cfg, poolId: p.poolId })),
     lens ? settle(lens.progress(p.poolId)) : Promise.resolve({ ok: false }),
+    lens ? settle(lens.tradingOpen(p.poolId)) : Promise.resolve({ ok: false }),
   ]);
-  const sqrtPriceX96 = slotR.ok ? slotR.value.sqrtPriceX96 : lensR.ok ? BigInt(lensR.value.sqrtPriceX96 ?? lensR.value[1]) : null;
+  const sqrtPriceX96 = slotR.ok ? slotR.value.sqrtPriceX96 : lensR.ok ? BigInt(lensR.value.sqrtPriceX96) : null;
+  // F1: the phase from the price (the lens rule); else the lens's own postPhase; else the indexer's last_phase.
+  let postPhase = gen8PostPhase(sqrtPriceX96, p.tickGrad);
+  let phaseSource = postPhase !== null ? "price" : null;
+  if (postPhase === null && lensR.ok) {
+    postPhase = Boolean(lensR.value.postPhase);
+    phaseSource = "lens";
+  }
+  if (postPhase === null && (indexed?.lastPhase === "post" || indexed?.lastPhase === "bonding")) {
+    postPhase = indexed.lastPhase === "post";
+    phaseSource = "indexer";
+  }
+  const phase = gen8PhaseFields({
+    openAt: p.openAt,
+    latched: p.graduated,
+    graduatedAt: p.graduatedAt,
+    postPhase,
+    now,
+    lensTradingOpen: openR.ok ? Boolean(openR.value.open) : null,
+  });
+  const platformGraduated = phase.platformStatus === "graduated";
   const progress = sqrtPriceX96 != null
-    ? gen8Progress({ liqA: p.liqA, tickStart: p.tickStart, tickGrad: p.tickGrad, sqrtPriceX96, graduated: p.graduated })
+    ? gen8Progress({ liqA: p.liqA, tickStart: p.tickStart, tickGrad: p.tickGrad, sqrtPriceX96 })
     : null;
   const priceWei = sqrtPriceX96 ? nativePerCoinWei(sqrtPriceX96) : null;
   const marketCapWei = sqrtPriceX96 ? gen8MarketCapWei(sqrtPriceX96) : null;
-  const currentBps = gen8FeeRate({ graduated: p.graduated, launchTime: p.launchTime, nowTs: now, fees: p.fees });
-  const antiSniperEndsAt = p.launchTime + GEN8_RATES.sniperWindowSeconds;
+  // The rate the next swap pays: by the price phase (F1), the decay from openAt (B). Unknown phase: the latch.
+  const feePost = postPhase ?? p.graduated;
+  const currentBps = gen8FeeRate({ postPhase: feePost, openAt: p.openAt, nowTs: now, fees: p.fees });
+  const antiSniperEndsAt = p.openAt + GEN8_RATES.sniperWindowSeconds;
 
   // Fee choice: keep coins name the human creator in the hook; holders / split / buyback coins name the
   // creator-choice vault, which records the human creator (D2).
@@ -185,7 +259,9 @@ export async function readGen8CampaignState({ provider, cfg, token, wallet = nul
       reserve = {
         address: cfg.reserveLock,
         amount: BigInt(resR.value.amount ?? resR.value[1]).toString(),
-        releasable: Boolean(p.graduated && BigInt(resR.value.amount ?? resR.value[1]) > 0n),
+        // MwzReserveLock.release: latched, price at or past graduation, an hour after the latch (and its own tx).
+        releasable: Boolean(phase.reserveReleasable && BigInt(resR.value.amount ?? resR.value[1]) > 0n),
+        releaseAt: phase.reserveReleaseAt,
         beneficiary: benR.ok ? addr(benR.value) : null,
       };
     }
@@ -217,16 +293,21 @@ export async function readGen8CampaignState({ provider, cfg, token, wallet = nul
     blockTimestamp: now,
     creator: humanCreator,
     token: tokenAddress,
+    // Fix round 2026-10-12 (see gen8PhaseFields): openAt, tradingOpen, latched, postPhase, graduatedAt,
+    // platformStatus, reserveReleaseAt, reserveReleasable; phaseSource says where postPhase came from.
+    ...phase,
+    phaseSource,
     tradeFee: {
       currentBps,
-      baseBps: p.graduated ? p.fees.postBps : p.fees.bondingBps,
+      baseBps: feePost ? p.fees.postBps : p.fees.bondingBps,
       bondingBps: p.fees.bondingBps,
       postGraduationBps: p.fees.postBps,
       antiSniperStartBps: p.fees.sniperStartBps,
       antiSniperWindowSeconds: GEN8_RATES.sniperWindowSeconds,
-      launchAt: p.launchTime,
+      launchAt: p.openAt,
+      openAt: p.openAt,
       antiSniperEndsAt,
-      antiSniperActive: !p.graduated && now < antiSniperEndsAt,
+      antiSniperActive: !feePost && now >= p.openAt && now < antiSniperEndsAt,
       appliesTo: "every swap in the coin's pool, from any wallet or router; the creator's first buy at launch pays the bonding rate",
     },
     quotes: {},
@@ -242,17 +323,19 @@ export async function readGen8CampaignState({ provider, cfg, token, wallet = nul
       marketCapBasis: "fully_diluted",
     },
     graduation: {
-      state: p.graduated ? "graduated" : "trading",
-      phase: p.graduated ? "graduated" : "bonding",
+      // The platform status (latched AND post phase); a forced latch whose price fell back into A shows as trading.
+      state: platformGraduated ? "graduated" : "trading",
+      phase: platformGraduated ? "graduated" : "bonding",
+      latched: p.graduated,
       // Graduation happens inside the swap that crosses the top of A: no pending state, no keeper.
       pendingSince: null,
       sold: progress ? progress.soldRaw.toString() : null,
       curveSupply: progress ? progress.capacityRaw.toString() : null,
       progressBps: progress ? progress.bps : null,
       progressPct: progress ? progress.pct : null,
-      lensNativeInAWei: lensR.ok ? BigInt(lensR.value.nativeInA ?? lensR.value[4]).toString() : null,
-      lensNativeTargetAWei: lensR.ok ? BigInt(lensR.value.nativeTargetA ?? lensR.value[5]).toString() : null,
-      graduate: { callable: false, repairNeeded: false, reason: p.graduated ? "graduated" : "in_swap" },
+      lensNativeInAWei: lensR.ok ? BigInt(lensR.value.nativeInA).toString() : null,
+      lensNativeTargetAWei: lensR.ok ? BigInt(lensR.value.nativeTargetA).toString() : null,
+      graduate: { callable: false, repairNeeded: false, reason: platformGraduated ? "graduated" : "in_swap" },
     },
     market: {
       sqrtPriceX96: sqrtPriceX96 != null ? sqrtPriceX96.toString() : null,
@@ -280,7 +363,7 @@ export async function readGen8CampaignState({ provider, cfg, token, wallet = nul
       launcher: cfg.launcher,
       displayPair: display,
       tradePath: GEN8_TRADE_PATH,
-      phase: p.graduated ? "graduated" : "bonding",
+      phase: platformGraduated ? "graduated" : "bonding",
       tickStart: p.tickStart,
       tickGrad: p.tickGrad,
       liqA: p.liqA.toString(),
@@ -297,5 +380,94 @@ export async function readGen8CampaignState({ provider, cfg, token, wallet = nul
           canClaimEscrow: Boolean(escrow?.claimableTokens && BigInt(escrow.claimableTokens) > 0n),
         }
       : null,
+  };
+}
+
+/**
+ * The indexer's record of a gen-8 coin (evm_gen8_pools joined with campaigns), for when the chain cannot be read:
+ * { poolId, token, creator, openAt, lastPhase, graduatedBlock, graduatedAt, tickStart, tickGrad, liqA, sqrtPriceX96 }
+ * with times in unix seconds, or null (no row, no table, or the 20261012_000012 columns not applied). Never throws.
+ */
+export async function readGen8IndexedPool(db, chainId, token) {
+  if (!db || typeof db.query !== "function" || !ethers.isAddress(String(token || ""))) return null;
+  try {
+    const { rows } = await db.query(
+      `select g.pool_id, g.token_address, g.creator_address, g.open_at, g.last_phase, g.graduated_block, g.tick_start, g.tick_grad,
+              g.liq_a::text as liq_a, g.last_sqrt_price_x96::text as last_sqrt_price_x96, c.graduated_at_chain
+         from public.evm_gen8_pools g
+         left join public.campaigns c on c.chain_id = g.chain_id and c.campaign_address = g.token_address
+        where g.chain_id = $1 and g.token_address = $2
+        limit 1`,
+      [Number(chainId), String(token).toLowerCase()],
+    );
+    const r = rows?.[0];
+    if (!r) return null;
+    const secs = (v) => (v ? Math.floor(new Date(v).getTime() / 1000) : null);
+    return {
+      poolId: String(r.pool_id),
+      token: ethers.getAddress(r.token_address),
+      creator: r.creator_address ? ethers.getAddress(r.creator_address) : null,
+      openAt: secs(r.open_at),
+      lastPhase: r.last_phase === "post" || r.last_phase === "bonding" ? r.last_phase : null,
+      graduatedBlock: r.graduated_block != null ? Number(r.graduated_block) : null,
+      graduatedAt: r.graduated_block != null ? secs(r.graduated_at_chain) : null,
+      tickStart: Number(r.tick_start),
+      tickGrad: Number(r.tick_grad),
+      liqA: r.liq_a != null ? String(r.liq_a) : null,
+      sqrtPriceX96: r.last_sqrt_price_x96 != null ? String(r.last_sqrt_price_x96) : null,
+    };
+  } catch (error) {
+    console.warn("[gen8] indexed pool read failed", error?.message || error);
+    return null;
+  }
+}
+
+/**
+ * Coin-page state from the indexer alone (the RPC failed): the phase, open and reserve fields of gen8PhaseFields from
+ * evm_gen8_pools.open_at / last_phase / graduated_block and campaigns.graduated_at_chain, plus progress from the last
+ * indexed price. `source: "indexer"`, `stale: true`; nothing that needs the chain (claims, fee ledgers) is present.
+ */
+export function gen8IndexedCampaignState({ cfg, indexed, nowSec = Math.floor(Date.now() / 1000) }) {
+  const latched = indexed.graduatedBlock !== null;
+  const postPhase = indexed.lastPhase === "post" ? true : indexed.lastPhase === "bonding" ? false : null;
+  const phase = gen8PhaseFields({ openAt: indexed.openAt ?? 0, latched, graduatedAt: indexed.graduatedAt, postPhase, now: nowSec });
+  const platformGraduated = phase.platformStatus === "graduated";
+  let progress = null;
+  try {
+    if (indexed.liqA != null && indexed.sqrtPriceX96 != null) progress = gen8Progress({ liqA: indexed.liqA, tickStart: indexed.tickStart, tickGrad: indexed.tickGrad, sqrtPriceX96: indexed.sqrtPriceX96 });
+  } catch {
+    progress = null;
+  }
+  return {
+    campaignAddress: indexed.token,
+    supported: true,
+    source: "indexer",
+    stale: true,
+    generation: { factoryGeneration: 8, campaignGeneration: 8, factoryAddress: cfg.launcher, kind: "gen8" },
+    blockTimestamp: nowSec,
+    creator: indexed.creator,
+    token: indexed.token,
+    ...phase,
+    phaseSource: postPhase === null ? null : "indexer",
+    graduation: {
+      state: platformGraduated ? "graduated" : "trading",
+      phase: platformGraduated ? "graduated" : "bonding",
+      latched,
+      progressBps: progress ? progress.bps : null,
+      progressPct: progress ? progress.pct : null,
+    },
+    gen8: {
+      poolId: indexed.poolId,
+      poolKey: gen8PoolKey(indexed.token, cfg.hook),
+      hook: cfg.hook,
+      poolManager: cfg.poolManager,
+      lens: cfg.lens,
+      launcher: cfg.launcher,
+      tradePath: GEN8_TRADE_PATH,
+      phase: platformGraduated ? "graduated" : "bonding",
+      tickStart: indexed.tickStart,
+      tickGrad: indexed.tickGrad,
+      tradeAuthorization: "none",
+    },
   };
 }

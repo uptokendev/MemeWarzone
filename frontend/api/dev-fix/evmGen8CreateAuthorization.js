@@ -9,8 +9,11 @@
  *                                  hashRequest(req), uint64 deadline))
  *   digest  = EIP-191 personal_sign hash of the 32 payload bytes; signer = launcher.createSigner()
  *   req     = (name, symbol, logoURI, xAccount, website, extraLink, metadataHash, targetUsd, feeChoice,
- *              feeCreatorPct, firstBuyValue, minFirstBuyOut, salt);  msg.value must equal firstBuyValue
+ *              feeCreatorPct, firstBuyValue, minFirstBuyOut, salt, uint64 openAt);  msg.value must equal firstBuyValue
  *   deadline <= now + 1 day on chain; the API uses ROUTE_AUTH_TTL_SECONDS (default 600 s, capped at 1 day)
+ *   openAt  B scheduled trading open (campaignRequest.openAt, unix seconds): absent, 0 or not in the future = 0 (trading
+ *           opens at launch); otherwise at most now + 30 days (MAX_OPEN_DELAY) minus the authorization TTL, so a
+ *           launch inside the authorization's lifetime can never revert OpenAtTooFar
  *
  * The creator (msg.sender of launch) is bound into the digest, so nobody else can use the signature, and the digest
  * is single use on chain. Preflight as the gen-7 create path: the go-live canary, the wallet's create preflight (bans,
@@ -28,6 +31,7 @@ import {
   GEN8_FEE_CHOICES,
   GEN8_FEE_CHOICE_NAMES,
   GEN8_FIRST_BUY_MAX,
+  GEN8_MAX_OPEN_DELAY_SECONDS,
   GEN8_TARGET_DEFAULT_USD,
   GEN8_TARGET_TEST_USD,
   GEN8_TRADE_PATH,
@@ -36,6 +40,7 @@ import {
   gen8HashRequest,
   gen8LaunchRequestJson,
   gen8MetadataHash,
+  gen8RevertReason,
   isGen8TargetAllowed,
 } from "../../shared/evmGen8.mjs";
 import { gen8ConfigFor } from "../lib/evmGen8Config.js";
@@ -152,11 +157,48 @@ function checkGen8Text(value, label, { maxBytes = null, maxLength = null, forbid
   }
 }
 
+/** The authorization lifetime the API signs: ROUTE_AUTH_TTL_SECONDS, default 600 s, capped at 1 day (MAX_AUTH_TTL). */
+export function gen8AuthTtlSeconds(env = process.env) {
+  const n = Number(env.ROUTE_AUTH_TTL_SECONDS);
+  return Number.isFinite(n) && n > 0 ? Math.min(Math.trunc(n), MAX_AUTH_TTL_SECONDS) : 10 * 60;
+}
+
+/**
+ * B scheduled open. `raw` is campaignRequest.openAt in unix seconds (a non-negative integer, as a number or a decimal
+ * string). Returns 0n (trading opens at launch) when it is absent, 0 or not after `nowSec`; otherwise the time
+ * itself, which must be at most nowSec + MAX_OPEN_DELAY - ttlSeconds: the launch can run up to the authorization's
+ * deadline (nowSec + ttl), and the launcher refuses openAt > block time + 30 days (OpenAtTooFar), so this bound keeps
+ * every launch the API signs out of that revert. Throws Gen8CreateError 400 GEN8_OPEN_AT_INVALID.
+ */
+export function parseGen8OpenAt(raw, { nowSec, ttlSeconds }) {
+  if (raw === undefined || raw === null || raw === "") return 0n;
+  let value;
+  if (typeof raw === "number") {
+    if (!Number.isSafeInteger(raw) || raw < 0) value = null;
+    else value = BigInt(raw);
+  } else if (typeof raw === "bigint") {
+    value = raw >= 0n ? raw : null;
+  } else if (typeof raw === "string" && /^\d{1,20}$/.test(raw.trim())) {
+    value = BigInt(raw.trim());
+  } else {
+    value = null;
+  }
+  const maxOpenAt = BigInt(Math.trunc(nowSec)) + BigInt(GEN8_MAX_OPEN_DELAY_SECONDS) - BigInt(Math.trunc(ttlSeconds));
+  if (value === null) {
+    throw new Gen8CreateError(400, "GEN8_OPEN_AT_INVALID", "openAt must be a whole number of unix seconds (0 or absent opens trading at launch).", { maxOpenAt: maxOpenAt.toString() });
+  }
+  if (value <= BigInt(Math.trunc(nowSec))) return 0n;
+  if (value > maxOpenAt) {
+    throw new Gen8CreateError(400, "GEN8_OPEN_AT_INVALID", "Trading can open at most 30 days after the launch.", { maxOpenAt: maxOpenAt.toString() });
+  }
+  return value;
+}
+
 /**
  * Normalises the request body into the launch request (without salt / minFirstBuyOut, which are chosen once the
- * launcher's plan is known). Throws Gen8CreateError (400) on a bad field.
+ * launcher's plan is known). Throws Gen8CreateError (400) on a bad field. `nowSec` (default the clock) bounds openAt.
  */
-export function parseGen8CreateRequest(body, chainId, env = process.env) {
+export function parseGen8CreateRequest(body, chainId, env = process.env, { nowSec = Math.floor(Date.now() / 1000) } = {}) {
   const source = body?.campaignRequest || body?.launchRequest || body?.request || body || {};
   const name = String(source.name || "");
   const symbol = String(source.symbol || "");
@@ -202,8 +244,9 @@ export function parseGen8CreateRequest(body, chainId, env = process.env) {
   if (clientHash && clientHash.toLowerCase() !== metadataHash) {
     throw new Gen8CreateError(400, "GEN8_METADATA_HASH_MISMATCH", "metadataHash does not match the name, symbol, links and description sent; leave it out and the server computes it.", { expected: metadataHash });
   }
+  const openAt = parseGen8OpenAt(source.openAt, { nowSec, ttlSeconds: gen8AuthTtlSeconds(env) });
   return {
-    fields: { name, symbol, logoURI, xAccount, website, extraLink, metadataHash, targetUsd, feeChoice: feeChoice.id, feeCreatorPct: feeChoice.pct, firstBuyValue },
+    fields: { name, symbol, logoURI, xAccount, website, extraLink, metadataHash, targetUsd, feeChoice: feeChoice.id, feeCreatorPct: feeChoice.pct, firstBuyValue, openAt },
     minFirstBuyOut,
     slippageBps,
     description,
@@ -245,7 +288,7 @@ export async function readGen8LauncherPreflight({ provider, cfg, targetUsd, sign
     plan = { marketCapNative: BigInt(p.mc ?? p[0]), virtualNative: BigInt(p.vN ?? p[1]), virtualToken: BigInt(p.vT ?? p[2]), tickStart: Number(p.tickStart ?? p[3]), tickGrad: Number(p.tickGrad ?? p[4]) };
   } catch (error) {
     // OraclePriceUnavailable / OraclePriceOutOfBand / TargetOutOfRangeAtPrice: the launch would revert now.
-    throw new Gen8CreateError(503, "GEN8_ORACLE_UNAVAILABLE", "The graduation oracle cannot size a launch right now. Try again shortly.", { reason: String(error?.shortMessage || error?.reason || error?.message || error) });
+    throw new Gen8CreateError(503, "GEN8_ORACLE_UNAVAILABLE", "The graduation oracle cannot size a launch right now. Try again shortly.", { reason: String(error?.shortMessage || error?.reason || error?.message || error), revert: gen8RevertReason(error)?.name ?? null });
   }
   return { createPaused: false, createSigner: ethers.getAddress(createSigner), hook: ethers.getAddress(hook), plan };
 }
@@ -282,9 +325,7 @@ export async function signGen8CreateAuthorization({ signer, chainId, launcher, c
 }
 
 function authDeadline(env, nowSec) {
-  const n = Number(env.ROUTE_AUTH_TTL_SECONDS);
-  const ttl = Number.isFinite(n) && n > 0 ? Math.min(Math.trunc(n), MAX_AUTH_TTL_SECONDS) : 10 * 60;
-  return nowSec + ttl;
+  return nowSec + gen8AuthTtlSeconds(env);
 }
 
 /**
@@ -322,7 +363,8 @@ export async function gen8CreateAuthorization(body, deps) {
   }
 
   try {
-    const parsed = parseGen8CreateRequest(body, chainId, env);
+    const nowSec = Math.floor((deps.now ? deps.now() : Date.now()) / 1000);
+    const parsed = parseGen8CreateRequest(body, chainId, env, { nowSec });
     const createPreflight = await deps.evaluateCreatePreflight({ walletAddress, chainId });
     if (!createPreflight?.allowed) {
       return { status: 403, body: { error: createPreflight?.reasons?.[0] || "Wallet is not eligible to launch.", code: "CREATE_PREFLIGHT_BLOCKED", preflight: createPreflight } };
@@ -333,7 +375,6 @@ export async function gen8CreateAuthorization(body, deps) {
     const firstBuy = planGen8FirstBuy({ firstBuyValue: parsed.fields.firstBuyValue, minFirstBuyOut: parsed.minFirstBuyOut, slippageBps: parsed.slippageBps, plan: onChain.plan });
     const salt = deps.randomSalt ? BigInt(deps.randomSalt()) : BigInt(`0x${crypto.randomBytes(32).toString("hex")}`);
     const request = { ...parsed.fields, minFirstBuyOut: firstBuy.minCoinsOut, salt };
-    const nowSec = Math.floor((deps.now ? deps.now() : Date.now()) / 1000);
     const deadline = authDeadline(env, nowSec);
     const signed = await signGen8CreateAuthorization({ signer, chainId, launcher: cfg.launcher, creator: walletAddress, request, deadline });
     const validUntil = new Date(deadline * 1000).toISOString();
@@ -345,7 +386,9 @@ export async function gen8CreateAuthorization(body, deps) {
     const routeProfileId = selfRecruiter ? 1 : Number(route?.tradeRouteProfileId ?? 1);
     const finalizeRouteProfileId = selfRecruiter ? 1 : Number(route?.finalizeRouteProfileId ?? 1);
     const launchRequest = gen8LaunchRequestJson(request);
-    const generation = { factoryGeneration: EVM_GEN8_FACTORY_GENERATION, campaignGeneration: EVM_GEN8_CAMPAIGN_GENERATION, requestHashLayout: "gen8_13_field", kind: "gen8" };
+    const generation = { factoryGeneration: EVM_GEN8_FACTORY_GENERATION, campaignGeneration: EVM_GEN8_CAMPAIGN_GENERATION, requestHashLayout: "gen8_14_field", kind: "gen8" };
+    // B: when trading opens (unix seconds; 0 = at launch, the launch block time). The launch request carries it last.
+    const openAtJson = { openAt: Number(request.openAt), scheduled: request.openAt > 0n, maxOpenDelaySeconds: GEN8_MAX_OPEN_DELAY_SECONDS };
     const planJson = {
       targetUsd: parsed.fields.targetUsd.toString(),
       marketCapNative: onChain.plan.marketCapNative.toString(),
@@ -384,6 +427,7 @@ export async function gen8CreateAuthorization(body, deps) {
         plan: planJson,
         firstBuy: firstBuyJson,
         feeChoice: { id: request.feeChoice, name: GEN8_FEE_CHOICE_NAMES[request.feeChoice], creatorPct: request.feeCreatorPct || null },
+        trading: openAtJson,
         description: parsed.description || null,
         preflight,
       },
@@ -402,6 +446,7 @@ export async function gen8CreateAuthorization(body, deps) {
         plan: planJson,
         firstBuy: firstBuyJson,
         feeChoice: { id: request.feeChoice, name: GEN8_FEE_CHOICE_NAMES[request.feeChoice], creatorPct: request.feeCreatorPct || null },
+        trading: openAtJson,
         graduationMarket: { kind: "NATIVE", quoteAsset: null, venue: "uniswap_v4_hook" },
         tradePath: GEN8_TRADE_PATH,
         routeAuthority: signer.address,
@@ -462,6 +507,6 @@ export async function gen8RoutingStatus({ chainId, signer, getProvider, env = pr
     createPaused: onChain ? onChain.createPaused : null,
     tradeAuthorization: "none",
     tradePath: GEN8_TRADE_PATH,
-    ttlSeconds: Math.min(Number(env.ROUTE_AUTH_TTL_SECONDS) > 0 ? Math.trunc(Number(env.ROUTE_AUTH_TTL_SECONDS)) : 600, MAX_AUTH_TTL_SECONDS),
+    ttlSeconds: gen8AuthTtlSeconds(env),
   };
 }

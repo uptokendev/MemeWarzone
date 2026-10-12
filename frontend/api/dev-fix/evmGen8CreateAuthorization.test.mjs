@@ -12,8 +12,8 @@ import {
   parseGen8CreateRequest,
   strictEvmWallet,
 } from "./evmGen8CreateAuthorization.js";
-import { GEN8_TARGET_DEFAULT_USD, GEN8_TARGET_TEST_USD, gen8AuthorizationPayload, gen8MetadataHash, gen8HashRequest, gen8PoolId, gen8PoolKey, gen8Progress } from "../../shared/evmGen8.mjs";
-import { deployGen8Local, directSwap, gen8ArtifactsAvailable, gen8EnvFor, startAnvil } from "../lib/evmGen8LocalChain.testkit.mjs";
+import { GEN8_MAX_OPEN_DELAY_SECONDS, GEN8_TARGET_DEFAULT_USD, GEN8_TARGET_TEST_USD, gen8AuthorizationPayload, gen8MetadataHash, gen8HashRequest, gen8PoolId, gen8PoolKey, gen8Progress, gen8RevertReason, sqrtAtTick } from "../../shared/evmGen8.mjs";
+import { advanceTime, deployGen8Local, directSwap, gen8ArtifactsAvailable, gen8EnvFor, startAnvil } from "../lib/evmGen8LocalChain.testkit.mjs";
 
 const LAUNCHER = "0x1111111111111111111111111111111111111111";
 const HOOK = "0x2222222222222222222222222222222222222222";
@@ -225,7 +225,10 @@ chainTests("the API's create authorization is the one MwzV4Launcher verifies; la
   assert.equal(res.body.generation.factoryGeneration, 8);
   const onChainDigest = await local.launcher.authorizationDigest(creator.address, launchRequest, authorization.deadline);
   assert.equal(onChainDigest, authorization.digest, "API digest == MwzV4Launcher.authorizationDigest");
-  assert.equal(await local.launcher.hashRequest(launchRequest), gen8HashRequest(launchRequest), "hashRequest matches");
+  assert.equal(launchRequest.openAt, "0", "no openAt: trading opens at launch");
+  assert.equal(Object.keys(launchRequest).at(-1), "openAt", "openAt is the request's last field");
+  assert.equal(res.body.trading.openAt, 0);
+  assert.equal(await local.launcher.hashRequest(launchRequest), gen8HashRequest(launchRequest), "hashRequest matches (openAt 0)");
   assert.equal(ethers.verifyMessage(ethers.getBytes(gen8AuthorizationPayload({ chainId: 97, launcher: local.addresses.launcher, creator: creator.address, request: launchRequest, deadline: authorization.deadline })), authorization.signature), apiSigner.address);
   assert.equal(logged.length, 1);
   assert.equal(logged[0].routeKind, "create");
@@ -319,7 +322,7 @@ chainTests("the API's create authorization is the one MwzV4Launcher verifies; la
     await evmCampaignStateHandler(
       { method: "GET", url: `/api/evm/campaign-state?chainId=97&campaign=${campaign}`, headers: {} },
       res3,
-      { getProvider: async () => provider, readState: async () => ({ supported: false, from: "gen5" }), gen8Config: () => cfg },
+      { getProvider: async () => provider, readState: async () => ({ supported: false, from: "gen5" }), gen8Config: () => cfg, db: null },
     );
     return out;
   };
@@ -333,4 +336,133 @@ chainTests("the API's create authorization is the one MwzV4Launcher verifies; la
   assert.equal(coin.poolId, pool.poolId);
   assert.equal(coin.source, "hook");
   assert.equal(await findGen8Coin({ chainId: 97, address: local.addresses.splitter, db: null, getProvider: async () => provider, env }), null);
+  // 6. B scheduled open: openAt is signed (hashRequest pinned against the launcher), a scheduled launch succeeds, no
+  // swap before openAt (TradingNotOpen), the campaign state says when trading opens.
+  // Raw RPC: ethers caches an identical getBlock("latest") for a moment, which would hide a time jump.
+  const chainNow = async () => Number(BigInt((await provider.send("eth_getBlockByNumber", ["latest", false])).timestamp));
+  // Time travel keeps the mock oracle fresh (GraduationOracle maxPriceAge 3600 s), as a live feed would be.
+  const travel = async (seconds) => {
+    await advanceTime(provider, seconds);
+    await (await local.feed.set(600n * 10n ** 8n, await chainNow())).wait();
+  };
+  let t0 = await chainNow();
+  const atChain = (over = {}) => deps({ now: () => t0 * 1000, ...over });
+  const openAt = t0 + 3600;
+  const sched = await gen8CreateAuthorization(body({ firstBuyValue: ethers.parseEther("0.002").toString(), openAt }), atChain());
+  assert.equal(sched.status, 200, JSON.stringify(sched.body));
+  assert.equal(sched.body.launchRequest.openAt, String(openAt), "openAt as a decimal string");
+  assert.deepEqual(sched.body.trading, { openAt, scheduled: true, maxOpenDelaySeconds: GEN8_MAX_OPEN_DELAY_SECONDS });
+  assert.equal(await local.launcher.hashRequest(sched.body.launchRequest), gen8HashRequest(sched.body.launchRequest), "hashRequest matches (future openAt)");
+  assert.notEqual(gen8HashRequest({ ...sched.body.launchRequest, openAt: "0" }), gen8HashRequest(sched.body.launchRequest), "openAt is inside the signed hash");
+  assert.equal(await local.launcher.authorizationDigest(creator.address, sched.body.launchRequest, sched.body.authorization.deadline), sched.body.authorization.digest);
+  // The creator cannot move the open time: the same signature over another openAt is refused on chain.
+  await assert.rejects(launcherAsCreator.launch({ ...sched.body.launchRequest, openAt: "0" }, { deadline: sched.body.authorization.deadline, signature: sched.body.authorization.signature }, { value: BigInt(sched.body.launchRequest.firstBuyValue) }));
+  const rcSched = await (await launcherAsCreator.launch(sched.body.launchRequest, { deadline: sched.body.authorization.deadline, signature: sched.body.authorization.signature }, { value: BigInt(sched.body.launchRequest.firstBuyValue) })).wait();
+  const lsched = rcSched.logs.map((l) => { try { return local.launcher.interface.parseLog(l); } catch { return null; } }).find((e) => e?.name === "Launched");
+  assert.equal(Number(lsched.args.openAt), openAt, "Launched.openAt");
+  assert.ok(lsched.args.firstBuyOut > 0n, "the creator first buy inside launch() runs before openAt");
+  const schedToken = lsched.args.token;
+  const schedKey = gen8PoolKey(schedToken, cfg.hook);
+  const keyTuple = (k) => [k.currency0, k.currency1, k.fee, k.tickSpacing, k.hooks];
+  const early = await local.trader.connect(local.buyer).swap.staticCall(keyTuple(schedKey), true, -ethers.parseEther("0.001"), 0n, "0x", { value: ethers.parseEther("0.001") }).then(() => null, (e) => e);
+  assert.ok(early, "a swap before openAt reverts");
+  assert.equal(gen8RevertReason(early)?.name, "TradingNotOpen", `revert reason: ${early?.shortMessage || early?.message}`);
+  await assert.rejects(directSwap(local, schedKey, local.buyer, { buy: true, amount: ethers.parseEther("0.001") }));
+  const schedPool = await readGen8Pool({ provider, cfg, token: schedToken });
+  assert.equal(schedPool.openAt, openAt, "hook pools().openAt");
+  const sState = await readGen8CampaignState({ provider, cfg, token: schedToken, pool: schedPool });
+  assert.deepEqual(
+    [sState.openAt, sState.tradingOpen, sState.latched, sState.postPhase, sState.graduatedAt, sState.platformStatus, sState.reserveReleaseAt, sState.reserveReleasable],
+    [openAt, false, false, false, null, "bonding", null, false],
+  );
+  assert.equal(sState.tradeFee.launchAt, openAt, "the launch fee decay runs from openAt");
+  assert.equal(sState.tradeFee.antiSniperActive, false, "no decay window before trading opens");
+  await travel(3600);
+  await directSwap(local, schedKey, local.buyer, { buy: true, amount: ethers.parseEther("0.001") });
+  const sOpen = await readGen8CampaignState({ provider, cfg, token: schedToken, pool: schedPool });
+  assert.equal(sOpen.tradingOpen, true);
+  assert.ok(sOpen.tradeFee.antiSniperActive, "the 60 s decay starts at openAt");
+
+  // openAt bounds: past or 0 = open now (0 signed); beyond now + 30 days - TTL or not an integer = 400 before signing.
+  t0 = await chainNow();
+  const ttl = 600;
+  const maxOpenAt = t0 + GEN8_MAX_OPEN_DELAY_SECONDS - ttl;
+  const past = await gen8CreateAuthorization(body({ firstBuyValue: "0", openAt: t0 - 5 }), atChain());
+  assert.equal(past.status, 200, JSON.stringify(past.body));
+  assert.equal(past.body.launchRequest.openAt, "0");
+  const asZero = await gen8CreateAuthorization(body({ firstBuyValue: "0", openAt: "0" }), atChain());
+  assert.equal(asZero.body.launchRequest.openAt, "0");
+  const signedBefore = logged.length;
+  for (const bad of [maxOpenAt + 1, "1.5", 1.5, -1, "0x10", "soon", { at: 1 }]) {
+    const r = await gen8CreateAuthorization(body({ firstBuyValue: "0", openAt: bad }), atChain());
+    assert.deepEqual([r.status, r.body.code], [400, "GEN8_OPEN_AT_INVALID"], `openAt ${JSON.stringify(bad)}`);
+  }
+  assert.equal(logged.length, signedBefore, "no signature for a refused openAt");
+  const atMax = await gen8CreateAuthorization(body({ firstBuyValue: "0", openAt: String(maxOpenAt) }), atChain());
+  assert.equal(atMax.status, 200);
+  assert.equal(atMax.body.launchRequest.openAt, String(maxOpenAt));
+  // The furthest openAt the API signs launches even at the authorization's last second (no OpenAtTooFar).
+  await travel(ttl - 20);
+  await (await launcherAsCreator.launch(atMax.body.launchRequest, { deadline: atMax.body.authorization.deadline, signature: atMax.body.authorization.signature })).wait();
+
+  // 7. F1 platform status and the reserve: graduate a coin, sell back into range A (latched, bonding), buy past the
+  // graduation price again (graduated), and the reserve opens one hour after the latch, as MwzReserveLock decides.
+  t0 = await chainNow();
+  const g = await gen8CreateAuthorization(body({ firstBuyValue: "0" }), atChain());
+  const rcG = await (await launcherAsCreator.launch(g.body.launchRequest, { deadline: g.body.authorization.deadline, signature: g.body.authorization.signature })).wait();
+  const gToken = rcG.logs.map((l) => { try { return local.launcher.interface.parseLog(l); } catch { return null; } }).find((e) => e?.name === "Launched").args.token;
+  const gKey = gen8PoolKey(gToken, cfg.hook);
+  const gPool0 = await readGen8Pool({ provider, cfg, token: gToken });
+  await travel(120); // past the 60 s launch fee window
+  const lp0 = await local.lens.progress(gPool0.poolId);
+  await directSwap(local, gKey, local.buyer, { buy: true, amount: (lp0.nativeTargetA * 110n) / 100n });
+  const gPool = await readGen8Pool({ provider, cfg, token: gToken });
+  assert.equal(gPool.graduated, true, "latched");
+  assert.ok(gPool.graduatedAt > 0, "hook pools().graduatedAt");
+  const grad = await readGen8CampaignState({ provider, cfg, token: gToken, pool: gPool });
+  const lpGrad = await local.lens.progress(gPool.poolId);
+  assert.deepEqual([grad.latched, grad.postPhase, grad.platformStatus, grad.graduatedAt], [true, true, "graduated", Number(lpGrad.graduatedAt)]);
+  assert.equal(grad.postPhase, lpGrad.postPhase, "price phase == lens postPhase");
+  assert.equal(grad.reserveReleaseAt, gPool.graduatedAt + 3600);
+  assert.equal(grad.reserveReleasable, false, "inside the hour");
+  assert.equal(grad.graduation.state, "graduated");
+  const tooEarly = await local.reserveLock.release.staticCall(gPool.poolId).then(() => null, (e) => e);
+  assert.equal(gen8RevertReason(tooEarly)?.name, "ReserveTooEarly");
+  // Sell half of the buyer's coins: the price goes back inside range A.
+  const gCoin = new ethers.Contract(gToken, local.tokenAbi, provider);
+  await directSwap(local, gKey, local.buyer, { buy: false, amount: (await gCoin.balanceOf(local.buyer.address)) / 2n });
+  const back = await readGen8CampaignState({ provider, cfg, token: gToken, pool: gPool });
+  assert.ok(BigInt(back.market.sqrtPriceX96) > sqrtAtTick(gPool.tickGrad), "price back inside A");
+  assert.deepEqual([back.latched, back.postPhase, back.platformStatus, back.graduation.state, back.gen8.phase], [true, false, "bonding", "trading", "bonding"]);
+  assert.equal(back.postPhase, (await local.lens.progress(gPool.poolId)).postPhase, "== lens postPhase");
+  assert.equal(back.tradeFee.currentBps, Number(await local.lens.currentFeeBps(gPool.poolId, local.addresses.poolManager, { blockTag: back.blockNumber })), "bonding rate again, as the lens");
+  assert.equal(back.tradeFee.currentBps, 200);
+  assert.ok(back.graduation.progressPct < 100, "progress from the price, not 100 because of the latch");
+  await travel(3600);
+  const backLater = await readGen8CampaignState({ provider, cfg, token: gToken, pool: gPool });
+  assert.equal(backLater.reserveReleasable, false, "an hour later but back in A: not releasable");
+  const below = await local.reserveLock.release.staticCall(gPool.poolId).then(() => null, (e) => e);
+  assert.equal(gen8RevertReason(below)?.name, "PriceBelowGraduation");
+  await directSwap(local, gKey, local.other, { buy: true, amount: (lp0.nativeTargetA * 110n) / 100n });
+  const again = await readGen8CampaignState({ provider, cfg, token: gToken, pool: gPool });
+  assert.deepEqual([again.postPhase, again.platformStatus, again.reserveReleasable, again.creatorClaims.reserve.releasable], [true, "graduated", true, true]);
+  assert.equal(again.tradeFee.currentBps, 100);
+  await (await local.reserveLock.release(gPool.poolId)).wait();
+
+  // RPC down: the handler answers from the indexer's open_at / last_phase.
+  clearEvmCampaignStateCache();
+  const out = { headers: {} };
+  const resX = { statusCode: 0, setHeader: (k, v) => { out.headers[k] = v; }, end: (text) => { out.code = resX.statusCode; out.body = JSON.parse(text); } };
+  const gradAtSec = gPool.graduatedAt;
+  await evmCampaignStateHandler(
+    { method: "GET", url: `/api/evm/campaign-state?chainId=97&campaign=${gToken}`, headers: {} },
+    resX,
+    {
+      getProvider: async () => provider, readState: async () => { throw new Error("gen5 reader must not run"); }, gen8Config: () => cfg,
+      readGen8Pool: async () => { throw new Error("rpc down"); },
+      loadGen8Indexed: async () => ({ poolId: gPool.poolId, token: gToken, creator: creator.address, openAt: 1000, lastPhase: "bonding", graduatedBlock: 5, graduatedAt: gradAtSec, tickStart: gPool.tickStart, tickGrad: gPool.tickGrad, liqA: null, sqrtPriceX96: null }),
+    },
+  );
+  assert.equal(out.code, 200);
+  assert.deepEqual([out.body.source, out.body.latched, out.body.postPhase, out.body.platformStatus, out.body.openAt, out.body.tradingOpen, out.body.reserveReleaseAt, out.body.reserveReleasable], ["indexer", true, false, "bonding", 1000, true, gradAtSec + 3600, false]);
 });

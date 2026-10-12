@@ -54,7 +54,8 @@ async function progressFor(chainId, address) {
 }
 
 const LENS_PROGRESS_ABI = [
-  "function progress(bytes32 id) view returns (tuple(bool graduated, uint160 sqrtPriceX96, uint256 coinsSoldFromA, uint256 coinsInA, uint256 nativeInA, uint256 nativeTargetA))",
+  // build/evm-gen8 20d95e0a: postPhase and graduatedAt sit second and third; read by name only.
+  "function progress(bytes32 id) view returns (tuple(bool graduated, bool postPhase, uint40 graduatedAt, uint160 sqrtPriceX96, uint256 coinsSoldFromA, uint256 coinsInA, uint256 nativeInA, uint256 nativeTargetA))",
 ];
 
 /**
@@ -85,10 +86,12 @@ export async function gen8ItemProgress(item, { readLens = null, env = process.en
   try {
     const r = await read(item.chainId, cfg.lens, g.poolId);
     if (!r) return null;
-    const graduated = Boolean(r.graduated ?? r[0]);
-    const sold = BigInt(r.coinsSoldFromA ?? r[2]);
-    const inA = BigInt(r.coinsInA ?? r[3]);
-    if (graduated) return 100;
+    // F1: complete while the price is at or past the graduation price (postPhase), not because of the latch alone; a
+    // latched coin back inside range A shows its progress from the price, as the lens computes it.
+    const postPhase = Boolean(r.postPhase);
+    const sold = BigInt(r.coinsSoldFromA);
+    const inA = BigInt(r.coinsInA);
+    if (postPhase) return 100;
     // Same resolution as the indexer-row path (gen8Progress: whole bps).
     return inA > 0n ? Math.min(10_000, Number((sold * 10_000n) / inA)) / 100 : null;
   } catch {
