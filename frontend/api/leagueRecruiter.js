@@ -6,6 +6,7 @@ import { resolveEthUsdPrice } from "./lib/ethUsdPrice.js";
 import { scoreUniversalRecruiter, toNumber, weiToNative } from "./leagueRecruiterScore.js";
 import { internalRecruiterLabel } from "../shared/ownerWallets.mjs";
 import { notPublicHiddenCampaignSql, publicHiddenWhere } from "./lib/publicHiddenSql.js";
+import { gen8NettedCurveTradesSql } from "./lib/evmGen8LeagueSql.js";
 
 /**
  * Recruiter League is ONE universal All-Chains weekly/monthly board.
@@ -96,26 +97,42 @@ function preserveWallet(value) {
 
 // A creator's own buys (gen-5 first buy and escrow buys, curve_trades.league_excluded) do not make a
 // wallet count as "traded", exactly as in the settlement job (realtime-indexer/src/evm/
-// curveTradeGen5Columns.ts). Empty until the gen-5 migration has added the column.
-let leagueExcludedColumn = { at: 0, present: false };
-async function countedTradeSql(alias) {
-  if (Date.now() - leagueExcludedColumn.at > 10 * 60 * 1000) {
+// curveTradeGen5Columns.ts). Empty until the gen-5 migration has added the column. The same probe
+// says whether fee_raw exists, which the gen-8 netted trades read (tradesFromSql).
+let curveTradeColumns = { at: 0, leagueExcluded: false, feeRaw: false };
+async function probeCurveTradeColumns() {
+  if (Date.now() - curveTradeColumns.at > 10 * 60 * 1000) {
     try {
       const { rows } = await pool.query(
-        `select 1 from information_schema.columns
-          where table_schema = 'public' and table_name = 'curve_trades' and column_name = 'league_excluded'`,
+        `select column_name from information_schema.columns
+          where table_schema = 'public' and table_name = 'curve_trades' and column_name in ('league_excluded', 'fee_raw')`,
       );
-      leagueExcludedColumn = { at: Date.now(), present: rows.length > 0 };
+      const names = new Set(rows.map((row) => String(row.column_name)));
+      curveTradeColumns = { at: Date.now(), leagueExcluded: names.has("league_excluded"), feeRaw: names.has("fee_raw") };
     } catch {
-      leagueExcludedColumn = { at: Date.now(), present: false };
+      curveTradeColumns = { at: Date.now(), leagueExcluded: false, feeRaw: false };
     }
   }
-  return leagueExcludedColumn.present ? `NOT coalesce(${alias}.league_excluded, false)` : "true";
+  return curveTradeColumns;
+}
+async function countedTradeSql(alias) {
+  const cols = await probeCurveTradeColumns();
+  return cols.leagueExcluded ? `NOT coalesce(${alias}.league_excluded, false)` : "true";
+}
+// Gen-8 rows (founder, 2026-10-12): referred volume reads the netted trades, as the settlement job
+// does (realtime-indexer/src/rewards/recruiterLeague.ts): one row per coin, wallet and transaction
+// with the trader-side amount, so a buy and a sell inside one transaction count as their net. Every
+// other row passes through unchanged; the plain table until the gen-5 columns exist. The board shows
+// the chain head; settlement additionally counts only gen-8 rows below the money cursor.
+async function tradesFromSql(alias) {
+  const cols = await probeCurveTradeColumns();
+  return cols.leagueExcluded && cols.feeRaw ? gen8NettedCurveTradesSql(alias) : `public.curve_trades ${alias}`;
 }
 
 async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
   const weights = getWeights();
   const countedTrade = await countedTradeSql("t");
+  const trades = await tradesFromSql("t");
   const { rows } = await pool.query(
     `
     WITH active_links AS (
@@ -145,7 +162,7 @@ async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
         sum(t.bnb_amount_raw::numeric) AS raw,
         coalesce(sum(t.bnb_amount_raw::numeric) FILTER (WHERE ${countedTrade}), 0) AS counted_raw,
         max(t.block_time) AS last_at
-      FROM public.curve_trades t
+      FROM ${trades}
       JOIN volume_wallets w
         ON (t.chain_id = 101 AND w.wallet_address = t.wallet)
         OR (t.chain_id <> 101 AND lower(w.wallet_address) = lower(t.wallet))

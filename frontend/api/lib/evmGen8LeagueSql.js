@@ -14,7 +14,10 @@
  *   netting  (audit D-L2) a gen-8 swap needs no capital to repeat inside one transaction, so the trader boards read
  *            gen8NettedCurveTradesSql() in place of curve_trades: all gen-8 swaps of one coin by one wallet (tx.from)
  *            in one transaction become one row of the net trader-side amount. The pot is not netted (every leg
- *            paid its fee).
+ *            paid its fee). The recruiter board and the weekly airdrop candidates net the same way (founder,
+ *            2026-10-12), so a single gen-8 trade counts trader-side there too.
+ *   bound    (hybrid ingestion) money paths count a gen-8 row only once its block is final: gen8MoneySafeSql().
+ *            The live boards show the chain head and do not apply it.
  */
 import { GEN8_CURVE_VENUE } from "../../shared/evmGen8.mjs";
 
@@ -72,4 +75,17 @@ export function gen8NettedCurveTradesSql(alias = "t") {
         ) n
         WHERE n.net_raw <> 0
       ) ${alias}`;
+}
+
+/**
+ * Money bound (hybrid ingestion, realtime-indexer/src/evm/evmGen8Pool.ts): gen-8 curve_trades rows follow the chain
+ * head and can be rolled back on a reorg, so a money path counts a gen-8 row only once its block is final, i.e. below
+ * the chain's money cursor (indexer_state cursor 'gen8-money:<hook>', last_indexed_block = the next block the money
+ * pass reads; one hook per chain). Without a money cursor no gen-8 row counts (nothing is final yet). Every other row
+ * passes. Condition without a leading AND; the same text as realtime-indexer/src/rewards/leagueLeaderboard.ts
+ * gen8MoneySafeSql (settlement, recruiter league, airdrop eligibility). Used by the weekly airdrop candidates
+ * (scripts/weekly-airdrop/candidates.mjs); league.js and leagueRecruiter.js are display and show the chain head.
+ */
+export function gen8MoneySafeSql(alias = "t") {
+  return `(NOT ${isGen8(alias)} OR ${alias}.block_number < coalesce((select s.last_indexed_block from public.indexer_state s where s.chain_id = ${alias}.chain_id and s.cursor like 'gen8-money:%' limit 1), 0))`;
 }

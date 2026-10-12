@@ -423,3 +423,119 @@ test("wash netting is gen-8 only: without gen-8 config the boards read curve_tra
   assert.equal(byCoin["0x00000000000000000000000000000000000000a9"].buyer_address, "0x0000000000000000000000000000000000000004");
   assert.equal(String(byCoin["0x00000000000000000000000000000000000000a9"].bnb_amount_raw), milli(980).toString(), "raw curve amount, as before gen-8");
 });
+
+// Hybrid ingestion (founder, 2026-10-12): the trader boards are display and show the chain head; settlement
+// (realtime-indexer/src/tests/evmGen8LeagueSettlement.integration.test.ts "money bound") counts a gen-8 row only below
+// the chain's money cursor (indexer_state 'gen8-money:<hook>', last_indexed_block = the next block to ingest). Same
+// rows here: W7's 2.040 buy on G8 and a sell on the perfect run GW, both above the cursor; the board moves, settlement
+// does not.
+test("money bound is settlement only: the board shows gen-8 rows above the money cursor; bound SQL == settlement SQL", async () => {
+  const MONEY_CURSOR = 6000;
+  await db.query(`insert into public.indexer_state (chain_id, cursor, last_indexed_block) values ($1, $2, $3)`, [CHAIN, `gen8-money:${HOOK}`, MONEY_CURSOR]);
+  const W7 = "0x0000000000000000000000000000000000000007";
+  const GW = "0x00000000000000000000000000000000000000a9";
+  const unsafe = (campaign, tx, block, side, curve, fee) => db.query(
+    `insert into public.curve_trades (chain_id, campaign_address, tx_hash, log_index, block_number, block_time, side, wallet,
+       token_amount_raw, bnb_amount_raw, token_amount, bnb_amount, venue, fee_raw, league_excluded)
+     values ($1, $2, $3, 1, $4, $5, $6, $7, 1, $8, 1, $8::numeric / 1e18, 'gen8', $9, false)`,
+    [CHAIN, campaign, tx, block, at(19), side, W7, curve.toString(), fee.toString()],
+  );
+  await unsafe(G8, `0x${"11".repeat(32)}`, MONEY_CURSOR + 3000, "buy", milli(2000), milli(40)); // pays 2.040
+  await unsafe(GW, `0x${"22".repeat(32)}`, MONEY_CURSOR + 3001, "sell", milli(100), milli(2));
+  setGen8(true);
+  try {
+    const hits = await board("biggest_hit");
+    const byCoin = Object.fromEntries(hits.map((r) => [r.campaign_address, r]));
+    assert.equal(byCoin[G8].buyer_address, W7, "the board shows the chain head");
+    assert.equal(String(byCoin[G8].bnb_amount_raw), milli(2040).toString());
+    const res = await call(league, `/api/league?${new URLSearchParams({ chainId: String(CHAIN), category: "perfect_run", period: "monthly" })}`);
+    assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+    assert.equal(res.body.items.find((r) => r.campaign_address === GW), undefined, "the sell at the head ends GW's perfect run on the board");
+
+    // The bound itself: both rows at the head out, nothing else; with no money cursor only the gen-7 rows are final.
+    const { gen8MoneySafeSql, gen8NettedCurveTradesSql } = await import("./lib/evmGen8LeagueSql.js");
+    const head = await db.query(`select count(*)::int as n from ${gen8NettedCurveTradesSql("t")} where t.wallet = $1 and ${gen8MoneySafeSql("t")}`, [W7]);
+    assert.equal(head.rows[0].n, 0);
+    const below = await db.query(`select count(*)::int as n from ${gen8NettedCurveTradesSql("t")} where t.chain_id = $1 and ${gen8MoneySafeSql("t")}`, [CHAIN]);
+    const everything = await db.query(`select count(*)::int as n from ${gen8NettedCurveTradesSql("t")} where t.chain_id = $1`, [CHAIN]);
+    assert.equal(below.rows[0].n, everything.rows[0].n - 2);
+    await db.query(`delete from public.indexer_state where chain_id = $1 and cursor like 'gen8-money:%'`, [CHAIN]);
+    const noCursor = await db.query(`select count(*)::int as n from ${gen8NettedCurveTradesSql("t")} where t.chain_id = $1 and ${gen8MoneySafeSql("t")}`, [CHAIN]);
+    const gen7 = await db.query(`select count(*)::int as n from public.curve_trades t where t.chain_id = $1 and coalesce(t.venue, '') <> 'gen8'`, [CHAIN]);
+    assert.equal(noCursor.rows[0].n, gen7.rows[0].n);
+    await db.query(`insert into public.indexer_state (chain_id, cursor, last_indexed_block) values ($1, $2, $3)`, [CHAIN, `gen8-money:${HOOK}`, MONEY_CURSOR]);
+
+    // Settlement renders the exact same condition (leagueLeaderboard.ts gen8MoneySafeSql); the live boards never do.
+    const ts = fs.readFileSync(path.join(ROOT, "realtime-indexer/src/rewards/leagueLeaderboard.ts"), "utf8");
+    const i = ts.indexOf("export function gen8MoneySafeSql(");
+    const settlementBound = new Function(
+      `const GEN8_ROW = (a) => \`coalesce(\${a}.venue, '') = 'gen8'\`;\n${ts.slice(i, ts.indexOf("\n}\n", i) + 2).replace(/^export /, "")}\nreturn gen8MoneySafeSql;`,
+    )();
+    assert.equal(settlementBound("t"), gen8MoneySafeSql("t"), "candidates helper == settlement helper");
+    for (const file of ["frontend/api/league.js", "frontend/api/leagueRecruiter.js"]) {
+      assert.ok(!fs.readFileSync(path.join(ROOT, file), "utf8").includes("gen8MoneySafeSql"), `${file} shows the chain head`);
+    }
+  } finally {
+    setGen8(false);
+  }
+});
+
+// Founder, 2026-10-12: the recruiter board nets gen-8 legs like the trader boards and the settlement job
+// (realtime-indexer/src/tests/evmGen8LeagueSettlement.integration.test.ts "recruiter league"): a wash pair inside one
+// transaction is its net 0.020; a single gen-8 trade is trader-side. The board is display, so the trade at the chain
+// head counts here and not in settlement.
+test("recruiter board: a gen-8 wash pair by a linked wallet is net 0.020 of referred volume; gen-7 unchanged; chain head shown", async () => {
+  await db.query(`
+    alter table public.recruiters add column if not exists metadata jsonb not null default '{}'::jsonb;
+    create table if not exists public.wallet_squad_memberships (
+      recruiter_id bigint not null, wallet_address text not null, member_role text,
+      is_active boolean not null default true, joined_at timestamptz not null default now()
+    );
+  `);
+  const C56 = "0x00000000000000000000000000000000000000b8";
+  const C56_7 = "0x00000000000000000000000000000000000000b7";
+  const CREATOR56 = "0x00000000000000000000000000000000000000d6";
+  await db.query(
+    `insert into public.campaigns (chain_id, campaign_address, token_address, creator_address, name, symbol, meta, created_block, created_at_chain, is_active)
+     values (56, $1, $1, $3, 'Bsc8', 'B8', '{}'::jsonb, 1, $4, true), (56, $2, $2, $3, 'Bsc7', 'B7', '{}'::jsonb, 1, $4, true)`,
+    [C56, C56_7, CREATOR56, at(0)],
+  );
+  const { rows: [washed] } = await db.query(`insert into public.recruiters (wallet_address, code) values ('0x00000000000000000000000000000000000000f5', 'washed') returning id`);
+  const { rows: [head] } = await db.query(`insert into public.recruiters (wallet_address, code) values ('0x00000000000000000000000000000000000000f6', 'head') returning id`);
+  const LW = "0x00000000000000000000000000000000000000e5";
+  const LH = "0x00000000000000000000000000000000000000e6";
+  await db.query(`insert into public.wallet_recruiter_links (wallet_address, recruiter_id, linked_at) values ($1, $2, $4), ($3, $5, $4)`, [LW, washed.id, LH, at(-48), head.id]);
+  await db.query(`insert into public.indexer_state (chain_id, cursor, last_indexed_block) values (56, $1, 6000)`, [`gen8-money:${HOOK}`]);
+  const t20 = at(20); // legs of one transaction share their block time
+  const leg = (campaign, tx, logIndex, block, side, wallet, curve, fee, venue) => db.query(
+    `insert into public.curve_trades (chain_id, campaign_address, tx_hash, log_index, block_number, block_time, side, wallet,
+       token_amount_raw, bnb_amount_raw, token_amount, bnb_amount, venue, fee_raw, league_excluded)
+     values (56, $1, $2, $3, $4, $5, $6, $7, 1, $8, 1, $8::numeric / 1e18, $9, $10, false)`,
+    [campaign, tx, logIndex, block, t20, side, wallet, curve.toString(), venue, fee.toString()],
+  );
+  const WASH = `0x${"33".repeat(32)}`;
+  await leg(C56, WASH, 1, 4000, "buy", LW, milli(980), milli(20), "gen8"); // pays 1.000
+  await leg(C56, WASH, 2, 4000, "sell", LW, milli(1000), milli(20), "gen8"); // receives 0.980
+  await leg(C56_7, `0x${"44".repeat(32)}`, 1, 4001, "buy", LW, milli(1000), milli(20), null); // gen-7 as stored
+  await leg(C56, `0x${"55".repeat(32)}`, 1, 9000, "buy", LH, milli(500), milli(10), "gen8"); // above the money cursor
+
+  // The board ranks the mainnets (56, 4663, 101) over the live weekly epoch, or the one before it when the fixture
+  // hour (at(20), 52 hours ago) falls there.
+  const tradeAt = new Date(at(20));
+  const now = new Date();
+  const monday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) - ((now.getUTCDay() + 6) % 7) * 86_400_000);
+  const epochOffset = tradeAt < monday ? 1 : 0;
+  process.env.BNB_USD_PRICE = "600";
+  process.env.ETH_USD_PRICE = "3000";
+  const { default: recruiterBoard } = await import("./leagueRecruiter.js");
+  const { weiToNative } = await import("./leagueRecruiterScore.js");
+  const res = await call(recruiterBoard, `/api/league/recruiter?${new URLSearchParams({ chainId: "56", period: "weekly", epochOffset: String(epochOffset), limit: "50" })}`);
+  assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+  const byCode = Object.fromEntries(res.body.items.map((r) => [r.code, r]));
+  assert.ok(byCode.washed && byCode.head, JSON.stringify(res.body));
+  assert.equal(byCode.washed.referredVolumeBnb, weiToNative(milli(1020).toString(), 18), "gen-7 1.000 + gen-8 net 0.020");
+  assert.ok(Math.abs(byCode.washed.referredVolumeUsd - 612) < 1e-9, String(byCode.washed.referredVolumeUsd));
+  assert.equal(byCode.washed.qualified, true);
+  assert.equal(byCode.washed.linkedWalletCount, 1);
+  assert.equal(byCode.head.referredVolumeBnb, weiToNative(milli(510).toString(), 18), "display: the trade at the chain head counts, trader-side 0.500 + 0.010");
+});

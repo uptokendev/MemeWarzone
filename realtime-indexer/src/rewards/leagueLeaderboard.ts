@@ -54,6 +54,19 @@ export function gen8NettedCurveTradesSql(alias = "t") {
       ) ${alias}`;
 }
 
+/**
+ * Money bound (hybrid ingestion, evm/evmGen8Pool.ts): the gen-8 indexer writes curve_trades up to the chain head and
+ * rolls them back on a reorg, so a money path (settlement, recruiter league, airdrop eligibility and candidates) counts
+ * a gen-8 row only once its block is final: block_number below the chain's money cursor (indexer_state cursor
+ * 'gen8-money:<hook>', last_indexed_block = the next block the money pass reads; one hook per chain). Without a money
+ * cursor no gen-8 row counts (nothing is final yet). Every other row passes. Condition without a leading AND; the same
+ * text as frontend/api/lib/evmGen8LeagueSql.js gen8MoneySafeSql (weekly airdrop candidates). Live boards do not apply
+ * it: they show the chain head.
+ */
+export function gen8MoneySafeSql(alias = "t") {
+  return `(NOT ${GEN8_ROW(alias)} OR ${alias}.block_number < coalesce((select s.last_indexed_block from public.indexer_state s where s.chain_id = ${alias}.chain_id and s.cursor like 'gen8-money:%' limit 1), 0))`;
+}
+
 /** The gen-8 fragments once curve_trades has fee_raw and league_excluded (gen-8 rows need both); else the old SQL. */
 async function gen8LeagueSql(db: Db) {
   const cols = await curveTradeGen5Columns(db);
@@ -61,6 +74,8 @@ async function gen8LeagueSql(db: Db) {
   return {
     amount: (a = "t") => (on ? gen8TraderNativeRawSql(a) : `${a}.bnb_amount_raw::numeric`),
     keep: (a = "t") => (on ? `AND ${gen8LeagueRowKeepSql(a)}` : ""),
+    // Settlement pays money: a gen-8 row counts only below the money cursor (gen8MoneySafeSql).
+    final: (a = "t") => (on ? `AND ${gen8MoneySafeSql(a)}` : ""),
     // `plain` is the exact pre-gen-8 FROM text, used while the columns are missing.
     trades: (plain: string) => (on ? gen8NettedCurveTradesSql("t") : plain),
   };
@@ -111,6 +126,7 @@ export async function leagueLeaderboard(
               AND (c.graduated_block IS NULL OR c.graduated_block=0 OR t.block_number <= c.graduated_block)
               AND (c.creator_address IS NULL OR t.wallet <> c.creator_address)
               ${g8.keep("t")}
+              ${g8.final("t")}
           ) AS unique_buyers
         FROM campaigns c
         WHERE c.chain_id=$1
@@ -160,6 +176,7 @@ export async function leagueLeaderboard(
               AND t.side='sell'
               AND t.block_number >= c.created_block
               AND (c.graduated_block IS NULL OR c.graduated_block=0 OR t.block_number <= c.graduated_block)
+              ${g8.final("t")}
           ) AS sells_count
         FROM campaigns c
         WHERE c.chain_id=$1
@@ -221,6 +238,7 @@ export async function leagueLeaderboard(
           AND (c.creator_address IS NULL OR t.wallet IS DISTINCT FROM c.creator_address)
           AND (c.fee_recipient_address IS NULL OR t.wallet IS DISTINCT FROM c.fee_recipient_address)
           ${g8.keep("t")}
+          ${g8.final("t")}
       )
       SELECT *
       FROM buys
@@ -330,6 +348,7 @@ export async function leagueLeaderboard(
           AND (c.creator_address IS NULL OR t.wallet IS DISTINCT FROM c.creator_address)
           AND (c.fee_recipient_address IS NULL OR t.wallet IS DISTINCT FROM c.fee_recipient_address)
           ${g8.keep("t")}
+          ${g8.final("t")}
         GROUP BY ${sqlWallet("t.wallet", chainId)}
       )
       SELECT wallet as recipient, pnl_raw
