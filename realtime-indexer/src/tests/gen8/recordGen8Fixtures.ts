@@ -1,5 +1,5 @@
 /**
- * Records the gen-8 log fixtures used by src/tests/evmGen8Decode.test.ts from a real local run (anvil + the production
+ * Records the gen-8 log fixtures (last recorded from build/evm-gen8 20d95e0a) used by src/tests/evmGen8Decode.test.ts from a real local run (anvil + the production
  * contracts): a launch with a first buy, the four swap types, a graduation crossing and post-graduation swaps.
  *   npx tsx src/tests/gen8/recordGen8Fixtures.ts > src/tests/fixtures/gen8-logs.json
  */

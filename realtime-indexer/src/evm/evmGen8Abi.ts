@@ -65,7 +65,8 @@ export const V4_POOL_MANAGER_EVENTS = [
 ] as const;
 
 export const GEN8_HOOK_VIEWS = [
-  "function pools(bytes32) view returns (address creator, uint40 openAt, bool graduated, int24 tickGrad, int24 tickStart, uint128 liqA, uint128 liqB, uint160 sqrtGrad, (uint16 bondingBps, uint16 postBps, uint16 creatorPostBps, uint16 sniperStartBps, uint16 creatorBondingBps) fees)",
+  // build/evm-gen8 38ee22c1: graduatedAt (the latch time) is the tenth field; the reserve releases 1 h after it.
+  "function pools(bytes32) view returns (address creator, uint40 openAt, bool graduated, int24 tickGrad, int24 tickStart, uint128 liqA, uint128 liqB, uint160 sqrtGrad, (uint16 bondingBps, uint16 postBps, uint16 creatorPostBps, uint16 sniperStartBps, uint16 creatorBondingBps) fees, uint40 graduatedAt)",
   "function routerOwed() view returns (uint128)",
   "function parkedOwed() view returns (uint256)",
   "function routerParked(address) view returns (uint256 amount, uint256 bondingFees, uint256 gradFees)",
