@@ -7,7 +7,7 @@ import { creatorMatchSql, normalizeCreatorQuery } from "./lib/campaignCreatorFil
 import { liveVoteWindowsJoin } from "./lib/liveVoteWindows.js";
 import { gen8ConfigFor } from "./lib/evmGen8Config.js";
 import { gen8Tables } from "./lib/evmGen8Schema.js";
-import { GEN8_CURVE_VENUE, GEN8_TRADE_PATH } from "../shared/evmGen8.mjs";
+import { GEN8_CURVE_VENUE, GEN8_TRADE_PATH, gen8PlatformStatus } from "../shared/evmGen8.mjs";
 
 /**
  * Market cap of EVM generation 6/5 coins is fully diluted (founder decision 2026-10-01): price x total
@@ -50,6 +50,44 @@ const DEX_TRADING_SQL = `(
     and upper(${DEX_MARKET_STAGE_SQL}) not in ('BONDING', 'LIVE', 'ENDED')
   )
 )`;
+
+// Generation 8 platform status (contract fix round 2026-10-12, F1): a gen-8 coin is graduated only when its one-time
+// latch is set AND its pool price is at or past the graduation price now (evm_gen8_pools.graduated_block and
+// last_phase = 'post', written by the gen-8 indexer); a forced latch whose price fell back into range A is bonding
+// again, although campaigns.graduated_at_chain stays set. Without a pool row a gen-8 campaign follows the market stage
+// the indexer keeps in step (DEX_ACTIVE / BONDING). Used only where gen-8 is configured AND the fix-round columns exist
+// (gen8Tables().phase); every other list keeps DEX_TRADING_SQL byte for byte.
+const DEX_MARKET_STAGE_DEX_SQL = `(
+    ${DEX_MARKET_STAGE_SQL} is not null
+    and upper(${DEX_MARKET_STAGE_SQL}) not in ('BONDING', 'LIVE', 'ENDED')
+  )`;
+const DEX_TRADING_SQL_GEN8_JOINED = `(case
+  when g8.pool_id is not null then (g8.graduated_block is not null and g8.last_phase = 'post')
+  when coalesce(c.factory_generation, 0) = 8 then ${DEX_MARKET_STAGE_DEX_SQL}
+  else ${DEX_TRADING_SQL}
+end)`;
+const DEX_TRADING_SQL_GEN8_STAGE = `(case
+  when coalesce(c.factory_generation, 0) = 8 then ${DEX_MARKET_STAGE_DEX_SQL}
+  else ${DEX_TRADING_SQL}
+end)`;
+
+/** The DEX-trading condition for a list: unchanged unless gen-8 is on with the fix-round columns. */
+export function dexTradingSqlFor({ gen8Phase = false, gen8Joined = false } = {}) {
+  if (!gen8Phase) return DEX_TRADING_SQL;
+  return gen8Joined ? DEX_TRADING_SQL_GEN8_JOINED : DEX_TRADING_SQL_GEN8_STAGE;
+}
+
+// The graduation latch sets campaigns.is_active = false (setCampaignGraduated). A latched gen-8 coin whose price fell
+// back into range A trades on in its pool, so for the live / ended filters it counts as active.
+const ACTIVE_SQL = "c.is_active = true";
+const ACTIVE_SQL_GEN8_JOINED = "(c.is_active = true or (g8.pool_id is not null and g8.graduated_block is not null))";
+const ACTIVE_SQL_GEN8_STAGE = "(c.is_active = true or (coalesce(c.factory_generation, 0) = 8 and c.graduated_at_chain is not null))";
+
+/** "Live" / not-ended condition for a list: c.is_active = true unless gen-8 is on with the fix-round columns. */
+export function activeSqlFor({ gen8Phase = false, gen8Joined = false } = {}) {
+  if (!gen8Phase) return ACTIVE_SQL;
+  return gen8Joined ? ACTIVE_SQL_GEN8_JOINED : ACTIVE_SQL_GEN8_STAGE;
+}
 
 function toInt(v, fallback) {
   const n = Number(v);
@@ -142,8 +180,30 @@ function solanaFieldsFromMeta(meta, chainId) {
  * campaigns.meta.gen8 (the indexer's markGen8Campaign), and the pool state from evm_gen8_pools when that table is
  * joined. A gen-8 coin has no pair address (cms.dex_pair_address stays empty); it trades in its own V4 pool before
  * and after graduation, never through the import route (D9).
+ *
+ * With the fix-round columns (`phaseAware`): gen8.openAt (unix seconds, null when unknown; from evm_gen8_pools.open_at
+ * or campaigns.meta.gen8.openAt), gen8.tradingOpen, gen8.latched, gen8.postPhase (true / false / null) and
+ * gen8.platformStatus ('graduated' only when latched AND post), and gen8.phase follows the platform status.
  */
-export function gen8FieldsFromRow(row, isDexTrading) {
+export function gen8PlatformFromRow(row) {
+  const meta = row?.meta && typeof row.meta === "object" ? row.meta.gen8 : null;
+  const joined = row?.gen8_pool_id != null && Object.prototype.hasOwnProperty.call(row, "gen8_last_phase");
+  if (!joined) return null;
+  const latched = row.gen8_graduated_block != null;
+  const postPhase = row.gen8_last_phase === "post" ? true : row.gen8_last_phase === "bonding" ? false : null;
+  const openAtRaw = row.gen8_open_at ?? meta?.openAt ?? null;
+  const openAtMs = openAtRaw ? new Date(openAtRaw).getTime() : NaN;
+  const openAt = Number.isFinite(openAtMs) ? Math.floor(openAtMs / 1000) : null;
+  return { latched, postPhase, platformStatus: gen8PlatformStatus({ latched, postPhase }), openAt };
+}
+
+function gen8OpenAtFromMeta(row) {
+  const raw = row?.meta && typeof row.meta === "object" ? row.meta.gen8?.openAt : null;
+  const ms = raw ? new Date(raw).getTime() : NaN;
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+}
+
+export function gen8FieldsFromRow(row, isDexTrading, { phaseAware = false, nowMs = Date.now() } = {}) {
   const meta = row?.meta && typeof row.meta === "object" ? row.meta.gen8 : null;
   const poolId = String(row?.gen8_pool_id || meta?.poolId || "").toLowerCase();
   if (!/^0x[0-9a-f]{64}$/.test(poolId)) return null;
@@ -158,6 +218,23 @@ export function gen8FieldsFromRow(row, isDexTrading) {
         holderCount: row.gen8_holder_count != null ? Number(row.gen8_holder_count) : null,
       }
     : null;
+  if (!phaseAware) {
+    return {
+      generation: 8,
+      gen8: {
+        poolId,
+        hook,
+        poolManager: meta?.poolManager ? String(meta.poolManager).toLowerCase() : null,
+        displayPair: row?.gen8_display_pair || meta?.display || null,
+        tradePath: GEN8_TRADE_PATH,
+        phase: isDexTrading || pool?.graduatedBlock != null ? "graduated" : "bonding",
+        pool,
+      },
+    };
+  }
+  const platform = gen8PlatformFromRow(row);
+  const openAt = platform ? platform.openAt : gen8OpenAtFromMeta(row);
+  const platformStatus = platform ? platform.platformStatus : isDexTrading ? "graduated" : "bonding";
   return {
     generation: 8,
     gen8: {
@@ -166,19 +243,35 @@ export function gen8FieldsFromRow(row, isDexTrading) {
       poolManager: meta?.poolManager ? String(meta.poolManager).toLowerCase() : null,
       displayPair: row?.gen8_display_pair || meta?.display || null,
       tradePath: GEN8_TRADE_PATH,
-      phase: isDexTrading || pool?.graduatedBlock != null ? "graduated" : "bonding",
+      phase: platformStatus === "graduated" ? "graduated" : "bonding",
+      platformStatus,
+      latched: platform ? platform.latched : pool?.graduatedBlock != null || Boolean(row?.graduated_at_chain),
+      postPhase: platform ? platform.postPhase : null,
+      openAt,
+      tradingOpen: openAt === null ? true : nowMs >= openAt * 1000,
       pool,
     },
   };
 }
 
-function mapCampaignRow(row, gradTargetBnb, { gen8 = false } = {}) {
+function mapCampaignRow(row, gradTargetBnb, { gen8 = false, gen8Phase = false } = {}) {
   const chainId = Number(row.chain_id);
   const campaignAddress = normalizeOutputAddress(row.campaign_address, chainId);
   const graduatedAt = row.graduated_at_chain ? String(row.graduated_at_chain) : null;
   const solana = solanaFieldsFromMeta(row.meta, chainId);
-  const { marketStage, dexPool, dexPosition, isDexTrading } = deriveDexTradingState(row, chainId);
-  const gen8Fields = gen8 ? gen8FieldsFromRow(row, isDexTrading) : null;
+  const derived = deriveDexTradingState(row, chainId);
+  const { marketStage, dexPool, dexPosition } = derived;
+  let isDexTrading = derived.isDexTrading;
+  let gen8Fields = gen8 ? gen8FieldsFromRow(row, isDexTrading) : null;
+  if (gen8Fields && gen8Phase) {
+    // Gen-8 platform status (see DEX_TRADING_SQL_GEN8_JOINED): latch AND post phase from the pool row, else the
+    // market stage the indexer keeps in step; campaigns.graduated_at_chain (the latch) alone no longer decides.
+    const platform = gen8PlatformFromRow(row);
+    isDexTrading = platform ? platform.platformStatus === "graduated" : isDexTradingMarketStage(marketStage);
+    gen8Fields = gen8FieldsFromRow(row, isDexTrading, { phaseAware: true });
+  }
+  // A latched gen-8 coin back in range A keeps trading in its pool: active (live), not ended (see ACTIVE_SQL_GEN8_*).
+  const isActive = Boolean(row.is_active) || Boolean(gen8Phase && gen8Fields?.gen8?.latched && !isDexTrading);
 
   return {
     chainId,
@@ -199,8 +292,8 @@ function mapCampaignRow(row, gradTargetBnb, { gen8 = false } = {}) {
     isDexTrading,
 
     // canonical status (useful for UI)
-    isActive: Boolean(row.is_active),
-    status: isDexTrading ? "graduated" : row.is_active ? "live" : "ended",
+    isActive,
+    status: isDexTrading ? "graduated" : isActive ? "live" : "ended",
 
     // stats, present in rich mode and null/zero in basic fallback mode
     lastActivityAt: row.last_activity_at ? String(row.last_activity_at) : null,
@@ -242,8 +335,8 @@ function mapCampaignRow(row, gradTargetBnb, { gen8 = false } = {}) {
   };
 }
 
-function campaignPayload(rows, { limit, cursor, gradTargetBnb, warning = null, gen8 = false }) {
-  const items = (rows || []).map((row) => mapCampaignRow(row, gradTargetBnb, { gen8 }));
+function campaignPayload(rows, { limit, cursor, gradTargetBnb, warning = null, gen8 = false, gen8Phase = false }) {
+  const items = (rows || []).map((row) => mapCampaignRow(row, gradTargetBnb, { gen8, gen8Phase }));
   return {
     items,
     nextCursor: items.length === limit ? cursor + limit : null,
@@ -253,7 +346,9 @@ function campaignPayload(rows, { limit, cursor, gradTargetBnb, warning = null, g
   };
 }
 
-async function fetchBasicCampaignRows({ chainId, limit, cursor, effectiveStatus, searchRaw, tab, sort, creator }) {
+async function fetchBasicCampaignRows({ chainId, limit, cursor, effectiveStatus, searchRaw, tab, sort, creator, gen8Phase = false }) {
+  const DEX_TRADING_SQL = dexTradingSqlFor({ gen8Phase, gen8Joined: false });
+  const ACTIVE = activeSqlFor({ gen8Phase, gen8Joined: false });
   const params = [chainId];
   let where = "where c.chain_id = $1 and c.campaign_address is not null";
 
@@ -268,11 +363,11 @@ async function fetchBasicCampaignRows({ chainId, limit, cursor, effectiveStatus,
   }
 
   if (effectiveStatus === "live") {
-    where += ` and c.is_active = true and not ${DEX_TRADING_SQL}`;
+    where += ` and ${ACTIVE} and not ${DEX_TRADING_SQL}`;
   } else if (effectiveStatus === "graduated") {
     where += ` and ${DEX_TRADING_SQL}`;
   } else if (effectiveStatus === "ended") {
-    where += ` and c.is_active = false and not ${DEX_TRADING_SQL}`;
+    where += ` and ${gen8Phase ? `not ${ACTIVE}` : "c.is_active = false"} and not ${DEX_TRADING_SQL}`;
   }
 
   const orderBy = (() => {
@@ -400,7 +495,13 @@ export default async function handler(req, res) {
   // a fee correction for gen-8 rows, and holders / pool state from evm_gen8_pools once its migration is applied.
   // Without the config the SQL below is exactly the pre-gen-8 text.
   const gen8Enabled = Boolean(gen8ConfigFor(chainId));
-  const gen8Pools = gen8Enabled ? (await gen8Tables(pool)).pools : false;
+  const gen8Schema = gen8Enabled ? await gen8Tables(pool) : null;
+  const gen8Pools = gen8Schema ? gen8Schema.pools : false;
+  // Fix round 2026-10-12: the price-phase rule (latched AND last_phase 'post') once its columns exist.
+  const gen8Phase = Boolean(gen8Pools && gen8Schema.phase);
+  const DEX_TRADING_SQL = dexTradingSqlFor({ gen8Phase, gen8Joined: gen8Phase });
+  const ACTIVE = activeSqlFor({ gen8Phase, gen8Joined: gen8Phase });
+  const NOT_ACTIVE = gen8Phase ? `not ${ACTIVE}` : "c.is_active = false";
   const EVM_TRADE_FEE_NATIVE_SQL = gen8Enabled ? EVM_TRADE_FEE_NATIVE_SQL_GEN8 : EVM_TRADE_FEE_NATIVE_SQL_PRE_GEN8;
 
   try {
@@ -472,7 +573,9 @@ export default async function handler(req, res) {
           g8.last_sqrt_price_x96::text as gen8_sqrt_price,
           g8.graduated_block as gen8_graduated_block,
           g8.holder_count as gen8_holder_count,
-          g8.display_pair as gen8_display_pair,` : ""}
+          g8.display_pair as gen8_display_pair,` : ""}${gen8Phase ? `
+          g8.open_at as gen8_open_at,
+          g8.last_phase as gen8_last_phase,` : ""}
           -- Last price 24 hours ago (or the first price of a younger coin), for the ticker's 24h change.
           p24.price_24h_ago,
           vw.votes_24h,
@@ -574,9 +677,9 @@ export default async function handler(req, res) {
           ))
           and (
             $4::text = 'all'
-            or ($4::text = 'live' and c.is_active = true and not ${DEX_TRADING_SQL})
+            or ($4::text = 'live' and ${ACTIVE} and not ${DEX_TRADING_SQL})
             or ($4::text = 'graduated' and ${DEX_TRADING_SQL})
-            or ($4::text = 'ended' and c.is_active = false and not ${DEX_TRADING_SQL})
+            or ($4::text = 'ended' and ${NOT_ACTIVE} and not ${DEX_TRADING_SQL})
           )
           and (
             $5::text <> 'dex'
@@ -706,7 +809,7 @@ export default async function handler(req, res) {
       creator,
     ]);
 
-    const payload = campaignPayload(r.rows, { limit, cursor, gradTargetBnb, gen8: gen8Enabled });
+    const payload = campaignPayload(r.rows, { limit, cursor, gradTargetBnb, gen8: gen8Enabled, gen8Phase });
     // Each campaign's own graduation target (the creator's $15k / $30k / $50k choice), read from
     // chain the way Token Details reads it -- never a single default.
     await withSolanaBondingProgress(payload.items, solUsd);
@@ -726,6 +829,7 @@ export default async function handler(req, res) {
         tab,
         sort,
         creator,
+        gen8Phase,
       });
 
       return json(
@@ -736,6 +840,7 @@ export default async function handler(req, res) {
           cursor,
           gradTargetBnb,
           gen8: gen8Enabled,
+          gen8Phase,
           warning: "Campaign feed returned basic data because rich stats are temporarily unavailable.",
         }),
       );

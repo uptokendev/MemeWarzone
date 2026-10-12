@@ -218,6 +218,64 @@ test("gen-8 migration applied: holders and exact progress from evm_gen8_pools; g
   setGen8(false);
 });
 
+test("fix round: a gen-8 coin is graduated only when latched AND post phase; back in range A it is live again; open_at shown", async () => {
+  await db.query(fs.readFileSync(path.join(ROOT, "db/migrations/20261012_000012_evm_gen8_open_at_phase.sql"), "utf8"));
+  const listQ = async (q = "") => {
+    const res = await call(campaigns, `/api/campaigns?chainId=${CHAIN}&limit=50${q}`);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.warning, undefined, "rich query, not the basic fallback");
+    return Object.fromEntries(res.body.items.map((i) => [i.campaignAddress, i]));
+  };
+  setGen8(false);
+  const off = await listQ();
+  setGen8(true);
+  clearGen8SchemaCache(apiPool);
+  try {
+    const on = await listQ();
+    assert.deepEqual(on[G7], off[G7], "gen-7 coin identical with the phase columns joined");
+    assert.deepEqual([on[G8].gen8.latched, on[G8].gen8.postPhase, on[G8].gen8.platformStatus, on[G8].gen8.openAt, on[G8].gen8.tradingOpen], [false, null, "bonding", null, true]);
+
+    // The latch as the indexer writes it (setCampaignGraduated: is_active false, graduated_* set), price past graduation.
+    await db.query(`update public.campaigns set graduated_at_chain = now(), graduated_block = 900, is_active = false where chain_id = $1 and campaign_address = $2`, [CHAIN, G8]);
+    await db.query(`update public.evm_gen8_pools set graduated_block = 900, last_phase = 'post' where pool_id = $1`, [POOL_ID]);
+    const grad = await listQ();
+    assert.deepEqual([grad[G8].status, grad[G8].isDexTrading, grad[G8].gen8.phase, grad[G8].gen8.platformStatus, grad[G8].progressPct], ["graduated", true, "graduated", "graduated", 100]);
+    assert.ok((await listQ("&status=graduated"))[G8], "in the graduated filter");
+    assert.equal((await listQ("&status=live"))[G8], undefined);
+    assert.ok((await listQ("&tab=dex"))[G8], "on the DEX tab");
+
+    // A later swap ran back inside range A: latched, bonding phase. Not graduated for the platform, live again, progress
+    // from the price; campaigns.graduated_at_chain stays set (the indexer never clears the latch).
+    await db.query(`update public.evm_gen8_pools set last_phase = 'bonding' where pool_id = $1`, [POOL_ID]);
+    const back = await listQ();
+    assert.deepEqual([back[G8].status, back[G8].isDexTrading, back[G8].isActive, back[G8].gen8.phase, back[G8].gen8.latched, back[G8].gen8.postPhase, back[G8].gen8.platformStatus], ["live", false, true, "bonding", true, false, "bonding"]);
+    assert.ok(back[G8].graduatedAtChain, "the latch time is still reported");
+    const { gen8Progress } = await import("../shared/evmGen8.mjs");
+    assert.equal(back[G8].progressPct, gen8Progress({ liqA: LIQ_A, tickStart: TICK_START, tickGrad: TICK_GRAD, sqrtPriceX96: SQRT_NOW }).pct, "progress from the pool price");
+    assert.ok((await listQ("&status=live"))[G8], "in the live filter");
+    assert.equal((await listQ("&status=graduated"))[G8], undefined);
+    assert.equal((await listQ("&status=ended"))[G8], undefined, "never ended");
+    assert.equal((await listQ("&tab=dex"))[G8], undefined, "off the DEX tab");
+
+    // B: a scheduled open from evm_gen8_pools.open_at (unix seconds), trading not open yet.
+    const openAt = Math.floor(Date.now() / 1000) + 7200;
+    await db.query(`update public.campaigns set graduated_at_chain = null, graduated_block = null, is_active = true where chain_id = $1 and campaign_address = $2`, [CHAIN, G8]);
+    await db.query(`update public.evm_gen8_pools set graduated_block = null, last_phase = null, open_at = to_timestamp($2) where pool_id = $1`, [POOL_ID, openAt]);
+    const sched = await listQ();
+    assert.deepEqual([sched[G8].status, sched[G8].gen8.openAt, sched[G8].gen8.tradingOpen, sched[G8].gen8.platformStatus], ["live", openAt, false, "bonding"]);
+
+    // The gen-8 coin-page fallback reads the same row (RPC down).
+    const { readGen8IndexedPool } = await import("./lib/evmGen8CampaignState.js");
+    const idx = await readGen8IndexedPool(db, CHAIN, G8);
+    assert.deepEqual([idx.poolId, idx.openAt, idx.lastPhase, idx.graduatedBlock], [POOL_ID, openAt, null, null]);
+  } finally {
+    await db.query(`update public.campaigns set graduated_at_chain = null, graduated_block = null, is_active = true where chain_id = $1 and campaign_address = $2`, [CHAIN, G8]);
+    await db.query(`update public.evm_gen8_pools set graduated_block = null, last_phase = null, open_at = null where pool_id = $1`, [POOL_ID]);
+    setGen8(false);
+    clearGen8SchemaCache(apiPool);
+  }
+});
+
 test("league pot: gen-8 rows pay 37.5% of the recorded fee; gen-7 rows unchanged", async () => {
   const p = (start, end) => computeTotalLeagueFeeRawInRange(CHAIN, start, end, 200, 75);
   const g7Window = [at(0), at(5)];

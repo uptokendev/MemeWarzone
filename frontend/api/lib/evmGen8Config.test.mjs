@@ -30,14 +30,16 @@ test("migration guard: missing tables, query errors and the cache", async () => 
   let calls = 0;
   const present = { query: async () => { calls += 1; return { rows: [{ pools: true, accruals: true, route_runs: false, side_pools: true }] }; } };
   const t1 = await gen8Tables(present, { now: 1000 });
-  assert.deepEqual({ ...t1 }, { pools: true, accruals: true, routeRuns: false, sidePools: true });
+  assert.deepEqual({ ...t1 }, { pools: true, accruals: true, routeRuns: false, sidePools: true, phase: false });
   await gen8Tables(present, { now: 2000 });
   assert.equal(calls, 1, "cached");
   clearGen8SchemaCache(present);
   await gen8Tables(present, { now: 3000 });
   assert.equal(calls, 2);
   const broken = { query: async () => { throw Object.assign(new Error("down"), { code: "57P01" }); } };
-  assert.deepEqual({ ...(await gen8Tables(broken)) }, { pools: false, accruals: false, routeRuns: false, sidePools: false });
+  assert.deepEqual({ ...(await gen8Tables(broken)) }, { pools: false, accruals: false, routeRuns: false, sidePools: false, phase: false });
+  const withPhase = { query: async () => ({ rows: [{ pools: true, accruals: true, route_runs: true, side_pools: true, phase: true }] }) };
+  assert.equal((await gen8Tables(withPhase)).phase, true, "fix-round columns present");
   assert.equal(isSchemaMissingError({ code: "42P01" }), true);
   assert.equal(isSchemaMissingError({ code: "23505" }), false);
 });
