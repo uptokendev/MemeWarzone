@@ -8,6 +8,7 @@ import { profileFromLink } from "../dbc/dbcFeeSplit.js";
 import type { Gen8Fees } from "./evmGen8Decode.js";
 import type { Gen8Profile, Gen8Slices } from "./evmGen8Fees.js";
 import { GEN8_CAMPAIGN_GENERATION, GEN8_FACTORY_GENERATION } from "./evmGen8Abi.js";
+import { gen8WrappedNative } from "./evmGen8Config.js";
 import { GEN8_TOTAL_SUPPLY, WAD, rawToDecimal } from "./evmGen8Math.js";
 
 export type Queryable = { query(sql: string, params?: unknown[]): Promise<{ rows: any[]; rowCount?: number | null }> };
@@ -224,19 +225,29 @@ export async function insertGen8CurveTrade(db: Queryable, t: Gen8TradeRow): Prom
   return (r.rowCount ?? r.rows.length) > 0;
 }
 
-/** dex_trades row (after the crossing swap, D14). pair_address = the hook (one V4 pool has no pair contract). */
+/**
+ * dex_trades row (after the crossing swap, D14). pair_address = the hook (one V4 pool has no pair contract).
+ * The quote columns are required: set_dex_trade_quote_identity (20260930_000003) raises when pair_address is not a
+ * dex_pools row and quote_token_address was left empty. A gen-8 coin is native-quoted, so the quote is the chain's
+ * wrapped native and the quote amount is the native amount. Without this the first post-graduation swap throws and
+ * the display cursor never moves past it.
+ */
 export async function insertGen8DexTrade(db: Queryable, t: Gen8TradeRow): Promise<boolean> {
+  const quoteToken = gen8WrappedNative(t.chainId);
+  const price = fillPrice(t.curveRaw, t.coinRaw);
   const r = await db.query(
     `insert into public.dex_trades(
        chain_id, campaign_address, token_address, pair_address, tx_hash, log_index, block_number, block_hash, block_time,
        status, side, sender_address, recipient_address, transaction_from, token_amount_raw, native_amount_raw,
-       token_amount, native_amount, price_bnb, execution_source, origin
-     ) values ($1,$2,$2,$3,$4,$5,$6,$7,$8,'confirmed',$9,$10,$11,$11,$12,$13,$14,$15,$16,$17,'unknown')
+       token_amount, native_amount, price_bnb, base_amount_raw, quote_amount_raw, base_amount, quote_amount, price_quote,
+       quote_asset_type, quote_token_address, execution_source, origin
+     ) values ($1,$2,$2,$3,$4,$5,$6,$7,$8,'confirmed',$9,$10,$11,$11,$12,$13,$14,$15,$16,$12,$13,$14,$15,$16,
+              'WRAPPED_NATIVE',$17,$18,'unknown')
      on conflict (chain_id, tx_hash, log_index) do nothing
      returning 1`,
     [
       t.chainId, t.token, t.hook, t.txHash, t.logIndex, t.blockNumber, t.blockHash || "", t.blockTime, t.side, t.swapSender, t.wallet,
-      t.coinRaw.toString(), t.curveRaw.toString(), rawToDecimal(t.coinRaw), rawToDecimal(t.curveRaw), fillPrice(t.curveRaw, t.coinRaw), GEN8_EXECUTION_SOURCE,
+      t.coinRaw.toString(), t.curveRaw.toString(), rawToDecimal(t.coinRaw), rawToDecimal(t.curveRaw), price, quoteToken, GEN8_EXECUTION_SOURCE,
     ],
   );
   return (r.rowCount ?? r.rows.length) > 0;

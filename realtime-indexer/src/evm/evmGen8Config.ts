@@ -37,6 +37,26 @@ export const CANONICAL_V4_POOL_MANAGER: Record<number, string> = {
   4663: "0x8366a39cc670b4001a1121b8f6a443a643e40951",
 };
 
+/**
+ * Wrapped native the rest of the market stack already uses. dex_trades inserts must name this quote:
+ * set_dex_trade_quote_identity rejects a row whose pair is not in dex_pools, and a gen-8 pair is the hook.
+ * WRAPPED_NATIVE_ADDRESS_<id> (or the VITE_ form) overrides. 97 is the public BSC testnet WBNB.
+ */
+export const GEN8_WRAPPED_NATIVE: Record<number, string> = {
+  56: "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c",
+  97: "0xae13d989dac2f0debff460ac112a837c89baa7cd",
+  4663: "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+  46630: "0x52a47a33930b8a90a2000b1ba3cb96e879569670",
+};
+
+export function gen8WrappedNative(chainId: number, env: NodeJS.ProcessEnv = process.env): string {
+  const raw = String(env[`WRAPPED_NATIVE_ADDRESS_${chainId}`] || env[`VITE_WRAPPED_NATIVE_ADDRESS_${chainId}`] || "").trim();
+  if (/^0x[0-9a-fA-F]{40}$/.test(raw)) return raw.toLowerCase();
+  const known = GEN8_WRAPPED_NATIVE[chainId];
+  if (!known) throw new Error(`gen8: no wrapped native for chain ${chainId} (set WRAPPED_NATIVE_ADDRESS_${chainId})`);
+  return known;
+}
+
 export const GEN8_EVM_CHAIN_IDS = [56, 97, 4663, 46630] as const;
 
 function parseEntry(name: string, raw: string | undefined, invalid: string[]): Gen8Entry | null {
