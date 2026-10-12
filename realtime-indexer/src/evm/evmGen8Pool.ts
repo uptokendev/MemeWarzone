@@ -6,11 +6,13 @@
  *      first buy BEFORE Launched, so launches are applied before any trade of the range);
  *   3. PoolManager Swap filtered by our pool ids (topic1 OR-list, chunked);
  *   4. per transaction: Swap joined with its HookFee (evmGen8Decode.joinSwapsWithFees), then everything in log order.
- * A trade goes to curve_trades (+ token_candles bonding, token_stats) while HookFee.graduated is false, i.e. up to and
- * including the crossing swap, and to dex_trades (+ token_candles dex, market_stats) after it. Wallet = tx.from.
- * Hook `Graduated` drives the gen-7 markEvmCampaignGraduated path (campaigns.graduated_*, notification,
- * league feed), then the market state moves to DEX_ACTIVE. Every HookFee and Graduated becomes a D1 accrual row and,
- * in the bonding phase, a reward_events row (source_event HookFee / Graduated).
+ * A trade goes to curve_trades (+ token_candles bonding, token_stats) when HookFee.graduated is false (F1, 2026-10-12:
+ * the swap started inside range A and paid the bonding rate; the crossing swap included) and to dex_trades
+ * (+ token_candles dex, market_stats) when it is true (started at or past the graduation price). Wallet = tx.from.
+ * Hook `Graduated` (the latch) drives the gen-7 markEvmCampaignGraduated path (campaigns.graduated_*, notification,
+ * league feed). The market stage follows the price: DEX_ACTIVE while the latch is set and the last swap was post
+ * phase, BONDING again when a later swap ran back inside A (gen8PlatformStatus). Every HookFee and Graduated becomes a
+ * D1 accrual row whose phase is the swap's flag, never the latch, and, in the bonding phase, a reward_events row.
  *
  * Hybrid ingestion (F10): the display pass (cursor gen8:<hook>) reads up to the display head and can be rolled back
  * on a reorg; the money pass (cursor gen8-money:<hook>) writes accruals, reward_events and route runs only up to the
@@ -24,12 +26,13 @@ export { gen8LeagueExcluded } from "./evmGen8Config.js";
 import { GEN8_TOPICS, gen8PoolId } from "./evmGen8Abi.js";
 import { decodeGen8Log, groupByTx, joinSwapsWithFees, traderNative, type Gen8Event, type JoinedSwap, type LogLike } from "./evmGen8Decode.js";
 import { gen8GraduationSlices, gen8TradeSlices } from "./evmGen8Fees.js";
-import { gen8PoolHoldings, gen8Progress, marketCapWei, nativePerCoin, nativePerCoinWei, rawToDecimal } from "./evmGen8Math.js";
+import { gen8PoolHoldings, gen8Progress, marketCapWei, nativePerCoin, nativePerCoinWei, rawToDecimal, sqrtAtTick } from "./evmGen8Math.js";
 import {
   deleteGen8Candles,
   deleteGen8DisplayRows,
   gen8DisplayRowsAbove,
   gen8DistinctSwapSenders,
+  gen8PlatformStatus,
   insertGen8Accrual,
   insertGen8Swap,
   lastGen8Swap,
@@ -302,6 +305,8 @@ async function applyLaunches(ctx: Ctx, events: Gen8Event[], timeOf: (n: number) 
       continue;
     }
     const at = await timeOf(pool.blockNumber);
+    // B: openAt from PoolLaunched (the launch block time when the request carried 0).
+    const openAt = new Date((pool.openAt || Math.floor(at.getTime() / 1000)) * 1000);
     const creator = launched?.creator || pool.creator;
     const creatorProfile = await resolveGen8Profile(db, creator, at);
     await upsertGen8Pool(db, {
@@ -312,7 +317,7 @@ async function applyLaunches(ctx: Ctx, events: Gen8Event[], timeOf: (n: number) 
       tickStart: pool.tickStart, tickGrad: pool.tickGrad, liqA: pool.liqA, liqB: pool.liqB, fees: pool.fees,
       display: pool.display && pool.display !== ethers.ZeroAddress ? pool.display : null,
       firstBuyIn: launched?.firstBuyIn ?? null, firstBuyOut: launched?.firstBuyOut ?? null,
-      launchTx: pool.txHash, launchBlock: pool.blockNumber, launchTime: at,
+      launchTx: pool.txHash, launchBlock: pool.blockNumber, launchTime: at, openAt,
       metadata: meta ? { name: meta.name, symbol: meta.symbol, logoURI: meta.logoURI, xAccount: meta.xAccount, website: meta.website, extraLink: meta.extraLink, metadataHash: meta.metadataHash } : {},
     });
     const name = meta?.name || "";
@@ -324,6 +329,7 @@ async function applyLaunches(ctx: Ctx, events: Gen8Event[], timeOf: (n: number) 
         poolId, hook: cfg.hook.address, poolManager: cfg.poolManager, display: pool.display, hookCreator: launched?.hookCreator ?? null,
         feeChoice: launched?.feeChoice ?? null, feeCreatorPct: launched?.feeCreatorPct ?? null, targetUsd: launched?.targetUsd?.toString() ?? null,
         tickStart: pool.tickStart, tickGrad: pool.tickGrad, xAccount: meta?.xAccount ?? null, website: meta?.website ?? null, extraLink: meta?.extraLink ?? null,
+        openAt: openAt.toISOString(),
       },
     });
     for (const e of [pool, launched, meta].filter(Boolean) as Gen8Event[]) {
@@ -341,7 +347,7 @@ async function applyLaunches(ctx: Ctx, events: Gen8Event[], timeOf: (n: number) 
       }
       await sinks.insertActivityEvent({
         chainId: cfg.chainId, eventType: "CREATE_CAMPAIGN", txHash: pool.txHash, logIndex: pool.logIndex, blockNumber: pool.blockNumber, blockTime: at,
-        actor: creator, campaign: pool.token, token: pool.token, meta: { name, symbol, factory: cfg.launcher.address, generation: 8, poolId },
+        actor: creator, campaign: pool.token, token: pool.token, meta: { name, symbol, factory: cfg.launcher.address, generation: 8, poolId, openAt: openAt.toISOString() },
       });
     }
   }
@@ -428,8 +434,15 @@ async function applyTrade(ctx: Ctx, pool: Gen8PoolRow, j: JoinedSwap, tx: TxInfo
     chainId: cfg.chainId, hook: cfg.hook.address, poolId: pool.poolId, token: pool.token, txHash: j.swap.txHash, logIndex: j.swap.logIndex, blockNumber: j.swap.blockNumber, blockTime,
     phase, side: j.side, sqrtPriceX96: j.swap.sqrtPriceX96, price: state.price, mcap: state.mcap, volume: curveDec, soldRaw: phase === "bonding" ? state.progress.soldRaw : null,
   });
-  await updateGen8PoolPrice(db, { chainId: cfg.chainId, poolId: pool.poolId, sqrtPriceX96: j.swap.sqrtPriceX96, tick: j.swap.tick, liquidity: j.swap.liquidity, blockNumber: j.swap.blockNumber, logIndex: j.swap.logIndex });
+  // The pool's CURRENT phase after this swap, from its resulting price (the lens's postPhase rule: post when the price
+  // is at or past the graduation price). HookFee.graduated is the phase the swap STARTED in and decides its row and
+  // its accrual; the current phase decides the platform status (gen8PlatformStatus) and what the next swap will pay.
+  const pricePhase = gen8PricePhase(pool, j.swap.sqrtPriceX96);
+  await updateGen8PoolPrice(db, { chainId: cfg.chainId, poolId: pool.poolId, sqrtPriceX96: j.swap.sqrtPriceX96, tick: j.swap.tick, liquidity: j.swap.liquidity, blockNumber: j.swap.blockNumber, logIndex: j.swap.logIndex, phase: pricePhase });
   pool.lastSqrtPriceX96 = j.swap.sqrtPriceX96;
+  pool.lastPhase = pricePhase;
+  // F1: once latched, the market stage follows the current phase (post: DEX_ACTIVE; back inside A: BONDING).
+  if (pool.graduatedBlock !== null) await syncGen8MarketStage(ctx, pool, j.swap.blockNumber, j.swap.txHash);
 
   if (!inserted) return null;
   const coinDec = rawToDecimal(j.coinRaw);
@@ -486,6 +499,29 @@ async function applyTrade(ctx: Ctx, pool: Gen8PoolRow, j: JoinedSwap, tx: TxInfo
     }).catch(() => undefined);
   }
   return "dex_trades";
+}
+
+/** The pool's phase at a price: post when the price is at or past the graduation price (MwzLaunchLens.progress.postPhase). */
+export function gen8PricePhase(pool: Pick<Gen8PoolRow, "tickGrad">, sqrtPriceX96: bigint): "bonding" | "post" {
+  return sqrtPriceX96 <= sqrtAtTick(pool.tickGrad) ? "post" : "bonding";
+}
+
+/**
+ * The platform status after a swap of a latched coin (gen8PlatformStatus): campaigns.market_stage and
+ * campaign_market_state.market_stage move between DEX_ACTIVE and BONDING with the price, with a market_stage_changed
+ * event for the UI. campaigns.graduated_* (set at the Graduated event) stay as they are.
+ */
+async function syncGen8MarketStage(ctx: Ctx, pool: Gen8PoolRow, blockNumber: number, txHash: string) {
+  const { cfg, db, sinks } = ctx;
+  const to = gen8PlatformStatus(pool) === "graduated" ? "DEX_ACTIVE" : "BONDING";
+  const prev = await db.query(`select market_stage from public.campaign_market_state where chain_id = $1 and campaign_address = $2`, [cfg.chainId, pool.token]);
+  const from = prev.rows[0]?.market_stage ? String(prev.rows[0].market_stage) : null;
+  if (from === to) return;
+  await db.query(`update public.campaign_market_state set market_stage = $3, updated_at = now() where chain_id = $1 and campaign_address = $2`, [cfg.chainId, pool.token, to]);
+  await db.query(`update public.campaigns set market_stage = $3, updated_at = now() where chain_id = $1 and campaign_address = $2`, [cfg.chainId, pool.token, to]).catch(() => undefined);
+  await sinks.publishTokenEvent(cfg.chainId, pool.token, "market_stage_changed", {
+    eventId: `${cfg.chainId}:${pool.token}:${blockNumber}:${to}`, from: from ?? "BONDING", to, marketStage: to, blockNumber, txHash, reason: to === "DEX_ACTIVE" ? "gen8_post_phase" : "gen8_back_in_range_a",
+  }).catch(() => undefined);
 }
 
 /** token_stats + the stats_patch publish after a bonding swap (also used to restate a coin after a rollback). */
@@ -609,9 +645,25 @@ async function applyEvent(ctx: Ctx, e: Gen8Event, pools: Map<string, Gen8PoolRow
         });
       }
       return false;
-    case "RouterFlushFailed":
-      if (fresh) await sinks.raiseAlert({ severity: "critical", kind: "gen8_router_flush_failed", chainId: cfg.chainId, subject: e.txHash, title: `Gen-8 hook: router flush failed on chain ${cfg.chainId}`, message: `RouterFlushFailed(${e.router}, ${e.amount}) in ${e.txHash}.` });
+    case "RouterParked":
+      // F3: a router change parks the old router's bucket; the routing worker pays it to the splitter with
+      // payParkedRouter (a RouterClaimed follows) and routes it as a normal run.
+      if (fresh) await sinks.raiseAlert({ severity: cfg.splitter && e.router === cfg.splitter.address ? "warning" : "critical", kind: "gen8_router_parked", chainId: cfg.chainId, subject: e.txHash, title: `Gen-8 hook: router bucket parked on chain ${cfg.chainId}`, message: `RouterParked(${e.router}, ${e.amount}; bonding ${e.bondingFees}, graduation ${e.gradFees}) in ${e.txHash}.${cfg.splitter && e.router === cfg.splitter.address ? " The routing worker pays it to the splitter (payParkedRouter) and routes it." : " Not our splitter: pay it with payParkedRouter(router) when that router is ready."}` });
       return false;
+    case "HolderBatchProposed":
+    case "HolderBatchApproved":
+    case "HolderBatchVetoed":
+    case "HolderBatchExecuted": {
+      // F5: the claim deadline is part of the proposal and the Safe's approval (approveHolderBatch with claimDeadline).
+      if (!fresh) return false;
+      const detail = e.kind === "HolderBatchProposed" ? `total ${e.total}, executable at ${new Date(e.executableAt * 1000).toISOString()}, claim deadline ${new Date(e.claimDeadline * 1000).toISOString()}`
+        : e.kind === "HolderBatchApproved" ? `total ${e.total}, claim deadline ${new Date(e.claimDeadline * 1000).toISOString()}` : `total ${e.total}`;
+      await sinks.raiseAlert({
+        severity: e.kind === "HolderBatchVetoed" ? "warning" : "info", kind: `gen8_holder_batch_${e.kind.replace("HolderBatch", "").toLowerCase()}`, chainId: cfg.chainId, subject: e.batchId,
+        title: `Gen-8 choice vault: holder batch ${e.kind.replace("HolderBatch", "").toLowerCase()} on chain ${cfg.chainId}`, message: `${e.kind}(${e.batchId}): ${detail}. Tx ${e.txHash}.`,
+      });
+      return false;
+    }
     case "CreatePauseUpdated":
       if (fresh) await sinks.raiseAlert({ severity: "warning", kind: "gen8_create_pause", chainId: cfg.chainId, subject: e.txHash, title: `Gen-8 launcher ${e.paused ? "paused" : "opened"} on chain ${cfg.chainId}`, message: `CreatePauseUpdated(${e.paused}) in ${e.txHash}.` });
       return false;
@@ -749,6 +801,9 @@ export async function rollbackGen8Display(ctx: Ctx, reorg: Gen8Reorg): Promise<G
     if (scope.firstTime) await rebuildGen8Candles(ctx, pool, scope.firstTime);
     const last = await lastGen8Swap(db, cfg.chainId, token);
     if (!last) continue;
+    pool.lastPhase = gen8PricePhase(pool, last.sqrtPriceX96);
+    await db.query(`update public.evm_gen8_pools set last_phase = $3, updated_at = now() where chain_id = $1 and pool_id = $2`, [cfg.chainId, pool.poolId, pool.lastPhase]);
+    if (pool.graduatedBlock !== null) await syncGen8MarketStage(ctx, pool, last.blockNumber, last.txHash);
     if (last.phase === "bonding") await restateGen8BondingStats(ctx, pool, { price: last.price, soldRaw: last.soldRaw ?? 0n, mcap: last.mcap, raisedDelta: null });
     else await restateGen8MarketStats(ctx, pool, { sqrtPriceX96: last.sqrtPriceX96, price: last.price, mcap: last.mcap, lastTradeBlock: last.blockNumber, lastTradeAt: last.blockTime });
   }

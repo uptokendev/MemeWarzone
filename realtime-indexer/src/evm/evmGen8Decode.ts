@@ -28,18 +28,18 @@ export type Pos = { address: string; blockNumber: number; txHash: string; logInd
 export type Gen8Fees = { bondingBps: number; postBps: number; creatorPostBps: number; sniperStartBps: number; creatorBondingBps: number };
 
 export type Gen8Event =
-  | (Pos & { kind: "Launched"; token: string; poolId: string; creator: string; hookCreator: string; targetUsd: bigint; marketCapNative: bigint; virtualNative: bigint; virtualToken: bigint; tickStart: number; tickGrad: number; feeChoice: number; feeCreatorPct: number; firstBuyIn: bigint; firstBuyOut: bigint })
+  | (Pos & { kind: "Launched"; token: string; poolId: string; creator: string; hookCreator: string; targetUsd: bigint; marketCapNative: bigint; virtualNative: bigint; virtualToken: bigint; tickStart: number; tickGrad: number; feeChoice: number; feeCreatorPct: number; firstBuyIn: bigint; firstBuyOut: bigint; openAt: number })
   | (Pos & { kind: "LaunchMetadata"; token: string; poolId: string; name: string; symbol: string; logoURI: string; xAccount: string; website: string; extraLink: string; metadataHash: string })
   | (Pos & { kind: "CreatePauseUpdated"; paused: boolean })
   | (Pos & { kind: "CreateSignerUpdated"; previous: string; next: string })
-  | (Pos & { kind: "PoolLaunched"; poolId: string; token: string; creator: string; tickStart: number; tickGrad: number; liqA: bigint; liqB: bigint; fees: Gen8Fees; display: string })
+  | (Pos & { kind: "PoolLaunched"; poolId: string; token: string; creator: string; tickStart: number; tickGrad: number; liqA: bigint; liqB: bigint; fees: Gen8Fees; display: string; openAt: number })
   | (Pos & { kind: "HookFee"; poolId: string; swapSender: string; referrer: string; buy: boolean; graduated: boolean; curveAmount: bigint; fee: bigint; feeBps: number; creatorShare: bigint })
   | (Pos & { kind: "Graduated"; poolId: string; gradFeeNative: bigint; nativeInA: bigint; liquidityRemoved: bigint })
   | (Pos & { kind: "CreatorClaimed"; poolId: string; to: string; amount: bigint })
   | (Pos & { kind: "CreatorProposed"; poolId: string; current: string; proposed: string })
   | (Pos & { kind: "CreatorTransferred"; poolId: string; previous: string; next: string; source: "hook" | "choice_vault" })
   | (Pos & { kind: "RouterClaimed"; router: string; amount: bigint; bondingFees: bigint; gradFees: bigint })
-  | (Pos & { kind: "RouterFlushFailed"; router: string; amount: bigint })
+  | (Pos & { kind: "RouterParked"; router: string; amount: bigint; bondingFees: bigint; gradFees: bigint })
   | (Pos & { kind: "RouterProposed"; router: string; eta: bigint })
   | (Pos & { kind: "RouterChanged"; previous: string; next: string })
   | (Pos & { kind: "RouterProposalCancelled"; router: string })
@@ -49,6 +49,10 @@ export type Gen8Event =
   | (Pos & { kind: "OwnershipTransferred"; previous: string; next: string; source: "hook" | "launcher" })
   | (Pos & { kind: "OperatorUpdated"; previous: string; next: string; paused: boolean | null; source: "splitter" | "choice_vault" })
   | (Pos & { kind: "CoinRegistered"; poolId: string; token: string; creator: string; choice: number; creatorPct: number })
+  | (Pos & { kind: "HolderBatchProposed"; batchId: string; root: string; total: bigint; executableAt: number; claimDeadline: number })
+  | (Pos & { kind: "HolderBatchApproved"; batchId: string; root: string; total: bigint; claimDeadline: number })
+  | (Pos & { kind: "HolderBatchVetoed"; batchId: string; total: bigint })
+  | (Pos & { kind: "HolderBatchExecuted"; batchId: string; total: bigint })
   | (Pos & { kind: "Swap"; poolId: string; sender: string; amount0: bigint; amount1: bigint; sqrtPriceX96: bigint; liquidity: bigint; tick: number; fee: number });
 
 export type Gen8Addresses = { launcher: string; hook: string; poolManager: string; splitter?: string | null; choiceVault?: string | null };
@@ -76,7 +80,7 @@ export function decodeGen8Log(log: LogLike, addrs: Gen8Addresses): Gen8Event | n
           ...pos, kind: "Launched", token: lc(a.token), poolId: lc(a.id), creator: lc(a.creator), hookCreator: lc(a.hookCreator),
           targetUsd: big(a.targetUsd), marketCapNative: big(a.marketCapNative), virtualNative: big(a.virtualNative), virtualToken: big(a.virtualToken),
           tickStart: Number(a.tickStart), tickGrad: Number(a.tickGrad), feeChoice: Number(a.feeChoice), feeCreatorPct: Number(a.feeCreatorPct),
-          firstBuyIn: big(a.firstBuyIn), firstBuyOut: big(a.firstBuyOut),
+          firstBuyIn: big(a.firstBuyIn), firstBuyOut: big(a.firstBuyOut), openAt: Number(a.openAt),
         };
       case "LaunchMetadata":
         return { ...pos, kind: "LaunchMetadata", token: lc(a.token), poolId: lc(a.id), name: String(a.name), symbol: String(a.symbol), logoURI: String(a.logoURI), xAccount: String(a.xAccount), website: String(a.website), extraLink: String(a.extraLink), metadataHash: lc(a.metadataHash) };
@@ -102,7 +106,7 @@ export function decodeGen8Log(log: LogLike, addrs: Gen8Addresses): Gen8Event | n
           ...pos, kind: "PoolLaunched", poolId: lc(a.id), token: lc(a.token), creator: lc(a.creator), tickStart: Number(a.tickStart), tickGrad: Number(a.tickGrad),
           liqA: big(a.liqA), liqB: big(a.liqB),
           fees: { bondingBps: Number(a.fees.bondingBps), postBps: Number(a.fees.postBps), creatorPostBps: Number(a.fees.creatorPostBps), sniperStartBps: Number(a.fees.sniperStartBps), creatorBondingBps: Number(a.fees.creatorBondingBps) },
-          display: lc(a.display),
+          display: lc(a.display), openAt: Number(a.openAt),
         };
       case "HookFee":
         return { ...pos, kind: "HookFee", poolId: lc(a.id), swapSender: lc(a.swapSender), referrer: lc(a.referrer), buy: Boolean(a.buy), graduated: Boolean(a.graduated), curveAmount: big(a.curveAmount), fee: big(a.fee), feeBps: Number(a.feeBps), creatorShare: big(a.creatorShare) };
@@ -116,8 +120,8 @@ export function decodeGen8Log(log: LogLike, addrs: Gen8Addresses): Gen8Event | n
         return { ...pos, kind: "CreatorTransferred", poolId: lc(a.id), previous: lc(a.previous), next: lc(a.next), source: "hook" };
       case "RouterClaimed":
         return { ...pos, kind: "RouterClaimed", router: lc(a.router), amount: big(a.amount), bondingFees: big(a.bondingFees), gradFees: big(a.gradFees) };
-      case "RouterFlushFailed":
-        return { ...pos, kind: "RouterFlushFailed", router: lc(a.router), amount: big(a.amount) };
+      case "RouterParked":
+        return { ...pos, kind: "RouterParked", router: lc(a.router), amount: big(a.amount), bondingFees: big(a.bondingFees), gradFees: big(a.gradFees) };
       case "RouterProposed":
         return { ...pos, kind: "RouterProposed", router: lc(a.router), eta: big(a.eta) };
       case "RouterChanged":
@@ -154,6 +158,10 @@ export function decodeGen8Log(log: LogLike, addrs: Gen8Addresses): Gen8Event | n
     if (parsed.name === "CoinRegistered") return { ...pos, kind: "CoinRegistered", poolId: lc(a.id), token: lc(a.token), creator: lc(a.creator), choice: Number(a.choice), creatorPct: Number(a.creatorPct) };
     if (parsed.name === "CreatorTransferred") return { ...pos, kind: "CreatorTransferred", poolId: lc(a.id), previous: lc(a.previous), next: lc(a.next), source: "choice_vault" };
     if (parsed.name === "OperatorUpdated") return { ...pos, kind: "OperatorUpdated", previous: "", next: lc(a.operator), paused: Boolean(a.paused), source: "choice_vault" };
+    if (parsed.name === "HolderBatchProposed") return { ...pos, kind: "HolderBatchProposed", batchId: lc(a.batchId), root: lc(a.root), total: big(a.total), executableAt: Number(a.executableAt), claimDeadline: Number(a.claimDeadline) };
+    if (parsed.name === "HolderBatchApproved") return { ...pos, kind: "HolderBatchApproved", batchId: lc(a.batchId), root: lc(a.root), total: big(a.total), claimDeadline: Number(a.claimDeadline) };
+    if (parsed.name === "HolderBatchVetoed") return { ...pos, kind: "HolderBatchVetoed", batchId: lc(a.batchId), total: big(a.total) };
+    if (parsed.name === "HolderBatchExecuted") return { ...pos, kind: "HolderBatchExecuted", batchId: lc(a.batchId), total: big(a.total) };
   }
   return null;
 }

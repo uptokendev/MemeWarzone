@@ -9,7 +9,8 @@ export const GEN8_FACTORY_GENERATION = 8;
 export const GEN8_CAMPAIGN_GENERATION = 8;
 
 export const GEN8_LAUNCHER_EVENTS = [
-  "event Launched(address indexed token, bytes32 indexed id, address indexed creator, address hookCreator, uint256 targetUsd, uint256 marketCapNative, uint256 virtualNative, uint256 virtualToken, int24 tickStart, int24 tickGrad, uint8 feeChoice, uint8 feeCreatorPct, uint256 firstBuyIn, uint256 firstBuyOut)",
+  // B (2026-10-12): openAt, the scheduled trading open (0 in the request = the launch block time).
+  "event Launched(address indexed token, bytes32 indexed id, address indexed creator, address hookCreator, uint256 targetUsd, uint256 marketCapNative, uint256 virtualNative, uint256 virtualToken, int24 tickStart, int24 tickGrad, uint8 feeChoice, uint8 feeCreatorPct, uint256 firstBuyIn, uint256 firstBuyOut, uint40 openAt)",
   "event LaunchMetadata(address indexed token, bytes32 indexed id, string name, string symbol, string logoURI, string xAccount, string website, string extraLink, bytes32 metadataHash)",
   "event CreatePauseUpdated(bool paused)",
   "event CreateSignerUpdated(address indexed previous, address indexed next)",
@@ -19,14 +20,17 @@ export const GEN8_LAUNCHER_EVENTS = [
 ] as const;
 
 export const GEN8_HOOK_EVENTS = [
-  "event PoolLaunched(bytes32 indexed id, address indexed token, address indexed creator, int24 tickStart, int24 tickGrad, uint128 liqA, uint128 liqB, (uint16 bondingBps, uint16 postBps, uint16 creatorPostBps, uint16 sniperStartBps, uint16 creatorBondingBps) fees, address display)",
+  "event PoolLaunched(bytes32 indexed id, address indexed token, address indexed creator, int24 tickStart, int24 tickGrad, uint128 liqA, uint128 liqB, (uint16 bondingBps, uint16 postBps, uint16 creatorPostBps, uint16 sniperStartBps, uint16 creatorBondingBps) fees, address display, uint40 openAt)",
+  // F1 (2026-10-12): `graduated` is the swap's PHASE (it started at or past the graduation price: post rate, post split),
+  // not the latch. The latch is the Graduated event; a swap back inside A after it is `graduated = false` again.
   "event HookFee(bytes32 indexed id, address indexed swapSender, address indexed referrer, bool buy, bool graduated, uint256 curveAmount, uint256 fee, uint256 feeBps, uint256 creatorShare)",
   "event Graduated(bytes32 indexed id, uint256 gradFeeNative, uint256 nativeInA, uint128 liquidityRemoved)",
   "event CreatorClaimed(bytes32 indexed id, address indexed to, uint256 amount)",
   "event CreatorProposed(bytes32 indexed id, address indexed current, address indexed proposed)",
   "event CreatorTransferred(bytes32 indexed id, address indexed previous, address indexed next)",
   "event RouterClaimed(address indexed router, uint256 amount, uint256 bondingFees, uint256 gradFees)",
-  "event RouterFlushFailed(address indexed router, uint256 amount)",
+  // F3 (2026-10-12): a router change parks the old router's bucket; payParkedRouter(r) pays it (RouterClaimed) later.
+  "event RouterParked(address indexed router, uint256 amount, uint256 bondingFees, uint256 gradFees)",
   "event RouterProposed(address indexed router, uint256 eta)",
   "event RouterChanged(address indexed previous, address indexed next)",
   "event RouterProposalCancelled(address indexed router)",
@@ -40,12 +44,20 @@ export const GEN8_SPLITTER_EVENTS = [
   "event Routed(uint256 indexed runId, bytes32 indexed accrualRoot, address indexed caller, (uint256 total, uint256 bondingFees, uint256 gradFees, uint256 weeklyLeague, uint256 monthlyLeague, uint256 recruiter, uint256 squad, uint256 airdrop, uint256 protocol) run)",
 ] as const;
 
-/** Choice vault: the creator hand-over (owner of a choice coin) and its operator key (alert only). */
+/** Choice vault: the creator hand-over (owner of a choice coin), its operator key and the holder batches (alerts). */
 export const GEN8_CHOICE_VAULT_EVENTS = [
   "event CoinRegistered(bytes32 indexed id, address indexed token, address indexed creator, uint8 choice, uint8 creatorPct)",
   "event CreatorTransferred(bytes32 indexed id, address indexed previous, address indexed next)",
   "event OperatorUpdated(address indexed operator, bool paused)",
+  // F5 (2026-10-12): the claim deadline is part of the proposal and the Safe's approval.
+  "event HolderBatchProposed(bytes32 indexed batchId, bytes32 root, uint256 total, uint64 executableAt, uint64 claimDeadline)",
+  "event HolderBatchApproved(bytes32 indexed batchId, bytes32 root, uint256 total, uint64 claimDeadline)",
+  "event HolderBatchVetoed(bytes32 indexed batchId, uint256 total)",
+  "event HolderBatchExecuted(bytes32 indexed batchId, uint256 total)",
 ] as const;
+
+/** approveHolderBatch(bytes32,bytes32,uint256,uint64): the Safe Roles policy must allow this selector for gen-8 vaults. */
+export const GEN8_APPROVE_HOLDER_BATCH_SELECTOR = "0xc62732bb";
 
 export const V4_POOL_MANAGER_EVENTS = [
   "event Swap(bytes32 indexed id, address indexed sender, int128 amount0, int128 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick, uint24 fee)",
@@ -53,8 +65,12 @@ export const V4_POOL_MANAGER_EVENTS = [
 ] as const;
 
 export const GEN8_HOOK_VIEWS = [
-  "function pools(bytes32) view returns (address creator, uint40 launchTime, bool graduated, int24 tickGrad, int24 tickStart, uint128 liqA, uint128 liqB, uint160 sqrtGrad, (uint16 bondingBps, uint16 postBps, uint16 creatorPostBps, uint16 sniperStartBps, uint16 creatorBondingBps) fees)",
+  "function pools(bytes32) view returns (address creator, uint40 openAt, bool graduated, int24 tickGrad, int24 tickStart, uint128 liqA, uint128 liqB, uint160 sqrtGrad, (uint16 bondingBps, uint16 postBps, uint16 creatorPostBps, uint16 sniperStartBps, uint16 creatorBondingBps) fees)",
   "function routerOwed() view returns (uint128)",
+  "function parkedOwed() view returns (uint256)",
+  "function routerParked(address) view returns (uint256 amount, uint256 bondingFees, uint256 gradFees)",
+  "function payParkedRouter(address r) returns (uint256 amount)",
+  "function MAX_OPEN_DELAY() view returns (uint256)",
   "function pendingBondingFees() view returns (uint128)",
   "function pendingGradFees() view returns (uint256)",
   "function routerPaid(address) view returns (uint256 amount, uint256 bondingFees, uint256 gradFees)",
@@ -98,7 +114,7 @@ export const GEN8_TOPICS = {
   CreatorProposed: topic(GEN8_HOOK_IFACE, "CreatorProposed"),
   CreatorTransferred: topic(GEN8_HOOK_IFACE, "CreatorTransferred"),
   RouterClaimed: topic(GEN8_HOOK_IFACE, "RouterClaimed"),
-  RouterFlushFailed: topic(GEN8_HOOK_IFACE, "RouterFlushFailed"),
+  RouterParked: topic(GEN8_HOOK_IFACE, "RouterParked"),
   RouterProposed: topic(GEN8_HOOK_IFACE, "RouterProposed"),
   RouterChanged: topic(GEN8_HOOK_IFACE, "RouterChanged"),
   RouterProposalCancelled: topic(GEN8_HOOK_IFACE, "RouterProposalCancelled"),
@@ -109,6 +125,10 @@ export const GEN8_TOPICS = {
   OwnershipTransferStarted: topic(GEN8_HOOK_IFACE, "OwnershipTransferStarted"),
   OwnershipTransferred: topic(GEN8_HOOK_IFACE, "OwnershipTransferred"),
   CoinRegistered: topic(GEN8_CHOICE_VAULT_IFACE, "CoinRegistered"),
+  HolderBatchProposed: topic(GEN8_CHOICE_VAULT_IFACE, "HolderBatchProposed"),
+  HolderBatchApproved: topic(GEN8_CHOICE_VAULT_IFACE, "HolderBatchApproved"),
+  HolderBatchVetoed: topic(GEN8_CHOICE_VAULT_IFACE, "HolderBatchVetoed"),
+  HolderBatchExecuted: topic(GEN8_CHOICE_VAULT_IFACE, "HolderBatchExecuted"),
   Swap: topic(V4_POOL_MANAGER_IFACE, "Swap"),
   Initialize: topic(V4_POOL_MANAGER_IFACE, "Initialize"),
 } as const;
@@ -122,7 +142,7 @@ export const GEN8_HOOK_TOPICS = [
   GEN8_TOPICS.CreatorProposed,
   GEN8_TOPICS.CreatorTransferred,
   GEN8_TOPICS.RouterClaimed,
-  GEN8_TOPICS.RouterFlushFailed,
+  GEN8_TOPICS.RouterParked,
   GEN8_TOPICS.RouterProposed,
   GEN8_TOPICS.RouterChanged,
   GEN8_TOPICS.RouterProposalCancelled,

@@ -19,17 +19,22 @@ const POOL = fx.poolId;
 const step = (label: string) => fx.steps.find((s) => s.label === label)!;
 const decodeStep = (label: string) => step(label).logs.map((l) => decodeGen8Log(l as any, A)).filter((e): e is Gen8Event => e !== null);
 
-test("topic0 of every event equals GEN8_INTERNAL_AUDIT.md 10.1", () => {
-  assert.equal(GEN8_TOPICS.Launched, "0x088cfcd47a3402b49e48e3f02ab27f94e17c8faf2fd7174441c6a1b2f22e8202");
+test("topic0 of every event equals GEN8_INTERNAL_AUDIT.md 10.1 (Launched / PoolLaunched / RouterParked: fix round 15, build/evm-gen8 1fd147cb)", () => {
+  assert.equal(GEN8_TOPICS.Launched, "0x31a17dc08a6e6d68b3756995fcffd6409e467aecf1e327d19f4a6d5d2493abad");
   assert.equal(GEN8_TOPICS.LaunchMetadata, "0xb1da1fbea51ed6d80051f5210a2219d6337b68bf121164963927cd17d0a248a4");
-  assert.equal(GEN8_TOPICS.PoolLaunched, "0x882a00429193dca8fdb004116ad7dab1dccf4e77ab2999afc6e0909732bd7f01");
+  assert.equal(GEN8_TOPICS.PoolLaunched, "0xdd7c18f0da19abbb07777bcf2ee68f0abe4c034ef678a7a2c11c32cdd02d0b08");
   assert.equal(GEN8_TOPICS.HookFee, "0xb77d9c06aa8d782c4be19bbd7a54af4d03bb0eaf618c887f8d1eb5f7b0213ad2");
   assert.equal(GEN8_TOPICS.Graduated, "0x9408aa53590d2acf7d72e624d65745b71ea5a308a6cc5f2c7cbee7163b3dc332");
   assert.equal(GEN8_TOPICS.CreatorClaimed, "0xc1d27057937a5216efd7c1ee2b680a2a34893e3f35e3a33f70c4bf0935312664");
   assert.equal(GEN8_TOPICS.CreatorProposed, "0x1cf5caa2b6a5e78ae6ef887c184ec7769be961dc26752723f916f81b41c60b0a");
   assert.equal(GEN8_TOPICS.CreatorTransferred, "0x144ce8a4ec60039eca39fc887805725944bd0789eadedc386cdaf0cc731e48c2");
   assert.equal(GEN8_TOPICS.RouterClaimed, "0x2a665e6945441ed891d04bf4224d831464c1973f64bc3826a762686cc02bb1d2");
-  assert.equal(GEN8_TOPICS.RouterFlushFailed, "0xab328c600f1136ae1f2cc5a41598d1474d4dd6ca3f64b5e2df7a1a215856f8ed");
+  assert.equal(GEN8_TOPICS.RouterParked, "0x506167ba2006e49cff0621af84213321ef12c7bcbd489bbb9072a59247567d66");
+  assert.equal(GEN8_TOPICS.HolderBatchProposed, "0x15e8e9826b05bf9de214f9773d349d7305b3b6011be17bef969d3c54cf9fba94");
+  assert.equal(GEN8_TOPICS.HolderBatchApproved, "0x22070f74010d6fdb033b5195480fe86205d63d57f90005cca85ea9967cf8b9c1");
+  assert.equal(GEN8_TOPICS.HolderBatchVetoed, "0x0fbe0a6b616951c272445bb10561e3052badcdb5829ca5ac22d2f834e1b394e3");
+  assert.equal(GEN8_TOPICS.HolderBatchExecuted, "0x7d3fdedaf15a1bb7a1de4152a969a36563efacec29b0fd0d56ff9799bec3662f");
+  assert.ok(!("RouterFlushFailed" in GEN8_TOPICS), "F3 removed RouterFlushFailed");
   assert.equal(GEN8_TOPICS.RouterProposed, "0xef16fd666847c0c0678edfd1d0ffd1bfa37b9d6be4af7ce29e8b0e01dcb94d59");
   assert.equal(GEN8_TOPICS.RouterChanged, "0xc736654a613824c69968e0ec25ac1a428ccd49e15c28e97b5dfd2c6059757e2a");
   assert.equal(GEN8_TOPICS.RouterProposalCancelled, "0x2da9e1f0074f0b00eb9265a391bbfbe3620e2dd942a4c34944ab3c8c0d18f4f4");

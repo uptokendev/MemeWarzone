@@ -210,7 +210,9 @@ test("gen-8 indexer end to end on a local chain", { skip: runnable ? false : "ge
       ...routeChain,
       sendRoute: async (a: any) => {
         await swap(env, coin, env.og, { buy: true, exactIn: true, amount: WAD / 800n });
-        await (await (env.hook.connect(env.other) as any).claimRouter()).wait(); // permissionless third-party claim
+        // F4: claimRouter is restricted to the router, its operator or the hook owner; a stranger's claim reverts.
+        await assert.rejects((env.hook.connect(env.other) as any).claimRouter(), /NotRouterCaller|0x544df468|revert/, "a third party cannot claim");
+        await (await (env.hook.connect(env.safe) as any).claimRouter()).wait(); // the owner (Safe) claims: a claim our worker did not plan
         return routeChain.sendRoute(a);
       },
     };
@@ -251,11 +253,19 @@ test("gen-8 indexer end to end on a local chain", { skip: runnable ? false : "ge
     await routeUntilSent();
     assert.equal((await db.query(`select status from public.evm_gen8_route_runs where run_id = 3`)).rows[0].status, "confirmed");
 
-    // ---- A4 flush: a router change pays the bucket to the splitter (RouterClaimed) and that run still routes
+    // ---- F3 parked router: a router change parks the splitter's bucket (RouterParked); the worker pays it
+    //      (payParkedRouter -> RouterClaimed) and routes it as a normal run
     await swap(env, coin2, env.buyer, { buy: true, exactIn: true, amount: WAD / 650n });
     await (await (env.hook.connect(env.safe) as any).proposeTreasuryRouter(await env.protocol.getAddress())).wait();
     await provider.send("evm_increaseTime", [48 * 3600 + 10]);
     await (await (env.hook.connect(env.safe) as any).executeTreasuryRouter()).wait();
+    await catchUp();
+    assert.ok(BigInt((await (env.hook as any).routerParked(A.splitter))[0]) > 0n, "the bucket is parked for the splitter");
+    const parkedDry = await runGen8RoutePass({ db, cfg, chain: routeChain, send: false, minWei: 0n });
+    assert.equal((parkedDry as any).reason, "dry-run-would-pay-parked", JSON.stringify(parkedDry));
+    const parkedRun = await runGen8RoutePass(send);
+    assert.equal(parkedRun.status, "paid-parked", JSON.stringify(parkedRun));
+    assert.equal(BigInt((await (env.hook as any).routerParked(A.splitter))[0]), 0n, "paid");
     await catchUp();
     const flushRun = await runGen8RoutePass(send);
     assert.equal(flushRun.status, "sent", JSON.stringify(flushRun));
@@ -268,8 +278,9 @@ test("gen-8 indexer end to end on a local chain", { skip: runnable ? false : "ge
     // F11: the control events and the third party's claimRouter() in run 2 are alerted; our own claims and the A4 flush are not.
     const kinds = async () => (await db.query(`select metadata->>'kind' as kind from public.reward_alerts`)).rows.map((r) => r.kind);
     const k1 = await kinds();
-    assert.equal(k1.filter((k) => k === "gen8_foreign_router_claim").length, 1, `one foreign claim (run 2): ${k1.join(",")}`);
+    assert.equal(k1.filter((k) => k === "gen8_foreign_router_claim").length, 1, `one claim not sent by the operator (the Safe's, run 2): ${k1.join(",")}`);
     assert.ok(k1.includes("gen8_router_proposed") && k1.includes("gen8_router_changed"), "RouterProposed and RouterChanged alerted");
+    assert.ok(k1.includes("gen8_router_parked"), "RouterParked alerted");
     await (await (env.splitter.connect(env.safe) as any).setOperator(env.operator.address)).wait();
     await (await (env.hook.connect(env.safe) as any).transferOwnership(env.other.address)).wait();
     await catchUp();
@@ -285,6 +296,78 @@ test("gen-8 indexer end to end on a local chain", { skip: runnable ? false : "ge
     assert.equal(otherRouterRow.swap_sender, (await trader2.getAddress()).toLowerCase());
     assert.equal(otherRouterRow.profile, "standard_unlinked", "not an allowed router: unlinked");
     assert.ok(otherRouterRow.recruiter === "0" && BigInt(otherRouterRow.airdrop) > 0n);
+
+    // ---- B scheduled open: a coin launched with openAt in the future refuses every swap before it (the creator's
+    //      first buy inside launch() excepted); the 60 s launch fee decay runs from openAt
+    const nowTs = Number((await provider.getBlock("latest"))!.timestamp);
+    // The router change above moved the chain 48 h; the mock oracle feed must be fresh again for a launch.
+    await (await (env.feed.connect(env.deployer) as any).set(600n * 10n ** 8n, nowTs)).wait();
+    const openAt = BigInt(nowTs + 600);
+    const coin3 = await launchCoin(env, env.creator, { firstBuyValue: WAD / 2000n, name: "Scheduled", symbol: "SCHD", openAt });
+    await catchUp();
+    const pool3 = (await db.query(`select open_at, launch_time from public.evm_gen8_pools where chain_id = 97 and pool_id = $1`, [coin3.id])).rows[0];
+    assert.equal(Math.floor(new Date(pool3.open_at).getTime() / 1000), Number(openAt), "open_at stored from PoolLaunched");
+    assert.ok(new Date(pool3.open_at) > new Date(pool3.launch_time));
+    const camp3 = (await db.query(`select meta from public.campaigns where chain_id = 97 and campaign_address = $1`, [coin3.token.toLowerCase()])).rows[0];
+    assert.equal(Math.floor(new Date(camp3.meta.gen8.openAt).getTime() / 1000), Number(openAt), "campaigns.meta.gen8.openAt");
+    assert.equal((await db.query(`select count(*)::int as n from public.curve_trades where chain_id = 97 and campaign_address = $1`, [coin3.token.toLowerCase()])).rows[0].n, 1, "the creator first buy inside launch()");
+    await assert.rejects(swap(env, coin3, env.buyer, { buy: true, exactIn: true, amount: WAD / 500n }), /TradingNotOpen|0xe09f0331|revert/, "no swap before openAt");
+    await provider.send("evm_increaseTime", [600]);
+    await provider.send("anvil_mine", ["0x1"]);
+    const atOpen = await swap(env, coin3, env.buyer, { buy: true, exactIn: true, amount: WAD / 500n });
+    await provider.send("evm_increaseTime", [120]);
+    await provider.send("anvil_mine", ["0x1"]);
+    const afterDecay = await swap(env, coin3, env.buyer, { buy: true, exactIn: true, amount: WAD / 500n });
+    await catchUp();
+    const feeAtOpen = (await db.query(`select fee_bps from public.evm_gen8_fee_accruals where tx_hash = $1`, [atOpen.hash.toLowerCase()])).rows[0];
+    const feeAfter = (await db.query(`select fee_bps from public.evm_gen8_fee_accruals where tx_hash = $1`, [afterDecay.hash.toLowerCase()])).rows[0];
+    assert.ok(Number(feeAtOpen.fee_bps) > Number(feeAfter.fee_bps), `the launch fee decays from openAt: ${feeAtOpen.fee_bps} > ${feeAfter.fee_bps}`);
+    assert.equal(Number(feeAfter.fee_bps), 200, "2% after the 60 s decay");
+
+    // ---- F1 per-trade D14: a forced latch followed by a sell back into range A. The Graduated event latches the coin
+    //      (campaigns.graduated_*), but later swaps that START inside A pay the bonding rate, land in curve_trades, book
+    //      bonding accruals, and the platform status is bonding again until the price is past graduation once more.
+    const coin4 = await launchCoin(env, env.other, { name: "Latch", symbol: "LTCH" });
+    await provider.send("evm_increaseTime", [120]);
+    const cross4 = await swap(env, coin4, env.og, { buy: true, exactIn: true, amount: WAD / 4n }); // past the graduation price: latch
+    await catchUp();
+    const tok4 = coin4.token.toLowerCase();
+    const latched = (await db.query(`select graduated_block, last_phase from public.evm_gen8_pools where chain_id = 97 and pool_id = $1`, [coin4.id])).rows[0];
+    assert.equal(Number(latched.graduated_block), cross4.blockNumber, "latched at the crossing");
+    assert.equal(latched.last_phase, "post", "the price is past graduation after the crossing");
+    assert.equal((await db.query(`select phase from public.evm_gen8_fee_accruals where tx_hash = $1`, [cross4.hash.toLowerCase()])).rows[0].phase, "bonding", "the crossing swap started inside A: bonding accrual");
+    const post4 = await swap(env, coin4, env.buyer, { buy: true, exactIn: true, amount: WAD / 2000n }); // starts past graduation: post
+    await catchUp();
+    assert.equal((await db.query(`select last_phase from public.evm_gen8_pools where pool_id = $1`, [coin4.id])).rows[0].last_phase, "post");
+    assert.equal((await db.query(`select market_stage from public.campaigns where chain_id = 97 and campaign_address = $1`, [tok4])).rows[0].market_stage, "DEX_ACTIVE");
+    assert.equal((await db.query(`select count(*)::int as n from public.dex_trades where chain_id = 97 and tx_hash = $1`, [post4.hash.toLowerCase()])).rows[0].n, 1, "a post-phase swap is a dex trade");
+    const ogCoins: bigint = await (coin4.coin as any).balanceOf(env.og.address);
+    // F2: after the latch A holds 98% of its liquidity, so selling ALL the coins bought from it would end above the start
+    // price and reverts PriceAboveStart (the app caps sells at what A can absorb); 90% ends well inside A.
+    await assert.rejects(swap(env, coin4, env.og, { buy: false, exactIn: true, amount: ogCoins }), /revert|PriceAboveStart/, "an oversize sell reverts");
+    const back = await swap(env, coin4, env.og, { buy: false, exactIn: true, amount: (ogCoins * 9n) / 10n }); // starts post, ends inside A
+    const inA = await swap(env, coin4, env.buyer, { buy: true, exactIn: true, amount: WAD / 2000n }); // starts inside A again: bonding
+    await catchUp();
+    assert.equal((await db.query(`select count(*)::int as n from public.dex_trades where chain_id = 97 and tx_hash = $1`, [back.hash.toLowerCase()])).rows[0].n, 1, "the sell back started post phase");
+    const inARow = (await db.query(`select block_number, league_excluded from public.curve_trades where chain_id = 97 and tx_hash = $1`, [inA.hash.toLowerCase()])).rows[0];
+    assert.ok(inARow, "a swap back inside A is a curve trade again");
+    assert.ok(Number(inARow.block_number) > cross4.blockNumber, "after the latch block: the Leagues must not cut at graduated_block");
+    assert.equal(inARow.league_excluded, false);
+    const inAAcc = (await db.query(`select phase, fee_bps, league_weekly from public.evm_gen8_fee_accruals where tx_hash = $1`, [inA.hash.toLowerCase()])).rows[0];
+    assert.equal(inAAcc.phase, "bonding", "the accrual phase follows the rate charged, not the latch");
+    assert.equal(Number(inAAcc.fee_bps), 200);
+    assert.ok(BigInt(inAAcc.league_weekly) > 0n, "bonding split: League share");
+    const backPool = (await db.query(`select graduated_block, last_phase from public.evm_gen8_pools where pool_id = $1`, [coin4.id])).rows[0];
+    assert.equal(Number(backPool.graduated_block), cross4.blockNumber, "the latch stays");
+    assert.equal(backPool.last_phase, "bonding");
+    assert.equal((await db.query(`select market_stage from public.campaigns where chain_id = 97 and campaign_address = $1`, [tok4])).rows[0].market_stage, "BONDING", "platform status back to bonding");
+    assert.equal((await db.query(`select market_stage from public.campaign_market_state where chain_id = 97 and campaign_address = $1`, [tok4])).rows[0].market_stage, "BONDING");
+    assert.ok(Number((await db.query(`select graduated_block from public.campaigns where chain_id = 97 and campaign_address = $1`, [tok4])).rows[0].graduated_block) === cross4.blockNumber, "campaigns.graduated_block keeps the latch block");
+    assert.equal((await db.query(`select count(*)::int as n from public.evm_campaign_events where chain_id = 97 and campaign_address = $1 and event_name = 'Graduated'`, [tok4])).rows[0].n, 1, "no second Graduated event");
+    await swap(env, coin4, env.og, { buy: true, exactIn: true, amount: WAD / 4n }); // past graduation again: no new latch, status graduated again
+    await catchUp();
+    assert.equal((await db.query(`select market_stage from public.campaigns where chain_id = 97 and campaign_address = $1`, [tok4])).rows[0].market_stage, "DEX_ACTIVE");
+    assert.equal((await db.query(`select count(*)::int as n from public.evm_campaign_events where chain_id = 97 and campaign_address = $1 and event_name = 'Graduated'`, [tok4])).rows[0].n, 1);
 
     // ---- side pool: a hookless V4 pool of our coin
     const pmSigner = env.pm.connect(env.buyer) as any;

@@ -26,5 +26,7 @@ export function gen8SchemaFiles(): string[] {
     "db/migrations/20261011_000010_evm_gen8_indexer.sql",
     "db/migrations/20261012_000011_evm_gen8_display.sql",
     "db/migrations/20261012_000011_evm_gen8_display.sql",
+    "db/migrations/20261012_000012_evm_gen8_open_at_phase.sql",
+    "db/migrations/20261012_000012_evm_gen8_open_at_phase.sql",
   ];
 }

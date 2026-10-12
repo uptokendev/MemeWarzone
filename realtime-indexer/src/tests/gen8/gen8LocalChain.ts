@@ -140,7 +140,8 @@ export async function deployGen8Local(provider: ethers.JsonRpcProvider, opts: { 
   const splitter = await deploy(deployer!, "MwzFeeSplitter", [hookAddr, safe!.address, await weekly.getAddress(), await monthly.getAddress(), await recruiter.getAddress(), await community.getAddress(), await protocol.getAddress(), operator!.address]);
   const vault = await deploy(deployer!, "MwzCreatorChoiceVault", [safe!.address, hookAddr, launcherAddr, 24 * 3600]);
   const reserveLock = await deploy(deployer!, "MwzReserveLock", [hookAddr, launcherAddr, await vault.getAddress()]);
-  const launcher = await deploy(deployer!, "MwzV4Launcher", [await pm.getAddress(), hookAddr, await oracle.getAddress(), await reserveLock.getAddress(), await vault.getAddress(), safe!.address, apiSigner!.address, 50n * WAD, 50_000n * WAD]);
+  // F6: the BNB production oracle band ($10 to $100,000), as test/gen8/fixtures/gen8.ts on build/evm-gen8.
+  const launcher = await deploy(deployer!, "MwzV4Launcher", [await pm.getAddress(), hookAddr, await oracle.getAddress(), await reserveLock.getAddress(), await vault.getAddress(), safe!.address, apiSigner!.address, 10n * WAD, 100_000n * WAD]);
   if ((await splitter.getAddress()) !== splitterAddr || (await launcher.getAddress()) !== launcherAddr) throw new Error("predicted address drift");
   const escrow = await deploy(deployer!, "MwzCreatorEscrow", [hookAddr]);
   const trader = await deploy(deployer!, "V4DirectTrader", [await pm.getAddress()]);
@@ -154,22 +155,24 @@ export async function deployGen8Local(provider: ethers.JsonRpcProvider, opts: { 
 
 let saltCounter = 1n;
 
-export async function launchCoin(env: Gen8Local, creator: ethers.Wallet, o: { firstBuyValue?: bigint; feeChoice?: number; name?: string; symbol?: string } = {}) {
+/** `openAt` (B): unix seconds when trading opens; 0 (default) = the launch block time. */
+export async function launchCoin(env: Gen8Local, creator: ethers.Wallet, o: { firstBuyValue?: bigint; feeChoice?: number; name?: string; symbol?: string; openAt?: bigint } = {}) {
   const req = {
     name: o.name ?? "Gen Eight", symbol: o.symbol ?? "GEN8", logoURI: "ipfs://logo", xAccount: "@gen8", website: "https://memewar.zone", extraLink: "",
     metadataHash: ethers.id("metadata"), targetUsd: TEST_TARGET, feeChoice: o.feeChoice ?? 1, feeCreatorPct: 0, firstBuyValue: o.firstBuyValue ?? 0n, minFirstBuyOut: 0n, salt: saltCounter++,
+    openAt: o.openAt ?? 0n,
   };
   const latest = await env.provider.getBlock("latest");
   const deadline = BigInt(latest!.timestamp) + 3600n;
   const h = (s: string) => ethers.keccak256(ethers.toUtf8Bytes(s));
   const coder = ethers.AbiCoder.defaultAbiCoder();
   const reqHash = ethers.keccak256(coder.encode(
-    ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256", "uint8", "uint8", "uint256", "uint256", "uint256"],
-    [h(req.name), h(req.symbol), h(req.logoURI), h(req.xAccount), h(req.website), h(req.extraLink), req.metadataHash, req.targetUsd, req.feeChoice, req.feeCreatorPct, req.firstBuyValue, req.minFirstBuyOut, req.salt],
+    ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256", "uint8", "uint8", "uint256", "uint256", "uint256", "uint64"],
+    [h(req.name), h(req.symbol), h(req.logoURI), h(req.xAccount), h(req.website), h(req.extraLink), req.metadataHash, req.targetUsd, req.feeChoice, req.feeCreatorPct, req.firstBuyValue, req.minFirstBuyOut, req.salt, req.openAt],
   ));
   const payload = ethers.keccak256(coder.encode(["bytes32", "uint256", "address", "address", "bytes32", "uint64"], [ethers.id("MWZ_GEN8_CREATE_AUTH"), 97, await env.launcher.getAddress(), creator.address, reqHash, deadline]));
   const signature = await env.apiSigner.signMessage(ethers.getBytes(payload));
-  const tuple = [req.name, req.symbol, req.logoURI, req.xAccount, req.website, req.extraLink, req.metadataHash, req.targetUsd, req.feeChoice, req.feeCreatorPct, req.firstBuyValue, req.minFirstBuyOut, req.salt];
+  const tuple = [req.name, req.symbol, req.logoURI, req.xAccount, req.website, req.extraLink, req.metadataHash, req.targetUsd, req.feeChoice, req.feeCreatorPct, req.firstBuyValue, req.minFirstBuyOut, req.salt, req.openAt];
   const tx = await (env.launcher.connect(creator) as any).launch(tuple, { deadline, signature }, { value: req.firstBuyValue });
   const rc = await tx.wait();
   const ev = rc.logs.map((l: any) => { try { return env.launcher.interface.parseLog(l); } catch { return null; } }).find((e: any) => e?.name === "Launched");

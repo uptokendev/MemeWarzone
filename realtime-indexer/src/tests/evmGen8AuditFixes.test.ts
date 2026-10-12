@@ -220,7 +220,7 @@ test("F11 / audit C-L3 replay: a run routed with other amounts, root and caller 
 
 function chainState(o: Partial<Record<string, any>> = {}) {
   return {
-    runs: 0n, paid: T, pendingTotal: T, pendingBonding: B, pendingGrad: 0n, routerOwed: 0n, treasuryRouter: SPLITTER, operator: OPERATOR,
+    runs: 0n, paid: T, pendingTotal: T, pendingBonding: B, pendingGrad: 0n, routerOwed: 0n, parked: 0n, parkedOwed: 0n, treasuryRouter: SPLITTER, operator: OPERATOR,
     bands: async (b: bigint, g: bigint) => splitterBands(b, g),
     ...o,
   };

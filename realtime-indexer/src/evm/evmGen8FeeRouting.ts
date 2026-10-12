@@ -5,8 +5,11 @@
  * Claim-first (MwzFeeSplitter V13, build/evm-gen8 aac801d5): route(runId, expectedPaid, ...) never claims and reverts
  * PaidMismatch unless hook.routerPaid(splitter).amount == expectedPaid. The hook moves its whole bucket with its
  * bonding / graduation counters in one step and emits RouterClaimed(router, amount, bondingFees, gradFees): by
- * claimRouter() (permissionless) or by the A4 flush in executeTreasuryRouter (a failed flush emits RouterFlushFailed and
- * moves nothing). So a run is exactly the HookFee / Graduated rows between two claims:
+ * claimRouter() (F4, 2026-10-12: only the router, its operator() or the hook owner may call it; the worker claims with
+ * the operator key) or by payParkedRouter(router) after a router change (F3: executeTreasuryRouter parks the old
+ * router's bucket, RouterParked; anyone may pay a parked bucket to the router it was accrued under). So a run is
+ * exactly the HookFee / Graduated rows between two claims:
+ *   0. If a bucket is parked for the splitter, pay it (send mode: payParkedRouter(splitter)) and stop.
  *   1. If nothing paid to the splitter is waiting to be routed and the hook holds a bucket, send claimRouter() (send
  *      mode) and stop; the next pass continues once the ingest has indexed the claim.
  *   2. P = routerPaid(splitter).amount, read at the block the ingest is complete through. The claim that brought the
@@ -214,6 +217,9 @@ export type Gen8RouteState = {
   pendingBonding: bigint;
   pendingGrad: bigint;
   routerOwed: bigint;
+  /** F3: hook.routerParked(splitter).amount, a bucket parked by a router change and not yet paid. */
+  parked: bigint;
+  parkedOwed: bigint;
   treasuryRouter: string;
   operator: string;
   bands: (b: bigint, g: bigint) => Promise<{ weekly: bigint; monthly: bigint; rsaMin: bigint; rsaMax: bigint; squadMax: bigint }>;
@@ -223,6 +229,8 @@ export type Gen8RouteChain = {
   readState(blockTag: number | "latest"): Promise<Gen8RouteState>;
   /** hook.claimRouter() from the operator key, waits for the receipt; returns its hash and block. Send mode only. */
   sendClaim(): Promise<{ hash: string; blockNumber: number }>;
+  /** hook.payParkedRouter(splitter) from the operator key (F3). Send mode only. */
+  sendPayParked?(): Promise<{ hash: string; blockNumber: number }>;
   /** Simulate then send route(runId, expectedPaid, ...); returns the tx hash. Send mode only. */
   sendRoute(args: { runId: bigint; expectedPaid: bigint; recruiter: bigint; squad: bigint; airdrop: bigint; root: string }): Promise<string>;
   waitReceipt(hash: string): Promise<{ status: number } | null>;
@@ -239,12 +247,13 @@ export function ethersRouteChain(cfg: Gen8ChainConfig, provider: ethers.JsonRpcP
   return {
     async readState(blockTag) {
       const o = { blockTag };
-      const [runs, pending, paid, routerOwed, router, operator] = await Promise.all([
+      const [runs, pending, paid, routerOwed, router, operator, parked, parkedOwed] = await Promise.all([
         splitterRead.runs(o), splitterRead.pending(o), hook.routerPaid(splitterAddr, o), hook.routerOwed(o), hook.treasuryRouter(o), splitterRead.operator(o),
+        hook.routerParked(splitterAddr, o), hook.parkedOwed(o),
       ]);
       return {
         runs: BigInt(runs), paid: BigInt(paid[0]), pendingTotal: BigInt(pending[0]), pendingBonding: BigInt(pending[1]), pendingGrad: BigInt(pending[2]),
-        routerOwed: BigInt(routerOwed), treasuryRouter: String(router).toLowerCase(), operator: String(operator).toLowerCase(),
+        routerOwed: BigInt(routerOwed), parked: BigInt(parked[0]), parkedOwed: BigInt(parkedOwed), treasuryRouter: String(router).toLowerCase(), operator: String(operator).toLowerCase(),
         bands: async (b, g) => {
           const r = await splitterRead.bands(b, g);
           return { weekly: BigInt(r[0]), monthly: BigInt(r[1]), rsaMin: BigInt(r[2]), rsaMax: BigInt(r[3]), squadMax: BigInt(r[4]) };
@@ -256,6 +265,13 @@ export function ethersRouteChain(cfg: Gen8ChainConfig, provider: ethers.JsonRpcP
       const tx = await (hook.connect(signer) as any).claimRouter();
       const rc = await tx.wait();
       if (!rc || Number(rc.status) !== 1) throw new Error(`claimRouter reverted: ${tx.hash}`);
+      return { hash: String(tx.hash), blockNumber: Number(rc.blockNumber) };
+    },
+    async sendPayParked() {
+      if (!signer) throw new Error("gen8 routing: no operator key");
+      const tx = await (hook.connect(signer) as any).payParkedRouter(splitterAddr);
+      const rc = await tx.wait();
+      if (!rc || Number(rc.status) !== 1) throw new Error(`payParkedRouter reverted: ${tx.hash}`);
       return { hash: String(tx.hash), blockNumber: Number(rc.blockNumber) };
     },
     async sendRoute(a) {
@@ -278,7 +294,7 @@ export function ethersRouteChain(cfg: Gen8ChainConfig, provider: ethers.JsonRpcP
 
 export type Gen8RoutePass =
   | { status: "skipped"; reason: string; detail?: Record<string, unknown> }
-  | { status: "claimed"; txHash: string; blockNumber: number }
+  | { status: "claimed" | "paid-parked"; txHash: string; blockNumber: number }
   | { status: "planned" | "sent"; runId: string; expectedPaid: string; total: string; bondingFees: string; gradFees: string; recruiter: string; squad: string; airdrop: string; rounding: string; root: string; leaves: number; txHash?: string };
 
 /** PaidMismatch(uint256,uint256) selector (MwzFeeSplitter V13). */
@@ -347,6 +363,19 @@ export async function runGen8RoutePass(opts: {
     await opts.alert?.({ severity: "critical", kind: "gen8_router_not_splitter", chainId: cfg.chainId, subject: s.treasuryRouter, title: `Gen-8 hook pays another router on chain ${cfg.chainId}`, message: `hook.treasuryRouter() is ${s.treasuryRouter}, the configured splitter is ${splitter}.` });
   }
   const minWei = opts.minWei ?? 0n;
+
+  // 0. F3: a bucket parked for the splitter by a router change is paid first (RouterClaimed follows; the next pass
+  //    plans a run from it). Only when nothing paid is waiting, so the parked claim never lands between a plan and
+  //    its route (that would be a PaidMismatch re-plan).
+  if ((s.parked ?? 0n) > 0n && s.pendingTotal === 0n) {
+    if (!opts.send || !chain.sendPayParked) return { status: "skipped", reason: "dry-run-would-pay-parked", detail: { parked: s.parked.toString() } };
+    if (opts.operatorAddress && opts.operatorAddress.toLowerCase() !== s.operator) {
+      await opts.alert?.({ severity: "critical", kind: "gen8_operator_mismatch", chainId: cfg.chainId, title: "Gen-8 operator key is not the splitter operator", message: `key ${opts.operatorAddress}, splitter.operator() ${s.operator}` });
+      return { status: "skipped", reason: "operator-key-is-not-the-splitter-operator" };
+    }
+    const c = await chain.sendPayParked();
+    return { status: "paid-parked", txHash: c.hash, blockNumber: c.blockNumber };
+  }
 
   // 1. Claim first, only when nothing paid to the splitter is still waiting (so constant trading cannot starve runs).
   if (s.pendingTotal === 0n) {

@@ -62,6 +62,10 @@ export type Gen8PoolRow = {
   fees: Gen8Fees;
   display: string | null;
   graduatedBlock: number | null;
+  /** B: when trading opens (the launch block time when not scheduled). */
+  openAt: Date | null;
+  /** F1: the pool's current phase from its last price: 'post' at or past the graduation price, else 'bonding'. */
+  lastPhase: "bonding" | "post" | null;
   lastSqrtPriceX96: bigint | null;
   lastSwapBlock: number | null;
   lastSwapLogIndex: number | null;
@@ -87,6 +91,8 @@ function mapPool(r: any): Gen8PoolRow {
     fees: (r.fees || {}) as Gen8Fees,
     display: r.display_pair ? String(r.display_pair) : null,
     graduatedBlock: r.graduated_block != null ? Number(r.graduated_block) : null,
+    openAt: r.open_at ? new Date(r.open_at) : null,
+    lastPhase: r.last_phase === "post" || r.last_phase === "bonding" ? r.last_phase : null,
     lastSqrtPriceX96: r.last_sqrt_price_x96 != null ? BigInt(String(r.last_sqrt_price_x96)) : null,
     lastSwapBlock: r.last_swap_block != null ? Number(r.last_swap_block) : null,
     lastSwapLogIndex: r.last_swap_log_index != null ? Number(r.last_swap_log_index) : null,
@@ -113,7 +119,7 @@ export async function upsertGen8Pool(db: Queryable, row: {
   hookCreator: string | null; creatorProfile: Gen8Profile | null; feeChoice: number | null; feeCreatorPct: number | null;
   targetUsd: bigint | null; marketCapNative: bigint | null; virtualNative: bigint | null; virtualToken: bigint | null;
   tickStart: number; tickGrad: number; liqA: bigint; liqB: bigint; fees: Gen8Fees; display: string | null;
-  firstBuyIn: bigint | null; firstBuyOut: bigint | null; launchTx: string; launchBlock: number; launchTime: Date | null;
+  firstBuyIn: bigint | null; firstBuyOut: bigint | null; launchTx: string; launchBlock: number; launchTime: Date | null; openAt: Date | null;
   metadata: Record<string, unknown>;
 }) {
   const s = (v: bigint | null) => (v === null ? null : v.toString());
@@ -122,8 +128,8 @@ export async function upsertGen8Pool(db: Queryable, row: {
        chain_id, pool_id, token_address, hook_address, launcher_address, pool_manager_address, creator_address,
        hook_creator_address, creator_profile, fee_choice, fee_creator_pct, target_usd, market_cap_native, virtual_native,
        virtual_token, tick_start, tick_grad, liq_a, liq_b, fees, display_pair, first_buy_in, first_buy_out, launch_tx,
-       launch_block, launch_time, metadata
-     ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb,$21,$22,$23,$24,$25,$26,$27::jsonb)
+       launch_block, launch_time, metadata, open_at
+     ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb,$21,$22,$23,$24,$25,$26,$27::jsonb,$28)
      on conflict (chain_id, pool_id) do update set
        hook_creator_address = coalesce(excluded.hook_creator_address, public.evm_gen8_pools.hook_creator_address),
        creator_profile = coalesce(public.evm_gen8_pools.creator_profile, excluded.creator_profile),
@@ -136,13 +142,14 @@ export async function upsertGen8Pool(db: Queryable, row: {
        first_buy_in = coalesce(excluded.first_buy_in, public.evm_gen8_pools.first_buy_in),
        first_buy_out = coalesce(excluded.first_buy_out, public.evm_gen8_pools.first_buy_out),
        launch_time = coalesce(public.evm_gen8_pools.launch_time, excluded.launch_time),
+       open_at = coalesce(excluded.open_at, public.evm_gen8_pools.open_at),
        metadata = public.evm_gen8_pools.metadata || excluded.metadata,
        updated_at = now()`,
     [
       row.chainId, row.poolId, row.token, row.hook, row.launcher, row.poolManager, row.creator, row.hookCreator, row.creatorProfile,
       row.feeChoice, row.feeCreatorPct, s(row.targetUsd), s(row.marketCapNative), s(row.virtualNative), s(row.virtualToken),
       row.tickStart, row.tickGrad, row.liqA.toString(), row.liqB.toString(), JSON.stringify(row.fees), row.display, s(row.firstBuyIn), s(row.firstBuyOut),
-      row.launchTx, row.launchBlock, row.launchTime, JSON.stringify(row.metadata),
+      row.launchTx, row.launchBlock, row.launchTime, JSON.stringify(row.metadata), row.openAt,
     ],
   );
 }
@@ -236,14 +243,23 @@ export async function insertGen8DexTrade(db: Queryable, t: Gen8TradeRow): Promis
 }
 
 /** Latest pool price, written only by a newer (block, log) than the stored one. */
-export async function updateGen8PoolPrice(db: Queryable, input: { chainId: number; poolId: string; sqrtPriceX96: bigint; tick: number; liquidity: bigint; blockNumber: number; logIndex: number }) {
+export async function updateGen8PoolPrice(db: Queryable, input: { chainId: number; poolId: string; sqrtPriceX96: bigint; tick: number; liquidity: bigint; blockNumber: number; logIndex: number; phase: "bonding" | "post" }) {
   await db.query(
     `update public.evm_gen8_pools
-        set last_sqrt_price_x96 = $3, last_tick = $4, last_liquidity = $5, last_swap_block = $6, last_swap_log_index = $7, updated_at = now()
+        set last_sqrt_price_x96 = $3, last_tick = $4, last_liquidity = $5, last_swap_block = $6, last_swap_log_index = $7, last_phase = $8, updated_at = now()
       where chain_id = $1 and pool_id = $2
         and (last_swap_block is null or last_swap_block < $6 or (last_swap_block = $6 and coalesce(last_swap_log_index, -1) < $7))`,
-    [input.chainId, input.poolId, input.sqrtPriceX96.toString(), input.tick, input.liquidity.toString(), input.blockNumber, input.logIndex],
+    [input.chainId, input.poolId, input.sqrtPriceX96.toString(), input.tick, input.liquidity.toString(), input.blockNumber, input.logIndex, input.phase],
   );
+}
+
+/**
+ * The platform status of a gen-8 coin (F1, founder 2026-10-12): graduated only when the latch is set (Graduated event)
+ * AND the pool's current price is at or past the graduation price (last_phase = post); a latched coin whose price fell
+ * back into range A is bonding again (its next swaps pay the bonding rate and count for the Leagues).
+ */
+export function gen8PlatformStatus(pool: Pick<Gen8PoolRow, "graduatedBlock" | "lastPhase">): "bonding" | "graduated" {
+  return pool.graduatedBlock !== null && pool.lastPhase === "post" ? "graduated" : "bonding";
 }
 
 /**
