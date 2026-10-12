@@ -21,7 +21,7 @@ Hides an account's posts and comments for you only. Their coin pages and trading
 
 ## Bonding Curve
 
-The market a launched coin trades on before graduation. Buys push the price up, sells push it down.
+The market a launched coin trades on before graduation. Buys push the price up, sells push it down. On gen-8 BNB Chain and Robinhood Chain launches this market is the coin's Uniswap V4 pool from the first second.
 
 ## Boost
 
@@ -47,6 +47,14 @@ Your private tools: coins, battles, recruiter, squad, airdrops, rewards and clai
 
 Where a creator's buys on their own coin go after launch. 20% is released after 30 days, then 20% every 7 days.
 
+## Creator reserve
+
+2% of supply, 20M tokens. Released at graduation on today's launches. On gen-8, once the coin has been graduated for at least 1 hour and the price is at or above the graduation market cap.
+
+## Creator transfer
+
+Handing creator rights to another wallet. On gen-8 this is two steps: propose, then accept. MemeWarzone cannot change it.
+
 ## Creator update
 
 A post a coin's owner writes as the coin. It shows on the coin page and can be shared to the home feed.
@@ -63,13 +71,17 @@ A fixed window for a league: weekly or monthly. Results are fixed when it closes
 
 The creator's optional buy in the launch transaction. Up to 70% of the supply, unlocked.
 
+## Gen-8
+
+The new launch generation on BNB Chain and Robinhood Chain for coins paired with BNB or ETH. The coin trades in a Uniswap V4 pool from the first second. Graduation does not move the pool.
+
 ## Graduated
 
-A coin whose bonding curve completed. It now trades in a DEX pool. Older pages called this POST.
+A coin whose bonding curve completed. It now trades at post-graduation fees. On today's launches that means a new DEX pool. On gen-8 the coin stays in the same Uniswap V4 pool. Older pages called this POST.
 
 ## Graduation market cap
 
-The market cap at which a coin moves to its DEX pool: $30K (Fast grad) or $50K (Normal). Picked at launch.
+The market cap at which a coin graduates: $30K (Fast grad) or $50K (Normal). Picked at launch. On today's launches the coin then moves to its DEX pool. On gen-8 it stays in the same pool.
 
 ## Hide
 
@@ -85,7 +97,11 @@ A coin launched elsewhere and brought to MemeWarzone. It has the same coin page 
 
 ## Launch fee
 
-The trade fee in the first 60 seconds: it starts at 90% and falls to the normal 2%.
+The trade fee in the first 60 seconds after trading opens: it starts at 90% and falls to the normal 2%.
+
+## Open time
+
+On a gen-8 launch, the time trading starts. The creator can pick it up to 30 days ahead. Nobody can trade before then.
 
 ## Live
 
@@ -130,6 +146,10 @@ A group linked to a recruiter that shares a reward pool.
 ## Story
 
 A short story page about a coin, opened with the Story button on the coin page.
+
+## Uniswap V4 pool
+
+The pool a gen-8 BNB Chain or Robinhood Chain coin trades in from the first second. Graduation does not migrate it.
 
 ## UpVote
 

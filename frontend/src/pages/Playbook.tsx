@@ -29,6 +29,7 @@ const STEPS = [
 
 const EXTRA_SECTIONS = [
   { id: "markets", label: "Graduation Markets" },
+  { id: "gen8", label: "Gen-8 launches" },
   { id: "after", label: "After launch" },
 ] as const;
 
@@ -227,28 +228,32 @@ const Playbook = () => {
             id="bond"
             step="04"
             title="Bond: graduation market cap, fees and first buy"
-            subtitle="The market cap at which your coin moves to its DEX pool, what happens to your fee share, and your own first buy."
+            subtitle="The market cap at which your coin graduates, what happens to your fee share, and your own first buy."
           >
             <div className="grid gap-2 sm:grid-cols-2">
               <div className={INSET}>
                 <div className="font-mw-mono text-base font-bold text-mw-text">$30K MC</div>
                 <div className={cp.label}>Fast grad</div>
-                <p className="mt-1 text-[13px]">The coin moves to its DEX pool when its market cap reaches $30K.</p>
+                <p className="mt-1 text-[13px]">The coin graduates when its market cap reaches $30K.</p>
               </div>
               <div className={INSET_ACCENT}>
                 <div className="font-mw-mono text-base font-bold text-mw-text">$50K MC</div>
                 <div className={cp.label}>Normal</div>
-                <p className="mt-1 text-[13px]">The default. The coin moves to its DEX pool at a $50K market cap.</p>
+                <p className="mt-1 text-[13px]">The default. The coin graduates at a $50K market cap.</p>
               </div>
             </div>
             <p>
-              The same two choices apply on Solana, BNB and Robinhood. The pool is on Meteora on Solana, on Topaz on BNB
-              and on Uniswap on Robinhood. The market cap is part of the launch and does not change afterwards. Test
-              networks also show a small rehearsal target. It never appears on mainnet.
+              The same two choices apply on Solana, BNB and Robinhood. On today&apos;s launches the pool is on Meteora on
+              Solana, on Topaz on BNB and on Uniswap on Robinhood. Gen-8 BNB and Robinhood coins already trade in a
+              Uniswap V4 pool from the first second; graduation does not move them. The market cap is part of the launch
+              and does not change afterwards. Test networks also show a small rehearsal target. It never appears on
+              mainnet.
             </p>
             <p>
-              Every coin has 1 billion tokens. 85% is sold on the bonding curve, 13% goes into the DEX pool at graduation
-              and 2% is the creator reserve, released at graduation. The coin graduates when the curve sells out.
+              Every coin has 1 billion tokens. 85% is sold on the bonding curve, 13% is added at graduation and 2% is
+              the creator reserve. On today&apos;s launches the reserve is released at graduation. On gen-8 it can be
+              released once the coin has been graduated for at least 1 hour and the price is at or above the graduation
+              market cap. See Gen-8 launches below.
             </p>
             <div className={INSET}>
               <div className={BOX_TITLE}>Creator fee</div>
@@ -260,8 +265,8 @@ const Playbook = () => {
                 <Rule><span className={STRONG}>Buyback and burn.</span> Bought back at random times each week and burned.</Rule>
               </ul>
               <p className="mt-2">
-                The launch fee starts at 90% and falls to 2% within 60 seconds, so bots that buy at launch pay for it.
-                Your own first buy does not.
+                From the moment trading opens, the trade fee starts at 90% and falls to 2% within 60 seconds, so bots
+                that buy at launch pay for it. Your own first buy does not.
               </p>
             </div>
             <div className={INSET}>
@@ -435,9 +440,14 @@ const Playbook = () => {
               <div className={BOX_TITLE}>What you get at graduation</div>
               <ul className="m-0 mt-2 list-none space-y-1.5 p-0">
                 <Rule>
-                  <span className={STRONG}>BNB and Robinhood</span>: the coin moves into the pool Create shows as
+                  <span className={STRONG}>BNB and Robinhood, today</span>: the coin moves into the pool Create shows as
                   Post-graduation market, paired with the quote you picked, with the liquidity locked. Your 2% creator
                   reserve is released. The 2% graduation fee goes to MemeWarzone&apos;s fee routing, not to the creator.
+                </Rule>
+                <Rule>
+                  <span className={STRONG}>BNB and Robinhood, gen-8</span>: the coin stays in the same Uniswap V4 pool.
+                  There is no migration and the chart does not break. The 2% reserve waits for the 1 hour rule below. The
+                  2% graduation fee still comes out of what the curve raised.
                 </Rule>
                 <Rule>
                   <span className={STRONG}>Solana</span>: a <span className={MONO}>$TICKER / quote</span>{" "}
@@ -460,6 +470,75 @@ const Playbook = () => {
             </div>
           </Section>
 
+          <Section
+            id="gen8"
+            title="Gen-8 launches on BNB and Robinhood"
+            subtitle="New launches on BNB Chain and Robinhood Chain against BNB or ETH. Solana stays as it is today. Coins paired with a stock or another quote token keep the current rules for now. Coins launched before the gen-8 release keep the rules they launched with."
+          >
+            <div className={INSET}>
+              <div className={BOX_TITLE}>Where the coin trades</div>
+              <p className="mt-1">
+                From the first second, the coin trades in a real Uniswap V4 pool, against BNB on BNB Chain or ETH on
+                Robinhood Chain. Anyone can trade it: this app, other wallets, trading bots and aggregators. On
+                Robinhood Chain it shows on DexScreener and GeckoTerminal. On BNB Chain it shows on GeckoTerminal.
+              </p>
+            </div>
+            <div className={INSET}>
+              <div className={BOX_TITLE}>Open time</div>
+              <p className="mt-1">
+                Optional. You launch now and pick when trading opens, up to 30 days ahead. Nobody can trade before that
+                time. This replaces &quot;launch later&quot; for drafts and scheduled launches. The 90% to 2% launch fee
+                starts when trading opens, not when you sign.
+              </p>
+            </div>
+            <div className={INSET}>
+              <div className={BOX_TITLE}>Fees</div>
+              <ul className="m-0 mt-2 list-none space-y-1.5 p-0">
+                <Rule>
+                  Before graduation: 2% on every buy and sell, paid in BNB or ETH, never in the coin.
+                </Rule>
+                <Rule>
+                  After graduation: 1% on every buy and sell. You get 0.5% of the trade amount. MemeWarzone gets the
+                  rest.
+                </Rule>
+                <Rule>
+                  Your fee choice (keep, give to holders, split, buyback and burn) works as it does today.
+                </Rule>
+              </ul>
+            </div>
+            <div className={INSET}>
+              <div className={BOX_TITLE}>Graduation</div>
+              <p className="mt-1">
+                Graduation happens in the trade that reaches the graduation market cap. The coin stays in the same pool,
+                so the chart and the listing on other sites continue. There is no migration. A one-time 2% graduation
+                fee comes out of what the curve raised. If the price later falls back below the graduation market cap,
+                trades there pay the 2% bonding fee again.
+              </p>
+            </div>
+            <div className={INSET_ACCENT}>
+              <div className={BOX_TITLE}>Creator reserve, claims and transfer</div>
+              <ul className="m-0 mt-2 list-none space-y-1.5 p-0">
+                <Rule>
+                  The 2% creator reserve (20M tokens) can be released once the coin has been graduated for at least 1
+                  hour and the price is at or above the graduation market cap.
+                </Rule>
+                <Rule>
+                  You claim your fee share to any wallet you choose. You can hand your creator rights to another wallet
+                  in two steps: propose, then accept. MemeWarzone cannot change this.
+                </Rule>
+                <Rule>
+                  Later buys by you through this app go into escrow: 20% after 30 days, then 20% every 7 days.
+                </Rule>
+              </ul>
+            </div>
+            <div className={INSET}>
+              <div className={BOX_TITLE}>Swap widget</div>
+              <p className="mt-1">
+                Partner sites can show the swap widget for gen-8 coins. Trades go through the coin&apos;s pool.
+              </p>
+            </div>
+          </Section>
+
           <Section id="after" title="After launch" subtitle="Where your coin lives once it exists.">
             <ul className="m-0 list-none space-y-2 p-0">
               <Rule>
@@ -467,8 +546,9 @@ const Playbook = () => {
                 you are ready.
               </Rule>
               <Rule>
-                <span className={STRONG}>Coin page</span>: bonding curve trading starts right after a Direct deploy. The
-                page has Posts, Trades, Holders and About tabs. Graduation happens without leaving MemeWarzone.
+                <span className={STRONG}>Coin page</span>: trading starts right after a Direct deploy, or at the open
+                time you picked on a gen-8 launch. The page has Posts, Trades, Holders and About tabs. Graduation
+                happens without leaving MemeWarzone.
               </Rule>
               <Rule>
                 <span className={STRONG}>Story</span>: opens from the coin page. A full-screen story with your own

@@ -97,6 +97,30 @@ No. There is no cooldown between launches and no limit on how many live coins on
 
 The trade fee starts at 90% when trading opens and falls to 2% within 60 seconds. Bots that buy in the first seconds pay for it. The creator's first buy pays 2%.
 
+### What is gen-8?
+
+The new launch generation on BNB Chain and Robinhood Chain for coins paired with BNB or ETH. The coin trades in a Uniswap V4 pool from the first second. Solana stays as it is today. Coins paired with a stock or another quote token keep the current rules for now. Coins launched before the gen-8 release keep the rules they launched with.
+
+### When does trading open on a gen-8 coin?
+
+Right away, unless the creator picked an open time, up to 30 days ahead. Nobody can trade before that time. The 90% to 2% launch fee starts when trading opens.
+
+### What is the fee after a gen-8 graduation?
+
+1% on every buy and sell. The creator gets 0.5% of the trade amount. MemeWarzone gets the rest. Before graduation the fee is 2%, paid in BNB or ETH, never in the coin.
+
+### When is the gen-8 creator reserve released?
+
+Once the coin has been graduated for at least 1 hour and the price is at or above the graduation market cap. The reserve is 2% of supply, 20M tokens.
+
+### How do gen-8 creator claims and transfer work?
+
+Creators claim their fee share to any wallet they choose. They can hand creator rights to another wallet in two steps: propose, then accept. MemeWarzone cannot change this.
+
+### Where can people see a gen-8 coin?
+
+On MemeWarzone, and in the Uniswap V4 pool from the first second. Anyone can trade it: the app, other wallets, trading bots and aggregators. On Robinhood Chain it shows on DexScreener and GeckoTerminal. On BNB Chain it shows on GeckoTerminal.
+
 ### What is an imported coin?
 
 A coin launched somewhere else and brought to MemeWarzone. It gets the same coin page and Buy/Sell panel, but trades on its own DEX: Jupiter on Solana, PancakeSwap on BNB Chain, Uniswap on Robinhood Chain. Read **[Import and claim a coin](/creators/imported-coins)**.
