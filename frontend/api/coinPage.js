@@ -16,6 +16,7 @@ import { createFeedSessionAuth } from "./lib/feedSessionAuth.js";
 import { hasCoinPostLink, linkCoinPost, unlinkCoinPost } from "./lib/coinPostLink.js";
 import { hasMediaUrls, mediaUrlsSelect, refreshMediaUrlColumns } from "./lib/postMediaUrls.js";
 import { coinIdent, coinPageOwner, isSolanaChain } from "./lib/coinPageOwner.js";
+import { gen8PhaseRuleOn, gen8PlatformGraduatedColumn } from "./lib/evmGen8PlatformSql.js";
 import {
   COIN_POST_RATE,
   buildAutoUpdates,
@@ -103,10 +104,11 @@ async function readAutoFacts(chainId, ids) {
     ? "(token_address = any($2::text[]) or campaign_address = any($2::text[]))"
     : "(lower(token_address) = any($2::text[]) or lower(campaign_address) = any($2::text[]))";
   const lowered = isSolanaChain(chainId) ? keys : keys.map((k) => String(k).toLowerCase());
-  const camp = (await pool.query(
-    `select token_address, campaign_address, created_at_chain, graduated_at_chain from public.campaigns where chain_id = $1 and ${where} limit 1`,
-    [chainId, lowered],
-  ).catch((e) => (isSchemaMissing(e) ? { rows: [] } : Promise.reject(e)))).rows[0];
+  const gen8On = await gen8PhaseRuleOn(pool, chainId);
+  const campSql = gen8On
+    ? `select token_address, campaign_address, created_at_chain, graduated_at_chain${gen8PlatformGraduatedColumn("c.", true)} from public.campaigns c where c.chain_id = $1 and ${where} limit 1`
+    : `select token_address, campaign_address, created_at_chain, graduated_at_chain from public.campaigns where chain_id = $1 and ${where} limit 1`;
+  const camp = (await pool.query(campSql, [chainId, lowered]).catch((e) => (isSchemaMissing(e) ? { rows: [] } : Promise.reject(e)))).rows[0];
   const battleKeys = [...new Set([...keys, camp?.token_address, camp?.campaign_address].filter(Boolean).map(String))];
   const battles = (await pool.query(
     `select id, battle_mode, winner_token, challenger_token, defender_token, participants,
@@ -120,7 +122,7 @@ async function readAutoFacts(chainId, ids) {
   ).catch((e) => (isSchemaMissing(e) ? { rows: [] } : Promise.reject(e)))).rows;
   return {
     launchedAt: camp?.created_at_chain || null,
-    graduatedAt: camp?.graduated_at_chain || null,
+    graduatedAt: camp?.gen8_platform_graduated === false ? null : camp?.graduated_at_chain || null,
     battles: battles.map((row) => {
       const mine = battleKeys.some((k) => sameAddr(chainId, k, row.challenger_token)) ? row.challenger_token : row.defender_token;
       const rivalToken = sameAddr(chainId, mine, row.challenger_token) ? row.defender_token : row.challenger_token;

@@ -139,6 +139,8 @@ async function standingsFor(db, due) {
 
 /** The coin's owner: creator of a graduated launch, else the verified import owner. */
 async function ownerWallet(db, chainId, token) {
+  // Founder 2026-10-12: once a coin showed graduated on our side (graduated_at_chain, the one-time latch)
+  // it counts for an MWL payout. A later gen-8 price dip back into bonding does not cancel it.
   const native = await db.query(
     `select creator_address from public.campaigns
       where chain_id = $1 and (token_address = $2 or lower(coalesce(token_address::text,'')) = lower($2))
