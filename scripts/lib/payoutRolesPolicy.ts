@@ -1,10 +1,13 @@
 /**
  * Permissions as code for the payout watchdog (founder, 2026-10-08: "Safe module: yes"). One Zodiac Roles v2.1.0
  * module per chain, owner = avatar = target = the treasury Safe, with ONE role, "payout-watchdog", that may make
- * exactly two kinds of calls in the Safe's name and nothing else:
+ * exactly these calls in the Safe's name and nothing else:
  *
  *   CreatorRewardsVaultV2.approveHolderBatch(batchId, root, total)            on each listed vault (gen-6, gen-7)
  *     total <= the vault's weekly holder cap                                  (Roles: LessThan cap + 1)
+ *   MwzCreatorChoiceVault.approveHolderBatch(batchId, root, total, claimDeadline)
+ *                                                                              on each listed gen-8 vault only (selector 0xc62732bb)
+ *     total <= that vault's cap; claimDeadline > 0 and <= a static bound      (the vault still binds the stored deadline)
  *   RewardDistributor.authorizeBatch(batchId, maxAmount, publishAfter, publishDeadline)
  *                                                                             on each listed distributor (holder gen-6 /
  *                                                                             gen-7, airdrop main / gen-7)
@@ -43,9 +46,20 @@ export const ROLES_STATUS = [
 ] as const;
 
 export const APPROVE_HOLDER_BATCH = "approveHolderBatch(bytes32,bytes32,uint256)";
+/** Gen-8 MwzCreatorChoiceVault. The last argument is claimDeadline. Gen-6 and gen-7 stay on the 3-arg selector. */
+export const GEN8_APPROVE_HOLDER_BATCH = "approveHolderBatch(bytes32,bytes32,uint256,uint64)";
+export const GEN8_APPROVE_SELECTOR = "0xc62732bb";
 export const AUTHORIZE_BATCH = "authorizeBatch(bytes32,uint256,uint64,uint64)";
+
+function gen8ApproveSelector(): string {
+  const selector = ethers.id(GEN8_APPROVE_HOLDER_BATCH).slice(0, 10);
+  if (selector !== GEN8_APPROVE_SELECTOR) throw new Error(`gen-8 approve selector ${selector} is not ${GEN8_APPROVE_SELECTOR}`);
+  return selector;
+}
+
 export const SELECTOR = {
   approveHolderBatch: ethers.id(APPROVE_HOLDER_BATCH).slice(0, 10),
+  approveGen8HolderBatch: gen8ApproveSelector(),
   authorizeBatch: ethers.id(AUTHORIZE_BATCH).slice(0, 10),
 } as const;
 
@@ -70,6 +84,8 @@ export const KNOWN_FORBIDDEN_WATCHDOGS: ReadonlyArray<{ address: string; label: 
 export type ConditionFlat = { parent: number; paramType: number; operator: number; compValue: string };
 
 export type PolicyVault = { label: string; address: string; /** approveHolderBatch total cap (the vault's weekly holder cap). */ maxTotalWei: bigint };
+/** Gen-8 only. maxTotalWei caps the third argument. claimDeadlineMax is a static Roles bound; the vault still requires the stored deadline. */
+export type PolicyGen8Vault = { label: string; address: string; maxTotalWei: bigint; claimDeadlineMax: bigint };
 export type PolicyDistributor = {
   label: string;
   kind: "holders" | "airdrop";
@@ -88,6 +104,8 @@ export type PayoutRolesPolicyInput = {
   roles: string;
   watchdog: string;
   vaults: PolicyVault[];
+  /** Optional. Scoped with selector 0xc62732bb. Omitted means the batch is the gen-6 / gen-7 batch exactly. */
+  gen8Vaults?: PolicyGen8Vault[];
   distributors: PolicyDistributor[];
   allowance: AllowancePlan;
   /** Extra refused watchdog addresses (on-chain operators, Safe owners, the deploying key). */
@@ -112,6 +130,26 @@ export function approveHolderBatchConditions(maxTotalWei: bigint): ConditionFlat
     { parent: 0, paramType: ParamType.Static, operator: Operator.Pass, compValue: "0x" }, // batchId
     { parent: 0, paramType: ParamType.Static, operator: Operator.Pass, compValue: "0x" }, // root
     { parent: 0, paramType: ParamType.Static, operator: Operator.LessThan, compValue: lessThanOrEqual(maxTotalWei) }, // total
+  ];
+}
+
+/**
+ * Gen-8 approveHolderBatch(bytes32,bytes32,uint256,uint64). Roles cannot compare two calldata arguments, so the
+ * deadline is only bounded: greater than 0 and at most claimDeadlineMax. The vault still reverts BadBatch unless
+ * the deadline equals the one stored at propose.
+ * Children of the And sit after the parameter siblings (parent index 4).
+ */
+export function approveGen8HolderBatchConditions(maxTotalWei: bigint, claimDeadlineMax: bigint): ConditionFlat[] {
+  if (claimDeadlineMax <= 0n) throw new Error("claim deadline bound must be positive");
+  if (claimDeadlineMax >= 1n << 64n) throw new Error("claim deadline bound must fit uint64");
+  return [
+    { parent: 0, paramType: ParamType.Calldata, operator: Operator.Matches, compValue: "0x" },
+    { parent: 0, paramType: ParamType.Static, operator: Operator.Pass, compValue: "0x" }, // batchId
+    { parent: 0, paramType: ParamType.Static, operator: Operator.Pass, compValue: "0x" }, // root
+    { parent: 0, paramType: ParamType.Static, operator: Operator.LessThan, compValue: lessThanOrEqual(maxTotalWei) }, // total
+    { parent: 0, paramType: ParamType.None, operator: Operator.And, compValue: "0x" }, // claimDeadline
+    { parent: 4, paramType: ParamType.Static, operator: Operator.GreaterThan, compValue: uint256Word(0n) },
+    { parent: 4, paramType: ParamType.Static, operator: Operator.LessThan, compValue: lessThanOrEqual(claimDeadlineMax) },
   ];
 }
 
@@ -190,6 +228,22 @@ function permissionRows(input: PayoutRolesPolicyInput, allowances: AllowanceRow[
       watchdogOnly: ["root and per-campaign amounts recomputed from chain data (census, allocation, merkle) before approving"],
     });
   }
+  for (const v of input.gen8Vaults ?? []) {
+    rows.push({
+      target: ethers.getAddress(v.address),
+      label: `${v.label} MwzCreatorChoiceVault`,
+      fn: GEN8_APPROVE_HOLDER_BATCH,
+      selector: SELECTOR.approveGen8HolderBatch,
+      onChain: [
+        `total <= ${v.maxTotalWei} wei (Roles LessThan)`,
+        `claimDeadline > 0 and claimDeadline <= ${v.claimDeadlineMax} (Roles And)`,
+        "value 0, call only (Roles ExecutionOptions.None)",
+        "batchId, root, total and claimDeadline must equal the proposed batch exactly (vault: BadBatch)",
+        "the 3-arg approveHolderBatch selector is not allowed on this vault",
+      ],
+      watchdogOnly: ["the watchdog does not send this call; the Safe signs the proposal"],
+    });
+  }
   for (const d of input.distributors) {
     const a = allowances.find((x) => x.distributor === ethers.getAddress(d.address))!;
     rows.push({
@@ -255,6 +309,18 @@ export function buildPayoutRolesPolicy(input: PayoutRolesPolicyInput): {
       note: `${v.label} vault: approveHolderBatch, total <= ${ethers.formatEther(v.maxTotalWei)}`,
     });
   }
+  for (const v of input.gen8Vaults ?? []) {
+    const to = take(v.address, v.label);
+    if (v.maxTotalWei <= 0n) throw new Error(`${v.label}: cap must be positive`);
+    calls.push({ contract: "IZodiacRolesV2", to: roles, fn: "scopeTarget", args: [PAYOUT_WATCHDOG_ROLE_KEY, to], note: `${v.label} vault: function-level clearance` });
+    calls.push({
+      contract: "IZodiacRolesV2",
+      to: roles,
+      fn: "scopeFunction",
+      args: [PAYOUT_WATCHDOG_ROLE_KEY, to, SELECTOR.approveGen8HolderBatch, conditionTuples(approveGen8HolderBatchConditions(v.maxTotalWei, v.claimDeadlineMax)), ExecutionOptions.None],
+      note: `${v.label} vault: approveHolderBatch(bytes32,bytes32,uint256,uint64) selector ${SELECTOR.approveGen8HolderBatch}, total <= ${ethers.formatEther(v.maxTotalWei)}, claimDeadline <= ${v.claimDeadlineMax}`,
+    });
+  }
   const allowances: AllowanceRow[] = [];
   for (const d of input.distributors) {
     const to = take(d.address, d.label);
@@ -303,6 +369,69 @@ export function rolesProxyPlan(input: { factory: string; mastercopy: string; saf
   const deployment = ethers.concat(["0x602d8060093d393df3363d3d373d3d3d363d73", ethers.getAddress(input.mastercopy), "0x5af43d82803e903d91602b57fd5bf3"]);
   const proxy = ethers.getCreate2Address(ethers.getAddress(input.factory), salt, ethers.keccak256(deployment));
   return { initializer, salt, proxy, proxyRuntime: ethers.hexlify(ethers.getBytes(deployment).slice(9)) };
+}
+
+/** Robinhood testnet gen-8 choice vault. The Roles file below is for the founder. Nothing in this repo sends it. */
+export const RH_TESTNET_GEN8_CHOICE_VAULT = "0x13537C6273dF312067cE775AAf9635c217A931fd";
+/** Weekly holder cap set on that vault (deployments/robinhood/testnet.gen8.json on build/evm-gen8). */
+export const RH_TESTNET_GEN8_HOLDER_CAP_WEI = 9_300_000_000_000_000_000n;
+/** Every uint64. Roles rejects 0. The vault still enforces the 7-day minimum and the 365-day maximum. */
+export const GEN8_CLAIM_DEADLINE_ROLES_MAX = (1n << 64n) - 1n;
+
+/**
+ * The Safe Roles scope for one gen-8 vault. `applied` is false: the founder sends scopeTarget and scopeFunction.
+ * `to` is null until PAYOUT_WATCHDOG_ROLES_<chainId> exists. The 3-arg selector is not in this file.
+ */
+export function gen8RolesPolicyFile(input: {
+  chainId: number;
+  vault: string;
+  maxTotalWei: bigint;
+  claimDeadlineMax?: bigint;
+}): {
+  applied: false;
+  executes: false;
+  chainId: number;
+  vault: string;
+  signature: string;
+  selector: string;
+  maxTotalWei: string;
+  claimDeadlineMax: string;
+  conditions: ConditionFlat[];
+  calls: Array<{ contract: string; to: null; fn: string; args: unknown[]; note: string }>;
+  note: string;
+} {
+  const claimDeadlineMax = input.claimDeadlineMax ?? GEN8_CLAIM_DEADLINE_ROLES_MAX;
+  const vault = ethers.getAddress(input.vault);
+  const conditions = approveGen8HolderBatchConditions(input.maxTotalWei, claimDeadlineMax);
+  const note = "Founder applies these two calls on the chain Roles module (PAYOUT_WATCHDOG_ROLES_<chainId> is the `to`). Do not send this file from a worker. Gen-6 and gen-7 keep approveHolderBatch(bytes32,bytes32,uint256). The vault still requires the stored claim deadline.";
+  return {
+    applied: false,
+    executes: false,
+    chainId: input.chainId,
+    vault,
+    signature: GEN8_APPROVE_HOLDER_BATCH,
+    selector: SELECTOR.approveGen8HolderBatch,
+    maxTotalWei: input.maxTotalWei.toString(),
+    claimDeadlineMax: claimDeadlineMax.toString(),
+    conditions,
+    calls: [
+      {
+        contract: "IZodiacRolesV2",
+        to: null,
+        fn: "scopeTarget",
+        args: [PAYOUT_WATCHDOG_ROLE_KEY, vault],
+        note: "function-level clearance on the gen-8 choice vault",
+      },
+      {
+        contract: "IZodiacRolesV2",
+        to: null,
+        fn: "scopeFunction",
+        args: [PAYOUT_WATCHDOG_ROLE_KEY, vault, SELECTOR.approveGen8HolderBatch, conditionTuples(conditions), ExecutionOptions.None],
+        note: `selector ${SELECTOR.approveGen8HolderBatch}; total <= ${input.maxTotalWei}; claimDeadline > 0 and <= ${claimDeadlineMax}; value 0; call only`,
+      },
+    ],
+    note,
+  };
 }
 
 /** Decodes a Roles revert (ConditionViolation status name, NoMembership, ...) for logs and alerts. */
