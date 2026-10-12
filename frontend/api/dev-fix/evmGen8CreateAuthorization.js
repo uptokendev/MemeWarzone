@@ -134,7 +134,7 @@ const GEN8_FORBIDDEN_CHARS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u2
 const GEN8_FORBIDDEN_DESCRIPTION_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/u;
 // The app uploads the logo and sends an https URL (src/lib/onchainLogoUri.ts refuses data: URLs); ipfs:// is the
 // other form a hosted logo takes. data: and anything else are refused.
-const GEN8_LOGO_URI_SCHEME = /^(https?|ipfs):\/\//i;
+const GEN8_LOGO_URI_SCHEME = /^(https|ipfs):\/\//i;
 
 function utf8Bytes(value) {
   return Buffer.byteLength(value, "utf8");
@@ -171,7 +171,7 @@ export function parseGen8CreateRequest(body, chainId, env = process.env) {
   checkGen8Text(name, "name", { maxBytes: GEN8_NAME_MAX_BYTES });
   checkGen8Text(symbol, "symbol", { maxBytes: GEN8_SYMBOL_MAX_BYTES });
   checkGen8Text(logoURI, "logoURI", { maxBytes: GEN8_URI_MAX_BYTES });
-  if (!GEN8_LOGO_URI_SCHEME.test(logoURI)) throw new Gen8CreateError(400, "GEN8_CREATE_FIELD_INVALID", "logoURI must be an https:// or ipfs:// URL");
+  if (!GEN8_LOGO_URI_SCHEME.test(logoURI)) throw new Gen8CreateError(400, "GEN8_CREATE_FIELD_INVALID", "logoURI must be an https:// or ipfs:// URL (http and data: are refused)");
   checkGen8Text(xAccount, "xAccount", { maxBytes: GEN8_URI_MAX_BYTES });
   checkGen8Text(website, "website", { maxBytes: GEN8_URI_MAX_BYTES });
   checkGen8Text(extraLink, "extraLink", { maxBytes: GEN8_URI_MAX_BYTES });
