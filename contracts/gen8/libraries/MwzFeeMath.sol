@@ -11,15 +11,17 @@ library MwzFeeMath {
     uint256 internal constant BPS = 10_000;
     uint256 internal constant SNIPER_WINDOW = 60;
 
-    /// @notice gen-7 LaunchCampaignGen7.currentTradeFeeBps with per-coin values: the start rate at launch, linear
-    /// to the bonding rate at launch + 60 s; the post-graduation rate once graduated; the bonding rate for the
-    /// launcher's own swap (the creator's first buy inside the launch transaction).
+    /// @notice gen-7 LaunchCampaignGen7.currentTradeFeeBps with per-coin values: the start rate when trading opens
+    /// (openAt), linear to the bonding rate at openAt + 60 s; the post-graduation rate for a swap that starts with the
+    /// pool price at or past the graduation price (`post`, F1); the bonding rate for the launcher's own swap (the
+    /// creator's first buy inside the launch transaction).
     /// @dev No underflow: sniperStartBps >= bondingBps is enforced at launch; `left` is clamped to the window, so
-    /// a timestamp before launchTime (impossible on chain) cannot raise the rate above sniperStartBps.
-    function rate(FeeConfig memory f, bool graduated, bool isLauncher, uint256 launchTime, uint256 nowTs) internal pure returns (uint256) {
-        if (graduated) return f.postBps;
+    /// a timestamp before openAt (only the launcher's swap can run then, and it returns above) cannot raise the rate
+    /// above sniperStartBps.
+    function rate(FeeConfig memory f, bool post, bool isLauncher, uint256 openAt, uint256 nowTs) internal pure returns (uint256) {
+        if (post) return f.postBps;
         if (isLauncher) return f.bondingBps;
-        uint256 end = launchTime + SNIPER_WINDOW;
+        uint256 end = openAt + SNIPER_WINDOW;
         if (nowTs >= end) return f.bondingBps;
         uint256 left = end - nowTs;
         if (left > SNIPER_WINDOW) left = SNIPER_WINDOW;

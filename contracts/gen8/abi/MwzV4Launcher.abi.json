@@ -159,6 +159,11 @@
   },
   {
     "inputs": [],
+    "name": "OpenAtTooFar",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "OraclePriceOutOfBand",
     "type": "error"
   },
@@ -391,6 +396,12 @@
         "internalType": "uint256",
         "name": "firstBuyOut",
         "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint40",
+        "name": "openAt",
+        "type": "uint40"
       }
     ],
     "name": "Launched",
@@ -631,6 +642,19 @@
   },
   {
     "inputs": [],
+    "name": "MAX_OPEN_DELAY",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "MAX_ORACLE_AGE",
     "outputs": [
       {
@@ -826,6 +850,11 @@
             "internalType": "uint256",
             "name": "salt",
             "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "openAt",
+            "type": "uint64"
           }
         ],
         "internalType": "struct MwzV4Launcher.LaunchRequest",
@@ -1049,6 +1078,11 @@
             "internalType": "uint256",
             "name": "salt",
             "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "openAt",
+            "type": "uint64"
           }
         ],
         "internalType": "struct MwzV4Launcher.LaunchRequest",
@@ -1167,6 +1201,11 @@
             "internalType": "uint256",
             "name": "salt",
             "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "openAt",
+            "type": "uint64"
           }
         ],
         "internalType": "struct MwzV4Launcher.LaunchRequest",

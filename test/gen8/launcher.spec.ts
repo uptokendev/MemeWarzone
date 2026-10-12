@@ -119,11 +119,12 @@ describe("gen8 MwzV4Launcher", function () {
       await trade(env, P, { wallet: env.bot, buy: true, exactIn: true, amount: WAD });
       await (await env.feed.set(0n, await now())).wait();
       await expect(env.launcher.plan(FAST_TARGET)).to.be.revertedWithCustomError(env.launcher, "OraclePriceUnavailable");
-      await (await env.feed.set(49n * 10n ** 8n, await now())).wait();
+      // F6: the fixture uses the BNB production band, $10 .. $100,000
+      await (await env.feed.set(999_999_999n, await now())).wait(); // $9.99999999
       await expect(env.launcher.plan(FAST_TARGET)).to.be.revertedWithCustomError(env.launcher, "OraclePriceOutOfBand");
-      await (await env.feed.set(50_001n * 10n ** 8n, await now())).wait();
+      await (await env.feed.set(100_000n * 10n ** 8n + 1n, await now())).wait();
       await expect(env.launcher.plan(FAST_TARGET)).to.be.revertedWithCustomError(env.launcher, "OraclePriceOutOfBand");
-      await (await env.feed.set(50_000n * 10n ** 8n, await now())).wait();
+      await (await env.feed.set(100_000n * 10n ** 8n, await now())).wait();
       expect((await env.launcher.plan(FAST_TARGET))[0]).to.eq(await env.oracle.nativeTargetForUsd(FAST_TARGET));
     });
 
@@ -198,7 +199,7 @@ describe("gen8 MwzV4Launcher", function () {
       const t = await trade(env, P, { wallet: env.bot, buy: true, exactIn: true, amount: 20n * WAD });
       expect(t.graduated).to.not.eq(null);
       await (await env.hook.connect(env.creator).claimCreator(P.id, env.creator.address)).wait();
-      await (await env.hook.claimRouter()).wait();
+      await (await env.hook.connect(env.operator).claimRouter()).wait();
       await (await env.launcher.connect(env.safe).setCreatePaused(false)).wait();
       await launch(env, env.creator2);
     });

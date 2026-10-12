@@ -9,6 +9,7 @@
 import { HardhatUserConfig, subtask } from "hardhat/config";
 import { TASK_COMPILE_GET_REMAPPINGS } from "hardhat/builtin-tasks/task-names";
 import "@nomicfoundation/hardhat-toolbox";
+import { id } from "ethers";
 
 // v4-core's PoolManager (built only for local tests) imports solmate through a foundry remapping; the pinned
 // @uniswap/v4-core 1.0.2 npm package ships that exact solmate copy under lib/.
@@ -53,7 +54,9 @@ const config: HardhatUserConfig = {
       // checked against EIP-170 explicitly in test/gen8/sizes.spec.ts
       allowUnlimitedContractSize: true,
       hardfork: "cancun",
-      accounts: { count: 12, accountsBalance: "100000000000000000000000000" },
+      // fresh deterministic test keys (never the standard hardhat / anvil mnemonic keys: an EIP-7702 sweeper sits on
+      // them on live chains). Local in-process network only.
+      accounts: Array.from({ length: 12 }, (_, i) => ({ privateKey: id(`mwz-gen8-local/${i}`), balance: "100000000000000000000000000" })),
     },
   },
   paths: {

@@ -42,6 +42,11 @@
   },
   {
     "inputs": [],
+    "name": "BadClaimDeadline",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "CapExceeded",
     "type": "error"
   },
@@ -364,6 +369,12 @@
         "internalType": "uint256",
         "name": "total",
         "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "claimDeadline",
+        "type": "uint64"
       }
     ],
     "name": "HolderBatchApproved",
@@ -547,6 +558,19 @@
   },
   {
     "inputs": [],
+    "name": "MAX_CLAIM_WINDOW",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "MAX_CURVE_PROGRESS_BPS",
     "outputs": [
       {
@@ -561,6 +585,19 @@
   {
     "inputs": [],
     "name": "MAX_IMPACT_BPS_LIMIT",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "MIN_CLAIM_WINDOW",
     "outputs": [
       {
         "internalType": "uint256",
@@ -639,6 +676,11 @@
         "internalType": "uint256",
         "name": "total",
         "type": "uint256"
+      },
+      {
+        "internalType": "uint64",
+        "name": "claimDeadline",
+        "type": "uint64"
       }
     ],
     "name": "approveHolderBatch",

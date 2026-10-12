@@ -73,7 +73,7 @@ export async function deployGen8(opts: DeployOptions = {}) {
   const reserveLock = await (await ethers.getContractFactory("MwzReserveLock")).deploy(hookAddr, launcherAddr, await vault.getAddress());
   const launcher = await (await ethers.getContractFactory("MwzV4Launcher")).deploy(
     await pm.getAddress(), hookAddr, await oracle.getAddress(), await reserveLock.getAddress(), await vault.getAddress(), safe.address, apiSigner.address,
-    opts.minNativeUsd ?? 50n * WAD, opts.maxNativeUsd ?? 50_000n * WAD,
+    opts.minNativeUsd ?? 10n * WAD, opts.maxNativeUsd ?? 100_000n * WAD, // F6: the BNB production band
   );
   for (const [n, a, want] of [["splitter", await splitter.getAddress(), splitterAddr], ["vault", await vault.getAddress(), vaultAddr], ["reserveLock", await reserveLock.getAddress(), lockAddr], ["launcher", await launcher.getAddress(), launcherAddr]]) {
     if (a !== want) throw new Error(`${n} not at its predicted address`);
@@ -122,6 +122,7 @@ export interface Req {
   firstBuyValue: bigint;
   minFirstBuyOut: bigint;
   salt: bigint;
+  openAt: bigint; // B: 0 = trading opens now
 }
 
 let saltCounter = 1n;
@@ -140,18 +141,19 @@ export function req(o: Partial<Req> = {}): Req {
     firstBuyValue: 0n,
     minFirstBuyOut: 0n,
     salt: saltCounter++,
+    openAt: 0n,
     ...o,
   };
 }
 
-export const reqTuple = (r: Req) => [r.name, r.symbol, r.logoURI, r.xAccount, r.website, r.extraLink, r.metadataHash, r.targetUsd, r.feeChoice, r.feeCreatorPct, r.firstBuyValue, r.minFirstBuyOut, r.salt];
+export const reqTuple = (r: Req) => [r.name, r.symbol, r.logoURI, r.xAccount, r.website, r.extraLink, r.metadataHash, r.targetUsd, r.feeChoice, r.feeCreatorPct, r.firstBuyValue, r.minFirstBuyOut, r.salt, r.openAt];
 
 export function hashReq(r: Req): string {
   const h = (s: string) => ethers.keccak256(ethers.toUtf8Bytes(s));
   return ethers.keccak256(
     coder.encode(
-      ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256", "uint8", "uint8", "uint256", "uint256", "uint256"],
-      [h(r.name), h(r.symbol), h(r.logoURI), h(r.xAccount), h(r.website), h(r.extraLink), r.metadataHash, r.targetUsd, r.feeChoice, r.feeCreatorPct, r.firstBuyValue, r.minFirstBuyOut, r.salt],
+      ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256", "uint8", "uint8", "uint256", "uint256", "uint256", "uint64"],
+      [h(r.name), h(r.symbol), h(r.logoURI), h(r.xAccount), h(r.website), h(r.extraLink), r.metadataHash, r.targetUsd, r.feeChoice, r.feeCreatorPct, r.firstBuyValue, r.minFirstBuyOut, r.salt, r.openAt],
     ),
   );
 }
@@ -189,7 +191,7 @@ export interface Pool {
   sqrtGrad: bigint;
   sqrtStart: bigint;
   mintedA: bigint;
-  launchTs: bigint;
+  launchTs: bigint; // the coin's openAt (== the launch block time when not scheduled)
   pair: string | null;
   nativeIsToken0: boolean;
   mc: bigint;
@@ -227,7 +229,7 @@ export async function poolOf(env: Env, token: string): Promise<Pool> {
     key, id, token, coin,
     tickStart: Number(st.tickStart), tickGrad: Number(st.tickGrad), liqA: st.liqA, liqB: st.liqB, sqrtGrad: st.sqrtGrad, sqrtStart,
     mintedA: amount1Delta(st.sqrtGrad, sqrtStart, st.liqA, true),
-    launchTs: BigInt(st.launchTime),
+    launchTs: BigInt(st.openAt),
     pair: pairAddr === ethers.ZeroAddress ? null : pairAddr,
     nativeIsToken0: BigInt(WNATIVE_LOCAL) < BigInt(token),
     mc: 0n, vN: 0n, vT: 0n, firstBuyOut: 0n, hookCreator: st.creator,
@@ -356,13 +358,19 @@ export function feeExact(t: TradeResult, buy: boolean, exactIn: boolean, amount:
   return [ok, `gross ${gross} fee ${t.fee}`, 0n];
 }
 
-/** ERC6909 native claims held by the hook vs its ledgers (invariant I4). */
+/** ERC6909 native claims held by the hook vs its ledgers (invariant I4: router bucket + parked buckets + creators). */
 export async function ledgers(env: Env, ids: string[]) {
   const claims = await env.pm.balanceOf(await env.hook.getAddress(), 0n);
   const router = await env.hook.routerOwed();
+  const parked = await env.hook.parkedOwed();
   let creators = 0n;
   for (const id of ids) creators += await env.hook.creatorOwed(id);
-  return { claims, router, creators, sum: router + creators };
+  return { claims, router, parked, creators, sum: router + parked + creators };
+}
+
+/** F4: the router bucket is claimed by the splitter operator (or the router / the Safe). */
+export async function claimRouter(env: Env, as?: HardhatEthersSigner) {
+  return (await env.hook.connect(as ?? env.operator).claimRouter()).wait();
 }
 
 /** native raised in A at launch liquidity when A is fully bought (graduation target) */

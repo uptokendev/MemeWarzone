@@ -154,6 +154,11 @@
             "type": "bool"
           },
           {
+            "internalType": "bool",
+            "name": "postPhase",
+            "type": "bool"
+          },
+          {
             "internalType": "uint160",
             "name": "sqrtPriceX96",
             "type": "uint160"
@@ -182,6 +187,30 @@
         "internalType": "struct MwzLaunchLens.Progress",
         "name": "p",
         "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "PoolId",
+        "name": "id",
+        "type": "bytes32"
+      }
+    ],
+    "name": "tradingOpen",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "open",
+        "type": "bool"
+      },
+      {
+        "internalType": "uint256",
+        "name": "openAt",
+        "type": "uint256"
       }
     ],
     "stateMutability": "view",

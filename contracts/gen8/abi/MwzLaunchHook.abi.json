@@ -37,6 +37,11 @@
   },
   {
     "inputs": [],
+    "name": "BadOpenAt",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "BadRange",
     "type": "error"
   },
@@ -92,6 +97,11 @@
   },
   {
     "inputs": [],
+    "name": "NotRouterCaller",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "NothingOwed",
     "type": "error"
   },
@@ -108,6 +118,11 @@
   {
     "inputs": [],
     "name": "PoolExists",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "PriceAboveStart",
     "type": "error"
   },
   {
@@ -134,6 +149,11 @@
   {
     "inputs": [],
     "name": "TimelockActive",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "TradingNotOpen",
     "type": "error"
   },
   {
@@ -447,6 +467,12 @@
         "internalType": "address",
         "name": "display",
         "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint40",
+        "name": "openAt",
+        "type": "uint40"
       }
     ],
     "name": "PoolLaunched",
@@ -516,9 +542,21 @@
         "internalType": "uint256",
         "name": "amount",
         "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "bondingFees",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "gradFees",
+        "type": "uint256"
       }
     ],
-    "name": "RouterFlushFailed",
+    "name": "RouterParked",
     "type": "event"
   },
   {
@@ -608,6 +646,19 @@
   {
     "inputs": [],
     "name": "MAX_CREATOR_BONDING_BPS",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "MAX_OPEN_DELAY",
     "outputs": [
       {
         "internalType": "uint256",
@@ -1597,6 +1648,11 @@
         "internalType": "struct FeeConfig",
         "name": "fees",
         "type": "tuple"
+      },
+      {
+        "internalType": "uint40",
+        "name": "openAt",
+        "type": "uint40"
       }
     ],
     "name": "createPool",
@@ -1719,6 +1775,38 @@
       }
     ],
     "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "parkedOwed",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "r",
+        "type": "address"
+      }
+    ],
+    "name": "payParkedRouter",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
     "type": "function"
   },
   {
@@ -1868,7 +1956,7 @@
       },
       {
         "internalType": "uint40",
-        "name": "launchTime",
+        "name": "openAt",
         "type": "uint40"
       },
       {
@@ -2003,6 +2091,35 @@
       }
     ],
     "name": "routerPaid",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "bondingFees",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "gradFees",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "name": "routerParked",
     "outputs": [
       {
         "internalType": "uint256",

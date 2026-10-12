@@ -45,6 +45,8 @@ interface IMwzChoiceVaultForLauncher {
 ///     launch carries an EIP-191 authorization from our API signer over the creator, chain, this launcher and the
 ///     request (gen-7 create-authorization scheme, max 1 day, digest replay map). Trading is never signed.
 ///     L5 (D4): createPaused (owner) stops launches only; it has no effect on trading, claims or graduation.
+///     B (2026-10-12): the signed request carries openAt; the hook refuses every swap before it except this
+///     launcher's creator first buy inside launch(); the 60 s launch-fee decay starts at openAt.
 ///
 /// Money path: `launch` (payable) is nonReentrant. The only native it handles is msg.value, which must equal the
 /// signed first-buy value and is spent entirely by the exact-input first buy (a partial fill would mean more than 70%
@@ -79,6 +81,7 @@ contract MwzV4Launcher is IUnlockCallback, ReentrancyGuard {
     error TargetOutOfRangeAtPrice();
     error SupplyBoundBroken();
     error CallbackOutsideLaunch();
+    error OpenAtTooFar();
 
     uint256 public constant WAD = 1e18;
     uint256 public constant SUPPLY = 1_000_000_000 * WAD;
@@ -109,6 +112,7 @@ contract MwzV4Launcher is IUnlockCallback, ReentrancyGuard {
     uint256 public constant TEST_GRADUATION_USD = 150 ether;
 
     uint256 public constant MAX_AUTH_TTL = 1 days; // gen-7 audit 5
+    uint256 public constant MAX_OPEN_DELAY = 30 days; // B: scheduled trading open, mirrors the draft scheduler
     /// @dev Upper bound on the oracle's own staleness window. The gen-7 oracles use 3600 s (BNB, Chainlink BNB/USD) and
     /// 90000 s (Robinhood, Chainlink ETH/USD with a 24 h heartbeat); 2 days accepts both and refuses a misconfigured one.
     uint256 public constant MAX_ORACLE_AGE = 2 days;
@@ -151,6 +155,7 @@ contract MwzV4Launcher is IUnlockCallback, ReentrancyGuard {
         uint256 firstBuyValue; // exact msg.value (0 = no first buy)
         uint256 minFirstBuyOut; // slippage bound on the first buy
         uint256 salt; // API-chosen uniqueness for the authorization
+        uint64 openAt; // B: trading opens at this time (0 or a past time = now); at most now + 30 days
     }
 
     struct CreateAuthorization {
@@ -172,7 +177,8 @@ contract MwzV4Launcher is IUnlockCallback, ReentrancyGuard {
         uint8 feeChoice,
         uint8 feeCreatorPct,
         uint256 firstBuyIn,
-        uint256 firstBuyOut
+        uint256 firstBuyOut,
+        uint40 openAt
     );
     event LaunchMetadata(
         address indexed token,
@@ -346,7 +352,8 @@ contract MwzV4Launcher is IUnlockCallback, ReentrancyGuard {
                 req.feeCreatorPct,
                 req.firstBuyValue,
                 req.minFirstBuyOut,
-                req.salt
+                req.salt,
+                req.openAt
             )
         );
     }
@@ -390,6 +397,12 @@ contract MwzV4Launcher is IUnlockCallback, ReentrancyGuard {
         if (choice < FEE_CHOICE_KEEP || choice > FEE_CHOICE_BUYBACK) revert InvalidFeeChoice();
         if (choice == FEE_CHOICE_SPLIT ? (req.feeCreatorPct == 0 || req.feeCreatorPct > 99) : req.feeCreatorPct != 0) revert InvalidFeeChoice();
         if (msg.value != req.firstBuyValue) revert FirstBuyValueMismatch();
+        // B: 0 or a time already passed opens trading now (gen-1 LaunchCampaign rule); later than 30 days is refused
+        uint40 openAt = uint40(block.timestamp);
+        if (req.openAt > block.timestamp) {
+            if (req.openAt > block.timestamp + MAX_OPEN_DELAY) revert OpenAtTooFar();
+            openAt = uint40(req.openAt);
+        }
         _consumeAuthorization(msg.sender, req, auth);
 
         LaunchPlan memory p;
@@ -409,7 +422,7 @@ contract MwzV4Launcher is IUnlockCallback, ReentrancyGuard {
         MwzV4Token(token).transfer(address(hook), COINS_A + COINS_B);
         MwzV4Token(token).transfer(address(reserveLock), CREATOR_RESERVE);
         reserveLock.lock(id, token, CREATOR_RESERVE);
-        hook.createPool(token, hookCreator, p.tickStart, p.tickGrad, COINS_A, COINS_B, feeConfig());
+        hook.createPool(token, hookCreator, p.tickStart, p.tickGrad, COINS_A, COINS_B, feeConfig(), openAt);
 
         if (msg.value > 0) {
             firstBuyOut = abi.decode(poolManager.unlock(abi.encode(key, msg.value, msg.sender)), (uint256));
@@ -417,7 +430,7 @@ contract MwzV4Launcher is IUnlockCallback, ReentrancyGuard {
             if (firstBuyOut < req.minFirstBuyOut) revert FirstBuyTooSmall();
         }
         emit Launched(
-            token, id, msg.sender, hookCreator, req.targetUsd, p.mc, p.vN, p.vT, p.tickStart, p.tickGrad, choice, req.feeCreatorPct, msg.value, firstBuyOut
+            token, id, msg.sender, hookCreator, req.targetUsd, p.mc, p.vN, p.vT, p.tickStart, p.tickGrad, choice, req.feeCreatorPct, msg.value, firstBuyOut, openAt
         );
         emit LaunchMetadata(token, id, req.name, req.symbol, req.logoURI, req.xAccount, req.website, req.extraLink, req.metadataHash);
     }

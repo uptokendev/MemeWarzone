@@ -26,7 +26,7 @@ interface IMwzLaunchHook {
         view
         returns (
             address creator,
-            uint40 launchTime,
+            uint40 openAt,
             bool graduated,
             int24 tickGrad,
             int24 tickStart,
@@ -42,9 +42,19 @@ interface IMwzLaunchHook {
     function routerPaid(address router) external view returns (uint256 amount, uint256 bondingFees, uint256 gradFees);
     function poolKeyFor(address token) external view returns (PoolKey memory);
 
-    function createPool(address token, address creator, int24 tickStart, int24 tickGrad, uint256 coinsA, uint256 coinsB, FeeConfig calldata fees)
-        external
-        returns (PoolKey memory key);
+    function createPool(
+        address token,
+        address creator,
+        int24 tickStart,
+        int24 tickGrad,
+        uint256 coinsA,
+        uint256 coinsB,
+        FeeConfig calldata fees,
+        uint40 openAt
+    ) external returns (PoolKey memory key);
     function claimCreator(PoolId id, address to) external returns (uint256 amount);
     function claimRouter() external returns (uint256 amount);
+    function payParkedRouter(address router) external returns (uint256 amount);
+    function routerParked(address router) external view returns (uint256 amount, uint256 bondingFees, uint256 gradFees);
+    function parkedOwed() external view returns (uint256);
 }

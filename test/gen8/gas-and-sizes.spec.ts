@@ -71,7 +71,7 @@ describe("gen8 sizes and gas", function () {
       g[`${tag} hookless twin sell exactIn`] = Number((await trade(env, plain, { wallet: env.bot, buy: false, exactIn: true, amount: 1_000_000n * WAD })).gas);
       // claims and periphery
       rec(`${tag} claimCreator`, await (await env.hook.connect(env.creator2).claimCreator(P.id, env.payee.address)).wait());
-      rec(`${tag} claimRouter`, await (await env.hook.claimRouter()).wait());
+      rec(`${tag} claimRouter`, await (await env.hook.connect(env.operator).claimRouter()).wait());
       if (display) {
         const [, B, G] = await env.splitter.pending();
         const [, , rsaMin, , squadMax] = await env.splitter.bands(B, G);

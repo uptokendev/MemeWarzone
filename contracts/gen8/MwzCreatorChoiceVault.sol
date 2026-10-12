@@ -33,8 +33,8 @@ interface IMwzHolderDistributor {
 ///
 /// Where value can leave this contract (complete list):
 /// - native to a coin's human creator's chosen address (claimCreatorFees, creator only);
-/// - native to holderDistributor, only through a batch whose exact root and total the admin (Safe) approved, after
-///   the veto window, within the weekly cap;
+/// - native to holderDistributor, only through a batch whose exact root, total and claim deadline the admin (Safe)
+///   approved, after the veto window, within the weekly cap; the deadline is bounded (F5);
 /// - native into the coin's own V4 pool (buyback, operator, capped), coins to 0xdEaD;
 /// - admin rescue of native above every liability (forced sends only).
 /// A compromised operator can pick bad moments within the caps or propose a root that never executes without the
@@ -75,6 +75,11 @@ contract MwzCreatorChoiceVault is IUnlockCallback, ReentrancyGuard {
     uint256 public constant SNIPER_WINDOW = 60;
     uint256 public constant MAX_BATCH_COINS = 200;
     uint256 public constant MIN_HOLDER_BATCH_DELAY = 24 hours;
+    /// @notice F5: a holder batch's claim deadline lies at least MIN_CLAIM_WINDOW after it can execute (and after it
+    /// does execute) and at most MAX_CLAIM_WINDOW after the proposal. Never 0: the distributor treats 0 as "never
+    /// expires", which would lock every unclaimed wei in it for good.
+    uint256 public constant MIN_CLAIM_WINDOW = 7 days;
+    uint256 public constant MAX_CLAIM_WINDOW = 365 days;
     bytes32 internal constant T_BUYBACK = keccak256("mwz.gen8.vault.buyback");
 
     address public immutable admin;
@@ -120,7 +125,7 @@ contract MwzCreatorChoiceVault is IUnlockCallback, ReentrancyGuard {
     event OperatorUpdated(address indexed operator, bool paused);
     event CapsUpdated(uint256 maxBuyPerTx, uint256 maxBuybackPerCoinWeek, uint256 minBuyInterval, uint256 maxImpactBps, uint256 maxHolderBatchPerWeek);
     event HolderBatchProposed(bytes32 indexed batchId, bytes32 root, uint256 total, uint64 executableAt, uint64 claimDeadline);
-    event HolderBatchApproved(bytes32 indexed batchId, bytes32 root, uint256 total);
+    event HolderBatchApproved(bytes32 indexed batchId, bytes32 root, uint256 total, uint64 claimDeadline);
     event HolderBatchVetoed(bytes32 indexed batchId, uint256 total);
     event HolderBatchExecuted(bytes32 indexed batchId, uint256 total);
     event HolderUnclaimedCredited(PoolId indexed id, uint256 amount);
@@ -150,6 +155,7 @@ contract MwzCreatorChoiceVault is IUnlockCallback, ReentrancyGuard {
     error UnexpectedCallback();
     error ValueMismatch();
     error PullMismatch();
+    error BadClaimDeadline();
 
     modifier onlyAdmin() {
         if (msg.sender != admin) revert OnlyAdmin();
@@ -322,6 +328,9 @@ contract MwzCreatorChoiceVault is IUnlockCallback, ReentrancyGuard {
         if (holderProposedInWeek + total > maxHolderBatchPerWeek || total > type(uint128).max) revert CapExceeded();
         holderProposedInWeek += total;
         uint64 executableAt = uint64(block.timestamp + holderBatchDelay);
+        if (claimDeadline < uint256(executableAt) + MIN_CLAIM_WINDOW || claimDeadline > block.timestamp + MAX_CLAIM_WINDOW) {
+            revert BadClaimDeadline();
+        }
         holderBatches[batchId] =
             HolderBatch({root: root, total: uint128(total), executableAt: executableAt, claimDeadline: claimDeadline, status: 1, approved: false});
         batchCoins[batchId] = ids;
@@ -329,12 +338,13 @@ contract MwzCreatorChoiceVault is IUnlockCallback, ReentrancyGuard {
         emit HolderBatchProposed(batchId, root, total, executableAt, claimDeadline);
     }
 
-    /// @notice The admin (Safe) approves the exact root and total; only an approved batch executes.
-    function approveHolderBatch(bytes32 batchId, bytes32 root, uint256 total) external onlyAdmin {
+    /// @notice The admin (Safe) approves the exact root, total and claim deadline (F5); only an approved batch
+    /// executes.
+    function approveHolderBatch(bytes32 batchId, bytes32 root, uint256 total, uint64 claimDeadline) external onlyAdmin {
         HolderBatch storage b = holderBatches[batchId];
-        if (b.status != 1 || b.root != root || b.total != total) revert BadBatch();
+        if (b.status != 1 || b.root != root || b.total != total || b.claimDeadline != claimDeadline) revert BadBatch();
         b.approved = true;
-        emit HolderBatchApproved(batchId, root, total);
+        emit HolderBatchApproved(batchId, root, total, claimDeadline);
     }
 
     /// @notice Admin veto until executed: every amount goes back to its coin's holder balance.
@@ -354,6 +364,8 @@ contract MwzCreatorChoiceVault is IUnlockCallback, ReentrancyGuard {
         if (b.status != 1) revert BadBatch();
         if (!b.approved) revert NotApproved();
         if (block.timestamp < b.executableAt) revert TooSoon();
+        // F5: a late execution must still leave holders the minimum claim window (else veto and re-propose)
+        if (uint256(b.claimDeadline) < block.timestamp + MIN_CLAIM_WINDOW) revert BadClaimDeadline();
         b.status = 2;
         uint256 total = b.total;
         totalLiabilities -= total;
@@ -396,8 +408,8 @@ contract MwzCreatorChoiceVault is IUnlockCallback, ReentrancyGuard {
         _checkInterval(id);
         _useWeekCap(id, amountIn);
 
-        (, uint40 launchTime, bool graduated,, int24 tickStart, uint128 liqA,, uint160 sqrtGrad,) = hook.pools(id);
-        if (block.timestamp < uint256(launchTime) + SNIPER_WINDOW) revert CurveState();
+        (, uint40 openAt, bool graduated,, int24 tickStart, uint128 liqA,, uint160 sqrtGrad,) = hook.pools(id);
+        if (block.timestamp < uint256(openAt) + SNIPER_WINDOW) revert CurveState();
         (uint160 sqrtP,,,) = poolManager.getSlot0(id);
         if (!graduated) {
             uint160 sqrtStart = TickMath.getSqrtPriceAtTick(tickStart);

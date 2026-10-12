@@ -40,22 +40,31 @@ interface IMwzDisplayPair {
 ///
 /// - Every trading fee is taken by this hook in NATIVE, gen-7 definition: buys pay floor(curveCost * rate / 10000)
 ///   on top of the curve cost, sells pay floor(curvePayout * rate / 10000) out of the curve payout. Rates are fixed
-///   per coin at launch under hard caps and decay from the launch rate to the bonding rate over the first 60 s.
+///   per coin at launch under hard caps and decay from the launch rate to the bonding rate over the first 60 s after
+///   the coin's trading opens (openAt).
+/// - Fee phase by price (F1, 2026-10-12): a swap that STARTS with the pool price inside A (below the graduation price)
+///   pays the bonding rate with the bonding split (D2 creator share, pendingBondingFees); a swap that starts at or
+///   past the graduation price pays the post-graduation rate (creator share of volume). The graduation latch decides
+///   only the one-time graduation (2% fee, Graduated event), never the rate.
+/// - Scheduled open (B): no swap before the coin's openAt except the launcher's own creator first buy inside launch().
+/// - No sell may leave the price above the start price, where no liquidity exists (F2).
 /// - Partial fills with a price limit: beforeSwap replays the swap exactly (MwzSwapSim) and charges only the part
 ///   that fills; afterSwap re-checks it.
 /// - This hook is the liquidity locker: it owns positions A and B in the PoolManager. No function removes them;
 ///   the only removal is the one-time graduation fee, 2% of A's liquidity, inside the graduation latch.
 /// - Fees accrue as ERC6909 native claims in the PoolManager. Creator ledger per coin (D2 bonding share, then the
 ///   post-graduation share), claimed by the coin's creator to any address; two-step creator transfer; the owner has
-///   no power over it. Router bucket: everything else, paid to the TreasuryRouter (the gen-8 MwzFeeSplitter), which
-///   the owner can only change behind a 48 h timelock that first flushes the bucket to the old router (A4).
+///   no power over it. Router bucket: everything else, paid to the TreasuryRouter (the gen-8 MwzFeeSplitter) on a
+///   claim by the router itself, its operator or the owner (F4). The owner can only change the router behind a 48 h
+///   timelock; the bucket accrued before the change is parked for the old router and paid to it by anyone later
+///   (A4 / F3), with no external call inside the change.
 /// - BNB only: a display-only Uniswap V2 look-alike pair per coin, updated best effort after every swap.
 ///
 /// Money paths (reentrancy guard / CEI / reachable states, see the audit file for the full statement):
 /// - beforeSwap / afterSwap: onlyPoolManager, inside the PoolManager lock; all accounting happens before the only
 ///   external call that is not to the PoolManager (the gas-capped display call, last).
-/// - claimCreator / claimRouter / executeTreasuryRouter: nonReentrant; the ledger is zeroed before the payout
-///   (burn claim + take native), which is the last external call.
+/// - claimCreator / claimRouter / payParkedRouter: nonReentrant; the ledger is zeroed before the payout (burn claim +
+///   take native), which is the last external call. executeTreasuryRouter makes no external call at all.
 /// - _graduate: inside afterSwap; the latch is set before the liquidity removal.
 contract MwzLaunchHook is IHooks, IUnlockCallback {
     using PoolIdLibrary for PoolKey;
@@ -85,6 +94,10 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
     error NoPendingRouter();
     error SeedOwesNative();
     error AmountOverflow();
+    error NotRouterCaller();
+    error TradingNotOpen();
+    error BadOpenAt();
+    error PriceAboveStart();
 
     uint256 public constant BPS = 10_000;
     // hard caps on the per-coin rates (bps of the native curve amount, gen-7 definition)
@@ -95,6 +108,8 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
     uint256 public constant SNIPER_WINDOW = 60;
     uint256 public constant GRAD_FEE_BPS = 200; // one-time: 2% of A's liquidity (= 2% of its native raise)
     uint256 public constant ROUTER_TIMELOCK = 48 hours;
+    uint256 public constant MAX_OPEN_DELAY = 30 days; // B: openAt in [launch, launch + 30 days] (draft scheduler bound)
+    uint256 internal constant OPERATOR_READ_GAS = 30_000; // F4: gas cap for reading the router's operator()
     uint256 public constant DISPLAY_GAS = 60_000; // hard cap for the best-effort display call
     int24 public constant TICK_SPACING = 10;
     uint256 internal constant NATIVE_ID = 0; // ERC6909 id of Currency(address(0))
@@ -105,6 +120,7 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
     bytes32 internal constant T_RATE = keccak256("mwz.gen8.hook.rate");
     bytes32 internal constant T_EXPECT = keccak256("mwz.gen8.hook.expect");
     bytes32 internal constant T_FEE = keccak256("mwz.gen8.hook.fee");
+    bytes32 internal constant T_POST = keccak256("mwz.gen8.hook.post"); // 1 = the swap started at/past graduation
 
     IPoolManager public immutable poolManager;
     address public immutable launcher;
@@ -112,7 +128,7 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
 
     struct PoolState {
         address creator; // 20 bytes
-        uint40 launchTime; // 5
+        uint40 openAt; // 5: trading opens; the launch-fee decay starts here (B). == launch time when not scheduled
         bool graduated; // 1
         int24 tickGrad; // 3
         int24 tickStart; // 3  -> slot 0
@@ -144,6 +160,11 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
     /// @notice Graduation fees accrued since the last router payout.
     uint256 public pendingGradFees;
     mapping(address => RouterPaid) public routerPaid;
+    /// @notice F3: bucket accrued under a previous router, parked at the router change and owed to that router
+    /// (same three counters as routerPaid). Paid by anyone through payParkedRouter.
+    mapping(address => RouterPaid) public routerParked;
+    /// @notice Sum of routerParked[*].amount (claims held for parked buckets; invariant I4).
+    uint256 public parkedOwed;
 
     address public owner; // the MemeWarzone Safe
     address public pendingOwner;
@@ -153,12 +174,23 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
     uint256 private _lock = 1;
 
     event PoolLaunched(
-        PoolId indexed id, address indexed token, address indexed creator, int24 tickStart, int24 tickGrad, uint128 liqA, uint128 liqB, FeeConfig fees, address display
+        PoolId indexed id,
+        address indexed token,
+        address indexed creator,
+        int24 tickStart,
+        int24 tickGrad,
+        uint128 liqA,
+        uint128 liqB,
+        FeeConfig fees,
+        address display,
+        uint40 openAt
     );
     /// @notice One per fee-charging swap. `swapSender` is the contract that called PoolManager.swap (a router), not
     /// the trader: attribution uses the transaction sender (D1). `referrer` is the first word of hookData, analytics
-    /// only, never used for money. `graduated` is the coin's phase when the fee was charged (the crossing swap is a
-    /// bonding swap). `curveAmount` is the native curve cost (buys) or curve payout (sells), i.e. gen-7 volume.
+    /// only, never used for money. `graduated` is the fee phase of this swap (F1): true when the swap STARTED with the
+    /// pool price at or past the graduation price (post-graduation rate and split), false when it started inside A
+    /// (bonding rate and split; the crossing swap and every swap back inside A after a graduation are bonding swaps).
+    /// `curveAmount` is the native curve cost (buys) or curve payout (sells), i.e. gen-7 volume.
     event HookFee(
         PoolId indexed id,
         address indexed swapSender,
@@ -175,7 +207,7 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
     event CreatorProposed(PoolId indexed id, address indexed current, address indexed proposed);
     event CreatorTransferred(PoolId indexed id, address indexed previous, address indexed next);
     event RouterClaimed(address indexed router, uint256 amount, uint256 bondingFees, uint256 gradFees);
-    event RouterFlushFailed(address indexed router, uint256 amount);
+    event RouterParked(address indexed router, uint256 amount, uint256 bondingFees, uint256 gradFees);
     event RouterProposed(address indexed router, uint256 eta);
     event RouterChanged(address indexed previous, address indexed next);
     event RouterProposalCancelled(address indexed router);
@@ -252,15 +284,29 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
         emit RouterProposalCancelled(p);
     }
 
-    /// @notice A4: the bucket accrued under the old router is first paid to the old router (flush), so a redirect
-    /// never takes fees earned before it. If the old router refuses native, the flush is skipped (state restored,
-    /// RouterFlushFailed) and the bucket follows the new router: a broken router can never block the change.
-    function executeTreasuryRouter() external onlyOwner nonReentrant {
+    /// @notice A4 / F3: the bucket accrued under the old router is parked for the old router (routerParked, paid to it
+    /// by anyone through payParkedRouter), so a redirect never takes fees earned before it. No external call here: the
+    /// change cannot fail or be steered by the old router's behaviour or by the PoolManager's lock state.
+    /// @dev CEI: checks, then state only. Reachable only by the owner with a pending proposal at or after its eta.
+    function executeTreasuryRouter() external onlyOwner {
         address p = pendingRouter;
         if (p == address(0)) revert NoPendingRouter();
         if (block.timestamp < routerEta) revert TimelockActive();
         address old = treasuryRouter;
-        if (routerOwed != 0) _payRouter(old, true);
+        uint256 amount = routerOwed;
+        if (amount != 0) {
+            uint256 bonding = pendingBondingFees;
+            uint256 grad = pendingGradFees;
+            routerOwed = 0;
+            pendingBondingFees = 0;
+            pendingGradFees = 0;
+            RouterPaid storage k = routerParked[old];
+            k.amount += amount;
+            k.bondingFees += bonding;
+            k.gradFees += grad;
+            parkedOwed += amount;
+            emit RouterParked(old, amount, bonding, grad);
+        }
         treasuryRouter = p;
         pendingRouter = address(0);
         routerEta = 0;
@@ -311,42 +357,50 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
         emit CreatorClaimed(id, to, amount);
     }
 
-    /// @notice Permissionless: pays the router bucket to the current TreasuryRouter.
+    /// @notice Pays the router bucket to the current TreasuryRouter. F4: callable only by that router, its operator
+    /// (read from the router's operator(), gas-capped; a router without one simply has no operator) or the owner, so a
+    /// third party cannot move cumulative paid between the splitter operator's plan and its route (C-M1 / D-L3).
     function claimRouter() external nonReentrant returns (uint256 amount) {
+        address r = treasuryRouter;
+        if (msg.sender != r && msg.sender != owner && msg.sender != _routerOperator(r)) revert NotRouterCaller();
         amount = routerOwed;
         if (amount == 0) revert NothingOwed();
-        _payRouter(treasuryRouter, false);
-    }
-
-    /// @dev CEI: ledger moved to routerPaid[r] and zeroed, then the payout. `tolerant` (flush only): a failed payout
-    /// restores the ledger instead of reverting. Callers hold the nonReentrant lock.
-    function _payRouter(address r, bool tolerant) private {
-        uint256 amount = routerOwed;
         uint256 bonding = pendingBondingFees;
         uint256 grad = pendingGradFees;
         routerOwed = 0;
         pendingBondingFees = 0;
         pendingGradFees = 0;
+        _payRouter(r, amount, bonding, grad);
+    }
+
+    /// @notice F3: pays a parked bucket to the router it was accrued under. Anyone may call; the money can only go to
+    /// that router. A router that refuses native reverts the call and the parked bucket stays for a later call.
+    function payParkedRouter(address r) external nonReentrant returns (uint256 amount) {
+        RouterPaid storage k = routerParked[r];
+        amount = k.amount;
+        if (amount == 0) revert NothingOwed();
+        uint256 bonding = k.bondingFees;
+        uint256 grad = k.gradFees;
+        delete routerParked[r];
+        parkedOwed -= amount;
+        _payRouter(r, amount, bonding, grad);
+    }
+
+    /// @dev The router's operator() (MwzFeeSplitter.operator), or address(0) if it has none, reverts, burns the gas
+    /// cap or returns short data. Static call: the router cannot change state here.
+    function _routerOperator(address r) private view returns (address op) {
+        (bool ok, bytes memory ret) = r.staticcall{gas: OPERATOR_READ_GAS}(abi.encodeWithSignature("operator()"));
+        if (ok && ret.length >= 32) op = address(uint160(uint256(bytes32(ret))));
+    }
+
+    /// @dev CEI: callers have zeroed the source ledger; here the cumulative paid record, then the payout (last call).
+    /// Callers hold the nonReentrant lock. A payout failure reverts the whole call (state restored by the revert).
+    function _payRouter(address r, uint256 amount, uint256 bonding, uint256 grad) private {
         RouterPaid storage p = routerPaid[r];
         p.amount += amount;
         p.bondingFees += bonding;
         p.gradFees += grad;
-        bytes memory data = abi.encode(ACTION_PAYOUT, abi.encode(r, amount));
-        if (!tolerant) {
-            poolManager.unlock(data);
-        } else {
-            try poolManager.unlock(data) {}
-            catch {
-                p.amount -= amount;
-                p.bondingFees -= bonding;
-                p.gradFees -= grad;
-                routerOwed = uint128(amount);
-                pendingBondingFees = uint128(bonding);
-                pendingGradFees = grad;
-                emit RouterFlushFailed(r, amount);
-                return;
-            }
-        }
+        poolManager.unlock(abi.encode(ACTION_PAYOUT, abi.encode(r, amount)));
         emit RouterClaimed(r, amount, bonding, grad);
     }
 
@@ -363,12 +417,20 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
     }
 
     /// @notice Initializes the coin's pool (only this hook can: beforeInitialize reverts for everyone else), mints A
-    /// and B from the coins the launcher sent, burns the rounding dust, creates the display pair (BNB).
-    function createPool(address token, address creator, int24 tickStart, int24 tickGrad, uint256 coinsA, uint256 coinsB, FeeConfig calldata fees)
-        external
-        returns (PoolKey memory key)
-    {
+    /// and B from the coins the launcher sent, burns the rounding dust, creates the display pair (BNB). `openAt` (B):
+    /// no swap before it except the launcher's own creator first buy; it must lie in [now, now + MAX_OPEN_DELAY].
+    function createPool(
+        address token,
+        address creator,
+        int24 tickStart,
+        int24 tickGrad,
+        uint256 coinsA,
+        uint256 coinsB,
+        FeeConfig calldata fees,
+        uint40 openAt
+    ) external returns (PoolKey memory key) {
         if (msg.sender != launcher) revert NotLauncher();
+        if (openAt < block.timestamp || openAt > block.timestamp + MAX_OPEN_DELAY) revert BadOpenAt();
         if (
             fees.bondingBps > MAX_BONDING_FEE_BPS || fees.postBps > MAX_POST_FEE_BPS || fees.sniperStartBps > MAX_SNIPER_START_BPS
                 || fees.sniperStartBps < fees.bondingBps || fees.creatorPostBps > fees.postBps || fees.creatorBondingBps > MAX_CREATOR_BONDING_BPS
@@ -390,7 +452,7 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
         if (liqA == 0 || liqB == 0) revert BadRange();
         pools[id] = PoolState({
             creator: creator,
-            launchTime: uint40(block.timestamp),
+            openAt: openAt,
             graduated: false,
             tickGrad: tickGrad,
             tickStart: tickStart,
@@ -412,7 +474,7 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
             (uint256 rN, uint256 rC) = _virtualReserves(sqrtStart, liqA);
             IMwzDisplayPair(display).init(rN, rC);
         }
-        emit PoolLaunched(id, token, creator, tickStart, tickGrad, liqA, liqB, fees, display);
+        emit PoolLaunched(id, token, creator, tickStart, tickGrad, liqA, liqB, fees, display, openAt);
     }
 
     /// @dev Only reachable through this hook's own poolManager.unlock: the PoolManager calls back msg.sender of
@@ -441,10 +503,6 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
 
     // ================================================================== fee accrual
 
-    function _rate(PoolState storage st, address sender) internal view returns (uint256) {
-        return MwzFeeMath.rate(st.fees, st.graduated, sender == launcher, st.launchTime, block.timestamp);
-    }
-
     function _tstore(bytes32 slot, uint256 v) private {
         assembly ("memory-safe") {
             tstore(slot, v)
@@ -458,15 +516,15 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
     }
 
     /// @dev Inside the swap (PoolManager-only callbacks). Mints the fee as an ERC6909 native claim to this hook (the
-    /// native never leaves the PoolManager until a payout) and books it: before graduation the creator gets
-    /// floor(fee * creatorBondingBps / 10000) and the full fee counts in pendingBondingFees; after graduation the
-    /// creator gets floor(curveAmount * creatorPostBps / 10000), capped at the fee. The router bucket gets the rest.
-    /// Invariant I4: claims held == routerOwed + sum(creatorOwed) holds after every call.
-    function _accrue(PoolId id, PoolState storage st, address sender, bool buy, uint256 curveAmount, uint256 fee, uint256 rate, bytes calldata hookData)
+    /// native never leaves the PoolManager until a payout) and books it by the swap's fee phase `post` (F1, decided by
+    /// the price at the start of the swap): bonding phase, the creator gets floor(fee * creatorBondingBps / 10000) and
+    /// the full fee counts in pendingBondingFees; post phase, the creator gets floor(curveAmount * creatorPostBps /
+    /// 10000), capped at the fee. The router bucket gets the rest.
+    /// Invariant I4: claims held == routerOwed + parkedOwed + sum(creatorOwed) holds after every call.
+    function _accrue(PoolId id, PoolState storage st, address sender, bool buy, uint256 curveAmount, uint256 fee, uint256 rate, bool grad, bytes calldata hookData)
         internal
     {
         uint256 creatorShare;
-        bool grad = st.graduated;
         if (fee > 0) {
             poolManager.mint(address(this), NATIVE_ID, fee);
             FeeConfig memory f = st.fees;
@@ -511,6 +569,10 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
 
     /// @dev Fee in the specified currency (native): exact-input buys and exact-output sells. The fee is computed up
     /// front (simulated when a price limit is set) and taken through BeforeSwapDelta.
+    /// B: no swap before openAt except the launcher's (its creator first buy, only inside launch()).
+    /// F1: the rate and the split follow the pool price at the start of the swap: inside A (sqrtP > sqrtGrad, i.e. the
+    /// coin price below the graduation price) the bonding rate with its launch decay; at or past the graduation price
+    /// the post-graduation rate. Phase and rate are handed to afterSwap in transient storage.
     function beforeSwap(address sender, PoolKey calldata key, SwapParams calldata params, bytes calldata hookData)
         external
         onlyPoolManager
@@ -519,8 +581,14 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
         PoolId id = key.toId();
         PoolState storage st = pools[id];
         if (st.creator == address(0)) revert UnknownPool();
-        uint256 rate = _rate(st, sender);
+        bool isLauncher = sender == launcher;
+        uint256 openAt = st.openAt;
+        if (block.timestamp < openAt && !isLauncher) revert TradingNotOpen();
+        (uint160 sqrtP,,,) = poolManager.getSlot0(id);
+        bool post = sqrtP <= st.sqrtGrad;
+        uint256 rate = MwzFeeMath.rate(st.fees, post, isLauncher, openAt, block.timestamp);
         _tstore(T_RATE, rate);
+        _tstore(T_POST, post ? 1 : 0);
         int128 specified;
         if (params.zeroForOne && params.amountSpecified < 0) {
             // exact-input buy. gen-7: total = cost + floor(cost * rate / B). An exact-input swap must consume its
@@ -537,7 +605,7 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
             }
             _tstore(T_EXPECT, cost);
             _tstore(T_FEE, fee);
-            _accrue(id, st, sender, true, cost, fee, rate, hookData);
+            _accrue(id, st, sender, true, cost, fee, rate, post, hookData);
             specified = fee.toInt128();
         } else if (!params.zeroForOne && params.amountSpecified > 0) {
             // exact-output sell: the trader receives net; the curve pays gross with gross - floor(gross*rate/B) == net
@@ -553,7 +621,7 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
             }
             _tstore(T_EXPECT, gross);
             _tstore(T_FEE, fee);
-            _accrue(id, st, sender, false, gross, fee, rate, hookData);
+            _accrue(id, st, sender, false, gross, fee, rate, post, hookData);
             specified = fee.toInt128();
         }
         return (IHooks.beforeSwap.selector, toBeforeSwapDelta(specified, 0), 0);
@@ -564,7 +632,8 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
     }
 
     /// @dev Fee in the unspecified currency (native): exact-output buys and exact-input sells, from the actual
-    /// amounts, taken through the return delta. Then the graduation latch, then the display (last, gas-capped).
+    /// amounts, taken through the return delta. Then the start-price bound (F2), the graduation latch, then the
+    /// display (last, gas-capped).
     function afterSwap(address sender, PoolKey calldata key, SwapParams calldata params, BalanceDelta delta, bytes calldata hookData)
         external
         onlyPoolManager
@@ -573,6 +642,7 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
         PoolId id = key.toId();
         PoolState storage st = pools[id];
         uint256 rate = _tload(T_RATE);
+        bool post = _tload(T_POST) == 1;
         int128 unspecified;
         uint256 nativeTrader; // native the trader pays (buy) or receives (sell), for the display
         if (params.zeroForOne) {
@@ -580,7 +650,7 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
             if (params.amountSpecified > 0) {
                 // exact-output buy: fee on top of the curve cost
                 uint256 fee = (cost * rate) / BPS;
-                _accrue(id, st, sender, true, cost, fee, rate, hookData);
+                _accrue(id, st, sender, true, cost, fee, rate, post, hookData);
                 unspecified = fee.toInt128();
                 nativeTrader = cost + fee;
             } else {
@@ -592,7 +662,7 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
             if (params.amountSpecified < 0) {
                 // exact-input sell: fee out of the curve payout
                 uint256 fee = (payout * rate) / BPS;
-                _accrue(id, st, sender, false, payout, fee, rate, hookData);
+                _accrue(id, st, sender, false, payout, fee, rate, post, hookData);
                 unspecified = fee.toInt128();
                 nativeTrader = payout - fee;
             } else {
@@ -601,14 +671,18 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
             }
         }
 
-        // Graduation latch: the first swap that leaves the price at or past the top of A (I7).
-        if (!st.graduated) {
-            (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(id);
-            if (sqrtPriceX96 <= st.sqrtGrad) _graduate(key, id, st);
-        }
-
+        bool graduated = st.graduated;
         address display = displayPair[id];
-        if (display != address(0)) _updateDisplay(id, display, sender, params.zeroForOne, nativeTrader, delta);
+        // a buy of a graduated coin without a display needs no price: skip the read (gas)
+        if (params.zeroForOne && graduated && display == address(0)) return (IHooks.afterSwap.selector, unspecified);
+        (uint160 sqrtAfter,,,) = poolManager.getSlot0(id);
+        // F2: no liquidity exists above the start price; a sell may never leave the price there (it would move the
+        // price to the limit for free, A-3). Sellers near the floor set their price limit at or below sqrtStart.
+        if (!params.zeroForOne && sqrtAfter > TickMath.getSqrtPriceAtTick(st.tickStart)) revert PriceAboveStart();
+        // Graduation latch: the first swap that leaves the price at or past the top of A (I7).
+        if (!graduated && sqrtAfter <= st.sqrtGrad) _graduate(key, id, st);
+
+        if (display != address(0)) _updateDisplay(id, display, sqrtAfter, sender, params.zeroForOne, nativeTrader, delta);
         return (IHooks.afterSwap.selector, unspecified);
     }
 
@@ -643,8 +717,7 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
 
     /// @dev Fixed 60k gas cap and no return data copied: a failing or gas-burning display can never revert the swap
     /// (I11). tx.origin is used only as the display `to` (A3), never for authorization or money.
-    function _updateDisplay(PoolId id, address display, address sender, bool buy, uint256 nativeTrader, BalanceDelta delta) internal {
-        (uint160 sqrtP,,,) = poolManager.getSlot0(id);
+    function _updateDisplay(PoolId id, address display, uint160 sqrtP, address sender, bool buy, uint256 nativeTrader, BalanceDelta delta) internal {
         uint128 liq = poolManager.getLiquidity(id);
         if (liq == 0) liq = pools[id].liqA; // at/above the start price only A is next
         (uint256 rN, uint256 rC) = _virtualReserves(sqrtP, liq);

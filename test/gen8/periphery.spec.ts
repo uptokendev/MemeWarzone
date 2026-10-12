@@ -133,7 +133,7 @@ describe("gen8 periphery", function () {
       const airdrop = rsaMin - recruiter - squad > 0n ? rsaMin - recruiter - squad : 0n;
       // route never claims: before the claim the paid ledger is 0, so a plan of 0 has nothing to route
       await expect(s.connect(env.operator).route(1, 0n, recruiter, squad, airdrop, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "NothingToRoute");
-      await (await env.hook.claimRouter()).wait();
+      await (await env.hook.connect(env.operator).claimRouter()).wait();
       const paid = (await env.hook.routerPaid(await s.getAddress())).amount;
       expect(paid).to.eq(owed);
       await expect(s.connect(env.attacker).route(1, paid, recruiter, squad, airdrop, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "NotOperator");
@@ -176,7 +176,9 @@ describe("gen8 periphery", function () {
       await expect(env.attacker.sendTransaction({ to: await s.getAddress(), value: 1n })).to.be.reverted;
       await expect(s.connect(env.attacker).setOperator(env.attacker.address)).to.be.revertedWithCustomError(s, "NotAdmin");
       await expect(s.connect(env.safe).setOperator(env.other.address)).to.emit(s, "OperatorUpdated").withArgs(env.operator.address, env.other.address);
-      await (await env.hook.claimRouter()).wait(); // anyone may claim first; route still sees the paid ledger
+      // F4: the hook reads the splitter's operator live: the old key can no longer claim, the new one can
+      await expect(env.hook.connect(env.operator).claimRouter()).to.be.revertedWithCustomError(env.hook, "NotRouterCaller");
+      await (await env.hook.connect(env.other).claimRouter()).wait();
       const [B, G] = [(await s.pending())[1], (await s.pending())[2]];
       const [, , rsaMin] = await s.bands(B, G);
       const paid = (await env.hook.routerPaid(await s.getAddress())).amount;
@@ -190,7 +192,7 @@ describe("gen8 periphery", function () {
       const { env } = await loadFixture(withFees);
       const s = env.splitter;
       await (await env.community.connect(env.safe).setRouter(env.other.address)).wait();
-      await (await env.hook.claimRouter()).wait();
+      await (await env.hook.connect(env.operator).claimRouter()).wait();
       const [, B, G] = await s.pending();
       const [, , rsaMin] = await s.bands(B, G);
       const bal = await ethers.provider.getBalance(await s.getAddress());
@@ -201,7 +203,7 @@ describe("gen8 periphery", function () {
       expect(await env.recruiter.received()).to.eq(rsaMin);
     });
 
-    it("after a router change the old splitter routes what the A4 flush paid it: the flush counts as a claim (routerPaid per payee)", async () => {
+    it("after a router change the old splitter routes its parked bucket once it is paid: payParkedRouter counts as a claim (routerPaid per payee)", async () => {
       const { env, P } = await loadFixture(withFees);
       const s = env.splitter;
       const owed = await env.hook.routerOwed();
@@ -210,10 +212,13 @@ describe("gen8 periphery", function () {
       await mineAt((await env.hook.routerEta()) + 1n);
       await (await env.hook.connect(env.safe).executeTreasuryRouter()).wait();
       await trade(env, P, { wallet: env.bot, buy: true, exactIn: true, amount: WAD }); // accrues for the new router
+      expect((await s.pending())[0]).to.eq(0n); // parked, not yet paid
+      expect((await env.hook.routerParked(await s.getAddress())).amount).to.eq(owed);
+      await (await env.hook.connect(env.attacker).payParkedRouter(await s.getAddress())).wait();
       const [total, B, G] = await s.pending();
       expect(total).to.eq(owed);
       const paid = (await env.hook.routerPaid(await s.getAddress())).amount;
-      expect(paid).to.eq(owed); // the flush recorded the bucket for the old router exactly like a claim
+      expect(paid).to.eq(owed); // the parked payout recorded the bucket for the old router exactly like a claim
       const [, , rsaMin] = await s.bands(B, G);
       await (await s.connect(env.operator).route(1, paid, rsaMin, 0n, 0n, ethers.ZeroHash)).wait();
       expect(await ethers.provider.getBalance(await s.getAddress())).to.eq(0n);
@@ -223,12 +228,12 @@ describe("gen8 periphery", function () {
     it("a post-graduation-only run must route nothing to the band and everything outside the league to protocol", async () => {
       const { env, P } = await loadFixture(withFees);
       const s = env.splitter;
-      await (await env.hook.claimRouter()).wait();
+      await (await env.hook.connect(env.operator).claimRouter()).wait();
       const p1 = await s.pending();
       const [, , m] = await s.bands(p1[1], p1[2]);
       await (await s.connect(env.operator).route(1, (await env.hook.routerPaid(await s.getAddress())).amount, m, 0n, 0n, ethers.ZeroHash)).wait();
       await trade(env, P, { wallet: env.bot, buy: true, exactIn: true, amount: WAD });
-      await (await env.hook.claimRouter()).wait();
+      await (await env.hook.connect(env.operator).claimRouter()).wait();
       const paid2 = (await env.hook.routerPaid(await s.getAddress())).amount;
       await expect(s.connect(env.operator).route(2, paid2, 1n, 0n, 0n, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "OutOfBand");
       const pb = await env.protocol.received();
@@ -243,7 +248,7 @@ describe("gen8 periphery", function () {
       const b = await keepCoin();
       const { env, P } = b;
       for (let i = 0; i < 4; i++) await trade(env, P, { wallet: env.bot, buy: true, exactIn: true, amount: WAD / 2n + BigInt(i) });
-      await (await env.hook.claimRouter()).wait();
+      await (await env.hook.connect(env.operator).claimRouter()).wait();
       return b;
     }
     // the operator's plan: claim done, B / G / total read from the paid ledger, standard_linked-shaped split
@@ -276,7 +281,7 @@ describe("gen8 periphery", function () {
       expect((await env.protocol.received()) - pb).to.eq(p.total - run.weeklyLeague - run.monthlyLeague - p.recruiter - p.squad - p.airdrop); // nothing extra fell into protocol
       expect(await env.hook.routerOwed()).to.eq(late); // the late fee is still in the hook bucket
       // next run: claim, re-plan, full league + band on the late fee
-      await (await env.hook.claimRouter()).wait();
+      await (await env.hook.connect(env.operator).claimRouter()).wait();
       const q = await plan(env);
       expect(q.total).to.eq(late);
       expect(q.B).to.eq(lateB);
@@ -289,12 +294,13 @@ describe("gen8 periphery", function () {
       expect(await ethers.provider.getBalance(await s.getAddress())).to.eq(0n);
     });
 
-    it("a third-party claim between the plan and the route makes the route revert PaidMismatch; the re-plan succeeds", async () => {
+    it("F4: a third party cannot claim between plan and route; a second claim by the operator (or the Safe) makes the route revert PaidMismatch and the re-plan succeeds", async () => {
       const { env, P } = await loadFixture(claimed);
       const s = env.splitter;
       const p = await plan(env);
       await trade(env, P, { wallet: env.bot, buy: true, exactIn: true, amount: WAD });
-      await (await env.hook.connect(env.attacker).claimRouter()).wait(); // anyone may claim
+      await expect(env.hook.connect(env.attacker).claimRouter()).to.be.revertedWithCustomError(env.hook, "NotRouterCaller");
+      await (await env.hook.connect(env.safe).claimRouter()).wait(); // our own second claim (e.g. a duplicate worker)
       const actual = (await env.hook.routerPaid(await s.getAddress())).amount;
       expect(actual).to.be.gt(p.paid);
       await expect(s.connect(env.operator).route(1, p.paid, p.recruiter, p.squad, p.airdrop, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "PaidMismatch").withArgs(p.paid, actual);
@@ -307,7 +313,7 @@ describe("gen8 periphery", function () {
       expect(await ethers.provider.getBalance(await s.getAddress())).to.eq(0n);
     });
 
-    it("the A4 router-change flush into the splitter counts as a claim: a plan made before it reverts, the re-plan routes the flushed bucket", async () => {
+    it("F3: the router change parks the bucket (a plan made before it still routes); the parked payout is the old splitter's next run", async () => {
       const { env, P } = await loadFixture(claimed);
       const s = env.splitter;
       const p = await plan(env);
@@ -316,16 +322,19 @@ describe("gen8 periphery", function () {
       const sink = await (await ethers.getContractFactory("NativeSink")).deploy();
       await (await env.hook.connect(env.safe).proposeTreasuryRouter(await sink.getAddress())).wait();
       await mineAt((await env.hook.routerEta()) + 1n);
-      await (await env.hook.connect(env.safe).executeTreasuryRouter()).wait(); // flushes `owed` to the splitter
+      await (await env.hook.connect(env.safe).executeTreasuryRouter()).wait(); // parks `owed` for the splitter
+      expect((await env.hook.routerPaid(await s.getAddress())).amount).to.eq(p.paid);
+      await (await s.connect(env.operator).route(1, p.paid, p.recruiter, p.squad, p.airdrop, ethers.ZeroHash)).wait();
+      await (await env.hook.payParkedRouter(await s.getAddress())).wait();
       const actual = (await env.hook.routerPaid(await s.getAddress())).amount;
       expect(actual).to.eq(p.paid + owed);
-      await expect(s.connect(env.operator).route(1, p.paid, p.recruiter, p.squad, p.airdrop, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "PaidMismatch");
       const q = await plan(env);
-      await (await s.connect(env.operator).route(1, q.paid, q.recruiter, q.squad, q.airdrop, ethers.ZeroHash)).wait();
+      expect(q.paid).to.eq(actual);
+      await (await s.connect(env.operator).route(2, q.paid, q.recruiter, q.squad, q.airdrop, ethers.ZeroHash)).wait();
       expect(await ethers.provider.getBalance(await s.getAddress())).to.eq(0n);
       // later fees go to the new router; the old splitter has nothing more to route
       await trade(env, P, { wallet: env.bot, buy: true, exactIn: true, amount: WAD });
-      await expect(s.connect(env.operator).route(2, q.paid, 0n, 0n, 0n, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "NothingToRoute");
+      await expect(s.connect(env.operator).route(3, q.paid, 0n, 0n, 0n, ethers.ZeroHash)).to.be.revertedWithCustomError(s, "NothingToRoute");
     });
   });
 
@@ -383,7 +392,7 @@ describe("gen8 periphery", function () {
       await expect(v.connect(env.creator).claimCreatorFees(coins.holders.id, env.creator.address)).to.be.revertedWithCustomError(v, "NothingToClaim");
     });
 
-    it("holder batches: operator proposes within the weekly cap, admin approves the exact root and total, executes after the delay; veto restores", async () => {
+    it("holder batches: operator proposes within the weekly cap, admin approves the exact root, total and deadline, executes after the delay; veto restores", async () => {
       const { env, coins } = await loadFixture(choiceCoins);
       const v = env.vault;
       for (const P of [coins.holders, coins.split]) {
@@ -394,17 +403,18 @@ describe("gen8 periphery", function () {
       const amts = [await v.holderBalance(ids[0]), await v.holderBalance(ids[1])];
       const total = amts[0] + amts[1];
       const root = ethers.id("root");
-      await expect(v.connect(env.attacker).proposeHolderBatch(ethers.id("b1"), root, 0, ids, amts)).to.be.revertedWithCustomError(v, "OnlyOperator");
-      await expect(v.connect(env.operator).proposeHolderBatch(ethers.id("b1"), root, 0, [coins.buyback.id], [1n])).to.be.revertedWithCustomError(v, "WrongChoice");
-      await expect(v.connect(env.operator).proposeHolderBatch(ethers.id("b1"), root, 0, ids, [amts[0] + 1n, amts[1]])).to.be.revertedWithCustomError(v, "Insufficient");
-      await expect(v.connect(env.operator).proposeHolderBatch(ethers.ZeroHash, root, 0, ids, amts)).to.be.revertedWithCustomError(v, "BadBatch");
-      await (await v.connect(env.operator).proposeHolderBatch(ethers.id("b1"), root, 0, ids, amts)).wait();
-      await expect(v.connect(env.operator).proposeHolderBatch(ethers.id("b1"), root, 0, ids, amts)).to.be.revertedWithCustomError(v, "AlreadySet");
+      const DL = (await now()) + 30n * 86400n; // F5: a bounded claim deadline, approved by the Safe
+      await expect(v.connect(env.attacker).proposeHolderBatch(ethers.id("b1"), root, DL, ids, amts)).to.be.revertedWithCustomError(v, "OnlyOperator");
+      await expect(v.connect(env.operator).proposeHolderBatch(ethers.id("b1"), root, DL, [coins.buyback.id], [1n])).to.be.revertedWithCustomError(v, "WrongChoice");
+      await expect(v.connect(env.operator).proposeHolderBatch(ethers.id("b1"), root, DL, ids, [amts[0] + 1n, amts[1]])).to.be.revertedWithCustomError(v, "Insufficient");
+      await expect(v.connect(env.operator).proposeHolderBatch(ethers.ZeroHash, root, DL, ids, amts)).to.be.revertedWithCustomError(v, "BadBatch");
+      await (await v.connect(env.operator).proposeHolderBatch(ethers.id("b1"), root, DL, ids, amts)).wait();
+      await expect(v.connect(env.operator).proposeHolderBatch(ethers.id("b1"), root, DL, ids, amts)).to.be.revertedWithCustomError(v, "AlreadySet");
       expect(await v.holderBalance(ids[0])).to.eq(0n);
       await expect(v.connect(env.operator).executeHolderBatch(ethers.id("b1"))).to.be.revertedWithCustomError(v, "NotApproved");
-      await expect(v.connect(env.safe).approveHolderBatch(ethers.id("b1"), ethers.id("other"), total)).to.be.revertedWithCustomError(v, "BadBatch");
-      await expect(v.connect(env.operator).approveHolderBatch(ethers.id("b1"), root, total)).to.be.revertedWithCustomError(v, "OnlyAdmin");
-      await (await v.connect(env.safe).approveHolderBatch(ethers.id("b1"), root, total)).wait();
+      await expect(v.connect(env.safe).approveHolderBatch(ethers.id("b1"), ethers.id("other"), total, DL)).to.be.revertedWithCustomError(v, "BadBatch");
+      await expect(v.connect(env.operator).approveHolderBatch(ethers.id("b1"), root, total, DL)).to.be.revertedWithCustomError(v, "OnlyAdmin");
+      await (await v.connect(env.safe).approveHolderBatch(ethers.id("b1"), root, total, DL)).wait();
       await expect(v.connect(env.operator).executeHolderBatch(ethers.id("b1"))).to.be.revertedWithCustomError(v, "TooSoon");
       await mineAt((await now()) + 86400n);
       await (await v.connect(env.operator).executeHolderBatch(ethers.id("b1"))).wait();
@@ -416,12 +426,12 @@ describe("gen8 periphery", function () {
       await trade(env, coins.holders, { wallet: env.bot, buy: true, exactIn: true, amount: WAD });
       await (await v.pull(coins.holders.id)).wait();
       const a2 = await v.holderBalance(coins.holders.id);
-      await (await v.connect(env.operator).proposeHolderBatch(ethers.id("b2"), root, 0, [coins.holders.id], [a2])).wait();
+      await (await v.connect(env.operator).proposeHolderBatch(ethers.id("b2"), root, DL, [coins.holders.id], [a2])).wait();
       await (await v.connect(env.safe).vetoHolderBatch(ethers.id("b2"))).wait();
       expect(await v.holderBalance(coins.holders.id)).to.eq(a2);
       // weekly cap
       await (await v.connect(env.safe).setCaps(10n * WAD, 100n * WAD, 0, 50, 1n)).wait();
-      await expect(v.connect(env.operator).proposeHolderBatch(ethers.id("b3"), root, 0, [coins.holders.id], [a2])).to.be.revertedWithCustomError(v, "CapExceeded");
+      await expect(v.connect(env.operator).proposeHolderBatch(ethers.id("b3"), root, DL, [coins.holders.id], [a2])).to.be.revertedWithCustomError(v, "CapExceeded");
       // unclaimed re-credit: exact value, holders / split coins only
       await expect(v.connect(env.safe).creditUnclaimedHolders([coins.holders.id], [5n], { value: 4n })).to.be.revertedWithCustomError(v, "ValueMismatch");
       await expect(v.connect(env.safe).creditUnclaimedHolders([coins.buyback.id], [5n], { value: 5n })).to.be.revertedWithCustomError(v, "WrongChoice");

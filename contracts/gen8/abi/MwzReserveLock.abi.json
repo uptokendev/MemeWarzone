@@ -52,6 +52,16 @@
   },
   {
     "inputs": [],
+    "name": "PoolManagerUnlocked",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "PriceBelowGraduation",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "ReentrancyGuardReentrantCall",
     "type": "error"
   },
@@ -206,6 +216,19 @@
     "name": "lock",
     "outputs": [],
     "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "poolManager",
+    "outputs": [
+      {
+        "internalType": "contract IPoolManager",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
     "type": "function"
   },
   {

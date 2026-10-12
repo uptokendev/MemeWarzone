@@ -100,20 +100,25 @@ describe("gen8 MwzLaunchHook", function () {
     it("reverts for anyone but the launcher, on every cap, on bad ranges, on zero addresses and on an existing pool", async () => {
       const { env, P } = await loadFixture(base);
       const fees = [200, 100, 50, 9000, 560];
-      await expect(env.hook.connect(env.attacker).createPool(env.other.address, env.attacker.address, P.tickStart, P.tickGrad, 1n, 1n, fees)).to.be.revertedWithCustomError(env.hook, "NotLauncher");
+      const oa = (await now()) + 100n;
+      await expect(env.hook.connect(env.attacker).createPool(env.other.address, env.attacker.address, P.tickStart, P.tickGrad, 1n, 1n, fees, oa)).to.be.revertedWithCustomError(env.hook, "NotLauncher");
       const L = await impersonate(await env.launcher.getAddress());
       const h = env.hook.connect(L);
       const tok = env.other.address;
       for (const f of [[201, 100, 50, 9000, 560], [200, 101, 50, 9000, 560], [200, 100, 50, 9001, 560], [200, 100, 101, 9000, 560], [200, 100, 50, 199, 560], [200, 100, 50, 9000, 1001]]) {
-        await expect(h.createPool(tok, env.creator.address, P.tickStart, P.tickGrad, COINS_A, COINS_B, f)).to.be.revertedWithCustomError(env.hook, "FeeCapExceeded");
+        await expect(h.createPool(tok, env.creator.address, P.tickStart, P.tickGrad, COINS_A, COINS_B, f, oa)).to.be.revertedWithCustomError(env.hook, "FeeCapExceeded");
       }
       for (const [ts, tg] of [[P.tickStart + 1, P.tickGrad], [P.tickStart, P.tickGrad + 3], [P.tickGrad, P.tickGrad], [P.tickGrad - 10, P.tickGrad], [P.tickStart, MIN_USABLE_TICK], [887280, P.tickGrad]]) {
-        await expect(h.createPool(tok, env.creator.address, ts, tg, COINS_A, COINS_B, fees)).to.be.revertedWithCustomError(env.hook, "BadRange");
+        await expect(h.createPool(tok, env.creator.address, ts, tg, COINS_A, COINS_B, fees, oa)).to.be.revertedWithCustomError(env.hook, "BadRange");
       }
-      await expect(h.createPool(tok, env.creator.address, P.tickStart, P.tickGrad, 0n, COINS_B, fees)).to.be.revertedWithCustomError(env.hook, "BadRange");
-      await expect(h.createPool(tok, ethers.ZeroAddress, P.tickStart, P.tickGrad, COINS_A, COINS_B, fees)).to.be.revertedWithCustomError(env.hook, "ZeroAddress");
-      await expect(h.createPool(ethers.ZeroAddress, env.creator.address, P.tickStart, P.tickGrad, COINS_A, COINS_B, fees)).to.be.revertedWithCustomError(env.hook, "ZeroAddress");
-      await expect(h.createPool(P.token, env.creator.address, P.tickStart, P.tickGrad, COINS_A, COINS_B, fees)).to.be.revertedWithCustomError(env.hook, "PoolExists");
+      await expect(h.createPool(tok, env.creator.address, P.tickStart, P.tickGrad, 0n, COINS_B, fees, oa)).to.be.revertedWithCustomError(env.hook, "BadRange");
+      await expect(h.createPool(tok, ethers.ZeroAddress, P.tickStart, P.tickGrad, COINS_A, COINS_B, fees, oa)).to.be.revertedWithCustomError(env.hook, "ZeroAddress");
+      await expect(h.createPool(ethers.ZeroAddress, env.creator.address, P.tickStart, P.tickGrad, COINS_A, COINS_B, fees, oa)).to.be.revertedWithCustomError(env.hook, "ZeroAddress");
+      await expect(h.createPool(P.token, env.creator.address, P.tickStart, P.tickGrad, COINS_A, COINS_B, fees, oa)).to.be.revertedWithCustomError(env.hook, "PoolExists");
+      // B: openAt in [now, now + 30 days]
+      const t0 = await now();
+      await expect(h.createPool(tok, env.creator.address, P.tickStart, P.tickGrad, COINS_A, COINS_B, fees, t0 - 1n)).to.be.revertedWithCustomError(env.hook, "BadOpenAt");
+      await expect(h.createPool(tok, env.creator.address, P.tickStart, P.tickGrad, COINS_A, COINS_B, fees, t0 + 30n * 86400n + 100n)).to.be.revertedWithCustomError(env.hook, "BadOpenAt");
     });
 
     it("launch state: positions A (850M) and B (130M) owned by the hook, rates stored, LP fee 0, hook holds 0 coins, dust burned (I5, I13)", async () => {
@@ -271,7 +276,8 @@ describe("gen8 MwzLaunchHook", function () {
       await pf(false, R * 2n, P.sqrtGrad);
       await pf(false, R * 5n, P.sqrtGrad + P.sqrtGrad / 20n);
       expect((await env.hook.pools(P.id)).graduated).to.eq(true);
-      expect(await env.lens.currentFeeBps(P.id, env.bot.address)).to.eq(100n);
+      // F1: back inside A, the bonding rate applies again (the latch never resets)
+      expect(await env.lens.currentFeeBps(P.id, env.bot.address)).to.eq(200n);
     });
 
     it("a limit already passed fills nothing in the preview; the PoolManager rejects the swap", async () => {
@@ -367,17 +373,23 @@ describe("gen8 MwzLaunchHook", function () {
       }
     });
 
-    it("falling back into A keeps the 1% rate; re-crossing never graduates again or takes another 2% (I7)", async () => {
+    it("falling back into A brings the bonding rate back (F1); re-crossing never graduates again or takes another 2% (I7)", async () => {
       const { env, P } = await loadFixture(graduated);
       const R = nativeTargetA(P);
-      await trade(env, P, { wallet: env.bot, buy: false, exactIn: false, amount: R * 5n, sqrtLimit: P.sqrtGrad + P.sqrtGrad / 20n, limit: 10n ** 30n });
+      const back = await trade(env, P, { wallet: env.bot, buy: false, exactIn: false, amount: R * 5n, sqrtLimit: P.sqrtGrad + P.sqrtGrad / 20n, limit: 10n ** 30n });
+      expect([back.rate, back.graduatedFlag]).to.deep.eq([100n, true]); // started past graduation
       expect((await slot0(env, P)).sqrtP > P.sqrtGrad).to.eq(true);
-      expect(await env.lens.currentFeeBps(P.id, env.bot.address)).to.eq(100n);
+      expect(await env.lens.currentFeeBps(P.id, env.bot.address)).to.eq(200n);
       const g = await env.hook.pendingGradFees();
+      const pb = await env.hook.pendingBondingFees();
       const t = await trade(env, P, { wallet: env.bot, buy: true, exactIn: true, amount: R });
       expect(t.graduated).to.eq(null);
-      expect(t.rate).to.eq(100n);
+      expect([t.rate, t.graduatedFlag]).to.deep.eq([200n, false]); // the re-crossing swap starts in A: bonding
+      expect((await env.hook.pendingBondingFees()) - pb).to.eq(t.fee);
       expect(await env.hook.pendingGradFees()).to.eq(g);
+      expect((await slot0(env, P)).sqrtP <= P.sqrtGrad).to.eq(true);
+      const t2 = await trade(env, P, { wallet: env.bot, buy: true, exactIn: true, amount: WAD });
+      expect([t2.rate, t2.graduatedFlag]).to.deep.eq([100n, true]);
     });
   });
 
@@ -493,27 +505,59 @@ describe("gen8 MwzLaunchHook", function () {
     });
   });
 
-  describe("router bucket, timelock and A4 flush (I10)", () => {
-    it("claimRouter is permissionless, pays the current router and records routerPaid; nothing owed reverts", async () => {
+  describe("router bucket, timelock, parked old-router bucket (I10, A4 / F3, F4)", () => {
+    it("F4: claimRouter only by the router, its operator or the owner; pays the current router and records routerPaid; nothing owed reverts", async () => {
       const { env, P } = await loadFixture(graduated);
       const owed = await env.hook.routerOwed();
       const bonding = await env.hook.pendingBondingFees();
       const grad = await env.hook.pendingGradFees();
       const splitter = await env.splitter.getAddress();
       const sb = await ethers.provider.getBalance(splitter);
-      await expect(env.hook.connect(env.attacker).claimRouter()).to.emit(env.hook, "RouterClaimed").withArgs(splitter, owed, bonding, grad);
+      for (const w of [env.attacker, env.bot, env.creator, env.deployer]) {
+        await expect(env.hook.connect(w).claimRouter()).to.be.revertedWithCustomError(env.hook, "NotRouterCaller");
+      }
+      await expect(env.hook.connect(env.operator).claimRouter()).to.emit(env.hook, "RouterClaimed").withArgs(splitter, owed, bonding, grad);
       expect((await ethers.provider.getBalance(splitter)) - sb).to.eq(owed);
       const paid = await env.hook.routerPaid(splitter);
       expect([paid.amount, paid.bondingFees, paid.gradFees]).to.deep.eq([owed, bonding, grad]);
       expect(await env.hook.routerOwed()).to.eq(0n);
       expect(await env.hook.pendingBondingFees()).to.eq(0n);
       expect(await env.hook.pendingGradFees()).to.eq(0n);
-      await expect(env.hook.claimRouter()).to.be.revertedWithCustomError(env.hook, "NothingOwed");
+      await expect(env.hook.connect(env.operator).claimRouter()).to.be.revertedWithCustomError(env.hook, "NothingOwed");
+      await expect(env.hook.connect(env.safe).claimRouter()).to.be.revertedWithCustomError(env.hook, "NothingOwed"); // owner passes the gate
+      // the splitter admin rotates the operator: the hook follows the router's operator() live
+      await trade(env, P, { wallet: env.bot, buy: true, exactIn: true, amount: WAD });
+      await (await env.splitter.connect(env.safe).setOperator(env.other.address)).wait();
+      await expect(env.hook.connect(env.operator).claimRouter()).to.be.revertedWithCustomError(env.hook, "NotRouterCaller");
+      await (await env.hook.connect(env.other).claimRouter()).wait();
+      // operator cleared: only the owner (and the router itself) remain
+      await trade(env, P, { wallet: env.bot, buy: true, exactIn: true, amount: WAD });
+      await (await env.splitter.connect(env.safe).setOperator(ethers.ZeroAddress)).wait();
+      await expect(env.hook.connect(env.other).claimRouter()).to.be.revertedWithCustomError(env.hook, "NotRouterCaller");
+      await (await env.hook.connect(env.safe).claimRouter()).wait();
       const l = await ledgers(env, [P.id]);
       expect(l.claims).to.eq(l.sum);
     });
 
-    it("propose / cancel / execute: owner only, 48 h, then the old router is flushed first (A4)", async () => {
+    it("F4: a router without operator(), with a reverting one or a gas-burning one: only the router itself and the owner can claim", async () => {
+      const { env, P } = await loadFixture(graduated);
+      for (const kind of ["NativeSink", "RevertingOperatorSink", "GasBurningOperatorSink"]) {
+        const r = await (await ethers.getContractFactory(kind)).deploy();
+        await (await env.hook.connect(env.safe).proposeTreasuryRouter(await r.getAddress())).wait();
+        await mineAt((await env.hook.routerEta()) + 1n);
+        await (await env.hook.connect(env.safe).executeTreasuryRouter()).wait();
+        await trade(env, P, { wallet: env.bot, buy: true, exactIn: true, amount: WAD });
+        await expect(env.hook.connect(env.operator).claimRouter(), kind).to.be.revertedWithCustomError(env.hook, "NotRouterCaller");
+        await expect(env.hook.connect(env.attacker).claimRouter({ gasLimit: 1_000_000n }), kind).to.be.revertedWithCustomError(env.hook, "NotRouterCaller");
+        const owed = await env.hook.routerOwed();
+        await (await env.hook.connect(env.safe).claimRouter()).wait();
+        expect(await r.received(), kind).to.eq(owed);
+      }
+      const l = await ledgers(env, [P.id]);
+      expect(l.claims).to.eq(l.sum);
+    });
+
+    it("propose / cancel / execute: owner only, 48 h; the old router's bucket is parked for it and paid to it by anyone (A4 / F3)", async () => {
       const { env, P } = await loadFixture(graduated);
       const sink = await (await ethers.getContractFactory("NativeSink")).deploy();
       const next = await sink.getAddress();
@@ -536,43 +580,90 @@ describe("gen8 MwzLaunchHook", function () {
       await expect(env.hook.connect(env.attacker).executeTreasuryRouter()).to.be.revertedWithCustomError(env.hook, "NotOwner");
       const splitter = await env.splitter.getAddress();
       const owed = await env.hook.routerOwed();
+      const bonding = await env.hook.pendingBondingFees();
+      const grad = await env.hook.pendingGradFees();
       const sb = await ethers.provider.getBalance(splitter);
-      const tx = env.hook.connect(env.safe).executeTreasuryRouter();
-      await expect(tx).to.emit(env.hook, "RouterClaimed").withArgs(splitter, owed, (v: bigint) => true, (v: bigint) => true);
-      expect((await ethers.provider.getBalance(splitter)) - sb).to.eq(owed); // flushed to the OLD router
+      const rc = await (await env.hook.connect(env.safe).executeTreasuryRouter()).wait();
+      const names = rc!.logs.map((l: any) => { try { return env.hook.interface.parseLog(l)?.name; } catch { return null; } });
+      expect(names).to.deep.eq(["RouterParked", "RouterChanged"]); // no payout, no external call
+      expect(await ethers.provider.getBalance(splitter)).to.eq(sb);
+      const parked = await env.hook.routerParked(splitter);
+      expect([parked.amount, parked.bondingFees, parked.gradFees]).to.deep.eq([owed, bonding, grad]);
+      expect(await env.hook.parkedOwed()).to.eq(owed);
       expect(await env.hook.treasuryRouter()).to.eq(next);
-      expect(await env.hook.routerOwed()).to.eq(0n);
-      // new accruals go to the new router
+      expect([await env.hook.routerOwed(), await env.hook.pendingBondingFees(), await env.hook.pendingGradFees()]).to.deep.eq([0n, 0n, 0n]);
+      let l = await ledgers(env, [P.id]);
+      expect(l.claims).to.eq(l.sum);
+      // anyone pays the parked bucket, only ever to the old router
+      const paidBefore = await env.hook.routerPaid(splitter);
+      await expect(env.hook.connect(env.attacker).payParkedRouter(splitter)).to.emit(env.hook, "RouterClaimed").withArgs(splitter, owed, bonding, grad);
+      expect((await ethers.provider.getBalance(splitter)) - sb).to.eq(owed);
+      const paidAfter = await env.hook.routerPaid(splitter);
+      expect(paidAfter.amount - paidBefore.amount).to.eq(owed);
+      expect(paidAfter.bondingFees - paidBefore.bondingFees).to.eq(bonding);
+      expect(paidAfter.gradFees - paidBefore.gradFees).to.eq(grad);
+      expect(await env.hook.parkedOwed()).to.eq(0n);
+      await expect(env.hook.payParkedRouter(splitter)).to.be.revertedWithCustomError(env.hook, "NothingOwed");
+      await expect(env.hook.payParkedRouter(next)).to.be.revertedWithCustomError(env.hook, "NothingOwed");
+      // new accruals go to the new router (claimed by the owner: the sink has no operator)
       await trade(env, P, { wallet: env.bot, buy: true, exactIn: true, amount: WAD });
       const owed2 = await env.hook.routerOwed();
-      await (await env.hook.connect(env.attacker).claimRouter()).wait();
+      await (await env.hook.connect(env.safe).claimRouter()).wait();
       expect(await sink.received()).to.eq(owed2);
+      l = await ledgers(env, [P.id]);
+      expect(l.claims).to.eq(l.sum);
       // rates unchanged by any admin action (I12)
       expect((await env.hook.pools(P.id)).fees.map((x: bigint) => x)).to.deep.eq(FEES);
     });
 
-    it("a router that refuses native cannot block the change: the flush fails softly and the bucket follows the new router", async () => {
+    it("a router that refuses native cannot block the change; its parked bucket waits until it accepts, never moves to another router", async () => {
       const { env, P } = await loadFixture(graduated);
-      const bad = await (await ethers.getContractFactory("RevertingSink")).deploy();
+      const bad = await (await ethers.getContractFactory("ToggleSink")).deploy();
       const good = await (await ethers.getContractFactory("NativeSink")).deploy();
       await (await env.hook.connect(env.safe).proposeTreasuryRouter(await bad.getAddress())).wait();
       await mineAt((await env.hook.routerEta()) + 1n);
-      await (await env.hook.connect(env.safe).executeTreasuryRouter()).wait(); // flushes to the splitter (works)
+      await (await env.hook.connect(env.safe).executeTreasuryRouter()).wait(); // parks the splitter's bucket
+      await (await env.hook.payParkedRouter(await env.splitter.getAddress())).wait();
+      await (await bad.setRefuse(true)).wait();
       await trade(env, P, { wallet: env.bot, buy: true, exactIn: true, amount: WAD });
       const owed = await env.hook.routerOwed();
       const pending = [await env.hook.pendingBondingFees(), await env.hook.pendingGradFees()];
-      await expect(env.hook.claimRouter()).to.be.reverted; // the bad router rejects
+      await expect(env.hook.connect(env.safe).claimRouter()).to.be.reverted; // the bad router rejects
       await (await env.hook.connect(env.safe).proposeTreasuryRouter(await good.getAddress())).wait();
       await mineAt((await env.hook.routerEta()) + 1n);
-      await expect(env.hook.connect(env.safe).executeTreasuryRouter()).to.emit(env.hook, "RouterFlushFailed").withArgs(await bad.getAddress(), owed);
-      expect(await env.hook.routerOwed()).to.eq(owed);
-      expect([await env.hook.pendingBondingFees(), await env.hook.pendingGradFees()]).to.deep.eq(pending);
-      const paidBad = await env.hook.routerPaid(await bad.getAddress());
-      expect(paidBad.amount).to.eq(0n);
-      await (await env.hook.claimRouter()).wait();
-      expect(await good.received()).to.eq(owed);
-      const l = await ledgers(env, [P.id]);
+      await expect(env.hook.connect(env.safe).executeTreasuryRouter()).to.emit(env.hook, "RouterParked").withArgs(await bad.getAddress(), owed, pending[0], pending[1]);
+      expect(await env.hook.routerOwed()).to.eq(0n);
+      await expect(env.hook.payParkedRouter(await bad.getAddress())).to.be.reverted; // still refusing: stays parked
+      expect((await env.hook.routerParked(await bad.getAddress())).amount).to.eq(owed);
+      expect((await env.hook.routerPaid(await bad.getAddress())).amount).to.eq(0n);
+      let l = await ledgers(env, [P.id]);
       expect(l.claims).to.eq(l.sum);
+      await (await bad.setRefuse(false)).wait();
+      await (await env.hook.connect(env.attacker).payParkedRouter(await bad.getAddress())).wait();
+      expect(await bad.received()).to.eq(owed);
+      expect(await good.received()).to.eq(0n);
+      l = await ledgers(env, [P.id]);
+      expect(l.claims).to.eq(l.sum);
+    });
+
+    it("F3 (A-2): an owner contract executing the change from inside a PoolManager unlock cannot skip the old router", async () => {
+      const { env, P } = await loadFixture(graduated);
+      const O = await (await ethers.getContractFactory("UnlockingOwner")).deploy(await env.pm.getAddress(), await env.hook.getAddress());
+      await (await env.hook.connect(env.safe).transferOwnership(await O.getAddress())).wait();
+      await (await O.accept()).wait();
+      const next = await (await ethers.getContractFactory("NativeSink")).deploy();
+      await (await O.propose(await next.getAddress())).wait();
+      await mineAt((await env.hook.routerEta()) + 1n);
+      const splitter = await env.splitter.getAddress();
+      const owed = await env.hook.routerOwed();
+      expect(owed > 0n).to.eq(true);
+      await (await O.executeInsideUnlock()).wait();
+      expect(await env.hook.treasuryRouter()).to.eq(await next.getAddress());
+      expect((await env.hook.routerParked(splitter)).amount).to.eq(owed);
+      expect(await env.hook.routerOwed()).to.eq(0n);
+      await (await env.hook.payParkedRouter(splitter)).wait();
+      expect(await next.received()).to.eq(0n);
+      expect((await env.hook.routerPaid(splitter)).amount).to.be.gte(owed);
     });
 
     it("ownership is two-step; the owner has no function that touches rates, liquidity or creator balances", async () => {
@@ -586,7 +677,7 @@ describe("gen8 MwzLaunchHook", function () {
       const fnNames = env.hook.interface.fragments.filter((f: any) => f.type === "function" && !["view", "pure"].includes(f.stateMutability)).map((f: any) => f.name);
       expect(fnNames.some((n: string) => /setFee|setRate|withdraw|rescue|sweep|remove|migrate|setCreator|pause/i.test(n))).to.eq(false);
       expect(fnNames.sort()).to.deep.eq(
-        ["acceptCreator", "acceptOwnership", "afterSwap", "beforeSwap", "cancelTreasuryRouter", "claimCreator", "claimRouter", "createPool", "executeTreasuryRouter", "proposeCreator", "proposeTreasuryRouter", "transferOwnership", "unlockCallback"].sort(),
+        ["acceptCreator", "acceptOwnership", "afterSwap", "beforeSwap", "cancelTreasuryRouter", "claimCreator", "claimRouter", "createPool", "executeTreasuryRouter", "payParkedRouter", "proposeCreator", "proposeTreasuryRouter", "transferOwnership", "unlockCallback"].sort(),
       );
     });
   });

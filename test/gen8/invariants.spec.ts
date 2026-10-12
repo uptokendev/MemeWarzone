@@ -40,14 +40,19 @@ describe("gen8 invariants (seeded property runs)", function () {
       const quoter = await deployQuoter(env);
       const keep = (await launch(env, env.creator, { feeChoice: 1, firstBuyValue: WAD / 3n })).P;
       const choice = (await launch(env, env.creator2, { feeChoice: 4, firstBuyValue: WAD / 5n })).P;
-      const coins = [keep, choice];
+      // B: a third coin scheduled to open 1 h .. 3 days after launch (creator first buy inside the launch only)
+      const sched = (await launch(env, env.creator, { feeChoice: 1, firstBuyValue: WAD / 7n, openAt: (await now()) + 3600n + BigInt(Math.floor(R() * 3 * 86400)) })).P;
+      const coins = [keep, choice, sched];
       const ids = coins.map((c) => c.id);
       const feesAtLaunch = await Promise.all(ids.map(async (id) => (await env.hook.pools(id)).fees.map((x: bigint) => x)));
       const users = [env.buyer, env.bot, env.attacker, env.payee, env.other];
       const latched: Record<string, boolean> = {};
       let splitterRouted = 0n;
       let runs = 0n;
-      const stats: Record<string, number> = { trades: 0, partial: 0, grads: 0, claims: 0, routes: 0, pulls: 0, escrow: 0, transfers: 0, skipped: 0, lateFees: 0, replans: 0 };
+      const stats: Record<string, number> = {
+        trades: 0, partial: 0, grads: 0, claims: 0, routes: 0, pulls: 0, escrow: 0, transfers: 0, skipped: 0, lateFees: 0, replans: 0,
+        postTrades: 0, backInA: 0, notOpen: 0, aboveStart: 0, releases: 0, releaseRefused: 0, foreignClaimRefused: 0,
+      };
 
       const checkAll = async (label: string) => {
         // I4: ERC6909 native claims held by the hook == router bucket + creator ledgers
@@ -59,6 +64,13 @@ describe("gen8 invariants (seeded property runs)", function () {
           // I13: supply conserved and fully accounted (no mint after construction)
           expect(await P.coin.totalSupply()).to.eq(SUPPLY);
           const st = await env.hook.pools(P.id);
+          const sNow = await slot0(env, P);
+          // F2: the price never sits above the start price (no liquidity there)
+          expect(sNow.sqrtP <= P.sqrtStart, `${label}: F2 price above start`).to.eq(true);
+          // F1: a price at or past the graduation price implies the latch (the post phase only exists after graduation)
+          if (sNow.sqrtP <= P.sqrtGrad) expect(st.graduated, `${label}: F1 post phase without latch`).to.eq(true);
+          // B: openAt is fixed at launch
+          expect(BigInt(st.openAt), `${label}: B openAt changed`).to.eq(P.launchTs);
           // I7: latch monotonic
           if (latched[P.id]) expect(st.graduated, `${label}: I7 latch reset`).to.eq(true);
           latched[P.id] = st.graduated;
@@ -81,9 +93,13 @@ describe("gen8 invariants (seeded property runs)", function () {
         expect(await env.vault.totalLiabilities()).to.eq(await ethers.provider.getBalance(await env.vault.getAddress()));
       };
 
+      // F1: the phase of a swap is the pool price at its start (wasPost); the latch (wasGrad) only decides graduation
       const checkTrade = async (P: Pool, t: TradeResult, buy: boolean, exactIn: boolean, amount: bigint, wasGrad: boolean, limited: boolean, label: string) => {
         const blockTs = BigInt((await ethers.provider.getBlock(t.rc.blockNumber))!.timestamp);
-        const expectedRate = wasGrad ? 100n : rateAt(blockTs - P.launchTs);
+        // B: no trade of a scheduled coin before its openAt
+        expect(blockTs >= P.launchTs, `${label}: B traded before openAt`).to.eq(true);
+        const wasPost = phase.post;
+        const expectedRate = wasPost ? 100n : rateAt(blockTs - P.launchTs);
         expect(t.rate, `${label}: I3 rate`).to.eq(expectedRate);
         if (!limited) {
           const [ok, d] = feeExact(t, buy, exactIn, amount);
@@ -94,9 +110,14 @@ describe("gen8 invariants (seeded property runs)", function () {
           expect(t.fee, `${label}: I2`).to.eq((buy && exactIn) || (!buy && !exactIn) ? (fill * t.rate!) / BPS : t.fee);
         }
         // I8 / D2: creator share
-        const exp = wasGrad ? (t.curve! * 50n) / BPS : (t.fee! * 560n) / BPS;
+        const exp = wasPost ? (t.curve! * 50n) / BPS : (t.fee! * 560n) / BPS;
         expect(t.creatorShare, `${label}: I8`).to.eq(exp > t.fee! ? t.fee! : exp);
-        expect(t.graduatedFlag).to.eq(wasGrad);
+        expect(t.graduatedFlag, `${label}: F1 HookFee phase`).to.eq(wasPost);
+        // F1: the fee buckets follow the same price rule (pendingBondingFees grows by the full fee only in the bonding phase)
+        const pb = BigInt(await env.hook.pendingBondingFees());
+        expect(pb - phase.pendingBonding, `${label}: F1 bonding bucket`).to.eq(wasPost ? 0n : t.fee!);
+        if (wasPost) stats.postTrades++;
+        else if (wasGrad) stats.backInA++;
         // I11: our display never fails in normal operation
         expect(t.displayFailed).to.eq(false);
         // I7: the latch fires exactly when the price ends at or below the top of A, once
@@ -110,6 +131,7 @@ describe("gen8 invariants (seeded property runs)", function () {
         }
       };
 
+      const phase = { post: false, pendingBonding: 0n };
       for (let step = 0; step < STEPS; step++) {
         const P = pick(coins);
         const roll = R();
@@ -118,9 +140,41 @@ describe("gen8 invariants (seeded property runs)", function () {
         const jump = R() < 0.1 ? BigInt(Math.floor(R() * 3 * 86400)) : BigInt(Math.floor(R() * 20));
         await setNextTs((await now()) + 1n + jump);
         const wasGrad = (await env.hook.pools(P.id)).graduated;
+        phase.post = (await slot0(env, P)).sqrtP <= P.sqrtGrad;
+        phase.pendingBonding = BigInt(await env.hook.pendingBondingFees());
+        // B: the next block's time; one second short of openAt is moved onto openAt so a refused attempt always has a
+        // second spare (approve + swap) and a normal action never lands before openAt by accident
+        let nextTs = (await now()) + 1n + jump;
+        if (nextTs < P.launchTs && nextTs + 1n >= P.launchTs) {
+          nextTs = P.launchTs;
+          await setNextTs(nextTs);
+        }
+        const notOpen = nextTs < P.launchTs;
         const pr = await env.lens.progress(P.id);
         const left = pr.nativeTargetA > pr.nativeInA ? pr.nativeTargetA - pr.nativeInA : 0n;
         let action = "";
+        let lastSell: { user: any; amountSpecified: bigint } | null = null;
+        if (notOpen) {
+          // B: before openAt every swap path is refused: direct buys and sells (the creator holds its first-buy coins),
+          // escrow buys; the lens reports the pool as not open
+          const which = R();
+          const attempt = which < 0.4
+            ? () => env.trader.connect(pick(users)).swap(P.key, true, -(WAD / 10n), 0n, "0x", { value: WAD / 10n, gasLimit: 3_000_000n })
+            : which < 0.7
+              ? async () => {
+                await (await P.coin.connect(env.creator).approve(await env.trader.getAddress(), ethers.MaxUint256)).wait();
+                await setNextTs((await now()) + 1n);
+                return env.trader.connect(env.creator).swap(P.key, false, -(1000n * WAD), 0n, "0x", { gasLimit: 3_000_000n });
+              }
+              : () => env.escrow.connect(env.creator).buy(P.token, 0n, { value: WAD / 10n, gasLimit: 3_000_000n });
+          const why = await revertOf(async () => (await attempt()).wait(), env);
+          expect(why ?? "", `${label}: B swap before openAt`).to.match(/TradingNotOpen/);
+          const [open] = await env.lens.tradingOpen(P.id);
+          expect(open).to.eq(false);
+          stats.notOpen++;
+          await checkAll(label);
+          continue;
+        }
         try {
           if (roll < 0.25) {
             // exact-input buy; sometimes big enough to graduate
@@ -154,6 +208,7 @@ describe("gen8 invariants (seeded property runs)", function () {
             if (bal < WAD) { stats.skipped++; continue; }
             const amount = big(bal) + 1n;
             action = `sell exactIn ${amount} grad=${wasGrad}`;
+            lastSell = { user, amountSpecified: -amount };
             const t = await trade(env, P, { wallet: user, buy: false, exactIn: true, amount });
             await checkTrade(P, t, false, true, amount, wasGrad, false, label);
             stats.trades++;
@@ -164,6 +219,7 @@ describe("gen8 invariants (seeded property runs)", function () {
             const q = await quote(quoter, P, false, true, bal / 2n);
             const amount = big(q / 2n) + 1n;
             action = `sell exactOut ${amount} grad=${wasGrad}`;
+            lastSell = { user, amountSpecified: amount };
             const t = await trade(env, P, { wallet: user, buy: false, exactIn: false, amount, limit: 10n ** 30n });
             await checkTrade(P, t, false, false, amount, wasGrad, false, label);
             stats.trades++;
@@ -174,7 +230,10 @@ describe("gen8 invariants (seeded property runs)", function () {
             const buy = R() < 0.6;
             const user = buy ? env.bot : pick(users);
             if (!buy && (await P.coin.balanceOf(user.address)) < 10_000_000n * WAD) { stats.skipped++; continue; }
-            const limit = buy ? s.sqrtP - (s.sqrtP * bps) / 10_000n : s.sqrtP + (s.sqrtP * bps) / 10_000n;
+            let limit = buy ? s.sqrtP - (s.sqrtP * bps) / 10_000n : s.sqrtP + (s.sqrtP * bps) / 10_000n;
+            // F2: a sell's limit never lies above the start price (the app clamps it there)
+            if (!buy && limit > P.sqrtStart) limit = P.sqrtStart;
+            if (!buy && limit <= s.sqrtP) { stats.skipped++; continue; }
             const amount = buy ? 1000n * WAD : WAD * 1000n;
             const r = await env.lens.currentFeeBps(P.id, await env.trader.getAddress());
             const spec = buy ? -((amount * BPS) / (BPS + r)) : await env.lens.grossForNet(amount, r);
@@ -198,13 +257,16 @@ describe("gen8 invariants (seeded property runs)", function () {
             if (t.graduated) stats.grads++;
           } else if (roll < 0.78) {
             if ((await env.hook.routerOwed()) === 0n) {
-              await expect(env.hook.connect(pick(users)).claimRouter()).to.be.revertedWithCustomError(env.hook, "NothingOwed");
+              await expect(env.hook.connect(env.operator).claimRouter()).to.be.revertedWithCustomError(env.hook, "NothingOwed");
               continue;
             }
-            await (await env.hook.connect(pick(users)).claimRouter()).wait();
+            // F4: nobody but the router, its operator or the owner can claim
+            await expect(env.hook.connect(pick(users)).claimRouter(), `${label}: F4`).to.be.revertedWithCustomError(env.hook, "NotRouterCaller");
+            stats.foreignClaimRefused++;
+            await (await env.hook.connect(R() < 0.5 ? env.operator : env.safe).claimRouter()).wait();
             stats.claims++;
           } else if (roll < 0.83) {
-            if (P === keep) {
+            if (P === keep || P === sched) {
               const owed = await env.hook.creatorOwed(P.id);
               const cur = (await env.hook.pools(P.id)).creator;
               const signer = await ethers.getSigner(cur);
@@ -222,7 +284,7 @@ describe("gen8 invariants (seeded property runs)", function () {
             // splitter run with a random split inside the band
             // V13 operator flow: claim, plan against the cumulative paid ledger, route with expectedPaid
             const splitterAddr = await env.splitter.getAddress();
-            if ((await env.hook.treasuryRouter()) === splitterAddr && (await env.hook.routerOwed()) > 0n) await (await env.hook.claimRouter()).wait();
+            if ((await env.hook.treasuryRouter()) === splitterAddr && (await env.hook.routerOwed()) > 0n) await (await env.hook.connect(env.operator).claimRouter()).wait();
             let [total, B, G] = await env.splitter.pending();
             if (total === 0n) { stats.skipped++; continue; }
             let paidPlan = (await env.hook.routerPaid(splitterAddr)).amount;
@@ -235,7 +297,7 @@ describe("gen8 invariants (seeded property runs)", function () {
               const late = (await env.hook.routerOwed()) - o0;
               if (between < 0.15 && (await env.hook.treasuryRouter()) === splitterAddr && (await env.hook.routerOwed()) > 0n) {
                 // a third party claims in between: the stale plan reverts, the operator re-plans
-                await (await env.hook.connect(pick(users)).claimRouter()).wait();
+                await (await env.hook.connect(env.operator).claimRouter()).wait();
                 const actual = (await env.hook.routerPaid(splitterAddr)).amount;
                 await expect(env.splitter.connect(env.operator).route(runs + 1n, paidPlan, 0n, 0n, 0n, ethers.ZeroHash), `${label}: stale plan`).to.be.revertedWithCustomError(env.splitter, "PaidMismatch");
                 [total, B, G] = await env.splitter.pending();
@@ -281,15 +343,58 @@ describe("gen8 invariants (seeded property runs)", function () {
             await (await env.hook.connect(await ethers.getSigner(cur)).proposeCreator(P.id, next.address)).wait();
             await (await env.hook.connect(next).acceptCreator(P.id)).wait();
             stats.transfers++;
+          } else if (roll >= 0.985 && P !== choice) {
+            // F2: one wallet collects every coin the users and the creator hold and sells all of it with no limit; after
+            // graduation (A keeps 98%, the reserve is out) this exceeds what A can take back and must revert
+            // PriceAboveStart (handled in the catch, with the same sell at the start-price limit going through)
+            const dumper = env.bot;
+            for (const w of [...users, env.creator, env.creator2]) {
+              if (w.address === dumper.address) continue;
+              const b = await P.coin.balanceOf(w.address);
+              if (b > 0n) await (await P.coin.connect(w).transfer(dumper.address, b)).wait();
+            }
+            const all = await P.coin.balanceOf(dumper.address);
+            if (all === 0n) { stats.skipped++; continue; }
+            action = `dump all ${all} grad=${wasGrad}`;
+            lastSell = { user: dumper, amountSpecified: -all };
+            await setNextTs((await now()) + 1n);
+            const t = await trade(env, P, { wallet: dumper, buy: false, exactIn: true, amount: all });
+            await checkTrade(P, t, false, true, all, wasGrad, false, label);
+            stats.trades++;
           } else {
-            // release the reserve when graduated (permissionless)
+            // release the reserve (permissionless) only when graduated AND the price is at or past graduation now (F1)
             const res = await env.reserveLock.reserves(P.id);
-            if (res.amount > 0n && (await env.hook.pools(P.id)).graduated) await (await env.reserveLock.connect(pick(users)).release(P.id)).wait();
+            if (res.amount > 0n && (await env.hook.pools(P.id)).graduated) {
+              if (phase.post) {
+                await (await env.reserveLock.connect(pick(users)).release(P.id)).wait();
+                stats.releases++;
+              } else {
+                await expect(env.reserveLock.connect(pick(users)).release(P.id), `${label}: F1 release back in A`).to.be.revertedWithCustomError(env.reserveLock, "PriceBelowGraduation");
+                stats.releaseRefused++;
+              }
+            }
           }
         } catch (e: any) {
           const why = await revertOf(async () => { throw e; }, env);
+          // B: every swap of a scheduled coin before its openAt is refused (and nothing else is)
+          if (why && /TradingNotOpen/.test(why)) {
+            expect(notOpen, `${label}: TradingNotOpen after openAt`).to.eq(true);
+            stats.notOpen++;
+            await checkAll(label);
+            continue;
+          }
+          // F2: a sell that would leave the price above the start price is refused; the same sell with the price limit
+          // at the start price goes through (checked as a static call)
+          if (why && /PriceAboveStart/.test(why) && lastSell) {
+            const ls = lastSell as { user: any; amountSpecified: bigint };
+            if ((await slot0(env, P)).sqrtP < P.sqrtStart) await env.trader.connect(ls.user).swap.staticCall(P.key, false, ls.amountSpecified, P.sqrtStart, "0x");
+            stats.aboveStart++;
+            await checkAll(label);
+            continue;
+          }
           // the only legitimate failures in this generator: a wallet without enough coins or native for a random size
           if (why && /ERC20InsufficientBalance|insufficient funds|doesn't have enough funds/i.test(why)) { stats.skipped++; continue; }
+          if (notOpen) throw new Error(`${label}: expected TradingNotOpen, got ${why} (action: ${action || "other"})`);
           throw new Error(`${label}: unexpected revert: ${why} (action: ${action || "other"})`);
         }
         await checkAll(label);

@@ -24,7 +24,8 @@ contract MwzLaunchLens {
     address public immutable launcher;
 
     struct Progress {
-        bool graduated;
+        bool graduated; // the one-time graduation latch
+        bool postPhase; // F1: the pool price is at or past the graduation price now (post rate applies)
         uint160 sqrtPriceX96;
         uint256 coinsSoldFromA; // coins bought out of A at the launch liquidity, from the pool price (exact before graduation)
         uint256 coinsInA; // what A held at launch
@@ -38,11 +39,22 @@ contract MwzLaunchLens {
         launcher = _hook.launcher();
     }
 
-    /// @notice The rate (bps of the curve amount) a swap whose PoolManager `sender` is `sender` pays right now.
+    /// @notice The rate (bps of the curve amount) a swap whose PoolManager `sender` is `sender` pays right now: by
+    /// the current pool price (F1: inside A the bonding rate with the launch decay from openAt, at or past the
+    /// graduation price the post rate). Before openAt only the launcher can swap (others revert TradingNotOpen).
     function currentFeeBps(PoolId id, address sender) external view returns (uint256) {
-        (address creator, uint40 launchTime, bool graduated,,,,,, FeeConfig memory fees) = hook.pools(id);
+        (address creator, uint40 openAt,,,,,, uint160 sqrtGrad, FeeConfig memory fees) = hook.pools(id);
         if (creator == address(0)) revert UnknownPool();
-        return MwzFeeMath.rate(fees, graduated, sender == launcher, launchTime, block.timestamp);
+        (uint160 sqrtP,,,) = poolManager.getSlot0(id);
+        return MwzFeeMath.rate(fees, sqrtP <= sqrtGrad, sender == launcher, openAt, block.timestamp);
+    }
+
+    /// @notice B: whether a normal trader can swap now, and when trading opens.
+    function tradingOpen(PoolId id) external view returns (bool open, uint256 openAt) {
+        address creator;
+        (creator, openAt,,,,,,,) = hook.pools(id);
+        if (creator == address(0)) revert UnknownPool();
+        open = block.timestamp >= openAt;
     }
 
     /// @notice Exact fill of a price-limited swap, for quotes (V4Quoter has no price-limit field). For an exact-input
@@ -66,6 +78,7 @@ contract MwzLaunchLens {
         (uint160 sqrtP,,,) = poolManager.getSlot0(id);
         uint160 sqrtStart = TickMath.getSqrtPriceAtTick(tickStart);
         p.graduated = graduated;
+        p.postPhase = sqrtP <= sqrtGrad;
         p.sqrtPriceX96 = sqrtP;
         p.coinsInA = SqrtPriceMath.getAmount1Delta(sqrtGrad, sqrtStart, liqA, true);
         p.nativeTargetA = SqrtPriceMath.getAmount0Delta(sqrtGrad, sqrtStart, liqA, false);
