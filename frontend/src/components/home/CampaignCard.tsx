@@ -97,10 +97,13 @@ export function CampaignCard({
   const creatorAddr = String(vm.creator ?? "").trim();
   const canOpenProfile = creatorAddr.length > 0;
   const progressRaw = Number(vm.progressPct);
-  const progress = Number.isFinite(progressRaw)
-    ? Math.max(0, Math.min(100, progressRaw))
-    : (vm.isDexTrading ? 100 : 0);
-  const progressLabel = !Number.isFinite(progress)
+  const progressKnown = vm.isDexTrading || (Number.isFinite(progressRaw) && progressRaw >= 0);
+  const progress = vm.isDexTrading
+    ? 100
+    : progressKnown
+      ? Math.max(0, Math.min(100, progressRaw))
+      : null;
+  const progressLabel = progress == null
     ? "—"
     : progress >= 100
       ? "100%"
@@ -305,7 +308,7 @@ export function CampaignCard({
           <div className="h-1.5 overflow-hidden rounded-full bg-mw-border" aria-hidden="true">
             <div
               className="h-full rounded-full bg-mw-accent"
-              style={{ width: `${Math.max(progress > 0 ? 2 : 0, progress)}%` }}
+              style={{ width: `${Math.max(progress != null && progress > 0 ? 2 : 0, progress ?? 0)}%` }}
             />
           </div>
         ) : null}

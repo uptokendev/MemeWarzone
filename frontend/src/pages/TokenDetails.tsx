@@ -691,8 +691,8 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     setDbcPoolLive(dbcLive?.poolLive ?? null);
     if (!isDbcPage || !dbcMint) return;
     let cancelled = false;
-    const timer = window.setInterval(() => {
-      void fetchDbcToken(dbcMint)
+    const stopPolling = setVisibleInterval(() => {
+      void fetchDbcToken(dbcMint, { live: true })
         .then((next) => {
           if (!cancelled && next?.poolLive) setDbcPoolLive(next.poolLive);
         })
@@ -700,7 +700,7 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     }, 20_000);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [dbcLive?.poolLive, dbcMint, isDbcPage]);
   // xStock quotes: wallets display raw x the mint's ScaledUiAmount multiplier; 1 for every other quote.
@@ -3097,10 +3097,10 @@ const toSeconds = (ts: number): number => {
       }
     };
     void loadCurve();
-    const timer = window.setInterval(() => void loadCurve(), 5_000);
+    const stopPolling = setVisibleInterval(() => void loadCurve(), 5_000);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [isSolanaPage, isDbcPage, campaign?.campaign, campaign?.token]);
 
@@ -3318,8 +3318,8 @@ const toSeconds = (ts: number): number => {
     if (!isSolanaPage || isDbcPage || !solanaCurveClosed) return;
     const campaignPda = String(solanaCurve?.campaignAddress || campaign?.campaign || "").trim();
     if (campaignPda) void requestSolanaGraduationHandoff(campaignPda);
-    const timer = window.setInterval(() => setSolanaBalanceTick((n) => n + 1), 8_000);
-    return () => window.clearInterval(timer);
+    const stopPolling = setVisibleInterval(() => setSolanaBalanceTick((n) => n + 1), 8_000);
+    return () => stopPolling();
   }, [campaign?.campaign, isDbcPage, isSolanaPage, solanaCurve?.campaignAddress, solanaCurveClosed]);
   const verifiedMarketStage = isSolanaPage ? null : unifiedMarket.state?.marketStage;
   // Do NOT treat TOPAZ_PENDING alone as DEX UI — that broke bonding metrics when
@@ -3410,6 +3410,7 @@ const toSeconds = (ts: number): number => {
     if (isDexStage) {
       return {
         pct: 100,
+        known: true,
         matured: true,
         soldWei: sold,
         curveSupplyWei: curveSupply,
@@ -3419,6 +3420,12 @@ const toSeconds = (ts: number): number => {
         raisedPct: 100,
       };
     }
+
+    const curveKnown = isDbcPage
+      ? Boolean(dbcPoolLive && (dbcThreshold > 0n || dbcReserve > 0n || dbcPoolLive.isMigrated))
+      : isSolanaPage
+        ? Boolean(solanaCurve)
+        : true;
 
     // Show whichever progress is “more complete”, because graduation triggers on either.
     let pct = Math.max(
@@ -3437,14 +3444,15 @@ const toSeconds = (ts: number): number => {
     }
 
     return {
-      pct,
+      pct: curveKnown ? pct : 0,
+      known: curveKnown,
       matured: reachedSold || reachedRaised,
       soldWei: sold,
       curveSupplyWei: curveSupply,
       reserveWei,
       targetWei,
-      soldPct: Math.max(0, Math.min(100, soldPct)),
-      raisedPct: Math.max(0, Math.min(100, raisedPct)),
+      soldPct: curveKnown ? Math.max(0, Math.min(100, soldPct)) : 0,
+      raisedPct: curveKnown ? Math.max(0, Math.min(100, raisedPct)) : 0,
     };
   }, [
     isDexStage,
@@ -3463,6 +3471,8 @@ const toSeconds = (ts: number): number => {
     dbcPoolLive?.quoteReserveLamports,
     dbcPoolLive?.curveSoldTokensRaw,
     dbcPoolLive?.curveTokensRaw,
+    dbcPoolLive?.isMigrated,
+    dbcPoolLive,
   ]);
 
     const remainingCurveWei = useMemo(() => {
@@ -5454,7 +5464,9 @@ const toSeconds = (ts: number): number => {
                     ? `Trading ${isSolanaPage ? "on Meteora" : isRobinhoodPage ? "on Uniswap" : "on Topaz"}`
                     : solanaCurveClosed || curveProgress.matured
                       ? "Eligible to graduate"
-                    : `${curveProgress.pct > 0 && curveProgress.pct < 0.01 ? curveProgress.pct.toFixed(6) : curveProgress.pct.toFixed(2)}% · graduates ${isSolanaPage ? "to Meteora" : isRobinhoodPage ? "to Uniswap" : "to Topaz"} at 100%`}
+                    : curveProgress.known
+                      ? `${curveProgress.pct > 0 && curveProgress.pct < 0.01 ? curveProgress.pct.toFixed(6) : curveProgress.pct.toFixed(2)}% · graduates ${isSolanaPage ? "to Meteora" : isRobinhoodPage ? "to Uniswap" : "to Topaz"} at 100%`
+                      : "—"}
                 </span>
               </div>
               <div className="h-2 w-full overflow-hidden rounded-full bg-mw-border">
@@ -5465,7 +5477,9 @@ const toSeconds = (ts: number): number => {
               </div>
               {contractGraduated ? null : (
                 <p className="m-0 font-mw-mono text-xs text-mw-muted">
-                  {inCurveLabel} in curve · {remainingCurveLabel.primary} to target · {curveProgress.soldPct > 0 && curveProgress.soldPct < 0.01 ? curveProgress.soldPct.toFixed(6) : curveProgress.soldPct.toFixed(2)}% of tokens sold
+                  {curveProgress.known
+                    ? `${inCurveLabel} in curve · ${remainingCurveLabel.primary} to target · ${curveProgress.soldPct > 0 && curveProgress.soldPct < 0.01 ? curveProgress.soldPct.toFixed(6) : curveProgress.soldPct.toFixed(2)}% of tokens sold`
+                    : "—"}
                 </p>
               )}
             </div>

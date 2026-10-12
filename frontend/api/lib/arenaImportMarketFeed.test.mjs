@@ -144,11 +144,12 @@ function snapshotQuery(importRow) {
 const deps = (row, nowMs = NOW) => ({ query: snapshotQuery(row), nowMs, resolveNativeUsd: async () => ({ price: 150, source: "test" }) });
 
 test("an imported token with a fresh feed row is healthy market data for battles", async () => {
-  const snap = await getArenaMarketSnapshot(101, DAVE, deps({ market_cap_usd: 57770, liquidity_usd: 20129.38, volume_24h_usd: 4.75, holders: 159, updated_at: new Date(NOW - 30_000).toISOString() }));
+  const snap = await getArenaMarketSnapshot(101, DAVE, deps({ price_usd: 0.0095, market_cap_usd: 57770, liquidity_usd: 20129.38, volume_24h_usd: 4.75, holders: 159, updated_at: new Date(NOW - 30_000).toISOString() }));
   assert.equal(snap.healthy, true, JSON.stringify(snap.reasons));
   assert.equal(snap.origin, "import");
   assert.equal(snap.dataSource, "import_market_feed");
   assert.equal(snap.marketCapUsd, 57770);
+  assert.equal(snap.priceUsd, 0.0095);
   assert.equal(snap.holders, 159);
   assert.equal(snap.creatorAddress, "7ZkEpeo8zcawdj39wpDtB7MbzkbyhNoQyVXLsswazohv");
 });

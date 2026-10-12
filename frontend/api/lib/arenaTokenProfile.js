@@ -146,7 +146,7 @@ export async function getArenaTokenProfile(chainId, tokenIdentity, deps = {}) {
     metadataUpdatedAt: base.metadataUpdatedAt,
     marketCapUsd: market?.marketCapUsd ?? null,
     athMarketCapUsd,
-    priceUsd: null,
+    priceUsd: market?.priceUsd ?? null,
     volume24hUsd: market?.volume24hUsd ?? null,
     holders: market?.holders ?? null,
     liquidityUsd: market?.liquidityUsd ?? null,

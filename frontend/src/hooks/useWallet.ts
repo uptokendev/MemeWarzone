@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { syncWalletRecruiterAttribution } from "@/lib/recruiterApi";
 import { getActiveChainId, getAllowedChainIds, isAllowedChainId, isEvmChainId } from "@/lib/chainConfig";
 import { watchInjectedProviderAvailability } from "@/lib/injectedProviderDiscovery";
+import { IDLE_PARK_EVENT, IDLE_RESUME_EVENT } from "@/lib/idleSession.mjs";
 
 export type WalletType =
   | "metamask"
@@ -116,6 +117,7 @@ declare global {
 
 const SELECTED_WALLET_KEY = "mwz:selected_wallet";
 const DISCONNECTED_KEY = "mwz:wallet:disconnected";
+const IDLE_PARKED_KEY = "mwz:wallet:idle-parked";
 const LEGACY_CONNECTED_KEY = "mwz_wallet_connected";
 
 const EIP6963_WALLETS = new Map<string, Eip6963ProviderDetail>();
@@ -341,6 +343,7 @@ function clearPersistedWalletSelection() {
   try {
     window.localStorage.removeItem(SELECTED_WALLET_KEY);
     window.localStorage.removeItem(LEGACY_CONNECTED_KEY);
+    window.sessionStorage.removeItem(IDLE_PARKED_KEY);
     window.localStorage.setItem(DISCONNECTED_KEY, "1");
   } catch {
     // ignore
@@ -617,11 +620,31 @@ export function useWallet(): WalletHook {
     };
 
     const timers = [80, 250, 800, 1600].map((delay) => window.setTimeout(() => { void restore(); }, delay));
+
+    const onPark = () => {
+      if (!accountRef.current) return;
+      try { window.sessionStorage.setItem(IDLE_PARKED_KEY, "1"); } catch { /* ignore */ }
+      resetWalletState(false);
+    };
+    const onResume = () => {
+      try {
+        if (window.sessionStorage.getItem(IDLE_PARKED_KEY) !== "1") return;
+        window.sessionStorage.removeItem(IDLE_PARKED_KEY);
+      } catch {
+        return;
+      }
+      void restore();
+    };
+    window.addEventListener(IDLE_PARK_EVENT, onPark);
+    window.addEventListener(IDLE_RESUME_EVENT, onResume);
+
     return () => {
       cancelled = true;
       timers.forEach((timer) => window.clearTimeout(timer));
+      window.removeEventListener(IDLE_PARK_EVENT, onPark);
+      window.removeEventListener(IDLE_RESUME_EVENT, onResume);
     };
-  }, [applyProviderState, bindListeners, setDetectedWalletSnapshot]);
+  }, [applyProviderState, bindListeners, resetWalletState, setDetectedWalletSnapshot]);
 
   const connect = useCallback(async (wallet?: WalletType, opts?: { chainId?: number }) => {
     if (typeof window === "undefined") throw new Error("No browser environment detected.");

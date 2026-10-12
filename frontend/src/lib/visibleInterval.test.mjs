@@ -53,6 +53,27 @@ test("hidden page: ticks are skipped; one catch-up run when the tab shows again,
   assert.equal(runs, 1, "no extra read when no tick was skipped");
 });
 
+test("idle pause skips ticks; catch-up on idle resume", () => {
+  const doc = fakeDoc();
+  const timers = fakeTimers();
+  const win = {
+    listeners: new Set(),
+    addEventListener: (name, fn) => name === "memewarzone:idle-resume" && win.listeners.add(fn),
+    removeEventListener: (name, fn) => win.listeners.delete(fn),
+    resume() { for (const fn of [...win.listeners]) fn(); },
+  };
+  let idle = false;
+  let runs = 0;
+  setVisibleInterval(() => { runs += 1; }, 5_000, { doc, timers, win, idlePaused: () => idle });
+  idle = true;
+  timers.tickAll();
+  timers.tickAll();
+  assert.equal(runs, 0, "no chain reads while idle");
+  idle = false;
+  win.resume();
+  assert.equal(runs, 1, "one catch-up read on idle resume");
+});
+
 test("stop clears the interval and the listener; no document means never hidden", () => {
   const doc = fakeDoc();
   const timers = fakeTimers();

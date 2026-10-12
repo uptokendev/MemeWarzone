@@ -1,6 +1,7 @@
-import React, { createContext, useContext } from "react";
+import React, { createContext, useContext, useEffect } from "react";
 
 import { useWallet as useWalletImpl } from "@/hooks/useWallet";
+import { startIdleSession } from "@/lib/idleSession.mjs";
 import { installWalletConnectEip6963Bridge } from "@/lib/walletConnect";
 
 import type { DetectedWallet, WalletHook, WalletType } from "@/hooks/useWallet";
@@ -14,6 +15,7 @@ installWalletConnectEip6963Bridge();
 
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const wallet = useWalletImpl();
+  useEffect(() => startIdleSession(), []);
 
   return <WalletContext.Provider value={wallet}>{children}</WalletContext.Provider>;
 }

@@ -131,8 +131,62 @@ export function dbcProgressPct(pool) {
   return Math.max(0, Math.min(100, Number((pool.quoteReserve * 1_000_000n) / pool.threshold) / 10_000));
 }
 
+async function defaultProgressQuery(text, params) {
+  const { pool } = await import("../../server/db.js");
+  return pool.query(text, params);
+}
+
+/** Stored DBC / launchpad progress when the live account read is missing. */
+export async function applyStoredSolanaProgress(items, deps = {}) {
+  const missing = items.filter((item) => (item.chainId === 101 || item.chainId === 102) && item.progressPct == null && item.campaignAddress);
+  if (!missing.length) return items;
+  const query = deps.query || defaultProgressQuery;
+  let rows = [];
+  try {
+    const result = await query(
+      `select c.campaign_address,
+              coalesce(c.launch_type, 'launchpad') as launch_type,
+              ms.bonding_reserve_bnb,
+              cfg.threshold_lamports
+         from public.campaigns c
+         left join public.market_stats ms
+           on ms.chain_id = c.chain_id and ms.campaign_address = c.campaign_address
+         left join public.dbc_launch_configs cfg
+           on cfg.config_address = coalesce(c.meta #>> '{dbc,config}', c.meta #>> '{dbc,configAddress}')
+        where c.chain_id in (101, 102)
+          and c.campaign_address = any($1::text[])`,
+      [missing.map((item) => item.campaignAddress)],
+    );
+    rows = result.rows || [];
+  } catch {
+    return items;
+  }
+  const byAddress = new Map(rows.map((row) => [row.campaign_address, row]));
+  for (const item of missing) {
+    if (item.isDexTrading) {
+      item.progressPct = 100;
+      continue;
+    }
+    const row = byAddress.get(item.campaignAddress);
+    if (!row) continue;
+    const reserve = Number(row.bonding_reserve_bnb);
+    const threshold = BigInt(String(row.threshold_lamports || "0"));
+    if (String(row.launch_type) === "dbc" && threshold > 0n && Number.isFinite(reserve) && reserve >= 0) {
+      const lamports = BigInt(Math.max(0, Math.round(reserve * 1e9)));
+      item.progressPct = Math.max(0, Math.min(100, Number((lamports * 1_000_000n) / threshold) / 10_000));
+      continue;
+    }
+    const raised = Number(item.raisedTotalBnb);
+    const target = Number(item.gradTargetBnb);
+    if (Number.isFinite(raised) && Number.isFinite(target) && target > 0) {
+      item.progressPct = Math.max(0, Math.min(100, (raised / target) * 100));
+    }
+  }
+  return items;
+}
+
 /** Adds progressPct + graduationCloseSol to Solana items (never throws; unknown stays null). */
-export async function withSolanaBondingProgress(items, solUsd) {
+export async function withSolanaBondingProgress(items, solUsd, deps = {}) {
   try {
     const solana = await loadSolanaCurves(items);
     for (const item of solana) {
@@ -153,6 +207,11 @@ export async function withSolanaBondingProgress(items, solUsd) {
     }
   } catch (error) {
     console.warn("[campaigns] Solana bonding progress unavailable", error?.message || error);
+  }
+  try {
+    await applyStoredSolanaProgress(items, deps);
+  } catch (error) {
+    console.warn("[campaigns] stored Solana bonding progress unavailable", error?.message || error);
   }
   return items;
 }
