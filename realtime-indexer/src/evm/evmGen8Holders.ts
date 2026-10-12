@@ -10,7 +10,7 @@
  * market_stats.holders (campaigns-base.js already prefers market_stats.holders over the buyer count).
  */
 import { ethers } from "ethers";
-import { gen8SafeHead, intEnv, type Gen8ChainConfig } from "./evmGen8Config.js";
+import { gen8MoneyHead, intEnv, type Gen8ChainConfig } from "./evmGen8Config.js";
 import type { Queryable } from "./evmGen8Store.js";
 import { INFINITY_VAULT } from "./evmGen8SidePools.js";
 
@@ -116,7 +116,7 @@ export async function runGen8HolderCensusOnce(opts: { db: DbWithConnect; cfg: Ge
     [cfg.chainId, cfg.hook.address],
   );
   if (!tokensRes.rows.length) return { tokens: 0, applied: 0, to: null };
-  const head = await gen8SafeHead(provider, cfg.chainId, env); // F10: finalized (BNB) / safe (Robinhood)
+  const head = await gen8MoneyHead(provider, cfg.chainId, env); // F10: the census feeds payouts: money tag (safe / finalized)
   const span = intEnv(env.EVM_GEN8_HOLDER_CHUNK, 2_000, 1, 50_000);
   const perCall = intEnv(env.EVM_GEN8_HOLDER_ADDRESSES_PER_CALL, 100, 1, 1_000);
   // next block per token: one past its cursor, or its launch block (the mint to the launcher is in the launch tx).

@@ -70,13 +70,15 @@ export async function gen8KnownClaimers(db: Queryable, chainId: number, splitter
 export type Gen8Claim = { blockNumber: number; logIndex: number; txHash: string; amount: bigint; bondingFees: bigint; gradFees: bigint; cumulative: bigint };
 
 /** RouterClaimed events paying the splitter (claimRouter or the A4 flush), in order, with the cumulative amount. */
-export async function claimsToSplitter(db: Queryable, cfg: Gen8ChainConfig): Promise<Gen8Claim[]> {
+export async function claimsToSplitter(db: Queryable, cfg: Gen8ChainConfig, upToBlock?: number): Promise<Gen8Claim[]> {
   if (!cfg.splitter) return [];
+  // F10: only claims at or below the money head count (the contract events table is written by the display pass).
   const { rows } = await db.query(
     `select block_number, log_index, tx_hash, args from public.evm_campaign_events
       where chain_id = $1 and contract_address = $2 and event_name = 'RouterClaimed' and lower(args->>'router') = $3
+        and ($4::bigint is null or block_number <= $4::bigint)
       order by block_number, log_index`,
-    [cfg.chainId, cfg.hook.address, cfg.splitter.address],
+    [cfg.chainId, cfg.hook.address, cfg.splitter.address, upToBlock ?? null],
   );
   let cumulative = 0n;
   return rows.map((r) => {
@@ -185,7 +187,7 @@ export async function recordRoutedRun(db: Queryable, cfg: Gen8ChainConfig, e: Ro
     `select coalesce(sum(total), 0)::text as t from public.evm_gen8_route_runs where chain_id = $1 and splitter_address = $2 and status = 'confirmed' and run_id <= $3`,
     [cfg.chainId, splitter, runId],
   );
-  const cut = claimCut(await claimsToSplitter(db, cfg), big(routed.rows[0]?.t));
+  const cut = claimCut(await claimsToSplitter(db, cfg, e.blockNumber), big(routed.rows[0]?.t));
   if (!cut) {
     await alert?.({ severity: "critical", kind: "gen8_run_without_claim", chainId: cfg.chainId, subject: String(runId), title: `Gen-8 run ${runId} has no matching claim on chain ${cfg.chainId}`, message: `No indexed RouterClaimed brings the splitter's cumulative paid to ${routed.rows[0]?.t}. Rows not assigned; should never happen.` });
     return;
@@ -304,7 +306,8 @@ export async function runGen8RoutePass(opts: {
   const { db, cfg, chain } = opts;
   if (!cfg.splitter) return { status: "skipped", reason: "no-splitter" };
   const splitter = cfg.splitter.address;
-  const cursor = await db.query(`select last_indexed_block from public.indexer_state where chain_id = $1 and cursor = $2`, [cfg.chainId, `gen8:${cfg.hook.address}`]);
+  // F10: the money cursor (accruals, Routed runs, claims at or below the safe / finalized block).
+  const cursor = await db.query(`select last_indexed_block from public.indexer_state where chain_id = $1 and cursor = $2`, [cfg.chainId, `gen8-money:${cfg.hook.address}`]);
   const indexedThrough = Number(cursor.rows[0]?.last_indexed_block || 0) - 1;
   if (indexedThrough < cfg.startBlock) return { status: "skipped", reason: "not-indexed-yet" };
   const n = Math.min(indexedThrough, await chain.headBlock());
@@ -359,7 +362,7 @@ export async function runGen8RoutePass(opts: {
 
   // 2. The run's cut: the claim that brought cumulative paid to P.
   const P = s.paid;
-  const cut = claimCut(await claimsToSplitter(db, cfg), P);
+  const cut = claimCut(await claimsToSplitter(db, cfg, n), P);
   if (!cut) return { status: "skipped", reason: "claim-not-indexed-yet", detail: { paid: P.toString() } };
   const rows = await unroutedRowsBefore(db, cfg, cut);
 

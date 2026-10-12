@@ -40,8 +40,9 @@ test("gen-8 indexer end to end on a local chain", { skip: runnable ? false : "ge
       EVM_GEN8_LAUNCHER_97: `${A.launcher}@${startBlock}`, EVM_GEN8_HOOK_97: `${A.hook}@${startBlock}`, EVM_GEN8_POOL_MANAGER_97: A.pm,
       EVM_GEN8_SPLITTER_97: `${A.splitter}@${startBlock}`, EVM_GEN8_CHOICE_VAULT_97: A.vault, EVM_GEN8_RESERVE_LOCK_97: A.lock, EVM_GEN8_ESCROW_97: A.escrow,
       EVM_GEN8_CONFIRMATIONS: "0", EVM_GEN8_LOG_CHUNK: "5000", EVM_GEN8_SIDE_FACTORIES_97: "v2:0x000000000000000000000000000000000000beef",
-      // F10: anvil's finalized block is 64 behind; this test runs at the head (evmGen8Reorg.integration.test.ts covers the tag).
-      EVM_GEN8_HEAD_TAG_97: "latest",
+      // F10: anvil's finalized block is 64 behind; this test runs both passes at the head (evmGen8Reorg.integration.test.ts
+      // covers the display / money split and the rollback).
+      EVM_GEN8_DISPLAY_HEAD_TAG_97: "latest", EVM_GEN8_MONEY_HEAD_TAG_97: "latest",
       // F9: the test router stands in for the app's UniversalRouter; F11: the operator is set before the start block.
       EVM_GEN8_LINK_ROUTERS_97: (await env.trader.getAddress()).toLowerCase(), EVM_GEN8_ROUTER_CLAIMERS_97: env.operator.address.toLowerCase(),
     };

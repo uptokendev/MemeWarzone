@@ -17,7 +17,7 @@
  * at least EVM_GEN8_SIDE_ALERT_SHARE_BPS of our pool's 24 h coin volume and at least EVM_GEN8_SIDE_ALERT_MIN_COINS.
  */
 import { ethers } from "ethers";
-import { gen8SafeHead, intEnv, type Gen8ChainConfig } from "./evmGen8Config.js";
+import { gen8DisplayHead, intEnv, type Gen8ChainConfig } from "./evmGen8Config.js";
 import { GEN8_TOPICS, V4_DYNAMIC_FEE_FLAG, V4_POOL_MANAGER_IFACE } from "./evmGen8Abi.js";
 import type { Queryable } from "./evmGen8Store.js";
 
@@ -183,7 +183,7 @@ export async function runGen8SidePoolWatcherOnce(opts: {
   const env = opts.env || process.env;
   const cursor = `gen8-side:${cfg.hook.address}`;
   const cur = await db.query(`select last_indexed_block from public.indexer_state where chain_id = $1 and cursor = $2`, [cfg.chainId, cursor]);
-  const head = await gen8SafeHead(provider, cfg.chainId, env); // F10: finalized (BNB) / safe (Robinhood)
+  const head = await gen8DisplayHead(provider, cfg.chainId, env); // F10: informational, display tag (latest / finalized)
   const from = Math.max(Number(cur.rows[0]?.last_indexed_block || 0), cfg.startBlock);
   if (from > head) return null;
   const to = Math.min(head, from + intEnv(env.EVM_GEN8_SIDE_CHUNK, 2_000, 1, 50_000) - 1);

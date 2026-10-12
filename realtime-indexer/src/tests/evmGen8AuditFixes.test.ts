@@ -1,7 +1,7 @@
 /**
  * Gen-8 indexer fixes from the 2026-10-12 AI audit (docs/build_plans/GEN8_AI_AUDIT_FINDINGS.md), no RPC, no DB:
  *   F9  (C-M4) link eligibility: allowed router, tx.to = router, denylist, many swap senders
- *   F10 (C-M5) head tag per chain (finalized on BNB, safe on Robinhood), fail closed
+ *   F10 (C-M5) head tags per chain (display: latest / finalized; money: safe / finalized), fail closed
  *   F11 (C-L3, C-L5) Routed vs plan, control-event decoding, foreign claims, PaidMismatch streak, dropped route tx,
  *       and the C-M2 dust deadlock (off-chain part of F4)
  *   F12 (D-L2) league exclusion by hook creator and swap sender, not tx.from alone
@@ -11,7 +11,7 @@ import test from "node:test";
 import { ethers } from "ethers";
 import { GEN8_CHOICE_VAULT_IFACE, GEN8_HOOK_IFACE, GEN8_LAUNCHER_IFACE, GEN8_SPLITTER_IFACE, GEN8_TOPICS } from "../evm/evmGen8Abi.js";
 import { decodeGen8Log } from "../evm/evmGen8Decode.js";
-import { gen8HeadTag, gen8LinkCheck, gen8LinkPolicy, gen8SafeHead, GEN8_LINK_ROUTERS, type Gen8ChainConfig } from "../evm/evmGen8Config.js";
+import { gen8DisplayHeadTag, gen8HeadBlock, gen8LinkCheck, gen8LinkPolicy, gen8MoneyHeadTag, GEN8_LINK_ROUTERS, type Gen8ChainConfig } from "../evm/evmGen8Config.js";
 import { gen8LeagueExcluded } from "../evm/evmGen8Config.js";
 import { recordRoutedRun, routedPlanDifferences, runGen8RoutePass } from "../evm/evmGen8FeeRouting.js";
 import { splitterBands } from "../evm/evmGen8Fees.js";
@@ -29,21 +29,24 @@ const cfg = (chainId = 97): Gen8ChainConfig => ({
 
 // ------------------------------------------------------------------ F10
 
-test("F10 head tag: finalized on BNB, safe on Robinhood, env override, latest = old confirmations rule", async () => {
-  assert.equal(gen8HeadTag(56, {}), "finalized");
-  assert.equal(gen8HeadTag(97, {}), "finalized");
-  assert.equal(gen8HeadTag(4663, {}), "safe");
-  assert.equal(gen8HeadTag(46630, {}), "safe");
-  assert.equal(gen8HeadTag(56, { EVM_GEN8_HEAD_TAG_56: "safe" }), "safe");
-  assert.equal(gen8HeadTag(4663, { EVM_GEN8_HEAD_TAG: "finalized" }), "finalized");
-  assert.equal(gen8HeadTag(4663, { EVM_GEN8_HEAD_TAG: "nonsense" }), "safe");
+test("F10 head tags: display latest / finalized, money safe / finalized, env overrides, fail closed", async () => {
+  assert.equal(gen8DisplayHeadTag(56, {}), "finalized");
+  assert.equal(gen8DisplayHeadTag(97, {}), "finalized");
+  assert.equal(gen8DisplayHeadTag(4663, {}), "latest");
+  assert.equal(gen8DisplayHeadTag(46630, {}), "latest");
+  assert.equal(gen8MoneyHeadTag(56, {}), "finalized");
+  assert.equal(gen8MoneyHeadTag(4663, {}), "safe");
+  assert.equal(gen8MoneyHeadTag(46630, {}), "safe");
+  assert.equal(gen8DisplayHeadTag(56, { EVM_GEN8_DISPLAY_HEAD_TAG_56: "latest" }), "latest");
+  assert.equal(gen8MoneyHeadTag(4663, { EVM_GEN8_MONEY_HEAD_TAG: "finalized" }), "finalized");
+  assert.equal(gen8MoneyHeadTag(4663, { EVM_GEN8_MONEY_HEAD_TAG: "nonsense" }), "safe");
   const asked: unknown[] = [];
   const p = { getBlockNumber: async () => 1_000, getBlock: async (t: any) => (asked.push(t), t === "finalized" ? { number: 990 } : t === "safe" ? { number: 940 } : null) };
-  assert.equal(await gen8SafeHead(p, 56, {}), 990);
-  assert.equal(await gen8SafeHead(p, 4663, {}), 940);
-  assert.equal(await gen8SafeHead(p, 56, { EVM_GEN8_HEAD_TAG_56: "latest", EVM_GEN8_CONFIRMATIONS: "3" }), 997);
+  assert.equal(await gen8HeadBlock(p, 56, "finalized", {}), 990);
+  assert.equal(await gen8HeadBlock(p, 4663, "safe", {}), 940);
+  assert.equal(await gen8HeadBlock(p, 56, "latest", { EVM_GEN8_CONFIRMATIONS: "3" }), 997);
   assert.deepEqual(asked, ["finalized", "safe"]);
-  await assert.rejects(gen8SafeHead({ getBlockNumber: async () => 5, getBlock: async () => null }, 56, {}), /did not return the 'finalized' block/, "fails closed, never falls back to the unsafe head");
+  await assert.rejects(gen8HeadBlock({ getBlockNumber: async () => 5, getBlock: async () => null }, 56, "finalized", {}), /did not return the 'finalized' block/, "fails closed, never falls back to the unsafe head");
 });
 
 // ------------------------------------------------------------------ F9

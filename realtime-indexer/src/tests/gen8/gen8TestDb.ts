@@ -24,5 +24,7 @@ export function gen8SchemaFiles(): string[] {
     "db/migrations/20260921_000002_market_trades_v_arena_valuation_columns.sql",
     "db/migrations/20261011_000010_evm_gen8_indexer.sql",
     "db/migrations/20261011_000010_evm_gen8_indexer.sql",
+    "db/migrations/20261012_000011_evm_gen8_display.sql",
+    "db/migrations/20261012_000011_evm_gen8_display.sql",
   ];
 }

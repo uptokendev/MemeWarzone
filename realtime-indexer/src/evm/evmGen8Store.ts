@@ -474,3 +474,142 @@ export async function gen8DistinctSwapSenders(db: Queryable, chainId: number, wa
   );
   return Number(r.rows[0]?.n ?? 1);
 }
+
+// ------------------------------------------------------------------ hybrid display / money ingestion (F10)
+
+export type Gen8SwapRow = {
+  chainId: number; hook: string; poolId: string; token: string; txHash: string; logIndex: number; blockNumber: number; blockTime: Date;
+  phase: "bonding" | "post"; side: "buy" | "sell"; sqrtPriceX96: bigint; price: number; mcap: number; volume: number; soldRaw: bigint | null;
+};
+
+/** The display-side swap ledger: what a candle and the stats need, so a rollback can rebuild them. Idempotent. */
+export async function insertGen8Swap(db: Queryable, r: Gen8SwapRow) {
+  await db.query(
+    `insert into public.evm_gen8_swaps(chain_id, hook_address, pool_id, token_address, tx_hash, log_index, block_number, block_time, phase, side, sqrt_price_x96, price, mcap, volume, sold_raw)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+     on conflict (chain_id, tx_hash, log_index) do nothing`,
+    [r.chainId, r.hook, r.poolId, r.token, r.txHash, r.logIndex, r.blockNumber, r.blockTime, r.phase, r.side, r.sqrtPriceX96.toString(), r.price, r.mcap, r.volume, r.soldRaw === null ? null : r.soldRaw.toString()],
+  );
+}
+
+export async function loadGen8SwapsSince(db: Queryable, chainId: number, token: string, since: Date): Promise<Gen8SwapRow[]> {
+  const { rows } = await db.query(
+    `select * from public.evm_gen8_swaps where chain_id = $1 and token_address = $2 and block_time >= $3 order by block_number, log_index`,
+    [chainId, token, since],
+  );
+  return rows.map((r) => ({
+    chainId: Number(r.chain_id), hook: String(r.hook_address), poolId: String(r.pool_id), token: String(r.token_address), txHash: String(r.tx_hash), logIndex: Number(r.log_index),
+    blockNumber: Number(r.block_number), blockTime: new Date(r.block_time), phase: r.phase, side: r.side, sqrtPriceX96: BigInt(String(r.sqrt_price_x96)),
+    price: Number(r.price), mcap: Number(r.mcap), volume: Number(r.volume), soldRaw: r.sold_raw === null ? null : BigInt(String(r.sold_raw)),
+  }));
+}
+
+export async function lastGen8Swap(db: Queryable, chainId: number, token: string): Promise<Gen8SwapRow | null> {
+  const { rows } = await db.query(`select max(block_time) as t from public.evm_gen8_swaps where chain_id = $1 and token_address = $2`, [chainId, token]);
+  if (!rows[0]?.t) return null;
+  const all = await loadGen8SwapsSince(db, chainId, token, new Date(rows[0].t));
+  return all[all.length - 1] ?? null;
+}
+
+/** Block hashes of the display window (upsert: a re-ingested block replaces its hash). */
+export async function storeGen8DisplayBlocks(db: Queryable, chainId: number, hook: string, blocks: Map<number, string>) {
+  for (const [n, h] of blocks) {
+    await db.query(
+      `insert into public.evm_gen8_display_blocks(chain_id, hook_address, block_number, block_hash) values ($1,$2,$3,$4)
+       on conflict (chain_id, hook_address, block_number) do update set block_hash = excluded.block_hash`,
+      [chainId, hook, n, h.toLowerCase()],
+    );
+  }
+}
+
+/** Stored display blocks at or below `tip`, newest first. */
+export async function loadGen8DisplayBlocks(db: Queryable, chainId: number, hook: string, tip: number, limit = 2_048): Promise<Array<{ number: number; hash: string }>> {
+  const { rows } = await db.query(
+    `select block_number, block_hash from public.evm_gen8_display_blocks where chain_id = $1 and hook_address = $2 and block_number <= $3 order by block_number desc limit $4`,
+    [chainId, hook, tip, limit],
+  );
+  return rows.map((r) => ({ number: Number(r.block_number), hash: String(r.block_hash).toLowerCase() }));
+}
+
+export async function pruneGen8DisplayBlocks(db: Queryable, chainId: number, hook: string, below: number) {
+  await db.query(`delete from public.evm_gen8_display_blocks where chain_id = $1 and hook_address = $2 and block_number < $3`, [chainId, hook, below]);
+}
+
+export type Gen8RollbackScope = {
+  tokens: string[];
+  firstTime: Date | null;
+  launches: Array<{ token: string; poolId: string }>;
+  graduations: Array<{ token: string; poolId: string }>;
+  trades: number;
+};
+
+/** What a rollback above `ancestor` touches (read before anything is deleted). */
+export async function gen8DisplayRowsAbove(db: Queryable, chainId: number, hook: string, ancestor: number): Promise<Gen8RollbackScope> {
+  const swaps = await db.query(
+    `select token_address, min(block_time) as first_time, count(*)::int as n from public.evm_gen8_swaps where chain_id = $1 and hook_address = $2 and block_number > $3 group by token_address`,
+    [chainId, hook, ancestor],
+  );
+  const launches = await db.query(`select token_address, pool_id from public.evm_gen8_pools where chain_id = $1 and hook_address = $2 and launch_block > $3`, [chainId, hook, ancestor]);
+  const graduations = await db.query(`select token_address, pool_id from public.evm_gen8_pools where chain_id = $1 and hook_address = $2 and graduated_block > $3`, [chainId, hook, ancestor]);
+  let firstTime: Date | null = null;
+  let trades = 0;
+  const tokens = new Set<string>();
+  for (const r of swaps.rows) {
+    tokens.add(String(r.token_address));
+    trades += Number(r.n);
+    const t = new Date(r.first_time);
+    if (!firstTime || t < firstTime) firstTime = t;
+  }
+  for (const r of [...launches.rows, ...graduations.rows]) tokens.add(String(r.token_address));
+  return {
+    tokens: [...tokens], firstTime, trades,
+    launches: launches.rows.map((r) => ({ token: String(r.token_address), poolId: String(r.pool_id) })),
+    graduations: graduations.rows.map((r) => ({ token: String(r.token_address), poolId: String(r.pool_id) })),
+  };
+}
+
+/** Deletes every display row of this hook above `ancestor`: trades, activity, contract events, swaps, block hashes. */
+export async function deleteGen8DisplayRows(db: Queryable, chainId: number, hook: string, ancestor: number) {
+  await db.query(`delete from public.curve_trades where chain_id = $1 and venue = '${GEN8_VENUE}' and block_number > $2`, [chainId, ancestor]);
+  await db.query(`delete from public.dex_trades where chain_id = $1 and execution_source = '${GEN8_EXECUTION_SOURCE}' and block_number > $2`, [chainId, ancestor]);
+  await db.query(`delete from public.activity_events where chain_id = $1 and block_number > $2 and meta->>'generation' = '8'`, [chainId, ancestor]);
+  await db.query(`delete from public.evm_campaign_events where chain_id = $1 and contract_kind like 'gen8_%' and block_number > $2`, [chainId, ancestor]);
+  await db.query(`delete from public.evm_gen8_swaps where chain_id = $1 and hook_address = $2 and block_number > $3`, [chainId, hook, ancestor]);
+  await db.query(`delete from public.evm_gen8_display_blocks where chain_id = $1 and hook_address = $2 and block_number > $3`, [chainId, hook, ancestor]);
+  // The pool price guard: the next (re-ingested) swap above the ancestor may overwrite the last price again.
+  await db.query(
+    `update public.evm_gen8_pools set last_swap_block = least(last_swap_block, $3), last_swap_log_index = null, updated_at = now()
+      where chain_id = $1 and hook_address = $2 and last_swap_block > $3`,
+    [chainId, hook, ancestor],
+  );
+}
+
+/** Undoes a graduation the chain dropped: the gen-7 campaign columns, the market state and the pool row. */
+export async function undoGen8Graduation(db: Queryable, chainId: number, token: string, poolId: string) {
+  await db.query(
+    `update public.evm_gen8_pools set graduated_block = null, graduated_tx = null, graduated_log_index = null, grad_fee_native = null, native_in_a = null, updated_at = now()
+      where chain_id = $1 and pool_id = $2`,
+    [chainId, poolId],
+  );
+  await db.query(
+    `update public.campaigns set is_active = true, graduated_block = null, graduated_at_chain = null, meta = coalesce(meta, '{}'::jsonb) - 'graduatedTx', updated_at = now()
+      where chain_id = $1 and campaign_address = $2`,
+    [chainId, token],
+  );
+  await db.query(`update public.campaigns set market_stage = 'BONDING', updated_at = now() where chain_id = $1 and campaign_address = $2`, [chainId, token]).catch(() => undefined);
+  await db.query(`delete from public.campaign_market_state where chain_id = $1 and campaign_address = $2`, [chainId, token]);
+  await db.query(`delete from public.market_stats where chain_id = $1 and campaign_address = $2`, [chainId, token]);
+}
+
+/** Removes a launch the chain dropped: the pool row, the campaign and its per-coin stats rows. */
+export async function undoGen8Launch(db: Queryable, chainId: number, token: string, poolId: string) {
+  await db.query(`delete from public.evm_gen8_pools where chain_id = $1 and pool_id = $2`, [chainId, poolId]);
+  for (const table of ["token_stats", "market_stats", "campaign_market_state", "campaign_activity"]) {
+    await db.query(`delete from public.${table} where chain_id = $1 and campaign_address = $2`, [chainId, token]).catch(() => undefined);
+  }
+  await db.query(`delete from public.campaigns where chain_id = $1 and campaign_address = $2 and campaign_generation = ${GEN8_CAMPAIGN_GENERATION}`, [chainId, token]);
+}
+
+export async function deleteGen8Candles(db: Queryable, chainId: number, token: string, timeframe: string, fromBucket: Date) {
+  await db.query(`delete from public.token_candles where chain_id = $1 and campaign_address = $2 and timeframe = $3 and bucket_start >= $4`, [chainId, token, timeframe, fromBucket]);
+}

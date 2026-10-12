@@ -113,17 +113,30 @@ export function intEnv(value: unknown, fallback: number, min: number, max = Numb
 export type Gen8HeadTag = "finalized" | "safe" | "latest";
 
 /**
- * The block tag the gen-8 loops (ingest, holder census, side pools) read up to. Default: `finalized` on BNB (56, 97;
- * fast finality, about 2 blocks / 1 s behind on 2026-10-12) and `safe` on Robinhood (4663, 46630; the block whose
- * batch is posted to Ethereum, about 9.6 minutes behind on 2026-10-12). A block at or below these tags cannot be
- * reorganised away, so nothing the indexer writes (trades, accruals, League rows, recruiter credit) can turn into a
- * phantom. EVM_GEN8_HEAD_TAG_<id> (or EVM_GEN8_HEAD_TAG) = finalized | safe | latest overrides it; `latest` is the old
- * behaviour (EVM_GEN8_CONFIRMATIONS blocks behind the head) and is meant for local chains only.
+ * Hybrid ingestion (founder 2026-10-12). Two cursors per chain:
+ *   display  curve_trades / dex_trades, candles, token_stats / market_stats, activity, Ably, the side-pool watcher.
+ *            Reads up to `latest` on Robinhood (4663, 46630) and `finalized` on BNB (56, 97; about 1 s behind the
+ *            head). A reorg at the tip (block hash mismatch) rolls the display rows above the common ancestor back
+ *            and re-ingests (evmGen8Pool.ts rollbackGen8Display).
+ *   money    evm_gen8_fee_accruals, reward_events, route runs, recruiter credit, the holder census. Reads only up to
+ *            `safe` on Robinhood (the batch posted to Ethereum, about 10 minutes behind on 2026-10-12) and `finalized`
+ *            on BNB, and never past the display cursor. Money rows are written once and need no rollback.
+ * EVM_GEN8_DISPLAY_HEAD_TAG(_<id>) and EVM_GEN8_MONEY_HEAD_TAG(_<id>) override (finalized | safe | latest); `latest`
+ * is EVM_GEN8_CONFIRMATIONS blocks behind the head and, for the money tag, meant for local chains only.
  */
-export function gen8HeadTag(chainId: number, env: NodeJS.ProcessEnv = process.env): Gen8HeadTag {
-  const raw = String(env[`EVM_GEN8_HEAD_TAG_${chainId}`] || env.EVM_GEN8_HEAD_TAG || "").trim().toLowerCase();
-  if (raw === "finalized" || raw === "safe" || raw === "latest") return raw;
-  return chainId === 4663 || chainId === 46630 ? "safe" : "finalized";
+function headTagEnv(raw: unknown): Gen8HeadTag | null {
+  const v = String(raw ?? "").trim().toLowerCase();
+  return v === "finalized" || v === "safe" || v === "latest" ? v : null;
+}
+
+const isRobinhood = (chainId: number) => chainId === 4663 || chainId === 46630;
+
+export function gen8DisplayHeadTag(chainId: number, env: NodeJS.ProcessEnv = process.env): Gen8HeadTag {
+  return headTagEnv(env[`EVM_GEN8_DISPLAY_HEAD_TAG_${chainId}`]) ?? headTagEnv(env.EVM_GEN8_DISPLAY_HEAD_TAG) ?? (isRobinhood(chainId) ? "latest" : "finalized");
+}
+
+export function gen8MoneyHeadTag(chainId: number, env: NodeJS.ProcessEnv = process.env): Gen8HeadTag {
+  return headTagEnv(env[`EVM_GEN8_MONEY_HEAD_TAG_${chainId}`]) ?? headTagEnv(env.EVM_GEN8_MONEY_HEAD_TAG) ?? (isRobinhood(chainId) ? "safe" : "finalized");
 }
 
 export type Gen8HeadProvider = {
@@ -132,16 +145,25 @@ export type Gen8HeadProvider = {
 };
 
 /**
- * The highest block the gen-8 loops may ingest. Fails closed: when the RPC cannot answer the tag, the pass throws
- * (logged, retried next tick) instead of falling back to the unsafe head.
+ * The highest block a gen-8 loop may read for `tag`. Fails closed: when the RPC cannot answer the tag, the pass
+ * throws (logged, retried next tick) instead of falling back to the unsafe head.
  */
-export async function gen8SafeHead(provider: Gen8HeadProvider, chainId: number, env: NodeJS.ProcessEnv = process.env): Promise<number> {
-  const tag = gen8HeadTag(chainId, env);
+export async function gen8HeadBlock(provider: Gen8HeadProvider, chainId: number, tag: Gen8HeadTag, env: NodeJS.ProcessEnv = process.env): Promise<number> {
   if (tag === "latest") return (await provider.getBlockNumber()) - intEnv(env.EVM_GEN8_CONFIRMATIONS, 1, 0, 64);
   const b = await provider.getBlock(tag);
   const n = b?.number;
   if (n === null || n === undefined || !Number.isFinite(Number(n))) throw new Error(`gen8: the RPC for chain ${chainId} did not return the '${tag}' block`);
   return Number(n);
+}
+
+/** The money head: gen8HeadBlock with the chain's money tag. */
+export function gen8MoneyHead(provider: Gen8HeadProvider, chainId: number, env: NodeJS.ProcessEnv = process.env): Promise<number> {
+  return gen8HeadBlock(provider, chainId, gen8MoneyHeadTag(chainId, env), env);
+}
+
+/** The display head: gen8HeadBlock with the chain's display tag. */
+export function gen8DisplayHead(provider: Gen8HeadProvider, chainId: number, env: NodeJS.ProcessEnv = process.env): Promise<number> {
+  return gen8HeadBlock(provider, chainId, gen8DisplayHeadTag(chainId, env), env);
 }
 
 // ------------------------------------------------------------------ recruiter / squad link eligibility (audit C-M4, F9)
