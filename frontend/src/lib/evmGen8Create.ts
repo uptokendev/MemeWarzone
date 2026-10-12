@@ -28,6 +28,8 @@ export type Gen8CreateInput = {
   feeChoice: "keep" | "holders" | "split" | "buyback";
   feeCreatorPct: number;
   firstBuyValueWei: bigint;
+  /** Unix seconds. 0 (default) opens trading at launch; a future time creates the pool now and opens trading then. */
+  openAt?: number;
 };
 
 async function postJson(path: string, body: unknown) {
@@ -115,6 +117,7 @@ export async function createGen8Campaign(input: Gen8CreateInput) {
           feeChoice: input.feeChoice,
           feeCreatorPct: input.feeCreatorPct,
           firstBuyValueWei: input.firstBuyValueWei,
+          openAt: input.openAt ?? 0,
         }),
       );
       let launched;

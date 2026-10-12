@@ -73,7 +73,6 @@ import { isScheduleLocked } from "../../shared/dbcSchedule.mjs";
 import { EvmGen8LaunchOptions, assertEvmGen8LaunchBalance, freshEvmGen8FirstBuyCheck } from "@/components/create/EvmGen8LaunchOptions";
 import { GEN8_DEFAULT_GRADUATION_TARGET_WEI, gen8GraduationTiers, gen8LauncherFor } from "@/lib/evmGen8Client.mjs";
 import { createGen8Campaign } from "@/lib/evmGen8Create";
-import { scheduleGen8DraftLaunch } from "@/lib/evmGen8Draft";
 
 const DRAFT_PUSH_LIVE_ENABLED = ["1", "true", "yes", "on"].includes(
   String(import.meta.env.VITE_DRAFT_PUSH_LIVE_ENABLED || import.meta.env.VITE_ENABLE_DRAFT_PUSH_LIVE || "")
@@ -830,9 +829,8 @@ export default function PushDraftLive() {
   };
 
   /**
-   * Gen-8 draft: "now" = the same create as Direct Deploy on the gen-8 launcher, then the draft is linked to the coin
-   * (campaign address = token address). "Countdown" = the launch time is saved on the draft (nothing on chain); the
-   * button unlocks at that time and launches the same way.
+   * Gen-8 draft: create the pool now (same as Direct Deploy). "Countdown" still pays gas now and sets
+   * LaunchRequest.openAt to the chosen time so trading opens by itself; it does not store a later launch.
    */
   const deployGen8 = async () => {
     if (!draft || !gen8Launcher) return;
@@ -842,21 +840,15 @@ export default function PushDraftLive() {
     if (!canPushLive(draft.status, { dbc: true })) return toast.error("Publish the promotion page before deployment.");
     if (!logoURI) return toast.error("Draft needs a saved logo before deployment.");
     const chainId = Number(draft.chainId);
-    const savedLocked = isScheduleLocked(draft.scheduledLaunchAt, Date.now());
-    const newTimeInFuture = isScheduleLocked(new Date(launchAtInput).toISOString(), Date.now());
+    const openAt = mode === "scheduled" ? Math.floor(new Date(launchAtInput).getTime() / 1000) : 0;
+    if (mode === "scheduled" && (!Number.isFinite(openAt) || openAt <= Math.floor(Date.now() / 1000))) {
+      return toast.error("Choose a trading-open time at least a few minutes from now.");
+    }
     setSubmitting(true);
     try {
       const { assertOnchainLogoUri } = await import("@/lib/onchainLogoUri");
       assertOnchainLogoUri(logoURI);
       const deployAuth = await signDraftAction({ signer: wallet.signer, walletAddress: wallet.account, chainId, action: "deploy_draft", draftId: draft.id });
-      if (mode === "scheduled" && (!draft.scheduledLaunchAt || newTimeInFuture)) {
-        const at = Math.floor(new Date(launchAtInput).getTime() / 1000);
-        await scheduleGen8DraftLaunch({ draftId: draft.id, auth: deployAuth, scheduledLaunchAt: at, graduationTargetWei });
-        toast.success("Launch time saved. Nothing is created on chain until you launch.");
-        navigate(`/prepare/${draft.slug}`);
-        return;
-      }
-      if (savedLocked) throw new Error(`Launch opens ${new Date(String(draft.scheduledLaunchAt)).toLocaleString()}.`);
       const firstBuyValueWei = parseNativeInput(evmFirstBuyInput);
       await freshEvmGen8FirstBuyCheck({ chainId, launcher: gen8Launcher, targetUsd: graduationTargetWei, valueWei: firstBuyValueWei });
       await assertEvmGen8LaunchBalance({ chainId, account: wallet.account, valueWei: firstBuyValueWei });
@@ -876,6 +868,7 @@ export default function PushDraftLive() {
         feeChoice: evmFeeChoice,
         feeCreatorPct: evmFeeChoice === "split" ? Number(evmCreatorSharePct) : 0,
         firstBuyValueWei,
+        openAt,
       });
       await markDraftDeployment({
         draftId: draft.id,
@@ -885,7 +878,7 @@ export default function PushDraftLive() {
         deployTxHash: created.txHash || "",
         factoryAddress: gen8Launcher,
       });
-      toast.success(`${deployTierLabel} coin is live.`);
+      toast.success(openAt > 0 ? `${deployTierLabel} coin is live. Trading opens at ${new Date(openAt * 1000).toLocaleString()}.` : `${deployTierLabel} coin is live.`);
       navigate(`/token/${created.tokenAddress}?chainId=${chainId}`);
     } catch (err: any) {
       toast.error(String(err?.shortMessage || err?.message || `We couldn’t deploy your coin on ${chainLabel}. Your draft remains saved. Please try again.`));
@@ -1070,11 +1063,10 @@ export default function PushDraftLive() {
   const dbcDue = dbcDraft && Boolean(draft.scheduledLaunchAt) && !dbcLocked;
   // A first buy the launch would refuse (over 70%) or could not pay for also blocks the button.
   const dbcFirstBuyBlocked = Boolean(dbcDraft && (dbcFirstBuyQuote?.exceedsCap || dbcFirstBuyOverBalance));
-  const gen8Locked = gen8Draft && isScheduleLocked(draft.scheduledLaunchAt, Date.now());
   const blocked = gen8Draft
-    ? submitting || !DRAFT_PUSH_LIVE_ENABLED || !canPushLive(draft.status, { dbc: true }) || (mode === "now" && gen8Locked) || (mode === "now" && evmGen8FirstBuyBlocked)
+    ? submitting || !DRAFT_PUSH_LIVE_ENABLED || !canPushLive(draft.status, { dbc: true }) || evmGen8FirstBuyBlocked
     : submitting || !DRAFT_PUSH_LIVE_ENABLED || !canPushLive(draft.status, { dbc: dbcDraft, due: dbcDue }) || (draftIsSolana ? !ownerConnected : false) || (dbcDraft && mode === "now" && dbcLocked) || dbcFirstBuyBlocked || (evmGen7 && !dbcDraft && evmGen7FirstBuyBlocked);
-  const timerDraft = dbcDraft || gen8Draft;
+  const timerDraft = dbcDraft;
 
   return (
     <div className="mx-auto w-full max-w-[1480px] px-1 py-8 md:px-2">
@@ -1187,9 +1179,7 @@ export default function PushDraftLive() {
                 <p>Creator timezone: <span className="font-mw-mono text-mw-text">{creatorTimeZone} ({timeZoneOffset(selectedLaunchDate)})</span></p>
                 <p>UTC time: <span className="font-mw-mono text-mw-text">{selectedLaunchDate.toISOString().replace("T", " ").slice(0, 16)} UTC</span></p>
                 <p className="pt-1 text-mw-accent-soft">
-                  {gen8Draft
-                    ? "Nothing is created until you launch. Come back to this page at that time and launch with one wallet signature."
-                    : dbcDraft
+                  {dbcDraft
                     ? "Nothing is created until you launch. At this time you get a reminder on any page of the site while your wallet is connected."
                     : "This timestamp controls only when trading opens. It is not reserved, queued, or made exclusive to this campaign."}
                 </p>
@@ -1233,7 +1223,7 @@ export default function PushDraftLive() {
           </div>
         ) : null}
 
-        {gen8Draft && gen8Launcher && mode === "now" ? (
+        {gen8Draft && gen8Launcher ? (
           <div className="mt-4">
             <EvmGen8LaunchOptions
               chainId={Number(draft.chainId)}
@@ -1284,11 +1274,7 @@ export default function PushDraftLive() {
         <Button onClick={deploy} disabled={blocked} className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-5 h-auto min-h-[54px] w-full whitespace-normal py-3 text-center text-[17px]">
           {submitting
             ? "Confirming Deployment..."
-            : gen8Draft && mode === "scheduled"
-              ? "Set launch time"
-              : gen8Draft && gen8Locked
-                ? `Launch opens ${new Date(String(draft.scheduledLaunchAt)).toLocaleString()}`
-                : gen8Draft
+            : gen8Draft
                   ? `Launch ${deployTierLabel} coin now`
             : dbcDraft && mode === "scheduled"
               ? "Set launch time"

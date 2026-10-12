@@ -1,7 +1,7 @@
 /**
- * Generation 8 timed launch from a draft: saves the launch time on the draft (POST /api/drafts/:id/deploy,
- * operation schedule_gen8, api/dev-fix/draftGen8Schedule.js). Nothing is created on chain; the creator launches the
- * coin at or after that time with the normal gen-8 create (MwzV4Launcher has no trading-open time).
+ * Generation 8 timed launch from a draft (API leftover). The app no longer calls this: a scheduled gen-8 launch
+ * creates the pool immediately with LaunchRequest.openAt set to the chosen time (PushDraftLive deployGen8). The
+ * schedule_gen8 API is left in place so gen-6/7 and DBC scheduling stay untouched.
  */
 import { apiFetch } from "@/lib/apiBase";
 import type { DraftActionAuth } from "@/lib/draftAuth";
