@@ -408,7 +408,7 @@ contract MwzCreatorChoiceVault is IUnlockCallback, ReentrancyGuard {
         _checkInterval(id);
         _useWeekCap(id, amountIn);
 
-        (, uint40 openAt, bool graduated,, int24 tickStart, uint128 liqA,, uint160 sqrtGrad,) = hook.pools(id);
+        (, uint40 openAt, bool graduated,, int24 tickStart, uint128 liqA,, uint160 sqrtGrad,,) = hook.pools(id);
         if (block.timestamp < uint256(openAt) + SNIPER_WINDOW) revert CurveState();
         (uint160 sqrtP,,,) = poolManager.getSlot0(id);
         if (!graduated) {

@@ -62,7 +62,7 @@ contract MwzCreatorEscrow is IUnlockCallback, ReentrancyGuard {
         if (msg.value == 0) revert ZeroAmount();
         PoolKey memory key = hook.poolKeyFor(token);
         PoolId id = key.toId();
-        (address creator,,,,,,,,) = hook.pools(id);
+        (address creator,,,,,,,,,) = hook.pools(id);
         if (creator == address(0)) revert UnknownPool();
         (spent, coinsOut) = abi.decode(poolManager.unlock(abi.encode(key, msg.value)), (uint256, uint256));
         if (coinsOut == 0 || coinsOut < minOut) revert Slippage();

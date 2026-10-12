@@ -47,6 +47,7 @@ interface IMwzDisplayPair {
 ///   past the graduation price pays the post-graduation rate (creator share of volume). The graduation latch decides
 ///   only the one-time graduation (2% fee, Graduated event), never the rate.
 /// - Scheduled open (B): no swap before the coin's openAt except the launcher's own creator first buy inside launch().
+/// - graduatedAt (2026-10-12): the latch's block time, read by MwzReserveLock (release at least 1 h after it).
 /// - No sell may leave the price above the start price, where no liquidity exists (F2).
 /// - Partial fills with a price limit: beforeSwap replays the swap exactly (MwzSwapSim) and charges only the part
 ///   that fills; afterSwap re-checks it.
@@ -136,6 +137,7 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
         uint128 liqB; // slot 1
         uint160 sqrtGrad;
         FeeConfig fees; // 10 bytes, packed with sqrtGrad -> slot 2
+        uint40 graduatedAt; // slot 3: block time of the graduation latch (0 until then); MwzReserveLock waits 1 h after it
     }
 
     /// @notice Cumulative amounts paid to one router address (D1 splitter bands). `bondingFees` is the full
@@ -459,7 +461,8 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
             liqA: liqA,
             liqB: liqB,
             sqrtGrad: sqrtGrad,
-            fees: fees
+            fees: fees,
+            graduatedAt: 0
         });
 
         poolManager.initialize(key, sqrtStart); // self-call: beforeInitialize is skipped for the hook itself
@@ -686,12 +689,13 @@ contract MwzLaunchHook is IHooks, IUnlockCallback {
         return (IHooks.afterSwap.selector, unspecified);
     }
 
-    /// @dev The latch is set first (never reset). Then the only liquidity removal that exists: floor(liqA * 2%) from
+    /// @dev The latch and its block time are set first (never reset). Then the only liquidity removal that exists: floor(liqA * 2%) from
     /// A, which at this price holds native only, so it returns exactly 2% of A's native raise (I6). The native is
     /// minted as a claim to the router bucket. The hook calls modifyLiquidity itself, so its own beforeAddLiquidity
     /// is skipped by the PoolManager (and remove has no callback).
     function _graduate(PoolKey calldata key, PoolId id, PoolState storage st) internal {
         st.graduated = true;
+        st.graduatedAt = uint40(block.timestamp);
         uint128 remove = uint128((uint256(st.liqA) * GRAD_FEE_BPS) / BPS);
         uint160 sqrtStart = TickMath.getSqrtPriceAtTick(st.tickStart);
         uint256 nativeInA = SqrtPriceMath.getAmount0Delta(st.sqrtGrad, sqrtStart, st.liqA, false);

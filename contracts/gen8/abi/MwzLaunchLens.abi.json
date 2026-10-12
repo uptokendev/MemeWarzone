@@ -159,6 +159,11 @@
             "type": "bool"
           },
           {
+            "internalType": "uint40",
+            "name": "graduatedAt",
+            "type": "uint40"
+          },
+          {
             "internalType": "uint160",
             "name": "sqrtPriceX96",
             "type": "uint160"

@@ -45,6 +45,8 @@ describe("gen8 periphery", function () {
       await (await env.hook.connect(env.creator).proposeCreator(P.id, env.creator2.address)).wait();
       await (await env.hook.connect(env.creator2).acceptCreator(P.id)).wait();
       await graduate(env, P, env.bot);
+      await expect(lock.release(P.id)).to.be.revertedWithCustomError(lock, "ReserveTooEarly"); // 1 h since the latch (F1 residual)
+      await mineAt((await now()) + 3600n);
       const b = await P.coin.balanceOf(env.creator2.address);
       await expect(lock.connect(env.attacker).release(P.id)).to.emit(lock, "ReserveReleased").withArgs(P.id, P.token, env.creator2.address, RESERVE);
       expect((await P.coin.balanceOf(env.creator2.address)) - b).to.eq(RESERVE);
@@ -58,6 +60,7 @@ describe("gen8 periphery", function () {
       await (await env.vault.connect(env.creator).proposeCreator(P.id, env.creator2.address)).wait();
       await (await env.vault.connect(env.creator2).acceptCreator(P.id)).wait();
       await graduate(env, P, env.bot);
+      await mineAt((await now()) + 3600n);
       await (await env.reserveLock.release(P.id)).wait();
       expect(await P.coin.balanceOf(env.creator2.address)).to.eq(RESERVE);
     });

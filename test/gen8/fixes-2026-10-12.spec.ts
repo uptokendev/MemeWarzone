@@ -120,7 +120,7 @@ describe("gen8 fix round 2026-10-12", function () {
       expect((await env.hook.pools(P.id)).graduated).to.eq(false);
     });
 
-    it("A-1 / D-H1 two transactions in one block (bundle): same result; a third transaction in between can release the reserve (residual, measured)", async () => {
+    it("A-1 / D-H1 two transactions in one block (bundle): same result; a release transaction in between now fails (ReserveTooEarly, 1 h since the latch)", async () => {
       const { env, P } = await loadFixture(freshCoin);
       await (await P.coin.connect(env.attacker).approve(await env.trader.getAddress(), ethers.MaxUint256)).wait();
       const big = nativeTargetA(P) * 2n;
@@ -133,23 +133,65 @@ describe("gen8 fix round 2026-10-12", function () {
       await network.provider.send("evm_mine", []);
       await network.provider.send("evm_setAutomine", [true]);
       const [r1, r2, r3] = await Promise.all([t1, t2, t3].map((t) => ethers.provider.getTransactionReceipt(t.hash)));
-      expect([r1!.status, r2!.status, r3!.status]).to.deep.eq([1, 1, 1]);
+      expect([r1!.status, r2!.status, r3!.status]).to.deep.eq([1, 0, 1]); // the release in the middle reverted
       expect(r1!.blockNumber).to.eq(r3!.blockNumber);
-      expect((await env.hook.pools(P.id)).graduated).to.eq(true);
+      expect(r2!.blockNumber).to.eq(r1!.blockNumber);
+      const st = await env.hook.pools(P.id);
+      expect(st.graduated).to.eq(true);
+      expect(st.graduatedAt).to.eq(BigInt((await ethers.provider.getBlock(r1!.blockNumber))!.timestamp));
       expect((await slot0(env, P)).sqrtP > P.sqrtGrad).to.eq(true);
       // fees are back to 2% for everyone
       expect(await env.lens.currentFeeBps(P.id, env.buyer.address)).to.eq(200n);
-      // residual: the reserve WAS released by the middle transaction (price at graduation, PoolManager locked)
-      expect((await env.reserveLock.reserves(P.id)).amount).to.eq(0n);
+      // the reserve is still locked (the release transaction hit ReserveTooEarly: price at graduation, PoolManager
+      // locked, but 0 s since the latch); afterwards the price is back in A, so it is PriceBelowGraduation
+      expect((await env.reserveLock.reserves(P.id)).amount).to.eq(RESERVE);
+      await expect(env.reserveLock.connect(env.attacker).release(P.id)).to.be.revertedWithCustomError(env.reserveLock, "PriceBelowGraduation");
+      // and the same release right after the buy leg alone (price at graduation, locked, same block time) is ReserveTooEarly
       const gas = [r1!, r2!, r3!].reduce((a, r) => a + r.gasUsed * r.gasPrice, 0n);
       const cost = nB - (await ethers.provider.getBalance(env.attacker.address)) - gas;
-      console.log(`      residual bundle (buy to graduation, release, sell back): net cost ${fmt(cost)} native, needs ${fmt(nativeTargetA(P))} native for one block; releases the creator's 20M reserve early; no fee change`);
+      console.log(`      bundle (buy to graduation, release, sell back): net cost ${fmt(cost)} native, needs ${fmt(nativeTargetA(P))} native for one block; reserve stays locked; no fee change`);
+    });
+
+    it("1 h delay: release refused at latch + 59 min, allowed at + 60 min with the price at/past graduation, refused if the price fell back; graduatedAt is set once", async () => {
+      const { env, P } = await loadFixture(coinAfterWindow);
+      expect((await env.hook.pools(P.id)).graduatedAt).to.eq(0n);
+      expect(await env.reserveLock.RESERVE_RELEASE_DELAY()).to.eq(3600n);
+      const g = await graduate(env, P, env.bot);
+      const tLatch = BigInt((await ethers.provider.getBlock(g.rc.blockNumber))!.timestamp);
+      const st = await env.hook.pools(P.id);
+      expect([st.graduated, st.graduatedAt]).to.deep.eq([true, tLatch]);
+      expect((await env.lens.progress(P.id)).graduatedAt).to.eq(tLatch);
+      // price at/past graduation the whole time, PoolManager locked: only the clock is missing
+      await expect(env.reserveLock.release(P.id)).to.be.revertedWithCustomError(env.reserveLock, "ReserveTooEarly");
+      await mineAt(tLatch + 59n * 60n);
+      await expect(env.reserveLock.release(P.id)).to.be.revertedWithCustomError(env.reserveLock, "ReserveTooEarly");
+      await setNextTs(tLatch + 3600n - 1n);
+      await expect(env.reserveLock.release(P.id)).to.be.revertedWithCustomError(env.reserveLock, "ReserveTooEarly");
+      // the price falls back into A at + 60 min: refused for the price, not the clock
+      await trade(env, P, { wallet: env.bot, buy: false, exactIn: true, amount: 30_000_000n * WAD, ts: tLatch + 3600n });
+      await expect(env.reserveLock.release(P.id)).to.be.revertedWithCustomError(env.reserveLock, "PriceBelowGraduation");
+      // back to the graduation price: the latch time did not move (set once), so the release goes through now
+      await buyToGrad(env, P);
+      expect((await env.hook.pools(P.id)).graduatedAt).to.eq(tLatch);
+      const b = await P.coin.balanceOf(env.creator.address);
+      await expect(env.reserveLock.connect(env.attacker).release(P.id)).to.emit(env.reserveLock, "ReserveReleased");
+      expect((await P.coin.balanceOf(env.creator.address)) - b).to.eq(RESERVE);
+      // a fresh coin: exactly + 60 min with the price at graduation is allowed (feed refreshed: the clock moved past the
+      // oracle's 3600 s window)
+      await (await env.feed.set(600n * 10n ** 8n, await now())).wait();
+      const { P: Q } = await launch(env, env.creator2, { firstBuyValue: WAD / 2n });
+      await mineAt(Q.launchTs + 61n);
+      const g2 = await graduate(env, Q, env.bot);
+      const t2 = BigInt((await ethers.provider.getBlock(g2.rc.blockNumber))!.timestamp);
+      await setNextTs(t2 + 3600n);
+      await expect(env.reserveLock.release(Q.id)).to.emit(env.reserveLock, "ReserveReleased");
     });
 
     it("release: latch alone is not enough; at/past the graduation price outside an unlock it works", async () => {
       const { env, P } = await loadFixture(coinAfterWindow);
       await expect(env.reserveLock.release(P.id)).to.be.revertedWithCustomError(env.reserveLock, "NotGraduated");
       await graduate(env, P, env.bot);
+      await mineAt((await now()) + 3600n); // the 1 h delay (tested on its own above)
       await trade(env, P, { wallet: env.bot, buy: false, exactIn: true, amount: 30_000_000n * WAD });
       await expect(env.reserveLock.release(P.id)).to.be.revertedWithCustomError(env.reserveLock, "PriceBelowGraduation");
       await buyToGrad(env, P);
@@ -180,6 +222,7 @@ describe("gen8 fix round 2026-10-12", function () {
     it("a sell larger than A can absorb (after graduation, plus the reserve) reverts without a limit and fills to exactly the start price with one", async () => {
       const { env, P } = await loadFixture(coinAfterWindow);
       await graduate(env, P, env.bot);
+      await mineAt((await now()) + 3600n);
       await (await env.reserveLock.release(P.id)).wait();
       await (await P.coin.connect(env.creator).transfer(env.bot.address, await P.coin.balanceOf(env.creator.address))).wait();
       const all = await P.coin.balanceOf(env.bot.address);

@@ -47,11 +47,12 @@ describe("gen8 invariants (seeded property runs)", function () {
       const feesAtLaunch = await Promise.all(ids.map(async (id) => (await env.hook.pools(id)).fees.map((x: bigint) => x)));
       const users = [env.buyer, env.bot, env.attacker, env.payee, env.other];
       const latched: Record<string, boolean> = {};
+      const gradAt: Record<string, bigint> = {};
       let splitterRouted = 0n;
       let runs = 0n;
       const stats: Record<string, number> = {
         trades: 0, partial: 0, grads: 0, claims: 0, routes: 0, pulls: 0, escrow: 0, transfers: 0, skipped: 0, lateFees: 0, replans: 0,
-        postTrades: 0, backInA: 0, notOpen: 0, aboveStart: 0, releases: 0, releaseRefused: 0, foreignClaimRefused: 0,
+        postTrades: 0, backInA: 0, notOpen: 0, aboveStart: 0, releases: 0, releaseRefused: 0, releaseTooEarly: 0, foreignClaimRefused: 0,
       };
 
       const checkAll = async (label: string) => {
@@ -74,6 +75,14 @@ describe("gen8 invariants (seeded property runs)", function () {
           // I7: latch monotonic
           if (latched[P.id]) expect(st.graduated, `${label}: I7 latch reset`).to.eq(true);
           latched[P.id] = st.graduated;
+          // I17 (2026-10-12): graduatedAt is 0 before the latch, set to the latch block's time with it, never changed
+          const tNow = BigInt((await ethers.provider.getBlock("latest"))!.timestamp);
+          if (!st.graduated) expect(st.graduatedAt, `${label}: graduatedAt before the latch`).to.eq(0n);
+          else {
+            expect(st.graduatedAt > 0n && st.graduatedAt <= tNow, `${label}: graduatedAt out of range`).to.eq(true);
+            if (gradAt[P.id] !== undefined) expect(st.graduatedAt, `${label}: graduatedAt changed`).to.eq(gradAt[P.id]);
+            gradAt[P.id] = st.graduatedAt;
+          }
           // I6: A and B only ever lose the one graduation removal
           const a = await positionLiquidity(env, P, P.tickGrad, P.tickStart);
           const b = await positionLiquidity(env, P, MIN_USABLE_TICK, P.tickGrad);
@@ -363,9 +372,15 @@ describe("gen8 invariants (seeded property runs)", function () {
             stats.trades++;
           } else {
             // release the reserve (permissionless) only when graduated AND the price is at or past graduation now (F1)
+            // AND at least 1 h passed since the latch (F1 residual)
             const res = await env.reserveLock.reserves(P.id);
-            if (res.amount > 0n && (await env.hook.pools(P.id)).graduated) {
-              if (phase.post) {
+            const stR = await env.hook.pools(P.id);
+            if (res.amount > 0n && stR.graduated) {
+              const early = nextTs < stR.graduatedAt + 3600n; // the release lands at nextTs (set at the step start)
+              if (phase.post && early) {
+                await expect(env.reserveLock.connect(pick(users)).release(P.id), `${label}: release inside the hour`).to.be.revertedWithCustomError(env.reserveLock, "ReserveTooEarly");
+                stats.releaseTooEarly++;
+              } else if (phase.post) {
                 await (await env.reserveLock.connect(pick(users)).release(P.id)).wait();
                 stats.releases++;
               } else {

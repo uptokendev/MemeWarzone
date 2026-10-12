@@ -66,6 +66,11 @@
     "type": "error"
   },
   {
+    "inputs": [],
+    "name": "ReserveTooEarly",
+    "type": "error"
+  },
+  {
     "inputs": [
       {
         "internalType": "address",
@@ -136,6 +141,19 @@
     ],
     "name": "ReserveReleased",
     "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "RESERVE_RELEASE_DELAY",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
   },
   {
     "inputs": [

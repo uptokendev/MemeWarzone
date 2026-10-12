@@ -26,6 +26,7 @@ contract MwzLaunchLens {
     struct Progress {
         bool graduated; // the one-time graduation latch
         bool postPhase; // F1: the pool price is at or past the graduation price now (post rate applies)
+        uint40 graduatedAt; // block time of the latch, 0 before; the reserve releases from graduatedAt + MwzReserveLock.RESERVE_RELEASE_DELAY
         uint160 sqrtPriceX96;
         uint256 coinsSoldFromA; // coins bought out of A at the launch liquidity, from the pool price (exact before graduation)
         uint256 coinsInA; // what A held at launch
@@ -43,7 +44,7 @@ contract MwzLaunchLens {
     /// the current pool price (F1: inside A the bonding rate with the launch decay from openAt, at or past the
     /// graduation price the post rate). Before openAt only the launcher can swap (others revert TradingNotOpen).
     function currentFeeBps(PoolId id, address sender) external view returns (uint256) {
-        (address creator, uint40 openAt,,,,,, uint160 sqrtGrad, FeeConfig memory fees) = hook.pools(id);
+        (address creator, uint40 openAt,,,,,, uint160 sqrtGrad, FeeConfig memory fees,) = hook.pools(id);
         if (creator == address(0)) revert UnknownPool();
         (uint160 sqrtP,,,) = poolManager.getSlot0(id);
         return MwzFeeMath.rate(fees, sqrtP <= sqrtGrad, sender == launcher, openAt, block.timestamp);
@@ -52,7 +53,7 @@ contract MwzLaunchLens {
     /// @notice B: whether a normal trader can swap now, and when trading opens.
     function tradingOpen(PoolId id) external view returns (bool open, uint256 openAt) {
         address creator;
-        (creator, openAt,,,,,,,) = hook.pools(id);
+        (creator, openAt,,,,,,,,) = hook.pools(id);
         if (creator == address(0)) revert UnknownPool();
         open = block.timestamp >= openAt;
     }
@@ -61,7 +62,7 @@ contract MwzLaunchLens {
     /// buy pass the curve part as a negative amount (the hook charges the fee on top); for an exact-output sell pass
     /// the gross curve payout as a positive amount (see MwzFeeMath.grossForNet).
     function previewFill(PoolId id, bool zeroForOne, int256 amountSpecified, uint160 limit) external view returns (uint256) {
-        (address creator,,, int24 tickGrad, int24 tickStart,,,,) = hook.pools(id);
+        (address creator,,, int24 tickGrad, int24 tickStart,,,,,) = hook.pools(id);
         if (creator == address(0)) revert UnknownPool();
         return MwzSwapSim.simulate(address(poolManager), id, tickGrad, tickStart, zeroForOne, amountSpecified, limit);
     }
@@ -73,11 +74,12 @@ contract MwzLaunchLens {
 
     /// @notice Bonding progress from the pool price (design 6.4: coins sold from A / A).
     function progress(PoolId id) external view returns (Progress memory p) {
-        (address creator,, bool graduated,, int24 tickStart, uint128 liqA,, uint160 sqrtGrad,) = hook.pools(id);
+        (address creator,, bool graduated,, int24 tickStart, uint128 liqA,, uint160 sqrtGrad,, uint40 graduatedAt) = hook.pools(id);
         if (creator == address(0)) revert UnknownPool();
         (uint160 sqrtP,,,) = poolManager.getSlot0(id);
         uint160 sqrtStart = TickMath.getSqrtPriceAtTick(tickStart);
         p.graduated = graduated;
+        p.graduatedAt = graduatedAt;
         p.postPhase = sqrtP <= sqrtGrad;
         p.sqrtPriceX96 = sqrtP;
         p.coinsInA = SqrtPriceMath.getAmount1Delta(sqrtGrad, sqrtStart, liqA, true);

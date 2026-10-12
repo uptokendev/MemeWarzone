@@ -33,7 +33,8 @@ interface IMwzLaunchHook {
             uint128 liqA,
             uint128 liqB,
             uint160 sqrtGrad,
-            FeeConfig memory fees
+            FeeConfig memory fees,
+            uint40 graduatedAt
         );
 
     function creatorOwed(PoolId id) external view returns (uint256);
