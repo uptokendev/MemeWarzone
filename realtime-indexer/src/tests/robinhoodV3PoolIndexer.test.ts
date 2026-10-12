@@ -36,6 +36,12 @@ const basePool = {
   lastIndexedBlock: null,
 };
 
+test("V3 pass skips RPC when there are no candidates and no stored pools", () => {
+  assert.equal(robinhoodV3Internals.v3RpcNeeded(0, 0), false);
+  assert.equal(robinhoodV3Internals.v3RpcNeeded(1, 0), true);
+  assert.equal(robinhoodV3Internals.v3RpcNeeded(0, 1), true);
+});
+
 test("stored decimals treat SQL null as missing instead of zero decimals", () => {
   assert.equal(robinhoodV3Internals.storedDecimals(null), null);
   assert.equal(robinhoodV3Internals.storedDecimals(undefined), null);

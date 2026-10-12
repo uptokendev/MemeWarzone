@@ -4,6 +4,8 @@ import test from "node:test";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
 
+import fs from "node:fs";
+import path from "node:path";
 import { recordTipScan, resetTipWindows, tipScanStart, tipWindowOptionsFromEnv } from "../tipScanWindow.js";
 import { countRpcRequest, countSolanaFetchBody, countingSolanaFetch, hookEthersRpcCounter, resetRpcUsage, rpcUsageDelta, rpcUsageSnapshot } from "../rpcUsage.js";
 import { maskRpcUrl } from "../rpcProvider.js";
@@ -43,10 +45,18 @@ test("tip window: the full window comes back every fullSweepMs, after a cut-shor
   assert.equal(tipScanStart(56, "d", 130_000, OPTS, t0 + 1).from, 110_000, "a gap larger than the window never reads more than the window");
 });
 
-test("tip window env: defaults 200 blocks overlap, 10 minute sweep; bad values fall back", () => {
-  assert.deepEqual(tipWindowOptionsFromEnv(20_000, {}), { windowBlocks: 20_000, overlapBlocks: 200, fullSweepMs: 600_000 });
+test("Topaz lists stored pools before opening an RPC provider", () => {
+  const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../topazPoolIndexer.ts"), "utf8");
+  const listAt = src.indexOf("const indexedPools = await listPools(config.chainId);");
+  const rpcAt = src.indexOf("await createWorkingProvider(config.rpcUrls, config.chainId");
+  assert.ok(listAt >= 0 && rpcAt > listAt, "listPools must run before createWorkingProvider");
+  assert.match(src, /if \(!indexedPools\.length\) continue;/);
+});
+
+test("tip window env: defaults 80 blocks overlap, 30 minute sweep; bad values fall back", () => {
+  assert.deepEqual(tipWindowOptionsFromEnv(2_500, {}), { windowBlocks: 2_500, overlapBlocks: 80, fullSweepMs: 1_800_000 });
   assert.deepEqual(tipWindowOptionsFromEnv(5_000, { INDEXER_TIP_OVERLAP_BLOCKS: "50", INDEXER_TIP_FULL_SWEEP_MS: "0" }), { windowBlocks: 5_000, overlapBlocks: 50, fullSweepMs: 0 });
-  assert.deepEqual(tipWindowOptionsFromEnv(5_000, { INDEXER_TIP_OVERLAP_BLOCKS: "x", INDEXER_TIP_FULL_SWEEP_MS: "-1" }), { windowBlocks: 5_000, overlapBlocks: 200, fullSweepMs: 600_000 });
+  assert.deepEqual(tipWindowOptionsFromEnv(5_000, { INDEXER_TIP_OVERLAP_BLOCKS: "x", INDEXER_TIP_FULL_SWEEP_MS: "-1" }), { windowBlocks: 5_000, overlapBlocks: 80, fullSweepMs: 1_800_000 });
 });
 
 test("rpc usage: counted by chain and method, batches per entry, windows by delta", () => {

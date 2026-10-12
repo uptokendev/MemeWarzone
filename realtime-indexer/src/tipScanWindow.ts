@@ -2,10 +2,10 @@
  * Incremental tip windows for the EVM trade and vote tip scans.
  *
  * The tip scans (runTipScanOnce every 10 s, Phase A and the vote tip in every
- * normal pass) re-read a fixed window of INDEXER_TIP_SCAN_BLOCKS (20 000)
- * blocks each time: 40 eth_getLogs per gen-5 campaign, 80 per older campaign,
- * per scan, whether or not anything happened. On BNB (0.45 s blocks) about 22
- * new blocks arrive between two scans.
+ * normal pass) used to re-read a fixed window of INDEXER_TIP_SCAN_BLOCKS
+ * (then 20 000) blocks each time: 40 eth_getLogs per gen-5 campaign, 80 per
+ * older campaign, per scan, whether or not anything happened. On BNB (0.45 s
+ * blocks) about 22 new blocks arrive between two scans.
  *
  * This remembers, per chain and scan key, the head block of the last tip scan
  * that read every chunk. The next scan starts `overlapBlocks` before it (late
@@ -74,13 +74,13 @@ export function recordTipScan(
 }
 
 export function tipWindowOptionsFromEnv(windowBlocks: number, env: NodeJS.ProcessEnv = process.env): TipWindowOptions {
-  const overlap = Number(env.INDEXER_TIP_OVERLAP_BLOCKS ?? 200);
-  const sweep = Number(env.INDEXER_TIP_FULL_SWEEP_MS ?? 600_000);
+  const overlap = Number(env.INDEXER_TIP_OVERLAP_BLOCKS ?? 80);
+  const sweep = Number(env.INDEXER_TIP_FULL_SWEEP_MS ?? 1_800_000);
   return {
     windowBlocks,
-    overlapBlocks: Number.isFinite(overlap) && overlap >= 0 ? Math.floor(overlap) : 200,
+    overlapBlocks: Number.isFinite(overlap) && overlap >= 0 ? Math.floor(overlap) : 80,
     // 0 = the old behaviour: the full window on every scan.
-    fullSweepMs: Number.isFinite(sweep) && sweep >= 0 ? Math.floor(sweep) : 600_000,
+    fullSweepMs: Number.isFinite(sweep) && sweep >= 0 ? Math.floor(sweep) : 1_800_000,
   };
 }
 

@@ -2132,7 +2132,7 @@ export async function runIndexerOnce() {
  */
 export async function runTipScanOnce() {
   // Cap tip-only at 20k so the concurrent loop stays under ~20s on publicnode.
-  const tipScanBlocks = Math.max(3_000, Math.min(ENV.INDEXER_TIP_SCAN_BLOCKS || 20_000, 20_000));
+  const tipScanBlocks = Math.max(500, Math.min(ENV.INDEXER_TIP_SCAN_BLOCKS || 2_500, 20_000));
   const deadlineMs = Date.now() + 25_000;
 
   for (const chain of CHAINS) {
@@ -2371,7 +2371,7 @@ async function runIndexerCore(opts: {
     try {
       if (chain.voteTreasuryAddress) {
         const state = await getState(chain.chainId, "votes");
-        const tipBlocks = Math.max(3_000, ENV.INDEXER_TIP_SCAN_BLOCKS || 20_000);
+        const tipBlocks = Math.max(500, ENV.INDEXER_TIP_SCAN_BLOCKS || 2_500);
         const histBlocks = Math.max(
           5_000,
           Math.min(opts.lookbackBlocks || 20_000, ENV.INDEXER_CAMPAIGN_BLOCKS_PER_PASS || 8_000),

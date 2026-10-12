@@ -139,9 +139,9 @@ export const ENV = {
   INDEXER_CAMPAIGN_BLOCKS_PER_PASS: Number(process.env.INDEXER_CAMPAIGN_BLOCKS_PER_PASS || "8000"),
   // Always re-scan this recent tip every tick for live trades, even when the historical
   // cursor is far behind (does not advance the historical cursor past holes).
-  // Keep wide enough that a buy from ~1h ago on Chapel (~3s blocks) still lands
-  // in the tip window while history catch-up is lagging (TTA trade aged out of 3k).
-  INDEXER_TIP_SCAN_BLOCKS: Number(process.env.INDEXER_TIP_SCAN_BLOCKS || "20000"),
+  // 2500 ≈ 19 min on BNB (~0.45s) and ~2h on ~3s Chapel; historical catch-up still
+  // fills older holes. 20k was archive-priced on Chainstack every full sweep.
+  INDEXER_TIP_SCAN_BLOCKS: Number(process.env.INDEXER_TIP_SCAN_BLOCKS || "2500"),
   // "campaigns" (default): trade/finalize log scans only — factory discovery has its own loop.
   // "core": factory registry + campaign trades (heavier; can starve tip scans on small RPC budgets).
   // "full": factory/vote/router + campaigns. "factory": registry only.
@@ -211,6 +211,8 @@ export const ENV = {
   ENABLE_TOPAZ_POOL_INDEXER: String(process.env.ENABLE_TOPAZ_POOL_INDEXER || "1") === "1",
   ENABLE_ROBINHOOD_V3_POOL_INDEXER: String(process.env.ENABLE_ROBINHOOD_V3_POOL_INDEXER || "0") === "1",
   ROBINHOOD_V3_POOL_INDEXER_INTERVAL_MS: Number(process.env.ROBINHOOD_V3_POOL_INDEXER_INTERVAL_MS || "5000"),
+  // When there are no V3 candidates or stored pools, only re-check the DB this often.
+  ROBINHOOD_V3_EMPTY_INTERVAL_MS: Number(process.env.ROBINHOOD_V3_EMPTY_INTERVAL_MS || "30000"),
   ROBINHOOD_V3_POOL_INDEXER_MAX_POOLS: Number(process.env.ROBINHOOD_V3_POOL_INDEXER_MAX_POOLS || "100"),
   // One-shot post-grad candle rebuild. Comma-separated campaign addresses, or
   // "all" for every Robinhood campaign. Runs once per process start, then stops.
