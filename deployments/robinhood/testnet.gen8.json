@@ -1,0 +1,170 @@
+{
+  "kind": "robinhood-testnet-gen8",
+  "network": "robinhoodTestnet",
+  "chainId": 46630,
+  "status": "deployed-create-open",
+  "deployedAt": "2026-10-12T12:23:36.384Z",
+  "commit": "20d95e0a",
+  "deployer": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "admin": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "createSigner": "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0",
+  "factoryStartBlock": 133622263,
+  "pins": {
+    "poolManager": "0x8366a39cc670b4001a1121b8f6a443a643e40951",
+    "quoter": "0x8dc178efb8111bb0973dd9d722ebeff267c98f94",
+    "universalRouter": "0x8876789976dEcBfCbBbe364623C63652db8C0904",
+    "routerLayout": "v2.1",
+    "permit2": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+    "graduationOracle": "0xE5A4c8DE9193822737111216891D464986c0F61C",
+    "nativeUsdFeed": "0x896C55A66FD6e310f0e923ea682cBAA06bDf9bc4",
+    "weekly": "0xa48723e35061380Feb6D269f7c26D6E426F83efc",
+    "monthly": "0x5D5CC19B5BE86BA28b8164f85883F17843B69810",
+    "recruiter": "0xD3E00E476b72e49Ec4587df58b23Ea5BAd1F151C",
+    "protocol": "0xf14dbfC92BCF313362668bD9fea42F9a23f0712b",
+    "gen7GraduationOracle": "0x35E93D0b0F4A2809264Fa8D9922e2d0D1609C9BA"
+  },
+  "addresses": {
+    "MwzSwapSim": "0x3a80288cd758d650bc26FBD656CA24f7158B4FCd",
+    "MwzLaunchHook": "0xb18105cb239885aad85Fbf9e62cEe56b6415A8eC",
+    "hookSalt": "0x000000000000000000000000000000000000000000000000000000000000098b",
+    "CommunityRewardsVault": "0x447aE6400ed2f6C39687242a0351881a0f4F5d9B",
+    "MwzFeeSplitter": "0xe0f9d33c5538cA0D04d305F0B9aa24057eDC3B02",
+    "MwzCreatorChoiceVault": "0x13537C6273dF312067cE775AAf9635c217A931fd",
+    "MwzReserveLock": "0x13D803b58E3Dd43650f53Bd7BBe4f430E850859f",
+    "MwzV4Launcher": "0xE0e3b38e2F9EE0CCb416f81FD6E19e6aF2B56975",
+    "MwzLaunchLens": "0x6132b87fd2648ef2818831501d6AB6dA4ec2A435",
+    "MwzCreatorEscrow": "0xFb8159f46BAB4e214F658c2c8f5CfF76C102E848",
+    "GraduationOracle": "0xE5A4c8DE9193822737111216891D464986c0F61C",
+    "holderDistributor": "0xc6FcfAaceF6A64998af523eb8124877de4Cce782",
+    "airdropDistributor": "0x5F2E32e07096C0A362bf3B3369883d8452A15EAA"
+  },
+  "caps": {
+    "maxBuyPerTx": "190000000000000000",
+    "maxBuybackPerCoinWeek": "1900000000000000000",
+    "minBuyInterval": "21600",
+    "maxImpactBps": "50",
+    "maxHolderBatchPerWeek": "9300000000000000000"
+  },
+  "txs": [
+    {
+      "label": "refresh mock ETH/USD feed",
+      "hash": "0xbdb1a705ce96d3a3bf67e6b133351db3460fd83412f20742e21ef26d55832611",
+      "gasUsed": "44401"
+    },
+    {
+      "label": "GraduationOracle",
+      "nonce": 411,
+      "hash": "0x1498e461d7450fcb41cb97656fa1bd19492d6bcc43ce49aff4d1982fb23770e1",
+      "gasUsed": "371968"
+    },
+    {
+      "label": "MwzSwapSim",
+      "nonce": 412,
+      "hash": "0x1d8c0e2548d2f694f2406ef169f3cce8d6ac8885486944ccc2b7e694318d8c30",
+      "gasUsed": "1253657"
+    },
+    {
+      "label": "CommunityRewardsVault",
+      "nonce": 413,
+      "hash": "0xf2e40a3f360ca143dda84ee81ca02c091813ea4fd785be369779a7dfd42fc96f",
+      "gasUsed": "684090"
+    },
+    {
+      "label": "MwzLaunchHook CREATE2",
+      "nonce": 414,
+      "hash": "0x9c1838cfa380b9c16780b50056947a033a80222160e9d2789c792edca53a9ddf",
+      "gasUsed": "3954464"
+    },
+    {
+      "label": "MwzFeeSplitter",
+      "nonce": 415,
+      "hash": "0xc9ea889792b7c727016796b03269065f3423d54632a9d75539aa53dead084de4",
+      "gasUsed": "883895"
+    },
+    {
+      "label": "MwzCreatorChoiceVault",
+      "nonce": 416,
+      "hash": "0xbbaae8bc1e59af1f231329a589c1c36937ecf146097bcaff0c7e109ed894cf7f",
+      "gasUsed": "2924604"
+    },
+    {
+      "label": "MwzReserveLock",
+      "nonce": 417,
+      "hash": "0xafdd66c55a31700e1b4c0efa0c4c3f8e33ffd4c9213ac3905f86dba5cb835ef1",
+      "gasUsed": "655014"
+    },
+    {
+      "label": "MwzV4Launcher",
+      "nonce": 418,
+      "hash": "0x03c23ed5dc484a2ae9d387e0660b467645be6c7b524b22255b4311a6b9c935a9",
+      "gasUsed": "3330972"
+    },
+    {
+      "label": "MwzLaunchLens",
+      "nonce": 419,
+      "hash": "0x584c9ad7658f417c54b84c3e8017051c4ecf033c5222e492267be3554b1dfc9f",
+      "gasUsed": "950746"
+    },
+    {
+      "label": "MwzCreatorEscrow",
+      "nonce": 420,
+      "hash": "0x434a5a7f8c319530d6a933b83d884f295823ee02804c3e016f6464230ff5655f",
+      "gasUsed": "1169429"
+    },
+    {
+      "label": "RewardDistributor (holders)",
+      "nonce": 421,
+      "hash": "0xc28e5862f96e6d0e28a5967b809325e828d33411da989d318372e98233d39b3a",
+      "gasUsed": "978242"
+    },
+    {
+      "label": "RewardDistributor (airdrop pot)",
+      "nonce": 422,
+      "hash": "0x10f5bd94a67154ab8b446cc183f10cc8e98cd9094cc27dab7bcfedab6664ba7d",
+      "gasUsed": "978242"
+    },
+    {
+      "label": "vault.setHolderDistributorOnce",
+      "nonce": 423,
+      "hash": "0x2bf2084a8fe20cf0dd3b0d0fb58e8983907bbe1c6529eef44fe109f7c7b0a8e8",
+      "gasUsed": "45012"
+    },
+    {
+      "label": "vault.setOperator",
+      "nonce": 424,
+      "hash": "0x779c5635f38b5cf4e752291a0aff7733181e7207d3edff2e8d72af2bbe8aa8c2",
+      "gasUsed": "45794"
+    },
+    {
+      "label": "vault.setCaps",
+      "nonce": 425,
+      "hash": "0xac60f5702c604413be9c507c1e97331a3cc1b9c056e6a38584e04d2b9e210c95",
+      "gasUsed": "135719"
+    },
+    {
+      "label": "community.setRewardDistributor",
+      "nonce": 426,
+      "hash": "0xd38228004d5e1d8deee045d6983fe5e95afc15d5a4fc163ab6989f3d49224077",
+      "gasUsed": "45488"
+    },
+    {
+      "label": "community.setAirdropOperator",
+      "nonce": 427,
+      "hash": "0x3bd36137600b7139fb2e4a238aeeb106fa42aa7ea39a47ed244435da1ee38fbb",
+      "gasUsed": "45313"
+    },
+    {
+      "label": "airdropDist.setBatchOperator",
+      "nonce": 428,
+      "hash": "0xcf09db28e3a09a45496b5b6f94c3fec2d44a8dbee206ffec14619f075ea256c6",
+      "gasUsed": "47870"
+    },
+    {
+      "label": "launcher.setCreatePaused(false)",
+      "nonce": 429,
+      "hash": "0xc3ba63f38d3e49721585ebe6c210498d3d18bd5235e6ff6487f489802ee70fad",
+      "gasUsed": "30275"
+    }
+  ],
+  "note": "Gen-7 factories were left as they were. Launcher create is open for the testnet create-signer."
+}
