@@ -10,6 +10,7 @@
  * wallet_switchEthereumChain, eth_sendTransaction, and eth_signTypedData_v4 for a sell's Permit2 permit.
  */
 import { STYLE, fromRaw, toRaw } from "./widgetShared";
+import { addProtectedBscRpc, offersProtectedRpc, readProtectedRpcChoice, rememberProtectedRpcChoice } from "../lib/bscProtectedRpc.mjs";
 
 type Side = "buy" | "sell";
 
@@ -65,6 +66,14 @@ export function formatPriceImpact(bps: number | null | undefined): string {
  */
 export function slippageRequest(options: { slippageBps?: number }): { slippageBps?: number } {
   return options.slippageBps == null ? {} : { slippageBps: options.slippageBps };
+}
+
+/**
+ * F13 (founder 2026-10-12): the widget offers the protected BSC RPC too, on BNB Chain mainnet only, once a wallet is
+ * connected and until this browser has added or dismissed it (src/lib/bscProtectedRpc.mjs keeps the memory).
+ */
+export function shouldOfferProtectedRpc(chainId: number | null | undefined, connected: boolean, choice: { state: string } | null): boolean {
+  return connected && offersProtectedRpc(Number(chainId)) && !choice;
 }
 
 export function findEvmWallet(scope: Record<string, any> = globalThis as any): Eip1193 | null {
@@ -125,6 +134,10 @@ export class Gen8SwapWidget {
         <div class="row"><span data-k="feeLabel">Fee</span><b data-k="fee">-</b></div>
         <div class="row" data-k="creatorRow" hidden><span>Of which to the coin's creator</span><b data-k="creator">-</b></div>
         <button type="button" class="go" data-k="go">CONNECT WALLET</button>
+        <div class="rpc" data-k="rpcRow" hidden>
+          <span>Trades on BNB Chain sent through a public RPC can be front-run. Add a private RPC to your wallet so it sends them without the public mempool.</span>
+          <span class="rpc-actions"><button type="button" class="rpc-add" data-k="rpcAdd">ADD PROTECTED BSC RPC</button><button type="button" class="rpc-later" data-k="rpcLater">NOT NOW</button></span>
+        </div>
         <div class="msg" data-k="msg" role="status"></div>
         <div class="foot">Swaps by <a data-k="link" href="https://app.memewar.zone" target="_blank" rel="noopener">MemeWarzone</a>, in the coin's Uniswap pool</div>
       </div>`;
@@ -136,7 +149,28 @@ export class Gen8SwapWidget {
     this.el.amount.addEventListener("input", () => this.scheduleQuote());
     this.el.max.addEventListener("click", () => this.fillMax());
     this.el.go.addEventListener("click", () => void this.onGo());
+    this.el.rpcAdd.addEventListener("click", () => void this.addProtectedRpc());
+    this.el.rpcLater.addEventListener("click", () => {
+      rememberProtectedRpcChoice("dismissed");
+      this.paintRpcOffer();
+    });
     this.paintSide();
+  }
+
+  private paintRpcOffer() {
+    this.el.rpcRow.hidden = !shouldOfferProtectedRpc(this.token?.chainId, Boolean(this.account), readProtectedRpcChoice());
+  }
+
+  private async addProtectedRpc() {
+    const wallet = this.wallet();
+    if (!wallet) return;
+    try {
+      const rpc = await addProtectedBscRpc(wallet);
+      this.say(`${rpc.label} added. The wallet decides whether it uses it for BNB Chain.`, "ok");
+    } catch (error) {
+      this.say(error instanceof Error ? error.message : "The wallet did not add the RPC.", "err");
+    }
+    this.paintRpcOffer();
   }
 
   private say(text: string, kind: "" | "err" | "ok" = "") {
@@ -296,6 +330,7 @@ export class Gen8SwapWidget {
         if (!EVM_ADDRESS.test(first)) throw new Error("The wallet did not share an address.");
         this.account = first;
         this.paintButton();
+        this.paintRpcOffer();
         await this.loadBalances();
       } catch (error) {
         this.say(error instanceof Error ? error.message : "Wallet connection failed.", "err");

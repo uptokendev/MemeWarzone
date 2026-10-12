@@ -13,7 +13,7 @@ import { Wallet, verifyTypedData, TypedDataEncoder, SigningKey, getBytes, Signat
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const compiled = await build({
   absWorkingDir: dir,
-  stdin: { contents: `export { hexValue, typedDataJson, findEvmWallet, formatPriceImpact, slippageRequest } from "./gen8Widget.ts";`, resolveDir: dir, sourcefile: "gen8Harness.ts", loader: "ts" },
+  stdin: { contents: `export { hexValue, typedDataJson, findEvmWallet, formatPriceImpact, slippageRequest, shouldOfferProtectedRpc } from "./gen8Widget.ts";`, resolveDir: dir, sourcefile: "gen8Harness.ts", loader: "ts" },
   bundle: true,
   write: false,
   format: "esm",
@@ -28,7 +28,7 @@ try {
 } finally {
   fs.rmSync(harness, { force: true });
 }
-const { hexValue, typedDataJson, findEvmWallet, formatPriceImpact, slippageRequest } = mod;
+const { hexValue, typedDataJson, findEvmWallet, formatPriceImpact, slippageRequest, shouldOfferProtectedRpc } = mod;
 const { gen8PermitTypedData } = await import("../../shared/evmGen8Swap.mjs");
 
 test("hex values for eth_sendTransaction", () => {
@@ -64,4 +64,13 @@ test("F13: price impact text, and the API picks the slippage unless the partner 
   assert.deepEqual(slippageRequest({}), {}, "no slippageBps: the API sizes it (BNB) or uses 1% (Robinhood)");
   assert.deepEqual(slippageRequest({ slippageBps: 250 }), { slippageBps: 250 });
   assert.deepEqual(slippageRequest({ slippageBps: 0 }), { slippageBps: 0 });
+});
+
+test("F13 (founder 2026-10-12): the widget offers the protected BSC RPC on BNB mainnet only, once connected, until added or dismissed", () => {
+  assert.equal(shouldOfferProtectedRpc(56, true, null), true);
+  assert.equal(shouldOfferProtectedRpc(56, false, null), false, "not before a wallet is connected");
+  assert.equal(shouldOfferProtectedRpc(56, true, { state: "added" }), false);
+  assert.equal(shouldOfferProtectedRpc(56, true, { state: "dismissed" }), false);
+  for (const id of [97, 4663, 46630]) assert.equal(shouldOfferProtectedRpc(id, true, null), false, `chain ${id}`);
+  assert.equal(shouldOfferProtectedRpc(undefined, true, null), false);
 });

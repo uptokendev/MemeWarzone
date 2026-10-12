@@ -48,6 +48,10 @@ export const STYLE = `
 .go:disabled { opacity:.55; cursor:not-allowed; }
 .msg { margin-top:10px; font-size:12px; min-height:16px; }
 .msg.err { color:var(--down); } .msg.ok { color:var(--up); }
+.rpc { margin-top:10px; font-size:11px; color:var(--muted); display:flex; flex-direction:column; gap:6px; }
+.rpc-actions { display:flex; gap:6px; }
+.rpc-add, .rpc-later { font: inherit; font-size:11px; padding:5px 8px; border-radius:6px; border:1px solid var(--muted); background:transparent; color:var(--text); cursor:pointer; }
+.rpc-add { border-color:var(--accent); }
 .foot { margin-top:12px; font-size:11px; color:var(--muted); text-align:center; }
 .foot a { color:var(--muted); }
 .claim { margin-top:8px; font-size:12px; text-align:center; color:var(--muted); }
