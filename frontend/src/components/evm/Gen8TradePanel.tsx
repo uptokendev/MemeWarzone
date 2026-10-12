@@ -18,6 +18,8 @@ import {
   gen8AppConfig,
   gen8ErrorMessage,
   gen8FeeLine,
+  gen8MaxSellable,
+  gen8TradingOpensLine,
   quoteGen8Trade,
 } from "@/lib/evmGen8Client.mjs";
 import { gen8FormatPriceImpact, gen8UsesSizedSlippage } from "../../../shared/evmGen8Swap.mjs";
@@ -114,9 +116,14 @@ export function Gen8TradePanel({
   const [rpcBusy, setRpcBusy] = useState(false);
   const [balances, setBalances] = useState<{ nativeRaw: bigint; tokenRaw: bigint } | null>(null);
   const [balanceTick, setBalanceTick] = useState(0);
-  const graduated = state.graduation?.phase === "graduated";
-  const now = useNowSeconds(!graduated && Math.floor(Date.now() / 1000) < Number(state.tradeFee?.antiSniperEndsAt || 0) + 1);
-  const countdown = graduated ? null : gen8AntiSniperCountdown(state.tradeFee, now);
+  const [maxSellable, setMaxSellable] = useState<bigint | null>(null);
+  const graduated = (state.platformStatus || state.graduation?.phase) === "graduated";
+  const openAt = Number(state.openAt ?? state.tradeFee?.openAt ?? state.tradeFee?.launchAt ?? 0);
+  const clockNeeded = !graduated || openAt > Math.floor(Date.now() / 1000);
+  const now = useNowSeconds(clockNeeded);
+  const tradingOpen = state.tradingOpen ?? now >= openAt;
+  const opensLine = tradingOpen ? null : gen8TradingOpensLine(openAt, now);
+  const countdown = graduated || !tradingOpen ? null : gen8AntiSniperCountdown(state.tradeFee, now);
 
   const readProvider = useMemo(() => {
     try {
@@ -144,14 +151,35 @@ export function Gen8TradePanel({
     };
   }, [account, readProvider, token, balanceTick]);
 
+  useEffect(() => {
+    if (!readProvider || !cfg || !state.gen8?.poolId || state.gen8.tickStart == null) {
+      setMaxSellable(null);
+      return;
+    }
+    let cancelled = false;
+    void gen8MaxSellable({ provider: readProvider, cfg, poolId: state.gen8.poolId, tickStart: state.gen8.tickStart })
+      .then((n) => {
+        if (!cancelled) setMaxSellable(n);
+      })
+      .catch(() => {
+        if (!cancelled) setMaxSellable(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [readProvider, cfg, state.gen8?.poolId, state.gen8?.tickStart, state.graduation?.phase, balanceTick]);
+
   const amountRaw = parseUnitsSafe(amount, 18);
+  const overSellCap = Boolean(side === "sell" && amountRaw && maxSellable != null && amountRaw > maxSellable);
 
   // Live quote (exact input): what you receive, the price impact, the minimum at the slippage (sized from the impact on
   // BNB Chain, 1% on Robinhood), the fee and the creator's part.
   useEffect(() => {
     setQuoteError(null);
-    if (setupError || !amountRaw || !readProvider || !cfg) {
+    if (setupError || !amountRaw || !readProvider || !cfg || !tradingOpen || overSellCap) {
       setQuote(null);
+      if (!tradingOpen) setQuoteError(null);
+      else if (overSellCap) setQuoteError("This sell is larger than the bonding range can take back. Sell a smaller amount.");
       return;
     }
     let cancelled = false;
@@ -171,7 +199,7 @@ export function Gen8TradePanel({
       window.clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setupError, amount, side, token, readProvider, cfg, escrowBuy, state.graduation?.phase, slippageArg]);
+  }, [setupError, amount, side, token, readProvider, cfg, escrowBuy, state.graduation?.phase, slippageArg, tradingOpen, overSellCap]);
 
   const gasReserve = evmBuyGasReserveWei(robinhood);
   const overBalance = Boolean(
@@ -185,6 +213,14 @@ export function Gen8TradePanel({
     }
     if (!cfg || setupError) {
       toast.error(setupError || "Trading for this coin is not set up on this chain yet.");
+      return;
+    }
+    if (!tradingOpen) {
+      toast.error(opensLine?.line || "Trading on this coin has not opened yet.");
+      return;
+    }
+    if (overSellCap) {
+      toast.error("This sell is larger than the bonding range can take back. Sell a smaller amount.");
       return;
     }
     if (overBalance) {
@@ -266,7 +302,16 @@ export function Gen8TradePanel({
           <span className="min-w-0 truncate text-xs text-mw-muted">Uniswap pool{graduated ? ", graduated" : ""}</span>
           <div className="flex items-center gap-2">
             {side === "sell" && balances && balances.tokenRaw > 0n ? (
-              <Button type="button" variant="ghost" size="sm" className={cp.smallButton} onClick={() => setAmount(ethers.formatUnits(balances.tokenRaw, 18))}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className={cp.smallButton}
+                onClick={() => {
+                  const cap = maxSellable != null && maxSellable < balances.tokenRaw ? maxSellable : balances.tokenRaw;
+                  setAmount(ethers.formatUnits(cap, 18));
+                }}
+              >
                 MAX
               </Button>
             ) : null}
@@ -324,9 +369,19 @@ export function Gen8TradePanel({
             </div>
           ) : null}
         </div>
+        {opensLine ? (
+          <p className="mt-2 text-center text-xs text-[#FF9A4D]" data-gen8-trading-opens="true">
+            {opensLine.line}
+          </p>
+        ) : null}
         {countdown ? (
           <p className="mt-2 text-center text-xs text-[#FF9A4D]" data-gen8-launch-fee="true">
             {countdown.line}
+          </p>
+        ) : null}
+        {side === "sell" && maxSellable != null ? (
+          <p className="mt-2 text-center text-[11px] text-mw-muted" data-gen8-max-sellable="true">
+            Max sellable {fmt(maxSellable, 2)} {symbol || "tokens"}
           </p>
         ) : null}
         <p className="mt-2 text-center text-[11px] text-mw-muted">{gen8FeeLine({ graduated, feeBps: graduated ? state.tradeFee?.postGraduationBps ?? 100 : state.tradeFee?.bondingBps ?? 200 })}</p>
@@ -353,11 +408,12 @@ export function Gen8TradePanel({
           </div>
         ) : null}
         {quoteError && !quote ? <p className="mt-2 text-center text-xs text-mw-down">{quoteError}</p> : null}
+        {overSellCap ? <p className="mt-2 text-center text-xs text-mw-down">This sell is larger than the bonding range can take back. Sell a smaller amount.</p> : null}
         {overBalance ? <p className="mt-2 text-center text-xs text-mw-down">{side === "buy" ? `Not enough ${native} (about ${ethers.formatEther(gasReserve)} ${native} stays for gas).` : "Amount is above your balance."}</p> : null}
       </div>
       <Button
         className={`min-h-12 w-full rounded-[10px] font-mw-body text-base font-bold disabled:opacity-50 ${side === "buy" ? "border border-mw-buy bg-mw-buy text-[#04140A] hover:bg-[#15913F]" : "border border-mw-sell bg-mw-sell text-[#FFF1F3] hover:bg-[#C81A40]"}`}
-        disabled={account ? busy || !amountRaw || !quote || overBalance : false}
+        disabled={account ? busy || !tradingOpen || !amountRaw || !quote || overBalance || overSellCap : false}
         onClick={() => {
           if (!account) {
             try {
@@ -370,7 +426,7 @@ export function Gen8TradePanel({
           void trade();
         }}
       >
-        {!account ? `Connect ${robinhood ? "Robinhood" : "BNB"} wallet` : busy ? (side === "sell" ? "Approve and sign in your wallet..." : "Confirm in your wallet...") : `${side === "buy" ? "Buy" : "Sell"} ${symbol ? `$${symbol}` : ""}`.trim()}
+        {!account ? `Connect ${robinhood ? "Robinhood" : "BNB"} wallet` : !tradingOpen ? "Trading not open yet" : busy ? (side === "sell" ? "Approve and sign in your wallet..." : "Confirm in your wallet...") : `${side === "buy" ? "Buy" : "Sell"} ${symbol ? `$${symbol}` : ""}`.trim()}
       </Button>
     </div>
   );

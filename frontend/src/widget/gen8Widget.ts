@@ -29,7 +29,22 @@ export type Gen8MountOptions = {
   onSwap?: (event: { txHash: string; side: Side; token: string; chainId: number }) => void;
 };
 
-type TokenInfo = { chainId: number; token: string; decimals: number; name: string | null; symbol: string | null; imageUrl: string | null; nativeSymbol: string; phase: string; feeBps: number; pageUrl: string };
+type TokenInfo = {
+  chainId: number;
+  token: string;
+  decimals: number;
+  name: string | null;
+  symbol: string | null;
+  imageUrl: string | null;
+  nativeSymbol: string;
+  phase: string;
+  feeBps: number;
+  pageUrl: string;
+  tradable?: boolean;
+  tradingOpen?: boolean;
+  openAt?: number;
+  maxSellable?: string | null;
+};
 type Quote = { amountIn: string; amountOut: string; minAmountOut: string; slippageBps: number; slippageAuto?: boolean; priceImpactBps?: number | null; feeBps: number; feeNativeRaw: string; creatorShareNativeRaw: string; phase: string };
 type Built = { to: string; data: string; value: string; quote: Quote };
 type NeedsPermit = { needsPermit: true; approval: { to: string; data: string; value: string } | null; permitTypedData: { domain: Record<string, unknown>; types: Record<string, Array<{ name: string; type: string }>>; primaryType: string; message: Record<string, unknown> }; quote: Quote };
@@ -92,6 +107,7 @@ export class Gen8SwapWidget {
   private busy = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private quoteSeq = 0;
+  private openTimer: ReturnType<typeof setInterval> | null = null;
   private el: Record<string, HTMLElement> = {};
 
   constructor(host: HTMLElement, private options: Gen8MountOptions) {
@@ -100,6 +116,7 @@ export class Gen8SwapWidget {
     this.side = options.side === "sell" ? "sell" : "buy";
     this.render();
     void this.loadToken();
+    this.openTimer = setInterval(() => this.paintOpens(), 1000);
   }
 
   private wallet(): Eip1193 | null {
@@ -138,6 +155,7 @@ export class Gen8SwapWidget {
           <span>Trades on BNB Chain sent through a public RPC can be front-run. Add a private RPC to your wallet so it sends them without the public mempool.</span>
           <span class="rpc-actions"><button type="button" class="rpc-add" data-k="rpcAdd">ADD PROTECTED BSC RPC</button><button type="button" class="rpc-later" data-k="rpcLater">NOT NOW</button></span>
         </div>
+        <div class="msg" data-k="opens" role="status"></div>
         <div class="msg" data-k="msg" role="status"></div>
         <div class="foot">Swaps by <a data-k="link" href="https://app.memewar.zone" target="_blank" rel="noopener">MemeWarzone</a>, in the coin's Uniswap pool</div>
       </div>`;
@@ -206,6 +224,27 @@ export class Gen8SwapWidget {
     this.el.max.hidden = this.side !== "sell" || raw === 0n;
   }
 
+  private tradingOpen(): boolean {
+    if (!this.token) return false;
+    const openAt = Number(this.token.openAt || 0);
+    if (openAt > 0 && Math.floor(Date.now() / 1000) < openAt) return false;
+    if (this.token.tradingOpen === false || this.token.tradable === false) return Math.floor(Date.now() / 1000) >= openAt;
+    return true;
+  }
+
+  private paintOpens() {
+    const node = this.el.opens;
+    if (!node) return;
+    if (!this.token || this.tradingOpen()) {
+      node.textContent = "";
+      return;
+    }
+    const openAt = Number(this.token.openAt || 0);
+    const left = Math.max(0, openAt - Math.floor(Date.now() / 1000));
+    node.textContent = openAt ? `Trading opens at ${new Date(openAt * 1000).toLocaleString()}. ${left}s left.` : "Trading on this coin has not opened yet.";
+    this.paintButton();
+  }
+
   private paintButton() {
     const go = this.el.go as HTMLButtonElement;
     if (!this.token) {
@@ -216,6 +255,11 @@ export class Gen8SwapWidget {
     if (!this.account) {
       go.textContent = this.wallet() ? "CONNECT WALLET" : "NO EVM WALLET FOUND";
       go.disabled = this.busy || !this.wallet();
+      return;
+    }
+    if (!this.tradingOpen()) {
+      go.textContent = "TRADING NOT OPEN YET";
+      go.disabled = true;
       return;
     }
     go.textContent = this.busy ? "WORKING..." : `${this.side === "buy" ? "BUY" : "SELL"} ${this.symbol().toUpperCase()}`;
@@ -257,6 +301,7 @@ export class Gen8SwapWidget {
       (this.el.link as HTMLAnchorElement).href = this.token.pageUrl;
       this.paintSide();
       this.paintQuote();
+      this.paintOpens();
     } catch (error) {
       this.say(error instanceof Error ? error.message : "Could not load this token.", "err");
     }
@@ -275,7 +320,9 @@ export class Gen8SwapWidget {
 
   private fillMax() {
     if (!this.balances) return;
-    (this.el.amount as HTMLInputElement).value = fromRaw(this.balances.tokenRaw, 18, 18).replace(/,/g, "");
+    const cap = this.token?.maxSellable ? BigInt(this.token.maxSellable) : this.balances.tokenRaw;
+    const raw = cap < this.balances.tokenRaw ? cap : this.balances.tokenRaw;
+    (this.el.amount as HTMLInputElement).value = fromRaw(raw, 18, 18).replace(/,/g, "");
     this.scheduleQuote();
   }
 
@@ -293,6 +340,14 @@ export class Gen8SwapWidget {
   private async fetchQuote(): Promise<Quote | null> {
     const raw = this.amountRaw();
     if (!this.token || !raw) return null;
+    if (!this.tradingOpen()) {
+      this.say("Trading on this coin has not opened yet.", "err");
+      return null;
+    }
+    if (this.side === "sell" && this.token.maxSellable && raw > BigInt(this.token.maxSellable)) {
+      this.say("This sell is larger than the bonding range can take back. Sell a smaller amount.", "err");
+      return null;
+    }
     const seq = ++this.quoteSeq;
     try {
       const quote = await this.call<Quote>("/api/widget/swap/gen8/quote", {
@@ -352,6 +407,10 @@ export class Gen8SwapWidget {
     const raw = this.amountRaw();
     if (!raw) {
       this.say("Enter an amount.", "err");
+      return;
+    }
+    if (!this.tradingOpen()) {
+      this.say("Trading on this coin has not opened yet.", "err");
       return;
     }
     const reserve = GAS_RESERVE[this.token.chainId] ?? 0n;

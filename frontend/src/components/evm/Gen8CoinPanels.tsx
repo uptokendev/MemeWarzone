@@ -36,7 +36,7 @@ const same = (a?: string | null, b?: string | null) => Boolean(a && b && a.toLow
  */
 export function Gen8CoinStatus({ chainId, state, explorerBase, nativeUsd = null }: { chainId: number; state: Gen8CoinState; explorerBase: string; nativeUsd?: number | null }) {
   const native = getNativeSymbol(chainId as SupportedChainId);
-  const graduated = state.graduation?.phase === "graduated";
+  const graduated = (state.platformStatus || state.graduation?.phase) === "graduated";
   const pct = state.graduation?.progressPct ?? null;
   const mcWei = state.market?.marketCapNativeWei ? BigInt(state.market.marketCapNativeWei) : null;
   const mcNative = mcWei != null ? Number(ethers.formatEther(mcWei)) : null;
@@ -174,12 +174,23 @@ export function Gen8CreatorPanel({ chainId, state, onDone }: { chainId: number; 
     }
   }
   if (claims.reserve && BigInt(claims.reserve.amount || "0") > 0n && (isHookCreator || isHumanCreator)) {
+    const releasable = Boolean(state.reserveReleasable ?? claims.reserve.releasable);
+    const releaseAt = Number(state.reserveReleaseAt ?? claims.reserve.releaseAt ?? 0);
+    let reserveDetail = "Unlocks when the coin graduates.";
+    if (releasable) reserveDetail = "Unlocked. Paid to the coin's creator.";
+    else if ((state.platformStatus || state.graduation?.phase) === "graduated" && releaseAt > Math.floor(Date.now() / 1000)) {
+      reserveDetail = `Unlocks at ${new Date(releaseAt * 1000).toLocaleString()} (one hour after graduation).`;
+    } else if (state.latched && state.postPhase === false) {
+      reserveDetail = "Unlocks only while the price is at or past the graduation price.";
+    } else if (state.latched && releaseAt > Math.floor(Date.now() / 1000)) {
+      reserveDetail = `Unlocks at ${new Date(releaseAt * 1000).toLocaleString()} (one hour after graduation).`;
+    }
     actions.push({
       key: "reserve",
       title: "Creator reserve (2%)",
-      detail: claims.reserve.releasable ? "Unlocked at graduation. Paid to the coin's creator." : "Unlocks when the coin graduates.",
+      detail: reserveDetail,
       amount: `${fmtTokens(claims.reserve.amount)} tokens`,
-      disabled: !claims.reserve.releasable,
+      disabled: !releasable,
       button: "Release",
       run: () => run("reserve", (signer) => releaseGen8Reserve({ signer, chainId, cfg, poolId }), "Reserve released."),
     });

@@ -3,10 +3,11 @@
 // trades go through Uniswap's own UniversalRouter, V4Quoter and Permit2 exactly as in the browser. Nothing is sent to
 // a public network: the fork only reads mainnet state.
 //
-//   create  (API create authorization -> app launchGen8Coin, MAX first buy) -> anti-sniper buy -> buy / sell (quote ==
-//   execution, to the wei) -> v2.0 router layout (BNB) -> widget quote / build / partner fingerprint (API) -> creator
-//   escrow buy + claim -> graduation in a swap -> post-graduation trade at 1% -> creator claims (hook, transfer,
-//   reserve, split vault) -> the API's coin-page state.
+//   create  (API create authorization -> app launchGen8Coin, MAX first buy) -> scheduled openAt (no trade before it)
+//   -> anti-sniper buy (decay from openAt) -> buy / sell (quote == execution, to the wei) -> v2.0 router layout (BNB)
+//   -> widget quote / build / partner fingerprint (API) -> creator escrow buy + claim -> graduation in a swap ->
+//   post-graduation trade at 1% -> sell cap (previewFill MAX) -> creator claims (hook, transfer, reserve after 1h,
+//   split vault) -> the API's coin-page state.
 //
 // Needs GEN8_ARTIFACTS (default ~/mwz-wt/evm-gen8/artifacts-gen8), anvil, and BSC_MAINNET_RPC / ROBINHOOD_MAINNET_RPC
 // (exported env, else the public RPCs). Skips when artifacts or anvil are missing.
@@ -14,7 +15,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ethers } from "ethers";
 
-import { deployGen8Local, gen8ArtifactsAvailable, gen8EnvFor, startAnvilFork, testWallets, WAD } from "../../api/lib/evmGen8LocalChain.testkit.mjs";
+import { deployGen8Local, directSwap, gen8ArtifactsAvailable, gen8EnvFor, startAnvil, startAnvilFork, testWallets, WAD } from "../../api/lib/evmGen8LocalChain.testkit.mjs";
 
 // Exported env only (never an .env file); else the chains' public RPCs (reads only).
 const RPC = { 56: process.env.BSC_MAINNET_RPC || "https://bsc-dataseed.bnbchain.org", 4663: process.env.ROBINHOOD_MAINNET_RPC || "https://rpc.mainnet.chain.robinhood.com" };
@@ -22,7 +23,7 @@ const POOL_MANAGER = { 56: "0x28e2ea090877bf75740558f6bfb36a5ffee9e9df", 4663: "
 
 const client = await import("./evmGen8Client.mjs");
 const swap = await import("../../shared/evmGen8Swap.mjs");
-const { gen8PoolId, GEN8_FIRST_BUY_MAX, GEN8_CREATOR_RESERVE, GEN8_TARGET_FAST_USD } = await import("../../shared/evmGen8.mjs");
+const { gen8PoolId, gen8PoolKey, gen8RevertReason, GEN8_FIRST_BUY_MAX, GEN8_CREATOR_RESERVE, GEN8_TARGET_FAST_USD } = await import("../../shared/evmGen8.mjs");
 const HOOK_IFACE = new ethers.Interface(client.GEN8_HOOK_ABI);
 const ESCROW_IFACE = new ethers.Interface(client.GEN8_ESCROW_ABI);
 const ERC20 = ["function balanceOf(address) view returns (uint256)", "function transfer(address,uint256) returns (bool)"];
@@ -65,12 +66,12 @@ const apiDeps = (local, provider) => ({
   logRouteAuthorization: async () => {},
 });
 
-async function createCoin({ local, provider, chainId, creator, feeChoice = "keep", feeCreatorPct = 0, firstBuyValueWei = 0n, targetUsd }) {
+async function createCoin({ local, provider, chainId, creator, feeChoice = "keep", feeCreatorPct = 0, firstBuyValueWei = 0n, targetUsd, openAt = 0 }) {
   const { gen8CreateAuthorization } = await import("../../api/dev-fix/evmGen8CreateAuthorization.js");
   const launcher = client.gen8LauncherFor(chainId);
   const body = client.gen8CreateAuthorizationBody({
     chainId, walletAddress: creator.address, launcher, name: "Gen Eight", symbol: "GEIGHT", logoURI: "https://example.com/g8.png",
-    description: "gen-8 app test", targetUsd, feeChoice, feeCreatorPct, firstBuyValueWei,
+    description: "gen-8 app test", targetUsd, feeChoice, feeCreatorPct, firstBuyValueWei, openAt,
   });
   // The API dates the authorization by its clock; on a fork whose clock was moved forward, use the chain's.
   const chainMs = Number((await provider.getBlock("latest")).timestamp) * 1000;
@@ -111,31 +112,24 @@ async function runChain(chainId, port, { display, extraRouters = [] }) {
     const C = await createCoin({ local, provider, chainId, creator: other, feeChoice: "split", feeCreatorPct: 60, targetUsd });
     assert.equal(C.launched.hookCreator, cfg.choiceVault, "holders / split / buyback coins name the vault in the hook");
 
-    // ---- draft -> timed launch -> Push Live on gen-8: the time is saved on the draft (nothing on chain), the
-    // launch is locked before it and goes through the gen-8 launcher at it; the draft is then linked to the token.
-    const { scheduleGen8Draft } = await import("../../api/dev-fix/draftGen8Schedule.js");
-    const { isScheduleLocked } = await import("../../shared/dbcSchedule.mjs");
+    // ---- scheduled open: the pool is created now with openAt in the future; public trades refuse until then.
+    const schedCreator = wallets[8];
     const chainNow = Number((await provider.getBlock("latest")).timestamp);
-    const draftWrites = [];
-    const draftDb = { query: async (sql, params) => { draftWrites.push(params); return { rows: [{ id: "draft-1", scheduled_launch_at: params[1] }] }; } };
-    const scheduled = await scheduleGen8Draft({
-      body: { scheduledLaunchAt: chainNow + 600, graduationTargetWei: targetUsd.toString() },
-      row: { id: "draft-1", chain_id: chainId, status: "promotion_published", campaign_address: null },
-      db: draftDb,
-      nowSec: chainNow,
-    });
-    assert.equal(draftWrites.length, 1, "scheduling writes the draft only");
-    const codeBefore = await provider.getTransactionCount(creator.address);
-    assert.equal(isScheduleLocked(scheduled.scheduledLaunchAt, chainNow * 1000), true, "Push Live is locked before the time");
+    const openAt = chainNow + 600;
+    const D = await createCoin({ local, provider, chainId, creator: schedCreator, firstBuyValueWei: 10n ** 16n, targetUsd, openAt });
+    assert.equal(String(D.auth.launchRequest.openAt), String(openAt), "authorization signs openAt");
+    assert.equal(client.gen8LaunchArgs(D.auth, { chainId, launcher: cfg.launcher }).req.at(-1), BigInt(openAt));
+    const dToken = D.launched.token;
+    await assert.rejects(
+      client.quoteGen8Trade({ provider, cfg, token: dToken, side: "buy", amountIn: 10n ** 16n }),
+      /has not opened yet/,
+    );
+    const earlyLine = client.gen8TradingOpensLine(openAt, chainNow);
+    assert.ok(earlyLine && earlyLine.secondsLeft > 0 && /Trading opens at/.test(earlyLine.line));
     await advance(provider, 600);
-    const chainAt = Number((await provider.getBlock("latest")).timestamp);
-    assert.equal(isScheduleLocked(scheduled.scheduledLaunchAt, chainAt * 1000), false, "and unlocked at it");
-    assert.equal(await provider.getTransactionCount(creator.address), codeBefore, "nothing was sent on chain while scheduled");
-    const D = await createCoin({ local, provider, chainId, creator, firstBuyValueWei: 10n ** 16n, targetUsd });
-    assert.equal(D.launched.creator, creator.address);
-    assert.ok(Number((await provider.getBlock(D.receipt.blockNumber)).timestamp) >= chainNow + 600, "the gen-8 launch lands at or after the saved time");
-    assert.equal(D.receipt.to, cfg.launcher, "Push Live goes to the gen-8 launcher");
-    r.draftLaunch = { scheduledLaunchAt: scheduled.scheduledLaunchAt, token: D.launched.token };
+    const dBuy = await client.executeGen8Trade({ signer: buyer, chainId, cfg, token: dToken, side: "buy", amountIn: 10n ** 16n });
+    assert.equal(Number(dBuy.receipt.status), 1, "trade after openAt");
+    r.draftLaunch = { openAt, token: dToken };
 
     const firstBuy = 10n ** 17n;
     const A = await createCoin({ local, provider, chainId, creator, firstBuyValueWei: firstBuy, targetUsd });
@@ -294,7 +288,7 @@ async function runChain(chainId, port, { display, extraRouters = [] }) {
     assert.equal(escrowed, esc.quote.amountOut, "escrowed coins == quote");
 
     // ---- graduation inside a swap, then the same pool at 1%
-    const lens = new ethers.Contract(cfg.lens, ["function progress(bytes32) view returns (tuple(bool graduated,uint160 sqrtPriceX96,uint256 coinsSoldFromA,uint256 coinsInA,uint256 nativeInA,uint256 nativeTargetA))"], provider);
+    const lens = new ethers.Contract(cfg.lens, client.GEN8_LENS_ABI, provider);
     const pr = await lens.progress(poolId);
     const need = ((BigInt(pr.nativeTargetA) - BigInt(pr.nativeInA)) * 10_200n) / 10_000n + 10n ** 17n;
     const grad = await client.executeGen8Trade({ signer: buyer, chainId, cfg, token, side: "buy", amountIn: need });
@@ -313,6 +307,17 @@ async function runChain(chainId, port, { display, extraRouters = [] }) {
     const wPost = await gen8SwapQuoteCore({ chainId, token, side: "buy", amountRaw: "1000000000000000" }, wdeps);
     assert.deepEqual([wPost.phase, wPost.feeBps, wPost.creatorShareBps], ["graduated", 100, 50]);
 
+    const poolRec = await client.readGen8PoolRecord({ provider, cfg, token });
+    const maxSell = await client.gen8MaxSellable({ provider, cfg, poolId, tickStart: poolRec.tickStart });
+    assert.ok(maxSell > 0n, "previewFill reports a max sellable amount");
+    await assert.rejects(
+      client.quoteGen8Trade({ provider, cfg, token, side: "sell", amountIn: maxSell + 1n, record: poolRec }),
+      /larger than the bonding range/,
+    );
+    const tooBig = await gen8SwapQuoteCore({ chainId, token, side: "sell", amountRaw: (maxSell + 1n).toString() }, wdeps).catch((e) => e);
+    assert.equal(tooBig.code, "GEN8_SELL_TOO_LARGE");
+    // A sell of the full cap would push the price below graduation; the reserve check needs the pool still in post.
+
     // ---- creator claims: hook ledger to any address, two-step transfer, reserve after graduation, escrow release
     const hook = new ethers.Contract(cfg.hook, client.GEN8_HOOK_ABI, provider);
     const owed = BigInt(await hook.creatorOwed(poolId));
@@ -324,6 +329,10 @@ async function runChain(chainId, port, { display, extraRouters = [] }) {
     await client.acceptGen8Creator({ signer: other, chainId, target: cfg.hook, poolId });
     assert.equal((await hook.pools(poolId)).creator, other.address);
     await assert.rejects(client.claimGen8HookCreatorFees({ signer: creator, chainId, cfg, poolId, to: payee }));
+    const earlyReserve = await client.releaseGen8Reserve({ signer: buyer, chainId, cfg, poolId }).catch((e) => e);
+    assert.equal(gen8RevertReason(earlyReserve)?.name, "ReserveTooEarly");
+    assert.match(client.gen8ErrorMessage(earlyReserve), /one hour after graduation/);
+    await advance(provider, 3600);
     const rel = await client.releaseGen8Reserve({ signer: buyer, chainId, cfg, poolId });
     assert.equal(await tokenDelta(provider, token, other.address, rel), GEN8_CREATOR_RESERVE, "20M reserve to the current creator");
     await advance(provider, 30 * 24 * 3600 + 1);
@@ -372,4 +381,48 @@ test("BNB Chain fork (56): create, trade, widget, graduate, claim through the ap
 test("Robinhood fork (4663): the same flow on its router", { skip: !ready || !RPC[4663] ? "artifacts, anvil or ROBINHOOD_MAINNET_RPC missing" : false, timeout: 900_000 }, async () => {
   const r = await runChain(4663, 8792, { display: false, extraRouters: ["0x204FAca1764B154221e35c0d20aBb3c525710498"] });
   console.log("[gen8 app chain 4663]", JSON.stringify(r));
+});
+
+test("local anvil: a future openAt launches now and the app refuses trades until it", { skip: !ready ? "artifacts or anvil missing" : false, timeout: 300_000 }, async () => {
+  const anvil = await startAnvil(8794, 97);
+  const provider = anvil.provider();
+  const saved = { ...process.env };
+  const chainId = 97;
+  try {
+    const local = await deployGen8Local(provider, {});
+    Object.assign(process.env, gen8EnvFor(local, chainId));
+    for (const [k, v] of Object.entries(gen8EnvFor(local, chainId))) process.env[`VITE_${k}`] = v;
+    const cfg = client.gen8AppConfig(chainId);
+    const creator = testWallets(provider, 8)[3];
+    const buyer = testWallets(provider, 8)[4];
+    // Raw RPC: ethers can reuse a getBlock("latest") and hide a time jump (same as evmGen8CreateAuthorization).
+    const chainNow = async () => Number(BigInt((await provider.send("eth_getBlockByNumber", ["latest", false])).timestamp));
+    const t0 = await chainNow();
+    const openAt = t0 + 3600;
+    const coin = await createCoin({ local, provider, chainId, creator, firstBuyValueWei: 10n ** 16n, targetUsd: GEN8_TARGET_FAST_USD, openAt });
+    const token = coin.launched.token;
+    const rec = await client.readGen8PoolRecord({ provider, cfg, token });
+    assert.equal(rec.openAt, openAt);
+    // Blank anvil has no UniversalRouter / V4Quoter; staticCall on V4DirectTrader still sees TradingNotOpen.
+    const key = gen8PoolKey(token, cfg.hook);
+    const keyTuple = [key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks];
+    const early = await local.trader.connect(buyer).swap.staticCall(keyTuple, true, -(10n ** 15n), 0n, "0x", { value: 10n ** 15n }).then(() => null, (e) => e);
+    assert.ok(early, "a swap before openAt reverts");
+    assert.equal(gen8RevertReason(early)?.name, "TradingNotOpen", `revert reason: ${early?.shortMessage || early?.message}`);
+    await assert.rejects(directSwap(local, key, buyer, { buy: true, amount: 10n ** 15n }));
+    const { readGen8CampaignState } = await import("../../api/lib/evmGen8CampaignState.js");
+    const { gen8ConfigFor } = await import("../../api/lib/evmGen8Config.js");
+    const closed = await readGen8CampaignState({ provider, cfg: gen8ConfigFor(chainId), token });
+    assert.equal(closed.tradingOpen, false);
+    assert.equal(closed.openAt, openAt);
+    assert.ok(client.gen8TradingOpensLine(openAt, t0).secondsLeft > 0);
+    await advance(provider, 3600);
+    const open = await readGen8CampaignState({ provider, cfg: gen8ConfigFor(chainId), token });
+    assert.equal(open.tradingOpen, true);
+    assert.equal(client.gen8AntiSniperCountdown({ openAt, antiSniperEndsAt: openAt + 60, bondingBps: 200, postGraduationBps: 100, antiSniperStartBps: 9000 }, openAt + 10).secondsLeft, 50);
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
+    await anvil.stop();
+  }
 });

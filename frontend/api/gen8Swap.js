@@ -21,7 +21,7 @@
  */
 import { ethers } from "ethers";
 import { badMethod, json, readJson } from "../server/http.js";
-import { GEN8_TOTAL_SUPPLY, gen8FeeRate, gen8PoolId, gen8PoolKey } from "../shared/evmGen8.mjs";
+import { GEN8_REVERTS, GEN8_TOTAL_SUPPLY, gen8FeeRate, gen8PoolId, gen8PoolKey, sqrtAtTick } from "../shared/evmGen8.mjs";
 import {
   GEN8_REFERRER_WIDGET,
   GEN8_SWAP_DEADLINE_SECONDS,
@@ -48,9 +48,14 @@ import { gen8ConfigFor } from "./lib/evmGen8Config.js";
 import { evmFingerprint } from "./lib/importSwapFingerprint.js";
 
 const HOOK_ABI = [
-  "function pools(bytes32) view returns (address creator, uint40 launchTime, bool graduated, int24 tickGrad, int24 tickStart, uint128 liqA, uint128 liqB, uint160 sqrtGrad, tuple(uint16 bondingBps, uint16 postBps, uint16 creatorPostBps, uint16 sniperStartBps, uint16 creatorBondingBps) fees)",
+  "function pools(bytes32) view returns (address creator, uint40 openAt, bool graduated, int24 tickGrad, int24 tickStart, uint128 liqA, uint128 liqB, uint160 sqrtGrad, tuple(uint16 bondingBps, uint16 postBps, uint16 creatorPostBps, uint16 sniperStartBps, uint16 creatorBondingBps) fees, uint40 graduatedAt)",
 ];
-const LENS_ABI = ["function currentFeeBps(bytes32 id, address sender) view returns (uint256)"];
+const LENS_ABI = [
+  "function currentFeeBps(bytes32 id, address sender) view returns (uint256)",
+  "function previewFill(bytes32 id, bool zeroForOne, int256 amountSpecified, uint160 limit) view returns (uint256)",
+  "function tradingOpen(bytes32 id) view returns (bool open, uint256 openAt)",
+  "function progress(bytes32 id) view returns (tuple(bool graduated, bool postPhase, uint40 graduatedAt, uint160 sqrtPriceX96, uint256 coinsSoldFromA, uint256 coinsInA, uint256 nativeInA, uint256 nativeTargetA))",
+];
 const ERC20_ABI = [
   "function balanceOf(address) view returns (uint256)",
   "function allowance(address owner, address spender) view returns (uint256)",
@@ -124,26 +129,53 @@ function parseSide(value) {
   return side;
 }
 
-/** The hook's record of the token's pool, or a 404 when the token is not a gen-8 coin of this hook. */
+/** The hook's record of the token's pool, or a 404 when the token is not a gen-8 coin of this hook. Decode by name. */
 export async function readGen8SwapPool({ provider, setup, token }) {
   const poolId = gen8PoolId(token, setup.hook);
   const p = await new ethers.Contract(setup.hook, HOOK_ABI, provider).pools(poolId);
-  const creator = p.creator ?? p[0];
+  const creator = p.creator;
   if (!creator || creator === ethers.ZeroAddress) throw new Gen8SwapError(404, "GEN8_NOT_A_COIN", "This token is not a MemeWarzone generation 8 coin on this chain.");
-  const f = p.fees ?? p[8];
+  const f = p.fees;
+  const openAt = Number(p.openAt);
   return {
     poolId,
     poolKey: gen8PoolKey(token, setup.hook),
-    launchTime: Number(p.launchTime ?? p[1]),
-    graduated: Boolean(p.graduated ?? p[2]),
-    fees: { bondingBps: Number(f[0]), postBps: Number(f[1]), creatorPostBps: Number(f[2]), sniperStartBps: Number(f[3]), creatorBondingBps: Number(f[4]) },
+    openAt,
+    launchTime: openAt,
+    graduated: Boolean(p.graduated),
+    tickStart: Number(p.tickStart),
+    tickGrad: Number(p.tickGrad),
+    fees: {
+      bondingBps: Number(f.bondingBps ?? f[0]),
+      postBps: Number(f.postBps ?? f[1]),
+      creatorPostBps: Number(f.creatorPostBps ?? f[2]),
+      sniperStartBps: Number(f.sniperStartBps ?? f[3]),
+      creatorBondingBps: Number(f.creatorBondingBps ?? f[4]),
+    },
   };
 }
 
 async function feeBpsNow({ provider, setup, pool }) {
   if (setup.lens) return Number(await new ethers.Contract(setup.lens, LENS_ABI, provider).currentFeeBps(pool.poolId, setup.router.address));
   const block = await provider.getBlock("latest");
-  return gen8FeeRate({ graduated: pool.graduated, launchTime: pool.launchTime, nowTs: Number(block.timestamp), fees: pool.fees });
+  return gen8FeeRate({ graduated: pool.graduated, openAt: pool.openAt, nowTs: Number(block.timestamp), fees: pool.fees });
+}
+
+async function assertTradingOpen({ provider, setup, pool }) {
+  if (setup.lens) {
+    const open = await new ethers.Contract(setup.lens, LENS_ABI, provider).tradingOpen(pool.poolId);
+    if (!open.open) throw new Gen8SwapError(400, "GEN8_TRADING_NOT_OPEN", GEN8_REVERTS["0xe09f0331"].message);
+    return;
+  }
+  const now = Number((await provider.getBlock("latest")).timestamp);
+  if (now < Number(pool.openAt || 0)) throw new Gen8SwapError(400, "GEN8_TRADING_NOT_OPEN", GEN8_REVERTS["0xe09f0331"].message);
+}
+
+async function maxSellableCoins({ provider, setup, pool }) {
+  if (!setup.lens || pool.tickStart == null) return null;
+  return BigInt(
+    await new ethers.Contract(setup.lens, LENS_ABI, provider).previewFill(pool.poolId, false, -GEN8_TOTAL_SUPPLY, sqrtAtTick(Number(pool.tickStart))),
+  );
 }
 
 /**
@@ -162,6 +194,11 @@ export async function gen8SwapQuoteCore(input, deps = {}) {
   const provider = await (deps.getProvider || defaultProvider)(chainId);
   if (!provider) throw new Gen8SwapError(503, "RPC_NOT_CONFIGURED", `No RPC is configured for chain ${chainId}.`);
   const pool = await readGen8SwapPool({ provider, setup, token });
+  await assertTradingOpen({ provider, setup, pool });
+  if (side === "sell") {
+    const max = await maxSellableCoins({ provider, setup, pool });
+    if (max != null && amountIn > max) throw new Gen8SwapError(400, "GEN8_SELL_TOO_LARGE", GEN8_REVERTS["0x2fcb916e"].message);
+  }
   const key = pool.poolKey;
   const keyTuple = [key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks];
   const quoter = new ethers.Contract(setup.quoter, V4_QUOTER_ABI, provider);
@@ -334,6 +371,17 @@ export async function gen8SwapTokenCore(input, deps = {}) {
   const provider = await (deps.getProvider || defaultProvider)(chainId);
   if (!provider) throw new Gen8SwapError(503, "RPC_NOT_CONFIGURED", `No RPC is configured for chain ${chainId}.`);
   const pool = await readGen8SwapPool({ provider, setup, token });
+  const block = await provider.getBlock("latest");
+  const now = Number(block.timestamp);
+  let tradingOpen = now >= Number(pool.openAt || 0);
+  let postPhase = null;
+  if (setup.lens) {
+    const lens = new ethers.Contract(setup.lens, LENS_ABI, provider);
+    const [openR, progR] = await Promise.all([lens.tradingOpen(pool.poolId).catch(() => null), lens.progress(pool.poolId).catch(() => null)]);
+    if (openR) tradingOpen = Boolean(openR.open);
+    if (progR) postPhase = Boolean(progR.postPhase);
+  }
+  const platformGraduated = Boolean(pool.graduated && postPhase === true);
   let row = null;
   if (deps.db) {
     const { rows } = await deps.db
@@ -342,10 +390,11 @@ export async function gen8SwapTokenCore(input, deps = {}) {
     row = rows[0] || null;
   }
   const erc20 = new ethers.Contract(token, ERC20_ABI, provider);
-  const [name, symbol, feeBps] = await Promise.all([
+  const [name, symbol, feeBps, maxSellable] = await Promise.all([
     row?.name ? row.name : erc20.name().catch(() => null),
     row?.symbol ? row.symbol : erc20.symbol().catch(() => null),
     feeBpsNow({ provider, setup, pool }),
+    maxSellableCoins({ provider, setup, pool }).catch(() => null),
   ]);
   return {
     chainId,
@@ -357,10 +406,13 @@ export async function gen8SwapTokenCore(input, deps = {}) {
     symbol: symbol || null,
     imageUrl: row?.logo_uri || null,
     nativeSymbol: NATIVE_SYMBOL[chainId] || "ETH",
-    tradable: true,
-    graduated: pool.graduated,
-    phase: pool.graduated ? "graduated" : "bonding",
+    tradable: tradingOpen,
+    tradingOpen,
+    openAt: Number(pool.openAt || 0),
+    graduated: platformGraduated,
+    phase: platformGraduated ? "graduated" : "bonding",
     feeBps,
+    maxSellable: maxSellable != null ? maxSellable.toString() : null,
     router: setup.router.address,
     pageUrl: `https://app.memewar.zone/token/${token.toLowerCase()}?chainId=${chainId}`,
   };

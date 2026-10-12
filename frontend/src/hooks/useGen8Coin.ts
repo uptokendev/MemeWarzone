@@ -16,10 +16,19 @@ export type Gen8CoinState = {
     antiSniperStartBps: number;
     antiSniperWindowSeconds: number;
     launchAt: number;
+    openAt?: number;
     antiSniperEndsAt: number;
     antiSniperActive: boolean;
   };
-  graduation: { state: string; phase: "bonding" | "graduated"; progressBps: number | null; progressPct: number | null; sold: string | null; curveSupply: string | null };
+  openAt?: number;
+  tradingOpen?: boolean;
+  latched?: boolean;
+  postPhase?: boolean | null;
+  graduatedAt?: number | null;
+  platformStatus?: "graduated" | "bonding";
+  reserveReleaseAt?: number | null;
+  reserveReleasable?: boolean;
+  graduation: { state: string; phase: "bonding" | "graduated"; progressBps: number | null; progressPct: number | null; sold: string | null; curveSupply: string | null; latched?: boolean };
   market: { sqrtPriceX96: string | null; priceNativeWeiPerCoin: string | null; priceNative: number | null; marketCapNativeWei: string | null };
   creatorClaims: {
     hookCreator: string;
@@ -27,10 +36,10 @@ export type Gen8CoinState = {
     hookPendingCreator: string | null;
     feeChoice: { id: number | null; name: string; creatorPct: number | null; vault: string | null };
     vault: { address: string; creatorClaimableWei: string | null; holderPendingWei: string | null; buybackPendingWei: string | null; pendingCreator: string | null; error: string | null } | null;
-    reserve: { address: string; amount: string; releasable: boolean; beneficiary: string | null } | null;
+    reserve: { address: string; amount: string; releasable: boolean; releaseAt?: number | null; beneficiary: string | null } | null;
     escrow: { address: string; totalTokens: string | null; claimedTokens: string | null; claimableTokens: string | null } | null;
   };
-  gen8: { poolId: string; poolKey: { currency0: string; currency1: string; fee: number; tickSpacing: number; hooks: string }; hook: string; poolManager: string; lens: string | null; launcher: string; displayPair: string | null; tradePath: string; phase: "bonding" | "graduated" };
+  gen8: { poolId: string; poolKey: { currency0: string; currency1: string; fee: number; tickSpacing: number; hooks: string }; hook: string; poolManager: string; lens: string | null; launcher: string; displayPair: string | null; tradePath: string; phase: "bonding" | "graduated"; tickStart?: number; tickGrad?: number };
   viewer: { wallet: string; isCreator: boolean; canClaimHookCreatorFees: boolean; canClaimVaultFees: boolean; canAcceptCreator: boolean; canClaimEscrow: boolean } | null;
 };
 

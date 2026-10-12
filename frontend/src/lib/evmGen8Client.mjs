@@ -26,6 +26,7 @@ import { Contract, ethers } from "ethers";
 import {
   GEN8_FIRST_BUY_MAX,
   GEN8_RATES,
+  GEN8_REVERTS,
   GEN8_TARGET_DEFAULT_USD,
   GEN8_TARGET_FAST_USD,
   GEN8_TARGET_TEST_USD,
@@ -35,6 +36,8 @@ import {
   gen8FirstBuyEstimate,
   gen8PoolId,
   gen8PoolKey,
+  gen8RevertReason,
+  sqrtAtTick,
 } from "../../shared/evmGen8.mjs";
 import {
   GEN8_REFERRER_APP,
@@ -66,11 +69,11 @@ export const GEN8_AUTO_SLIPPAGE = "auto";
 export const GEN8_FIRST_BUY_MAX_HEADROOM_BPS = 50n;
 
 export const GEN8_LAUNCHER_ABI = Object.freeze([
-  "function launch((string name,string symbol,string logoURI,string xAccount,string website,string extraLink,bytes32 metadataHash,uint256 targetUsd,uint8 feeChoice,uint8 feeCreatorPct,uint256 firstBuyValue,uint256 minFirstBuyOut,uint256 salt) req, (uint64 deadline, bytes signature) auth) payable returns (address token, bytes32 id, uint256 firstBuyOut)",
+  "function launch((string name,string symbol,string logoURI,string xAccount,string website,string extraLink,bytes32 metadataHash,uint256 targetUsd,uint8 feeChoice,uint8 feeCreatorPct,uint256 firstBuyValue,uint256 minFirstBuyOut,uint256 salt,uint64 openAt) req, (uint64 deadline, bytes signature) auth) payable returns (address token, bytes32 id, uint256 firstBuyOut)",
   "function plan(uint256 targetUsdWad) view returns (uint256 mc, uint256 vN, uint256 vT, int24 tickStart, int24 tickGrad)",
   "function createPaused() view returns (bool)",
   "function hook() view returns (address)",
-  "event Launched(address indexed token, bytes32 indexed id, address indexed creator, address hookCreator, uint256 targetUsd, uint256 marketCapNative, uint256 virtualNative, uint256 virtualToken, int24 tickStart, int24 tickGrad, uint8 feeChoice, uint8 feeCreatorPct, uint256 firstBuyIn, uint256 firstBuyOut)",
+  "event Launched(address indexed token, bytes32 indexed id, address indexed creator, address hookCreator, uint256 targetUsd, uint256 marketCapNative, uint256 virtualNative, uint256 virtualToken, int24 tickStart, int24 tickGrad, uint8 feeChoice, uint8 feeCreatorPct, uint256 firstBuyIn, uint256 firstBuyOut, uint40 openAt)",
   "error AuthorizationExpired()",
   "error AuthorizationReplayed()",
   "error InvalidAuthorization()",
@@ -82,6 +85,7 @@ export const GEN8_LAUNCHER_ABI = Object.freeze([
   "error OraclePriceUnavailable()",
   "error UnsupportedGraduationTarget()",
   "error TargetOutOfRangeAtPrice()",
+  "error OpenAtTooFar()",
 ]);
 export const GEN8_HOOK_ABI = Object.freeze([
   "function claimCreator(bytes32 id, address to) returns (uint256 amount)",
@@ -89,17 +93,23 @@ export const GEN8_HOOK_ABI = Object.freeze([
   "function acceptCreator(bytes32 id)",
   "function creatorOwed(bytes32 id) view returns (uint256)",
   "function pendingCreator(bytes32 id) view returns (address)",
-  "function pools(bytes32) view returns (address creator, uint40 launchTime, bool graduated, int24 tickGrad, int24 tickStart, uint128 liqA, uint128 liqB, uint160 sqrtGrad, tuple(uint16 bondingBps, uint16 postBps, uint16 creatorPostBps, uint16 sniperStartBps, uint16 creatorBondingBps) fees)",
+  "function pools(bytes32) view returns (address creator, uint40 openAt, bool graduated, int24 tickGrad, int24 tickStart, uint128 liqA, uint128 liqB, uint160 sqrtGrad, tuple(uint16 bondingBps, uint16 postBps, uint16 creatorPostBps, uint16 sniperStartBps, uint16 creatorBondingBps) fees, uint40 graduatedAt)",
   "event Graduated(bytes32 indexed id, uint256 gradFeeNative, uint256 nativeInA, uint128 liquidityRemoved)",
   "event HookFee(bytes32 indexed id, address indexed swapSender, address indexed referrer, bool buy, bool graduated, uint256 curveAmount, uint256 fee, uint256 feeBps, uint256 creatorShare)",
   "error NotCreator()",
   "error NotPendingCreator()",
   "error NothingOwed()",
+  "error TradingNotOpen()",
+  "error PriceAboveStart()",
+  "error BadOpenAt()",
+  "error UnknownPool()",
 ]);
 export const GEN8_LENS_ABI = Object.freeze([
   "function currentFeeBps(bytes32 id, address sender) view returns (uint256)",
   "function previewFill(bytes32 id, bool zeroForOne, int256 amountSpecified, uint160 limit) view returns (uint256)",
   "function grossForNet(uint256 net, uint256 rate) pure returns (uint256)",
+  "function progress(bytes32 id) view returns (tuple(bool graduated, bool postPhase, uint40 graduatedAt, uint160 sqrtPriceX96, uint256 coinsSoldFromA, uint256 coinsInA, uint256 nativeInA, uint256 nativeTargetA))",
+  "function tradingOpen(bytes32 id) view returns (bool open, uint256 openAt)",
 ]);
 export const GEN8_CHOICE_VAULT_ABI = Object.freeze([
   "function pull(bytes32 id) returns (uint256 amount)",
@@ -118,6 +128,9 @@ export const GEN8_RESERVE_LOCK_ABI = Object.freeze([
   "function reserves(bytes32) view returns (address token, uint96 amount)",
   "error NotGraduated()",
   "error NothingLocked()",
+  "error ReserveTooEarly()",
+  "error PriceBelowGraduation()",
+  "error PoolManagerUnlocked()",
 ]);
 export const GEN8_ESCROW_ABI = Object.freeze([
   "function buy(address token, uint256 minOut) payable returns (uint256 coinsOut, uint256 spent)",
@@ -250,8 +263,8 @@ export function gen8MaxFirstBuyByBalance({ balanceWei, gasReserveWei }) {
   return left > 0n ? left : 0n;
 }
 
-/** The campaignRequest body of POST /api/routing/create-authorization for a gen-8 launcher. */
-export function gen8CreateAuthorizationBody({ chainId, walletAddress, launcher, name, symbol, logoURI, xAccount = "", website = "", extraLink = "", description = "", targetUsd, feeChoice, feeCreatorPct = 0, firstBuyValueWei = 0n, firstBuySlippageBps = 300 }) {
+/** The campaignRequest body of POST /api/routing/create-authorization for a gen-8 launcher. openAt 0 = trading opens at launch. */
+export function gen8CreateAuthorizationBody({ chainId, walletAddress, launcher, name, symbol, logoURI, xAccount = "", website = "", extraLink = "", description = "", targetUsd, feeChoice, feeCreatorPct = 0, firstBuyValueWei = 0n, firstBuySlippageBps = 300, openAt = 0 }) {
   return {
     walletAddress,
     chainId: Number(chainId),
@@ -270,6 +283,7 @@ export function gen8CreateAuthorizationBody({ chainId, walletAddress, launcher, 
       feeCreatorPct: feeChoice === "split" || Number(feeChoice) === 3 ? Number(feeCreatorPct) : 0,
       firstBuyValue: BigInt(firstBuyValueWei).toString(),
       firstBuySlippageBps,
+      openAt: BigInt(openAt ?? 0).toString(),
     },
   };
 }
@@ -284,7 +298,7 @@ export function gen8LaunchArgs(auth, { chainId, launcher, firstBuyValueWei = nul
   if (!launcher || ethers.getAddress(auth.launcher) !== ethers.getAddress(launcher)) throw new Error("The create authorization names another launcher.");
   const r = auth.launchRequest;
   if (firstBuyValueWei != null && BigInt(r.firstBuyValue) !== BigInt(firstBuyValueWei)) throw new Error("The first buy in the authorization differs from yours. Try again.");
-  const req = [r.name, r.symbol, r.logoURI, r.xAccount, r.website, r.extraLink, r.metadataHash, BigInt(r.targetUsd), Number(r.feeChoice), Number(r.feeCreatorPct), BigInt(r.firstBuyValue), BigInt(r.minFirstBuyOut), BigInt(r.salt)];
+  const req = [r.name, r.symbol, r.logoURI, r.xAccount, r.website, r.extraLink, r.metadataHash, BigInt(r.targetUsd), Number(r.feeChoice), Number(r.feeCreatorPct), BigInt(r.firstBuyValue), BigInt(r.minFirstBuyOut), BigInt(r.salt), BigInt(r.openAt ?? 0)];
   const authTuple = [BigInt(auth.authorization.deadline), auth.authorization.signature];
   return { req, auth: authTuple, value: BigInt(r.firstBuyValue) };
 }
@@ -373,12 +387,13 @@ export async function readGen8FeeBps({ provider, cfg, poolId, sender }) {
   }
   const hook = new Contract(cfg.hook, GEN8_HOOK_ABI, provider);
   const [p, block] = await Promise.all([hook.pools(poolId), provider.getBlock("latest")]);
-  const f = p.fees ?? p[8];
+  const f = p.fees;
+  const openAt = Number(p.openAt);
   return gen8FeeRate({
-    graduated: Boolean(p.graduated ?? p[2]),
-    launchTime: Number(p.launchTime ?? p[1]),
+    graduated: Boolean(p.graduated),
+    openAt,
     nowTs: Number(block.timestamp),
-    fees: { bondingBps: Number(f[0]), postBps: Number(f[1]), sniperStartBps: Number(f[3]) },
+    fees: { bondingBps: Number(f.bondingBps ?? f[0]), postBps: Number(f.postBps ?? f[1]), sniperStartBps: Number(f.sniperStartBps ?? f[3]) },
   });
 }
 
@@ -387,16 +402,28 @@ export async function readGen8PoolRecord({ provider, cfg, token }) {
   const poolId = gen8PoolId(token, cfg.hook);
   const hook = new Contract(cfg.hook, GEN8_HOOK_ABI, provider);
   const p = await hook.pools(poolId);
-  const creator = p.creator ?? p[0];
+  const creator = p.creator;
   if (!creator || creator === ethers.ZeroAddress) return null;
-  const f = p.fees ?? p[8];
+  const f = p.fees;
+  const openAt = Number(p.openAt);
+  const graduatedAt = Number(p.graduatedAt);
   return {
     poolId,
     poolKey: gen8PoolKey(token, cfg.hook),
     creator: ethers.getAddress(creator),
-    launchTime: Number(p.launchTime ?? p[1]),
-    graduated: Boolean(p.graduated ?? p[2]),
-    fees: { bondingBps: Number(f[0]), postBps: Number(f[1]), creatorPostBps: Number(f[2]), sniperStartBps: Number(f[3]), creatorBondingBps: Number(f[4]) },
+    openAt,
+    launchTime: openAt,
+    graduated: Boolean(p.graduated),
+    graduatedAt: graduatedAt > 0 ? graduatedAt : null,
+    tickGrad: Number(p.tickGrad),
+    tickStart: Number(p.tickStart),
+    fees: {
+      bondingBps: Number(f.bondingBps ?? f[0]),
+      postBps: Number(f.postBps ?? f[1]),
+      creatorPostBps: Number(f.creatorPostBps ?? f[2]),
+      sniperStartBps: Number(f.sniperStartBps ?? f[3]),
+      creatorBondingBps: Number(f.creatorBondingBps ?? f[4]),
+    },
   };
 }
 
@@ -418,6 +445,12 @@ export async function quoteGen8Trade({ provider, cfg, token, side, amountIn, sli
   if (amount <= 0n) throw new Error("Enter an amount.");
   const pool = record || (await readGen8PoolRecord({ provider, cfg, token }));
   if (!pool) throw new Error("This token has no MemeWarzone pool on this chain.");
+  const now = Number((await provider.getBlock("latest")).timestamp);
+  if (now < Number(pool.openAt || 0)) throw new Error(GEN8_REVERTS["0xe09f0331"].message);
+  if (side === "sell" && cfg.lens) {
+    const maxSellable = await gen8MaxSellable({ provider, cfg, poolId: pool.poolId, tickStart: pool.tickStart });
+    if (amount > maxSellable) throw new Error(GEN8_REVERTS["0x2fcb916e"].message);
+  }
   const swapSender = sender || cfg.router?.address;
   const quoter = new Contract(cfg.quoter, V4_QUOTER_ABI, provider);
   const refIn = gen8ReferenceAmount(amount);
@@ -458,6 +491,22 @@ export async function quoteGen8Trade({ provider, cfg, token, side, amountIn, sli
 export async function previewGen8Fill({ provider, cfg, poolId, zeroForOne, amountSpecified, sqrtPriceLimitX96 }) {
   if (!cfg?.lens) throw new Error("No gen-8 lens is configured for this chain.");
   return BigInt(await new Contract(cfg.lens, GEN8_LENS_ABI, provider).previewFill(poolId, zeroForOne, BigInt(amountSpecified), BigInt(sqrtPriceLimitX96)));
+}
+
+/**
+ * Coins the pool will take back on an exact-input sell before the price would pass the start tick (F2 PriceAboveStart).
+ * UniversalRouter V4 swaps carry no price limit, so the app clamps MAX and refuses a larger sell.
+ */
+export async function gen8MaxSellable({ provider, cfg, poolId, tickStart }) {
+  if (tickStart == null || !Number.isFinite(Number(tickStart))) return 0n;
+  return previewGen8Fill({
+    provider,
+    cfg,
+    poolId,
+    zeroForOne: false,
+    amountSpecified: -GEN8_TOTAL_SUPPLY,
+    sqrtPriceLimitX96: sqrtAtTick(Number(tickStart)),
+  });
 }
 
 /** The UniversalRouter call for a quoted trade (exact input). */
@@ -567,15 +616,36 @@ export async function claimGen8Escrow({ signer, chainId, cfg, token }) {
 
 // ------------------------------------------------------------------ coin state (API) helpers for the UI
 
-/** "Launch fee: X% now, 2% in N s." from the API's tradeFee and the current time; null outside the window. */
-export function gen8AntiSniperCountdown(tradeFee, nowSec) {
-  if (!tradeFee || !tradeFee.launchAt) return null;
-  const end = Number(tradeFee.antiSniperEndsAt || Number(tradeFee.launchAt) + GEN8_RATES.sniperWindowSeconds);
+function formatWait(seconds) {
+  const s = Math.max(0, Math.floor(Number(seconds) || 0));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h < 24) return m ? `${h}h ${m}m` : `${h}h`;
+  return `${Math.floor(h / 24)}d ${h % 24}h`;
+}
+
+/** "Trading opens at <time>" plus remaining wait; null once openAt has passed. */
+export function gen8TradingOpensLine(openAt, nowSec) {
+  const open = Number(openAt) || 0;
   const now = Number(nowSec);
+  if (!open || now >= open) return null;
+  const when = new Date(open * 1000).toLocaleString();
+  return { openAt: open, secondsLeft: open - now, line: `Trading opens at ${when}. ${formatWait(open - now)} left.` };
+}
+
+/** "Launch fee: X% now, 2% in N s." from the API's tradeFee and the current time; null outside the window. Decay runs from openAt. */
+export function gen8AntiSniperCountdown(tradeFee, nowSec) {
+  const start = Number(tradeFee?.openAt ?? tradeFee?.launchAt);
+  if (!tradeFee || !start) return null;
+  const now = Number(nowSec);
+  if (now < start) return null;
+  const end = Number(tradeFee.antiSniperEndsAt || start + GEN8_RATES.sniperWindowSeconds);
   if (now >= end) return null;
   const bps = gen8FeeRate({
     graduated: false,
-    launchTime: Number(tradeFee.launchAt),
+    openAt: start,
     nowTs: now,
     fees: { bondingBps: Number(tradeFee.bondingBps ?? 200), postBps: Number(tradeFee.postGraduationBps ?? 100), sniperStartBps: Number(tradeFee.antiSniperStartBps ?? 9000) },
   });
@@ -613,6 +683,15 @@ const GEN8_ERROR_WORDS = Object.freeze({
   NotGraduated: "The reserve unlocks when the coin graduates.",
   NothingLocked: "The reserve was already released.",
   WrongChoice: "This coin keeps its fees in the hook; claim them there.",
+  OpenAtTooFar: "Trading can open at most 30 days after the launch.",
+  BadOpenAt: "The trading open time is outside the allowed window (now to 30 days ahead).",
+  TradingNotOpen: "Trading on this coin has not opened yet.",
+  PriceAboveStart: "This sell is larger than the bonding range can take back. Sell a smaller amount.",
+  PriceBelowGraduation: "The creator reserve unlocks only while the price is at or past the graduation price.",
+  PoolManagerUnlocked: "The creator reserve cannot be released inside a swap. Send the release as its own transaction.",
+  ReserveTooEarly: "The creator reserve unlocks one hour after graduation.",
+  NotRouterCaller: "Only the fee router, its operator or the owner can claim the router fees.",
+  BadClaimDeadline: "The holder batch claim deadline must be at least 7 days after it becomes executable and at most 365 days ahead.",
 });
 
 const GEN8_ERROR_IFACE = new ethers.Interface([
@@ -639,6 +718,8 @@ function revertDataOf(error) {
 
 /** A known gen-8 revert in plain words, or null (the caller shows its own message). */
 export function gen8ErrorMessage(error) {
+  const fromShared = gen8RevertReason(error);
+  if (fromShared) return GEN8_ERROR_WORDS[fromShared.name] || fromShared.message;
   let data = revertDataOf(error);
   for (let depth = 0; data && depth < 4; depth += 1) {
     let parsed = null;
@@ -650,10 +731,11 @@ export function gen8ErrorMessage(error) {
     if (!parsed) break;
     if (parsed.name === "ExecutionFailed") data = parsed.args.message;
     else if (parsed.name === "WrappedError") data = parsed.args.reason;
-    else return GEN8_ERROR_WORDS[parsed.name] || null;
+    else return GEN8_ERROR_WORDS[parsed.name] || gen8RevertReason(data)?.message || null;
   }
   const text = String(error?.shortMessage || error?.reason || error?.message || "");
   for (const [name, words] of Object.entries(GEN8_ERROR_WORDS)) if (text.includes(name)) return words;
+  for (const e of Object.values(GEN8_REVERTS)) if (text.includes(e.name)) return e.message;
   if (/user rejected|denied/i.test(text)) return "You rejected the request in your wallet.";
   return null;
 }
