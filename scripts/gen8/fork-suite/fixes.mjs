@@ -5,8 +5,9 @@
 // It replays the audit proofs of concept against the fixed contracts on the canonical PoolManager and every
 // UniversalRouter version of the chain:
 //   F1  A-1 / D-H1 forced graduation in ONE unlock (flash accounting), with a reserve release attempted between the
-//       legs; the same as two transactions in one block; the residual three-transaction bundle that releases the
-//       reserve; trades back in A pay the bonding rate through every router
+//       legs; the same as two transactions in one block; the three-transaction bundle with a release in the middle
+//       (fails: 1 h since the latch); release at latch + 59 min / + 60 min; trades back in A pay the bonding rate
+//       through every router
 //   F2  A-3 zero-coin sell at the start price, direct and through every UR, refused; the limit at the start price works
 //   F3  A-2 owner contract changing the router from inside an unlock: the old router's bucket is parked and paid to it
 //   F4  covered in base (third-party claimRouter) and step-2 split (plan / route)
@@ -133,11 +134,38 @@ export async function areaFixes(env, H, S, out) {
         check(`[F1] D-H1 two transactions in one block: latch fires, fee back to 2% for everyone, reserve locked`, sameBlock && st.graduated && rateNow === 200n && reserve === 20_000_000n * WAD, `net cost ${fmt(cost, 6)} (${usd(cost)}), capital ${fmt(R, 4)} for one block`);
         N.bundle2 = { netCost: cost.toString(), netCostUsd: usd(cost), capital: R.toString() };
       } else {
-        check(`[F1] residual (measured, not a fix failure): a three-transaction bundle (buy to graduation, release, sell back) releases the reserve early; the fee still returns to 2%`, sameBlock && st.graduated && rateNow === 200n && reserve === 0n, `net cost ${fmt(cost, 6)} (${usd(cost)}), capital ${fmt(R, 4)} (${usd(R)}) for one block; benefit: the creator gets 20M coins before a real graduation`);
-        N.bundle3 = { netCost: cost.toString(), netCostUsd: usd(cost), capital: R.toString(), capitalUsd: usd(R) };
+        const okBlocks = rcs.every((r) => r.blockNumber === rcs[0].blockNumber) && rcs[0].status === 1 && rcs[1].status === 0 && rcs[2].status === 1;
+        const latchTs = BigInt((await env.provider.getBlock(rcs[0].blockNumber)).timestamp);
+        check(`[F1] a three-transaction bundle (buy to graduation, release, sell back) no longer releases the reserve: the release reverts (1 h since the latch), the fee still returns to 2%`, okBlocks && st.graduated && st.graduatedAt === latchTs && rateNow === 200n && reserve === 20_000_000n * WAD, `release tx status ${rcs[1].status}; net cost ${fmt(cost, 6)} (${usd(cost)}), capital ${fmt(R, 4)} (${usd(R)}) for one block`);
+        N.bundle3 = { netCost: cost.toString(), netCostUsd: usd(cost), capital: R.toString(), capitalUsd: usd(R), releaseStatus: rcs[1].status };
       }
       env.W.attacker.reset();
       await H.revert(env, s2);
+    }
+    // the clock: buy to the graduation price and hold it; release at + 59 min refused, at + 60 min allowed; a price
+    // that fell back inside A is refused for the price
+    {
+      const s3 = await H.snapshot(env);
+      const rcB = await (await env.trader.connect(env.W.attacker).swap(P.key, true, -(R * 2n), P.sqrtGrad, "0x", { value: R * 2n, gasLimit: 3_000_000n })).wait();
+      const latchTs = BigInt((await env.provider.getBlock(rcB.blockNumber)).timestamp);
+      const stB = await env.hook.pools(P.id);
+      const r0 = await revertOf(() => env.reserveLock.connect(env.W.attacker).release.staticCall(P.id), ifaces);
+      await warpTo(env, latchTs + 59n * 60n);
+      const r59 = await revertOf(() => env.reserveLock.connect(env.W.attacker).release.staticCall(P.id), ifaces);
+      check("[F1] graduatedAt == the latch block's time; release at the latch and at + 59 min reverts ReserveTooEarly (price at graduation, PoolManager locked)", stB.graduated && stB.graduatedAt === latchTs && r0?.includes("ReserveTooEarly") && r59?.includes("ReserveTooEarly"), `${r0} / ${r59}`);
+      const s4 = await H.snapshot(env);
+      await (await P.coin.connect(env.W.attacker).approve(env.trader.target, ethers.MaxUint256)).wait();
+      await H.trade(env, P, { via: "direct", wallet: env.W.attacker, buy: false, exactIn: true, amount: 30_000_000n * WAD, limit: 0n, ts: latchTs + 3600n });
+      const rBack = await revertOf(() => env.reserveLock.connect(env.W.attacker).release.staticCall(P.id), ifaces);
+      check("[F1] at + 60 min with the price fallen back inside A the release reverts PriceBelowGraduation", rBack?.includes("PriceBelowGraduation"), rBack);
+      await H.revert(env, s4);
+      await warpTo(env, latchTs + 3600n);
+      const ben = await env.reserveLock.beneficiaryOf(P.id);
+      const bb = await P.coin.balanceOf(ben);
+      const rcR = await (await env.reserveLock.connect(env.W.attacker).release(P.id)).wait();
+      check("[F1] at + 60 min with the price still at graduation the release goes through, to the creator", rcR.status === 1 && (await P.coin.balanceOf(ben)) - bb === 20_000_000n * WAD, `gas ${rcR.gasUsed}`);
+      N.releaseGas = Number(rcR.gasUsed);
+      await H.revert(env, s3);
     }
     await H.revert(env, snap);
   }
@@ -154,6 +182,7 @@ export async function areaFixes(env, H, S, out) {
     // circulation exceed what A can take back; a full sell with no limit (UR V4 swaps carry none) must revert
     await H.trade(env, P, { via: "direct", wallet: env.W.bot, buy: true, exactIn: true, amount: S.R * 2n, limit: 0n });
     check("[F2] setup: the coin graduated", (await env.hook.pools(P.id)).graduated);
+    await warpTo(env, (await now(env)) + 3600n); // 1 h since the latch before the reserve can leave
     await (await env.reserveLock.connect(env.W.attacker).release(P.id)).wait();
     await (await P.coin.connect(env.W.creator).transfer(env.A.bot, await P.coin.balanceOf(env.A.creator))).wait();
     const bal = await P.coin.balanceOf(env.A.bot);

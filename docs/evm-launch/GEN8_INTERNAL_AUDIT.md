@@ -20,14 +20,14 @@ audit PoC re-runs).
 
 | File | Lines (total / code) | Role |
 |---|---|---|
-| `contracts/gen8/MwzLaunchHook.sol` | 766 / 589 (2026-10-12) | The V4 hook: fees, liquidity lock, graduation latch, creator ledger, router bucket, display call |
+| `contracts/gen8/MwzLaunchHook.sol` | 770 / 592 (2026-10-12) | The V4 hook: fees, liquidity lock, graduation latch, creator ledger, router bucket, display call |
 | `contracts/gen8/libraries/MwzSwapSim.sol` | 125 / 101 | External library (linked): exact replay of `Pool.swap` for price-limited swaps |
 | `contracts/gen8/libraries/MwzFeeMath.sol` | 39 / 20 | Internal library: rate schedule and exact-output gross, shared by hook and lens |
-| `contracts/gen8/interfaces/IMwzLaunchHook.sol` | 60 / 50 | `FeeConfig` and the hook view interface |
-| `contracts/gen8/MwzLaunchLens.sol` | 92 / 66 | Stateless views: `currentFeeBps`, `previewFill`, `grossForNet`, `progress` |
+| `contracts/gen8/interfaces/IMwzLaunchHook.sol` | 61 / 51 | `FeeConfig` and the hook view interface |
+| `contracts/gen8/MwzLaunchLens.sol` | 94 / 68 | Stateless views: `currentFeeBps`, `previewFill`, `grossForNet`, `progress` |
 | `contracts/gen8/MwzV4Launcher.sol` | 473 / 377 | One-transaction launch with L1 to L5 |
 | `contracts/gen8/MwzV4Token.sol` | 13 / 7 | Plain 1B ERC20 |
-| `contracts/gen8/MwzReserveLock.sol` | 100 / 72 | 2% creator reserve until graduation (D6 R2) |
+| `contracts/gen8/MwzReserveLock.sol` | 110 / 75 | 2% creator reserve until graduation (D6 R2) |
 | `contracts/gen8/MwzCreatorEscrow.sol` | 126 / 96 | App creator-buy escrow, gen-7 schedule (D5 E1) |
 | `contracts/gen8/MwzFeeSplitter.sol` | 189 / 144 | Bounded router-bucket splitter (D1 A) |
 | `contracts/gen8/MwzCreatorChoiceVault.sol` | 480 / 380 | Holders / split / buyback choice (D2) |
@@ -46,9 +46,9 @@ none changed behaviour between the two).
 
 | Suite | Command | Result |
 |---|---|---|
-| Local unit + property + gas/size (hardhat, v4-core 1.0.2 PoolManager built locally) | `npx hardhat --config hardhat.gen8.config.ts test` | 2026-10-12: 101 passing after the fix round (15.9). Before: 80 tests passing (77 before V13; +3 splitter plan tests) in about 5 minutes, including 10 seeded property runs of 220 actions (see 2.1) |
+| Local unit + property + gas/size (hardhat, v4-core 1.0.2 PoolManager built locally) | `npx hardhat --config hardhat.gen8.config.ts test` | 2026-10-12: 102 passing after the fix round (15.9, 15.10). Before: 80 tests passing (77 before V13; +3 splitter plan tests) in about 5 minutes, including 10 seeded property runs of 220 actions (see 2.1) |
 | Property runs, larger campaign | `GEN8_FUZZ_SEEDS=101..140 GEN8_FUZZ_STEPS=300` | 40 seeds x 300 random actions, all invariants checked after every action: 40 / 40 passing (after V13 the splitter step also lands fees and third-party claims between plan and route: 74 late fees, 79 re-plans) (12,000 actions, about 8 minutes) |
-| Fork suite, production contracts, BSC 56 + Robinhood 4663, $30K + $50K | `node scripts/gen8/fork-suite/run-fork-suite.mjs` | 2026-10-12: 2,376 / 2,376 PASS incl. step 2 and the `fixes` area (15.9). Step 1: 746 / 746 PASS (134 s) |
+| Fork suite, production contracts, BSC 56 + Robinhood 4663, $30K + $50K | `node scripts/gen8/fork-suite/run-fork-suite.mjs` | 2026-10-12: 2,388 / 2,388 PASS incl. step 2 and the `fixes` area (15.9, 15.10). Step 1: 746 / 746 PASS (134 s) |
 | Research equivalence | `node scripts/gen8/fork-suite/compare-with-research.mjs` | all 702 research checks present and passing (one renamed on purpose, D6) |
 
 ### 2.1 What the local suite covers
@@ -148,7 +148,8 @@ rate and split. The latch below decides only the one-time graduation (15.1). Bef
 swap passes (B, 15.8). A sell may not end above `sqrtStart` (F2, 15.2).
 
 **_graduate** (the latch)
-- Inside `afterSwap` only. `graduated = true` is written first and never reset (I7). Then the only liquidity removal
+- Inside `afterSwap` only. `graduated = true` and `graduatedAt = block.timestamp` are written first and never reset
+  (I7, I17). Then the only liquidity removal
   that exists: `floor(liqA * 200 / 10000)` from A, which at a price at or below `sqrtGrad` is native only (I6); the
   returned native is minted as a claim and added to `routerOwed` and `pendingGradFees`. The coin leg is 0 by
   construction; if it ever were not, it goes to `0xdEaD` (unreachable branch kept from the proof).
@@ -213,7 +214,8 @@ unlockCallback`. There is no rate setter, no withdraw, no pause, no liquidity fu
 - `lock`: launcher only, once per pool, after the launcher transferred the reserve (`balanceOf >= amount`; the coin is
   brand new, so the balance is exactly this reserve).
 - `release(id)`: `nonReentrant`; checks (amount > 0, hook says graduated, the PoolManager is locked, the pool price
-  is at or past the graduation price now (2026-10-12, F1), beneficiary non-zero), effect (amount = 0),
+  is at or past the graduation price now, at least `RESERVE_RELEASE_DELAY` = 1 h since the latch (2026-10-12, F1 and
+  15.10), beneficiary non-zero), effect (amount = 0),
   then the token transfer (our plain ERC20, no callbacks). Beneficiary: the hook creator, or the human creator in the
   choice vault when the hook creator is the vault. Permissionless, once.
 - If a coin never graduates, its reserve stays locked (same as gen-7). No owner, no rescue.
@@ -282,6 +284,7 @@ clamped to `uint112` for display. The lens and `MwzSwapSim` are views.
 | I14 (2026-10-12) | Fee phase and bucket follow the start price; `price <= sqrtGrad` implies the latch | `beforeSwap` phase, `_accrue` | property runs: HookFee phase, `pendingBondingFees` delta, latch implication after every action |
 | I15 (2026-10-12) | The price never sits above `sqrtStart` | `afterSwap` F2 check | property runs (incl. a full-dump action after graduation) |
 | I16 (2026-10-12) | No swap before `openAt` except the launcher's first buy | `beforeSwap` B check | property runs with a scheduled third coin (direct, sell, escrow attempts) |
+| I17 (2026-10-12) | `graduatedAt` is 0 before the latch, the latch block's time with it, never changed; the reserve leaves at the earliest `graduatedAt + 1 h` | `_graduate`, `MwzReserveLock.release` | property runs (after every action; releases inside the hour refused), fixes spec, fork `fixes` |
 
 ## 6. Auditor points A1 to A15
 
@@ -345,9 +348,9 @@ clamped to `uint112` for display. The lens and `MwzSwapSim` are views.
   the coins in circulation can exceed what A takes back; such a sell needs a price limit at or below `sqrtStart` (it
   then partially fills). UniversalRouter V4 swaps carry no limit, so the app must cap the sell size.
 - (2026-10-12) The graduation latch can still be forced with a buy-and-sell-back; it no longer changes fees, League
-  counting or the reserve (F1), but `Graduated` fires early and the one-time graduation fee is taken then. A
-  three-transaction same-block bundle (buy to the graduation price, `release`, sell back) can release a creator's
-  reserve early (15.1, residual).
+  counting or the reserve (F1), but `Graduated` fires early and the one-time graduation fee is taken then. The
+  reserve releases only after the price has been held at or past graduation for the 1 h delay (15.10); a coin whose
+  latch was forced shows `graduated == true` with `postPhase == false` in the lens until a real crossing.
 - (2026-10-12) Robinhood Chain has no Chainlink L2 sequencer uptime feed (15.7).
 
 ## 9. Deviations from the design doc (all deliberate, each needs the founder's eye)
@@ -448,6 +451,9 @@ can hold several swaps of one pool through a router.
   graduation price (lens `progress().postPhase`), since a forced latch with a sell-back is possible (15.1).
 - Scheduled open (B): `Launched.openAt` / `PoolLaunched.openAt`; no trade before it except the launch transaction's
   first buy; `lens.tradingOpen(id)`.
+- Reserve release (15.10): `hook.pools(id)` has a tenth field `uint40 graduatedAt` (also in `lens.progress().graduatedAt`);
+  the reserve can leave from `graduatedAt + MwzReserveLock.RESERVE_RELEASE_DELAY` (3600 s) when the price is at or
+  past graduation. No new event: `Graduated` marks the latch, `ReserveReleased` the release.
 - D1 accruals: for each `HookFee` with `graduated == false`, the router part is `fee - creatorShare`; league 37.5% of
   `fee`; recruiter / squad / airdrop by the trader's profile at trade time; for `Graduated`, the creator's profile
   (store it at launch). Run amounts must be computed from the run's totals with `MwzFeeSplitter.bands(B, G)` where
@@ -625,14 +631,10 @@ nothing left to trigger. The display pair has no phase. The splitter routes what
     cannot be released: inside the attacker's unlock `release` reverts `PoolManagerUnlocked`; after it,
     `PriceBelowGraduation`. Measured locally: the one-transaction round trip costs about 5% of A's raise and gains
     nothing on fees. Fork numbers in 15.9.
-  - Residual (measured, reported, not fixed): a bundle of THREE transactions in one block (buy to `sqrtGrad`, then
-    `release` as its own transaction while the price sits at the graduation price and the PoolManager is locked,
-    then the sell back) releases the creator's 20M reserve before a real graduation. It needs A's whole raise as
-    capital for one block (on BSC a builder bundle; on Robinhood back-to-back transactions from one sender) and costs
-    the same round trip as D-H1. The beneficiary is always the coin's creator, so only a creator has a motive; the
-    fee motive (0.5% creator share of volume vs 0.112%) is gone. Closing it needs a time condition on release (for
-    example "at or past the graduation price at two different block timestamps", or a minimum time since the latch),
-    which is a design change and is left to the founder.
+  - Residual found in this round and closed the same day (founder go, 15.10): a bundle of THREE transactions in one
+    block (buy to `sqrtGrad`, then `release` as its own transaction while the price sits at the graduation price and
+    the PoolManager is locked, then the sell back) could release the creator's 20M reserve before a real graduation.
+    `release` now also waits 1 h after the latch, so the release transaction in that bundle reverts `ReserveTooEarly`.
   - Other effects of a forced latch that remain by design: the `Graduated` event fires early (the indexer and the app
     must show "graduated" from the price, not from the event alone; see 10.2 below), and the one-time 2% graduation fee
     is taken at the forced crossing and never again (A keeps 98% of its liquidity for the real crossing).
@@ -758,9 +760,9 @@ the same field, so buybacks start at `openAt + 60 s`.
 
 | Suite | Result |
 |---|---|
-| Local unit + property + gas/size (`npx hardhat --config hardhat.gen8.config.ts test`, fresh deterministic keys since this round) | 101 passing (80 before; +21: `test/gen8/fixes-2026-10-12.spec.ts` 19, hook.spec +2 for F3 / F4) in about 5 minutes |
+| Local unit + property + gas/size (`npx hardhat --config hardhat.gen8.config.ts test`, fresh deterministic keys since this round) | 102 passing (80 before; +22: `test/gen8/fixes-2026-10-12.spec.ts` 20 incl. the 1 h delay of 15.10, hook.spec +2 for F3 / F4) in about 5 minutes |
 | Property runs (10 seeds x 220 actions, default) | all invariants after every action, plus I14 (phase by start price, bucket delta, latch implication), I15 (price <= sqrtStart, incl. a full-dump action), I16 (scheduled third coin: every attempt before `openAt` refused), F4 (a random user's `claimRouter` refused before every claim), F1 release rule (release succeeds at/past the graduation price, refused back in A). Over the 10 seeds: 130 to 145 trades each, 27 to 80 post-phase trades, 23 to 68 swaps back in A after graduation, up to 10 refused pre-open attempts, up to 3 refused oversize dumps, up to 9 refused releases |
-| Fork suite, BSC 56 + Robinhood 4663, $30K + $50K (`node scripts/gen8/fork-suite/run-fork-suite.mjs`, public read-only RPCs, no .env) | 2,376 / 2,376 PASS (2,116 before; new area `fixes` 42 per chain; base and step-2 checks adapted to F1 / F3 / F4 / F5 / B) in 1,101 s |
+| Fork suite, BSC 56 + Robinhood 4663, $30K + $50K (`node scripts/gen8/fork-suite/run-fork-suite.mjs`, public read-only RPCs, no .env) | 2,388 / 2,388 PASS (2,116 before; new area `fixes` 48 per chain incl. the 1 h delay checks of 15.10; base and step-2 checks adapted to F1 / F3 / F4 / F5 / B) in 1,378 s |
 | Audit PoC re-run (`scripts/gen8/audit-rerun.sh`, then `npx hardhat --config hardhat.audit-rerun.config.ts test` and `node audit-rerun/D/fork-econ.mjs --sims grad,grad2,splitter`) | see the table below |
 
 Audit PoCs against the fixed code (a FAILING PoC is an exploit that no longer works):
@@ -780,15 +782,17 @@ Audit PoCs against the fixed code (a FAILING PoC is an exploit that no longer wo
 | D grad (one unlock, sell-back WITHOUT a price limit) | D-H1 | fixed: the whole round trip reverts (F2), the latch is never set | BSC and Robinhood, $30K and $50K: `SIM grad FAILED: transaction execution reverted`; same flow locally: `PriceAboveStart` (fixes spec) |
 | D grad2 (two transactions, one block) | D-H1 | fixed: the sell-back transaction reverts (status 0, F2); the attacker is left holding A's coins at the graduation price, i.e. a real graduation paid in full ($4,058 BSC / $4,059 RH at $30K, $6,764 / $6,766 at $50K) | `rerun-d.log` |
 | D grad with the sell-back limited at the start price (our fork `fixes` area) | D-H1 variant | latch fires, nothing else changes: fees back to 2% through every router, reserve locked | below |
+| Three-transaction bundle: buy to graduation, `release`, sell back (our own PoC, 15.1 residual) | F1 residual | fixed (15.10): the release transaction reverts `ReserveTooEarly`; reserve stays locked; fees back to 2% | fixes spec (status `[1, 0, 1]` in one block), fork `fixes` area on both chains |
 | D splitter | D-L3 | fixed (F4): the griefer's claim reverts | `data="0x544df468"` (`NotRouterCaller`) on both forks |
 
 Remaining cost / benefit of forcing graduation (fork `fixes` area, oracle prices at the fork blocks: BNB $753, ETH
 $2,529): one transaction or two in one block, sell-back limited at the start price: BSC $198 ($30K target, fresh
 coin), $128 (after $1,000 of buyers), $330 / $250 ($50K); Robinhood $198 / $128 ($30K), $330 / $251 ($50K). About
 40% of that is the 2% graduation fee, paid to the router bucket. Gain: none on fees (every later swap in A pays 2%
-with the bonding split, through every router), League counting continues (phase flag), reserve locked. The only
-remaining gain is the three-transaction bundle that releases the creator's reserve early (same cost, plus A's raise
-as one-block capital: $3,980 at $30K, $6,631 at $50K); see 15.1.
+with the bonding split, through every router), League counting continues (phase flag), reserve locked. The three-transaction bundle that released the creator's reserve early is closed by the 1 h delay (15.10): to
+get the reserve out, the coin must be held at or past its graduation price for an hour, which means holding A's whole
+raise ($3,980 at $30K, $6,631 at $50K at the fork prices) in the open market for that hour, plus the same round-trip
+cost; the result is then a graduation by any definition.
 
 Gas (local table `reports/gen8/local-gas.json`, before -> after): bonding swaps +0.5k to +1.6k on BNB, +1.7k to +2.8k
 on Robinhood (one `slot0` read in `beforeSwap`, the phase in transient storage, the F2 check on sells); post-phase
@@ -801,3 +805,49 @@ skips the `afterSwap` read); crossing swap +0.7k / +1.8k; launch +1.0k to +2.9k 
 
 Sizes (runtime / initcode): hook 17,529 / 18,536 (was 16,708; limit 24,576, target 21,500), launcher 14,670 / 16,242,
 lens 4,042 / 4,491, reserve lock 2,515 / 2,955, choice vault 13,119 / 13,688; others unchanged.
+
+### 15.10 F1 residual: 1 h between the latch and the reserve release (founder go 2026-10-12, same day)
+
+Change (hook). `PoolState` gains `uint40 graduatedAt` (a new fourth storage slot per pool; 0 until the latch).
+`_graduate` writes it next to `graduated = true`. `pools(id)` returns it as a tenth field; `IMwzLaunchHook.pools`
+and every periphery destructuring follow. Nothing else in the hook changes.
+
+Change (reserve lock). `uint256 public constant RESERVE_RELEASE_DELAY = 1 hours` (a constant, not a deploy
+parameter: it is a rule of the contract and the same on both chains). `release` adds a fourth check, after the three
+of 15.1: `block.timestamp >= graduatedAt + RESERVE_RELEASE_DELAY`, else `ReserveTooEarly`. Check order: `NotGraduated`,
+`PoolManagerUnlocked`, `PriceBelowGraduation`, `ReserveTooEarly`.
+
+Change (lens). `progress()` gains `graduatedAt` (third field).
+
+- Reentrancy: `release` keeps `nonReentrant`; the new check is a comparison on a value already read from the hook
+  (one view call). The hook write is inside `_graduate`, which runs inside `afterSwap` (PoolManager-only).
+- CEI: the check sits with the other checks (all views) before the effect (`r.amount = 0`) and the transfer (last).
+  `_graduate` writes `graduatedAt` before the liquidity removal, with the latch.
+- States: `graduatedAt` is set exactly once (the latch never resets and `_graduate` is reachable once). A release is
+  possible only when all four hold: latched, PoolManager locked, price at or past `sqrtGrad`, and at least an hour
+  since the latch block. Exactly `graduatedAt + 3600` is allowed; one second less is refused (tested).
+- Over/underflow: `uint40` holds timestamps until the year 36812; `graduatedAt + 1 hours` is computed in `uint256`.
+- Griefing:
+  - Can anyone delay a legitimate release? Only by moving the price back below the graduation price at the moment of
+    the release call, which means selling into A (paying the 1% post-phase fee on the way down and the price impact)
+    and holding the coins; the next buyer, or the creator, moves the price back and releases. The clock itself cannot
+    be delayed or reset: nothing writes `graduatedAt` after the latch, and nobody can un-latch. Validators can skew
+    `block.timestamp` by seconds, which does not matter at a 1 h scale.
+  - The three-transaction bundle (15.1 residual): the release transaction now reverts `ReserveTooEarly` because it
+    runs in the latch block. To release, the attacker must keep the price at or past graduation for an hour: hold all
+    of A's coins (A's whole raise as capital, in the open market, where any earlier buyer can sell into it) and pay the
+    graduation fee. That is a real graduation. Measured on both forks: the bundle's release transaction has status 0,
+    the reserve stays locked, fees are back to 2%; at + 59 min `ReserveTooEarly`, at + 60 min with the price held the
+    release goes through, at + 60 min with the price fallen back `PriceBelowGraduation`.
+  - Cost of the change for honest coins: the creator gets the reserve an hour after graduation instead of at once.
+- Tests: unit (`fixes-2026-10-12.spec.ts`: latch + 59 min refused, + 60 min allowed, fallen-back price refused,
+  `graduatedAt` set once and shown by the lens; the bundle PoC now `[1, 0, 1]`), property invariant I17 after every
+  action plus refused releases inside the hour, fork `fixes` area on BSC and Robinhood (bundle, + 59 min, + 60 min,
+  fallen back), periphery and gas suites adapted (releases wait an hour).
+- Gas (local table, versus the state after 15.1 to 15.8): every swap path unchanged (31 of 42 rows; the hook's swap
+  code never reads the new slot); crossing swap +22.2k (BNB 339,531, Robinhood 325,245: the one-time write of the
+  new slot at graduation); launch +2.3k (the struct literal writes the zero slot); reserve release +2.5k (69,573);
+  escrow buy +2.1k and vault buyback +2.2k (their `pools()` read now returns a fourth slot). Audit-rerun PoCs:
+  unchanged outcome (11 pass, 12 fail; A-1 still stops at `PriceBelowGraduation`).
+- Sizes (runtime bytes): hook 17,625 (was 17,529), reserve lock 2,640 (was 2,515), lens 4,114 (was 4,042), choice
+  vault 13,143, escrow 5,030; launcher unchanged at 14,670. Hook limit 24,576, target 21,500.

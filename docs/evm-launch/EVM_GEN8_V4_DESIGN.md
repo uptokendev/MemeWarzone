@@ -11,7 +11,8 @@ Amendments 2026-10-12 (founder go after the AI audit; built on `build/evm-gen8`,
   graduation price the post-graduation rate (1%, creator 0.5% of volume). Graduation itself stays instant on the
   crossing swap (2% fee, `Graduated`, latch); the latch no longer selects the rate. `HookFee.graduated` is the phase
   of that swap by this rule. The reserve lock releases only when the latch is set, the price is at or past the
-  graduation price, and the PoolManager is not mid-unlock.
+  graduation price, the PoolManager is not mid-unlock, and at least 1 hour has passed since the latch
+  (`MwzReserveLock.RESERVE_RELEASE_DELAY`; the hook records `graduatedAt`).
 - **No sell may leave the price above the start price (F2).**
 - **Router change parks the old router's bucket (F3)** (`routerParked`, `payParkedRouter`, event `RouterParked`);
   no payout and no external call inside `executeTreasuryRouter`. **`claimRouter` only by the router, its
