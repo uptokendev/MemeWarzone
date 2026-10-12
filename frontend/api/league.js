@@ -14,7 +14,7 @@ import { pokerPaidPlaces, pokerPlacesAboveMinimum, pokerSplitRaw, solanaMinPayou
 import { loadPublicHiddenCampaignKeys, publicHiddenWhere, withoutPublicHidden } from "./lib/publicHiddenCampaigns.js";
 import { withoutOwnerWallets } from "../shared/ownerWallets.mjs";
 import { gen8ConfigFor } from "./lib/evmGen8Config.js";
-import { gen8LeagueRowKeepSql, gen8NettedCurveTradesSql, gen8PotFeeRawSql, gen8TraderNativeRawSql } from "./lib/evmGen8LeagueSql.js";
+import { gen8CurveRowSql, gen8LeagueRowKeepSql, gen8NettedCurveTradesSql, gen8PotFeeRawSql, gen8TraderNativeRawSql } from "./lib/evmGen8LeagueSql.js";
 import { MODERATION_CARRY_CATEGORY, leagueExclusionRefusal, leagueRootExclusion, leagueWinnerHold, moderationClaimRefusal, rootLeafRows } from "../shared/moderationHolds.mjs";
 import {
   buildMerkleProof as buildSolanaMerkleProof,
@@ -1290,6 +1290,11 @@ export default async function handler(req, res) {
     // Wash netting (audit D-L2): gen-8 swaps of one coin by one wallet in one transaction count as one net row. Same
     // FROM item as settlement (leagueLeaderboard.ts). `plain` is the exact pre-gen-8 text for every other chain.
     const g8Trades = (plain) => (gen8League ? gen8NettedCurveTradesSql("t") : plain);
+    // Fix round 2026-10-12 (F1): every gen-8 curve_trades row is a bonding trade, also above graduated_block (a latched
+    // coin back in range A), so the "bonding buys only" cutoff of biggest_hit lets gen-8 rows through, as settlement
+    // (leagueLeaderboard.ts biggest_hit, no cutoff) counts them. fastest_finish and perfect_run keep the latch: they
+    // rank the run TO graduation (the event), so their buyers / sells stay those at or before graduated_block.
+    const g8BondingRow = (alias) => (gen8League ? ` OR ${gen8CurveRowSql(alias)}` : "");
 
     if (category === "fastest_finish") {
       const params = [chainId, epochStartIso, rangeEndIso, limit];
@@ -1466,7 +1471,7 @@ export default async function handler(req, res) {
             AND t.wallet <> c.campaign_address
             AND (c.creator_address IS NULL OR t.wallet <> c.creator_address)
             AND (c.fee_recipient_address IS NULL OR t.wallet <> c.fee_recipient_address)
-            AND (c.graduated_block IS NULL OR c.graduated_block = 0 OR t.block_number <= c.graduated_block)${g8Keep("t")}
+            AND (c.graduated_block IS NULL OR c.graduated_block = 0 OR t.block_number <= c.graduated_block${g8BondingRow("t")})${g8Keep("t")}
         )
         SELECT
           COUNT(*) OVER () AS field_count,

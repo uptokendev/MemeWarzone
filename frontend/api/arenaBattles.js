@@ -35,6 +35,7 @@ import {
   recommendMatchCandidates,
 } from "./lib/arenaMatchQuality.js";
 import { evaluateImportedCompetitionEligibility } from "./lib/arenaImportEligibility.js";
+import { gen8PhaseRuleOn, gen8PlatformGraduatedColumn, graduatedSqlFor } from "./lib/evmGen8PlatformSql.js";
 import { advanceTournamentFromBattle } from "./arenaTournaments.js";
 import { solanaLiveTransition, solanaMatchedLifecyclePatch, solanaMayGoLive } from "./lib/arenaBattleLive.js";
 import { captureLiveBaselines } from "./lib/arenaBattleMetrics.js";
@@ -329,8 +330,10 @@ async function refreshBattle(id) {
 async function nativeCoin(chainId, identity) {
   const normalized = ident(identity, chainId);
   if (!normalized) return null;
+  // Generation 8 (fix round 2026-10-12): gen8_platform_graduated (latched AND post phase) for gen-8 rows; statusFor.
+  const gen8Rule = await gen8PhaseRuleOn(pool, chainId);
   const result = await pool.query(
-    `select ${NATIVE_COIN_SELECT}
+    `select ${NATIVE_COIN_SELECT}${gen8PlatformGraduatedColumn("c.", gen8Rule)}
        ${NATIVE_COIN_FROM}
       where c.chain_id = $1
         and (lower(c.campaign_address::text) = lower($2) or lower(coalesce(c.token_address::text, '')) = lower($2))
@@ -398,8 +401,9 @@ async function activeBattleForToken(chainId, token) {
 async function creatorCoins(chainId, creatorAddress, limit) {
   const creator = ident(creatorAddress, chainId) || normalizeWalletFlexible(creatorAddress);
   if (!isWallet(creator)) return [];
+  const gen8Rule = await gen8PhaseRuleOn(pool, chainId);
   const natives = await pool.query(
-    `select ${NATIVE_COIN_SELECT}
+    `select ${NATIVE_COIN_SELECT}${gen8PlatformGraduatedColumn("c.", gen8Rule)}
        ${NATIVE_COIN_FROM}
       where c.chain_id = $1 and lower(c.creator_address::text) = lower($2) and c.campaign_address is not null
       order by c.created_block desc nulls last
@@ -475,7 +479,8 @@ async function statusFor(coin, { allowActive = false } = {}) {
       };
     }
   }
-  if (coin.origin !== "import" && !coin.graduated_at_chain) {
+  // A gen-8 coin needs the platform status too (latched AND post phase): a forced latch back in range A is bonding.
+  if (coin.origin !== "import" && (!coin.graduated_at_chain || coin.gen8_platform_graduated === false)) {
     return { ...base, eligibility: false, currentState: "unavailable", battleState: null, battleId: null, openForBattleState: "not_open", unavailableReason: "bonding_not_graduated" };
   }
   if (coin.origin !== "import" && coin.is_active === false) {
@@ -765,7 +770,7 @@ async function eligibleRecommendationCoins(chainId, limit = 120) {
        ${NATIVE_COIN_FROM}
       where c.chain_id = $1
         and c.campaign_address is not null
-        and c.graduated_at_chain is not null
+        and ${graduatedSqlFor("c.", await gen8PhaseRuleOn(pool, chainId))}
         and coalesce(c.is_active, true) = true
         and coalesce(c.support_enabled, true) = true
       order by coalesce(ms.market_cap_usd, 0) desc, c.created_block desc nulls last

@@ -219,3 +219,36 @@ test("recruiter league: a gen-8 wash pair by a linked wallet is net 0.020 of ref
   assert.equal(w.linkedWalletCount, 1);
   assert.equal(standings.find((s) => s.code === "head"), undefined, "a gen-8 trade above the money cursor is not referred volume yet");
 });
+
+// Fix round 2026-10-12 (F1, D14 per trade): a forced latch whose price fell back into range A keeps trading at the
+// bonding rate and those swaps land in curve_trades ABOVE graduated_block. Same rows and figures as the API's board test
+// (frontend/api/evmGen8.db.test.mjs "fix round leagues"): GL latched at block 4000, W8 buys 0.102 before the latch, W9
+// buys 0.306 and sells after it. Settlement counts the post-latch bonding buy (biggest_hit has no graduation cutoff),
+// and the run to graduation (perfect_run, fastest_finish) stays at the latch.
+test("fix round: gen-8 bonding rows above graduated_block count in settlement; the latch still ends the run", async () => {
+  const GL = "0x00000000000000000000000000000000000000aa";
+  const CREATORL = "0x00000000000000000000000000000000000000da";
+  const W8 = "0x0000000000000000000000000000000000000008";
+  const W9 = "0x0000000000000000000000000000000000000009";
+  await db.query(
+    `insert into public.campaigns (chain_id, campaign_address, token_address, creator_address, name, symbol, created_block, created_at_chain, graduated_block, graduated_at_chain)
+     values ($1, $2, $2, $3, 'Latched', 'LTC', 2, $4, 4000, $5)`,
+    [CHAIN, GL, CREATORL, at(0), at(20)],
+  );
+  const row = (tx: string, block: number, hour: number, side: string, wallet: string, curve: bigint, fee: bigint) => db.query(
+    `insert into public.curve_trades (chain_id, campaign_address, tx_hash, log_index, block_number, block_time, side, wallet, token_amount_raw, bnb_amount_raw, venue, fee_raw, league_excluded)
+     values ($1, $2, $3, 1, $4, $5, $6, $7, 1, $8, 'gen8', $9, false)`,
+    [CHAIN, GL, tx, block, at(hour), side, wallet, curve.toString(), fee.toString()],
+  );
+  await row(`0x${"31".repeat(32)}`, 3990, 19, "buy", W8, milli(100), milli(2));
+  await row(`0x${"32".repeat(32)}`, 4500, 21, "buy", W9, milli(300), milli(6));
+  await row(`0x${"33".repeat(32)}`, 4600, 22, "sell", W9, milli(50), milli(1));
+
+  const hits = Object.fromEntries((await leagueLeaderboard(db, CHAIN, start, end, "biggest_hit", 20)).map((r) => [r.meta.campaign_address, r]));
+  assert.equal(hits[GL].recipient, W9, "the post-latch bonding buy is GL's biggest hit (the board shows the same)");
+  assert.equal(hits[GL].score, milli(306));
+  const runs = await leagueLeaderboard(db, CHAIN, start, end, "perfect_run", 20);
+  assert.ok(runs.some((r) => r.recipient === CREATORL), "a sell after the latch does not end the run to graduation");
+  const fastest = await leagueLeaderboard(db, CHAIN, start, end, "fastest_finish", 20);
+  assert.ok(fastest.some((r) => r.recipient === CREATORL), "graduation as an event: the latch");
+});

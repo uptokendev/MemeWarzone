@@ -597,3 +597,116 @@ test("recruiter board: a gen-8 wash pair by a linked wallet is net 0.020 of refe
   assert.equal(byCode.washed.linkedWalletCount, 1);
   assert.equal(byCode.head.referredVolumeBnb, weiToNative(milli(510).toString(), 18), "display: the trade at the chain head counts, trader-side 0.500 + 0.010");
 });
+
+// Fix round 2026-10-12 (F1, D14 per trade): a forced latch whose price fell back into range A keeps trading at the
+// bonding rate, and those swaps land in curve_trades ABOVE graduated_block. GL: gen-8, latched at block 4000; W8 buys
+// 0.102 before the latch, W9 buys 0.306 and sells after it (bonding rows). G7L: gen-7 with the same blocks (venue
+// null). Same rows and figures as realtime-indexer/src/tests/evmGen8LeagueSettlement.integration.test.ts "fix round".
+const GL = "0x00000000000000000000000000000000000000aa";
+const G7L = "0x00000000000000000000000000000000000000ab";
+const CREATORL = "0x00000000000000000000000000000000000000da";
+const W8 = "0x0000000000000000000000000000000000000008";
+const W9 = "0x0000000000000000000000000000000000000009";
+let latchedFixtures = false;
+async function latchedCoinFixtures() {
+  if (latchedFixtures) return;
+  latchedFixtures = true;
+  await db.query(
+    `insert into public.campaigns (chain_id, campaign_address, token_address, creator_address, name, symbol, meta, created_block, created_at_chain,
+       graduated_block, graduated_at_chain, factory_generation, campaign_generation, is_active)
+     values ($1, $2, $2, $4, 'Latched', 'LTC', $5::jsonb, 2, $6, 4000, $7, 8, 8, false),
+            ($1, $3, $3, $4, 'Seven L', 'S7L', '{}'::jsonb, 2, $6, 4000, $7, 7, 6, false)`,
+    [CHAIN, GL, G7L, CREATORL, JSON.stringify({ gen8: { poolId: gen8PoolId(GL, HOOK), hook: HOOK } }), at(0), at(20)],
+  );
+  const row = (campaign, tx, block, hour, side, wallet, curve, fee, venue) => db.query(
+    `insert into public.curve_trades (chain_id, campaign_address, tx_hash, log_index, block_number, block_time, side, wallet,
+       token_amount_raw, bnb_amount_raw, token_amount, bnb_amount, venue, fee_raw, league_excluded)
+     values ($1, $2, $3, 1, $4, $5, $6, $7, 1, $8, 1, $8::numeric / 1e18, $9, $10, false)`,
+    [CHAIN, campaign, tx, block, at(hour), side, wallet, curve.toString(), venue, fee.toString()],
+  );
+  await row(GL, `0x${"31".repeat(32)}`, 3990, 19, "buy", W8, milli(100), milli(2), "gen8"); // pays 0.102, before the latch
+  await row(GL, `0x${"32".repeat(32)}`, 4500, 21, "buy", W9, milli(300), milli(6), "gen8"); // pays 0.306, latched, back in A
+  await row(GL, `0x${"33".repeat(32)}`, 4600, 22, "sell", W9, milli(50), milli(1), "gen8"); // after the latch
+  await row(G7L, `0x${"34".repeat(32)}`, 3990, 19, "buy", W8, milli(100), 0n, null);
+  await row(G7L, `0x${"35".repeat(32)}`, 4500, 21, "buy", W9, milli(500), 0n, null); // above graduated_block: still cut
+}
+
+test("fix round leagues: gen-8 bonding rows above graduated_block count on the board as in settlement; the latch still ends the run", async () => {
+  await latchedCoinFixtures();
+  setGen8(false);
+  const offHits = Object.fromEntries((await board("biggest_hit")).map((r) => [r.campaign_address, r]));
+  assert.equal(offHits[GL].buyer_address, W8, "without gen-8 config the board SQL is the old text (cutoff at graduated_block)");
+  setGen8(true);
+  try {
+    const hits = Object.fromEntries((await board("biggest_hit")).map((r) => [r.campaign_address, r]));
+    assert.equal(hits[GL].buyer_address, W9, "the post-latch bonding buy counts (settlement: the same row)");
+    assert.equal(String(hits[GL].bnb_amount_raw), milli(306).toString(), "trader-side");
+    assert.equal(hits[G7L].buyer_address, W8, "a non-gen-8 row above graduated_block is still cut");
+    // perfect_run / fastest_finish rank the run TO graduation (the latch): a sell after it does not end the run.
+    const runs = await call(league, `/api/league?${new URLSearchParams({ chainId: String(CHAIN), category: "perfect_run", period: "monthly" })}`);
+    assert.equal(runs.statusCode, 200, JSON.stringify(runs.body));
+    assert.ok(runs.body.items.find((r) => r.campaign_address === GL), "GL keeps its perfect run");
+    const fast = await board("fastest_finish");
+    assert.ok(fast.find((r) => r.campaign_address === GL), "graduation as an event: the latch");
+    // The settlement job has no cutoff in biggest_hit at all (leagueLeaderboard.ts), so shown = paid for GL.
+    const ts = fs.readFileSync(path.join(ROOT, "realtime-indexer/src/rewards/leagueLeaderboard.ts"), "utf8");
+    const bh = ts.slice(ts.indexOf('if (category === "biggest_hit")'), ts.indexOf('if (category === "crowd_favorite")'));
+    assert.ok(!bh.includes("graduated_block"), "settlement biggest_hit has no graduation cutoff");
+  } finally {
+    setGen8(false);
+  }
+});
+
+test("fix round arena: a latched gen-8 coin back in range A is not graduated for votes / tournaments / MWL / battles; gen-7 unchanged", async () => {
+  await latchedCoinFixtures();
+  await db.query(fs.readFileSync(path.join(ROOT, "db/migrations/20261012_000012_evm_gen8_open_at_phase.sql"), "utf8"));
+  const GL_POOL = gen8PoolId(GL, HOOK);
+  await db.query(
+    `insert into public.evm_gen8_pools (chain_id, pool_id, token_address, hook_address, launcher_address, pool_manager_address, creator_address,
+       tick_start, tick_grad, liq_a, liq_b, launch_tx, launch_block, graduated_block, last_phase)
+     values ($1, $2, $3, $4, $5, '0xe8', $6, $7, $8, $9, 1, '0xab', 2, 4000, 'bonding')
+     on conflict (chain_id, pool_id) do update set graduated_block = 4000, last_phase = 'bonding'`,
+    [CHAIN, GL_POOL, GL, HOOK, LAUNCHER, CREATORL, TICK_START, TICK_GRAD, LIQ_A.toString()],
+  );
+  // resolveArenaVoteToken falls through to the import table for a coin that is not an eligible launch.
+  await db.query(`create table if not exists public.arena_token_imports (
+    chain_id integer, token_address text, name text, symbol text, status text, scan_json jsonb, scan_version text, scanned_at timestamptz,
+    evidence_version text, state_version text, created_at timestamptz default now(), updated_at timestamptz default now(), owner_wallet text)`);
+  const { resolveArenaVoteToken } = await import("./lib/arenaEligibility.js");
+  const { gen8PhaseRuleOn, gen8PlatformGraduatedColumn, graduatedSqlFor } = await import("./lib/evmGen8PlatformSql.js");
+  // Off (no gen-8 config): the original text and the latch alone.
+  assert.equal(graduatedSqlFor("", false, "campaigns."), "graduated_at_chain is not null");
+  assert.equal(graduatedSqlFor("c.", false), "c.graduated_at_chain is not null");
+  assert.equal(gen8PlatformGraduatedColumn("c.", false), "");
+  setGen8(false);
+  assert.equal(await gen8PhaseRuleOn(db, CHAIN), false);
+  assert.equal((await resolveArenaVoteToken(db, CHAIN, GL))?.origin, "native", "without gen-8 config the latch decides, as before");
+  setGen8(true);
+  clearGen8SchemaCache(db);
+  try {
+    assert.equal(await gen8PhaseRuleOn(db, CHAIN), true);
+    assert.equal(await resolveArenaVoteToken(db, CHAIN, GL), null, "latched, bonding phase: not Arena-eligible");
+    assert.equal((await resolveArenaVoteToken(db, CHAIN, G7L))?.origin, "native", "gen-7 graduated coin unchanged");
+    const col = async () => (await db.query(
+      `select c.campaign_address${gen8PlatformGraduatedColumn("c.", true)} from public.campaigns c where c.chain_id = $1 and c.campaign_address = any($2) order by 1`,
+      [CHAIN, [GL, G7L]],
+    )).rows;
+    assert.deepEqual(await col(), [{ campaign_address: GL, gen8_platform_graduated: false }, { campaign_address: G7L, gen8_platform_graduated: null }]);
+    const mwl = async () => (await db.query(
+      `select count(*)::int as n from public.campaigns c where c.chain_id = $1 and c.campaign_address = $2 and ${graduatedSqlFor("c.", true)}`, [CHAIN, GL],
+    )).rows[0].n;
+    assert.equal(await mwl(), 0);
+    // Price past graduation again: graduated for the platform.
+    await db.query(`update public.evm_gen8_pools set last_phase = 'post' where pool_id = $1`, [GL_POOL]);
+    assert.equal((await resolveArenaVoteToken(db, CHAIN, GL))?.origin, "native");
+    assert.deepEqual((await col())[0], { campaign_address: GL, gen8_platform_graduated: true });
+    assert.equal(await mwl(), 1);
+    // Not latched: never graduated, whatever the phase.
+    await db.query(`update public.evm_gen8_pools set graduated_block = null where pool_id = $1`, [GL_POOL]);
+    assert.equal(await resolveArenaVoteToken(db, CHAIN, GL), null);
+  } finally {
+    await db.query(`delete from public.evm_gen8_pools where pool_id = $1`, [GL_POOL]);
+    setGen8(false);
+    clearGen8SchemaCache(db);
+  }
+});

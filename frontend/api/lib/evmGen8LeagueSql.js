@@ -23,6 +23,17 @@ import { GEN8_CURVE_VENUE } from "../../shared/evmGen8.mjs";
 
 const isGen8 = (a) => `coalesce(${a}.venue, '') = '${GEN8_CURVE_VENUE}'`;
 
+/**
+ * A gen-8 curve_trades row (condition, no leading AND). Fix round 2026-10-12 (F1, D14 per trade): the gen-8 indexer
+ * writes a swap to curve_trades exactly when it STARTED inside range A (HookFee.graduated false, the bonding rate),
+ * so every gen-8 curve_trades row is a bonding trade, also one above campaigns.graduated_block (a forced latch whose
+ * price fell back into A). Cutoffs that keep "bonding trades only" (`t.block_number <= c.graduated_block`) are
+ * widened with `OR gen8CurveRowSql(t)` where gen-8 is configured; settlement (leagueLeaderboard.ts) has no such cutoff.
+ */
+export function gen8CurveRowSql(alias = "t") {
+  return isGen8(alias);
+}
+
 /** Trader-side native amount (numeric) of a curve_trades row. */
 export function gen8TraderNativeRawSql(alias = "t") {
   return `(case when ${isGen8(alias)} and ${alias}.fee_raw is not null
