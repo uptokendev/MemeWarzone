@@ -14,7 +14,7 @@ export type MarketStage =
   | "PAUSED"
   | "UNSUPPORTED";
 
-export type MarketTradeSource = "bonding" | "topaz" | "robinhood_v3";
+export type MarketTradeSource = "bonding" | "topaz" | "robinhood_v3" | "gen8_v4";
 export type MarketTradeFilter = "all" | MarketTradeSource | "dex";
 export type RobinhoodQuoteAssetType = "WRAPPED_NATIVE" | "STOCK_TOKEN" | "UNKNOWN";
 export type RobinhoodRouteKind = "DIRECT_NATIVE" | "STOCK_TWO_HOP" | "UNKNOWN";

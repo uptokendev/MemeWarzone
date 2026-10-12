@@ -28,7 +28,18 @@ export type Gen8CoinState = {
   platformStatus?: "graduated" | "bonding";
   reserveReleaseAt?: number | null;
   reserveReleasable?: boolean;
-  graduation: { state: string; phase: "bonding" | "graduated"; progressBps: number | null; progressPct: number | null; sold: string | null; curveSupply: string | null; latched?: boolean };
+  graduation: {
+    state: string;
+    phase: "bonding" | "graduated";
+    progressBps: number | null;
+    progressPct: number | null;
+    sold: string | null;
+    curveSupply: string | null;
+    latched?: boolean;
+    /** Native sitting on the bonding side of the pool. Not V4 TVL. */
+    lensNativeInAWei?: string | null;
+    lensNativeTargetAWei?: string | null;
+  };
   market: { sqrtPriceX96: string | null; priceNativeWeiPerCoin: string | null; priceNative: number | null; marketCapNativeWei: string | null };
   creatorClaims: {
     hookCreator: string;

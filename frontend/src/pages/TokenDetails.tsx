@@ -77,6 +77,15 @@ import { TokenWarRoom } from "@/components/token/TokenWarRoom";
 import { AthBar } from "@/components/token/AthBar";
 import { canonicalAthUsd } from "@/lib/canonicalMarket";
 import { canonicalAthNativeFromCandles } from "@/lib/chart/canonicalChartCandles";
+import {
+  GEN8_FDV_WHOLE,
+  gen8HolderExcludeList,
+  gen8LensNative,
+  gen8MarketCapNative,
+  gen8PlatformGraduated,
+  gen8SpotNative,
+  gen8SpotWindowChanges,
+} from "@/lib/chart/gen8TokenPage";
 import { evmCurveSpotChanges, fullyDilutedSupplyWhole } from "@/lib/fullyDilutedMarketCap.mjs";
 import { ArenaUpvoteDialog, UpvoteDialog } from "@/components/token/UpvoteDialog";
 import { postGradFlags } from "@/features/postgrad/config";
@@ -896,8 +905,8 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
   // Generation 6/5 is valued fully diluted: price x the token's total supply (founder 2026-10-01, the
   // DBC and pump.fun basis). Null for every older EVM coin, which keeps price x curve sold.
   const evmFullyDilutedSupply = useMemo(
-    () => (isSolanaPage ? null : fullyDilutedSupplyWhole(gen5.state?.tokenTotalSupplyRaw ?? null, 18)),
-    [gen5.state?.tokenTotalSupplyRaw, isSolanaPage],
+    () => (isSolanaPage ? null : gen8State ? GEN8_FDV_WHOLE : fullyDilutedSupplyWhole(gen5.state?.tokenTotalSupplyRaw ?? null, 18)),
+    [gen5.state?.tokenTotalSupplyRaw, gen8State, isSolanaPage],
   );
   const gen5ViewerIsCreator = Boolean(
     gen5.state && wallet.account && gen5.state.creator.toLowerCase() === String(wallet.account).toLowerCase(),
@@ -1093,11 +1102,34 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
       stopPolling();
     };
   }, [solanaHolderMint, solanaHolderCampaign]);
+  const gen8HolderExcludes = useMemo(() => {
+    if (!gen8State) return [campaign?.campaign];
+    const cfg = gen8AppConfig(Number(chainIdForStorage));
+    return gen8HolderExcludeList({
+      chainId: Number(chainIdForStorage),
+      addresses: [
+        campaign?.campaign,
+        gen8State.gen8.poolManager,
+        gen8State.gen8.hook,
+        gen8State.gen8.launcher,
+        gen8State.gen8.displayPair,
+        gen8State.creatorClaims?.vault?.address,
+        gen8State.creatorClaims?.reserve?.address,
+        gen8State.creatorClaims?.escrow?.address,
+        cfg?.escrow,
+        cfg?.choiceVault,
+        cfg?.reserveLock,
+        cfg?.hook,
+        cfg?.launcher,
+        cfg?.router,
+      ],
+    });
+  }, [campaign?.campaign, chainIdForStorage, gen8State]);
   const transferHolders = useTokenTransferHolders({
     tokenAddress: campaign?.token,
     chainId: chainIdForStorage,
     enabled: !isSolanaPage && Boolean(campaign?.token),
-    excludeAddresses: [campaign?.campaign],
+    excludeAddresses: gen8HolderExcludes,
   });
   const [marketResolution, setMarketResolution] = useState<MarketResolution>("1m");
   const [chartExpanded, setChartExpanded] = useState(false);
@@ -2004,6 +2036,10 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
       : Boolean(metrics && metrics.curveSupply > 0n && metrics.sold >= metrics.curveSupply);
   }, [metrics, onChainLaunched, isSolanaPage, solanaCurve?.graduated]);
 
+  // Separate from contractGraduatedEarly. That flag turns on the Topaz scan, which a
+  // gen-8 token address must not enter (BNB would price the coin as a Topaz pair).
+  const gen8Graduated = Boolean(gen8State && gen8PlatformGraduated(gen8State));
+
   // Topaz pair scan only after graduation. Running it on pure bonding campaigns
   // can resolve a wrong/empty route and poison price/mcap/chart streams.
   const topazMarket = useTopazMarket({
@@ -2085,6 +2121,8 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
       .map((trade) => marketTradeToCurvePoint(trade, chainIdForStorage))
       .filter((point): point is CurveTradePoint => Boolean(point));
     const bonding = mergeTradePoints(curvePointsForUi, confirmedCurvePoints, localTopazTrades);
+    // Gen-8's market is the V4 pool the whole time. Merge those swaps without turning Topaz on.
+    if (gen8State) return mergeTradePoints(bonding, unifiedAsPoints);
     if (!contractGraduatedEarly) {
       // Only seed a synthetic Solana anchor when no real prints exist yet.
       if (
@@ -2182,6 +2220,7 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     confirmedCurvePoints,
     contractGraduatedEarly,
     curvePointsForUi,
+    gen8State,
     isSolanaPage,
     metrics?.currentPrice,
     metrics?.sold,
@@ -2295,6 +2334,8 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
 
   const pageLivePriceNative = useMemo(() => {
     if (isSolanaPage) return solanaLivePrice;
+    const gen8Spot = gen8State ? gen8SpotNative(gen8State) : null;
+    if (gen8Spot != null && gen8Spot > 0) return gen8Spot;
     if (contractGraduatedEarly && topazMarket.priceBnb != null && Number.isFinite(topazMarket.priceBnb) && topazMarket.priceBnb > 0) {
       return Number(topazMarket.priceBnb);
     }
@@ -2317,6 +2358,7 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     return null;
   }, [
     contractGraduatedEarly,
+    gen8State,
     isRobinhoodPage,
     isSolanaPage,
     metrics?.currentPrice,
@@ -2470,10 +2512,25 @@ const toSeconds = (ts: number): number => {
       out[k].volume = volumeWei > 0n ? formatBnbFromWei(volumeWei) : "—";
     }
 
+    // Gen-8 change is pool spot versus candle spot. Curve fills are a different number
+    // (G8DIR fills read +977% while the pool moved +1847%).
+    if (gen8State) {
+      const spotChanges = gen8SpotWindowChanges({
+        candles: unifiedMarket.candles,
+        spotNow: gen8SpotNative(gen8State),
+        nowSec: now,
+        windows,
+      });
+      for (const k of Object.keys(windows) as TimeframeKey[]) {
+        out[k].change = spotChanges[k] ?? null;
+      }
+    }
+
     // Generation 6/5 bonding: change of the curve spot, not of fills (see evmCurveSpotChanges).
     // Generation 7/6 has no basePrice; its spot comes from the virtual reserves (same walk).
     const evmGen7CurveKnown = (metrics?.virtualNative ?? 0n) > 0n && (metrics?.virtualToken ?? 0n) > 0n;
     if (
+      !gen8State &&
       evmFullyDilutedSupply != null &&
       !contractGraduatedEarly &&
       ((metrics?.basePrice != null && metrics.basePrice > 0n) || evmGen7CurveKnown) &&
@@ -2499,7 +2556,7 @@ const toSeconds = (ts: number): number => {
     }
 
     return out;
-  }, [contractGraduatedEarly, evmFullyDilutedSupply, isSolanaPage, marketTradePoints, metrics, rtStats?.lastPriceBnb, solanaLivePrice, topazMarket.priceBnb]);
+  }, [contractGraduatedEarly, evmFullyDilutedSupply, gen8State, isSolanaPage, marketTradePoints, metrics, rtStats?.lastPriceBnb, solanaLivePrice, topazMarket.priceBnb, unifiedMarket.candles]);
 
   // Token view-model used throughout the page
   const tokenData = useMemo(() => {
@@ -2514,6 +2571,7 @@ const toSeconds = (ts: number): number => {
     const topazMarketCap = contractGraduatedEarly ? topazMarket.marketCapBnb : null;
     const topazLiquidity = contractGraduatedEarly ? topazMarket.liquidityBnb : null;
     const window24h = timeframeTiles?.["24h"]?.volume;
+    const gen8Spot = gen8State ? gen8SpotNative(gen8State) : null;
 
     // Bonding and graduated Solana share one valuation: live price × post-graduation supply
     // (curve sold until that is known).
@@ -2539,6 +2597,9 @@ const toSeconds = (ts: number): number => {
           : null;
         if (solanaCurve?.graduated) solanaDexMcapLabel = label;
         else bondingMcapLabel = label;
+      } else if (gen8State) {
+        const mcapNative = gen8MarketCapNative(gen8State);
+        bondingMcapLabel = mcapNative != null && mcapNative > 0 ? `${formatCompact(mcapNative)} ${nativeUnit}` : null;
       } else if (!contractGraduatedEarly && evmFullyDilutedSupply != null && metrics?.currentPrice != null && metrics.currentPrice > 0n) {
         const mcapNative = Number(ethers.formatUnits(metrics.currentPrice, 18)) * evmFullyDilutedSupply;
         bondingMcapLabel = Number.isFinite(mcapNative) && mcapNative > 0 ? `${formatCompact(mcapNative)} ${nativeUnit}` : null;
@@ -2615,6 +2676,8 @@ const toSeconds = (ts: number): number => {
       price:
         isSolanaPage && solanaLivePrice != null
           ? formatPriceBnb(solanaLivePrice)
+          : gen8Spot != null
+          ? formatPriceBnb(gen8Spot)
           : topazPrice != null && Number.isFinite(topazPrice) && topazPrice > 0
           ? formatPriceBnb(topazPrice)
           : !contractGraduatedEarly && metrics?.currentPrice != null
@@ -2644,7 +2707,7 @@ const toSeconds = (ts: number): number => {
       // Timeframe analytics (native volume + price change)
       metrics: timeframeTiles,
     };
-  }, [campaign, contractGraduatedEarly, evmFullyDilutedSupply, curveReserveWei, dbcMintSupplyWhole, dbcPoolLive?.quoteReserveLamports, solanaProjectedSupplyWhole, isDbcPage, isSolanaPage, latestSoldFromTrades, marketTradePoints, metrics, nativeUnit, solanaCurve, solanaLivePrice, solanaMeteora.holders, solanaMeteora.spot, solanaHolderCount, solanaSpotNative, summary, timeframeTiles, tokenDecimals, rtStats, topazMarket.liquidityBnb, topazMarket.marketCapBnb, topazMarket.priceBnb, transferHolders.complete, transferHolders.holders]);
+  }, [campaign, contractGraduatedEarly, evmFullyDilutedSupply, curveReserveWei, dbcMintSupplyWhole, dbcPoolLive?.quoteReserveLamports, gen8State, solanaProjectedSupplyWhole, isDbcPage, isSolanaPage, latestSoldFromTrades, marketTradePoints, metrics, nativeUnit, solanaCurve, solanaLivePrice, solanaMeteora.holders, solanaMeteora.spot, solanaHolderCount, solanaSpotNative, summary, timeframeTiles, tokenDecimals, rtStats, topazMarket.liquidityBnb, topazMarket.marketCapBnb, topazMarket.priceBnb, transferHolders.complete, transferHolders.holders]);
   // Native/USD reference for TokenDetails conversions: BNB on BNB Chain, SOL on
   // Solana, ETH on Robinhood. Treating every non-Solana chain as BNB priced a
   // Robinhood page in BNB/USD, so the header read about six times lower than the
@@ -2668,6 +2731,10 @@ const toSeconds = (ts: number): number => {
   }, []);
 
   const liveMarketCapNative = useMemo(() => {
+    if (gen8State) {
+      const mcapNative = gen8MarketCapNative(gen8State);
+      if (mcapNative != null && mcapNative > 0) return mcapNative;
+    }
     if (
       !isSolanaPage &&
       evmFullyDilutedSupply == null &&
@@ -2696,6 +2763,7 @@ const toSeconds = (ts: number): number => {
   }, [
     evmFullyDilutedSupply,
     contractGraduatedEarly,
+    gen8State,
     isSolanaPage,
     metrics?.currentPrice,
     metrics?.sold,
@@ -2727,6 +2795,7 @@ const toSeconds = (ts: number): number => {
 
   const priceDisplay = useMemo(() => {
     const fromSolanaSpot = isSolanaPage ? solanaLivePrice : null;
+    const fromGen8 = gen8State ? gen8SpotNative(gen8State) : null;
     const fromWei =
       metrics?.currentPrice != null && metrics.currentPrice > 0n
         ? Number(ethers.formatUnits(metrics.currentPrice, isSolanaPage ? 9 : 18))
@@ -2753,6 +2822,7 @@ const toSeconds = (ts: number): number => {
 
     const priceNative =
       fromSolanaSpot ??
+      (fromGen8 != null && fromGen8 > 0 ? fromGen8 : null) ??
       (contractGraduatedEarly ? fromTopaz : null) ??
       fromWei ??
       fromRt ??
@@ -2769,6 +2839,7 @@ const toSeconds = (ts: number): number => {
   }, [
     contractGraduatedEarly,
     displayDenom,
+    gen8State,
     isSolanaPage,
     marketTradePoints,
     metrics?.currentPrice,
@@ -3585,8 +3656,41 @@ const toSeconds = (ts: number): number => {
     return formatCompactUsd(native * nativeUsd);
   }, [curveProgress.reserveWei, displayDenom, nativeUsd, nativeUsdLoading, isSolanaPage, isDbcPage, dbcQuoteMultiplier]);
 
-  const liquidityLabel = isDexStage ? "Liquidity" : "Reserve";
+  const gen8Curve = gen8State ? gen8LensNative(gen8State) : null;
+  const formatNativeToggle = (wei: bigint | null): string => {
+    if (wei == null) return "—";
+    const nativeLabel = formatBnbFromWei(wei);
+    if (displayDenom !== "USD") return nativeLabel;
+    const native = parseBnbLabel(nativeLabel);
+    if (native == null || native < 0) return nativeLabel;
+    if (!nativeUsd) return nativeUsdLoading ? "…" : nativeLabel;
+    return formatCompactUsd(native * nativeUsd);
+  };
+  const gen8InCurveText = gen8State && !gen8Graduated ? formatNativeToggle(gen8Curve?.inCurveWei ?? null) : null;
+  const gen8RemainingText = !gen8State ? null : gen8Graduated ? "—" : formatNativeToggle(gen8Curve?.remainingWei ?? null);
+  const pageGraduated = contractGraduated || gen8Graduated;
+  const pageProgressPct = gen8State
+    ? (gen8Graduated ? 100 : Math.max(0, Math.min(100, Number(gen8State.graduation?.progressPct ?? 0))))
+    : curveProgress.pct;
+  const barPct = gen8State ? pageProgressPct : curveProgress.pct;
+  const soldShownPct = gen8State ? pageProgressPct : curveProgress.soldPct;
+  const bondingProgressText = pageGraduated
+    ? (isSolanaPage ? "Trading on Meteora" : isRobinhoodPage ? "Trading on Uniswap" : gen8State ? "Graduated" : "Trading on Topaz")
+    : solanaCurveClosed || (!gen8State && curveProgress.matured)
+      ? "Eligible to graduate"
+      : (() => {
+          const pctText = barPct > 0 && barPct < 0.01 ? barPct.toFixed(6) : barPct.toFixed(2);
+          const venue = isSolanaPage ? "to Meteora" : isRobinhoodPage ? "to Uniswap" : gen8State ? "" : "to Topaz";
+          return venue ? `${pctText}% · graduates ${venue} at 100%` : `${pctText}% · graduates at 100%`;
+        })();
+
+  const liquidityLabel = isDexStage || gen8Graduated ? "Liquidity" : "Reserve";
   const liquidityValue = (() => {
+    // Lens native is the bonding-side reserve. After graduation it is not pool TVL.
+    if (gen8State) {
+      if (gen8Graduated || gen8Curve?.inCurveWei == null) return "—";
+      return formatBnbFromWei(gen8Curve.inCurveWei);
+    }
     if (!isDexStage) return tokenData.liquidity;
     if (isSolanaPage && solanaMeteora.spot && solanaMeteora.spot.liquiditySol > 0) {
       return `${formatCompact(solanaMeteora.spot.liquiditySol)} ${nativeUnit}`;
@@ -3652,7 +3756,15 @@ const toSeconds = (ts: number): number => {
       : solanaCurveClosed
         ? "Graduating · Solana"
         : "Bonding · Solana"
-    : isRobinhoodPage
+    : gen8State
+      ? gen8Graduated
+        ? isRobinhoodPage
+          ? "Graduated · Uniswap"
+          : "Graduated"
+        : isRobinhoodPage
+          ? "Bonding · Robinhood"
+          : "Bonding"
+      : isRobinhoodPage
       ? onChainLaunched || contractGraduated
         ? "Graduated · Uniswap"
         : "Bonding · Robinhood"
@@ -5493,24 +5605,20 @@ const toSeconds = (ts: number): number => {
 
             <div className="flex flex-col gap-1.5">
               <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-                <h3 className="m-0 text-sm font-normal text-mw-muted">{contractGraduated ? "Graduated" : "Bonding curve"}</h3>
+                <h3 className="m-0 text-sm font-normal text-mw-muted">{pageGraduated ? "Graduated" : "Bonding curve"}</h3>
                 <span className="font-mw-mono text-mw-text">
-                  {contractGraduated
-                    ? `Trading ${isSolanaPage ? "on Meteora" : isRobinhoodPage ? "on Uniswap" : "on Topaz"}`
-                    : solanaCurveClosed || curveProgress.matured
-                      ? "Eligible to graduate"
-                    : `${curveProgress.pct > 0 && curveProgress.pct < 0.01 ? curveProgress.pct.toFixed(6) : curveProgress.pct.toFixed(2)}% · graduates ${isSolanaPage ? "to Meteora" : isRobinhoodPage ? "to Uniswap" : "to Topaz"} at 100%`}
+                  {bondingProgressText}
                 </span>
               </div>
               <div className="h-2 w-full overflow-hidden rounded-full bg-mw-border">
                 <div
                   className="h-full rounded-full bg-mw-accent"
-                  style={{ width: `${Math.max(0, Math.min(100, curveProgress.pct))}%`, minWidth: curveProgress.pct > 0 ? "1px" : undefined }}
+                  style={{ width: `${Math.max(0, Math.min(100, barPct))}%`, minWidth: barPct > 0 ? "1px" : undefined }}
                 />
               </div>
-              {contractGraduated ? null : (
+              {pageGraduated ? null : (
                 <p className="m-0 font-mw-mono text-xs text-mw-muted">
-                  {inCurveLabel} in curve · {remainingCurveLabel.primary} to target · {curveProgress.soldPct > 0 && curveProgress.soldPct < 0.01 ? curveProgress.soldPct.toFixed(6) : curveProgress.soldPct.toFixed(2)}% of tokens sold
+                  {gen8State ? gen8InCurveText : inCurveLabel} in curve · {gen8State ? gen8RemainingText : remainingCurveLabel.primary} to target · {soldShownPct > 0 && soldShownPct < 0.01 ? soldShownPct.toFixed(6) : soldShownPct.toFixed(2)}% of tokens sold
                 </p>
               )}
             </div>
@@ -5597,7 +5705,7 @@ const toSeconds = (ts: number): number => {
                   marketCandles={unifiedMarket.candles}
                   marketState={unifiedMarket.state}
                   serverTime={unifiedMarket.serverTime}
-                  graduationMarker={unifiedMarket.graduationMarker || solanaGraduationMarker}
+                  graduationMarker={gen8State ? (gen8Graduated ? unifiedMarket.graduationMarker : null) : (unifiedMarket.graduationMarker || solanaGraduationMarker)}
                   creatorAddress={isSolanaPage ? (solanaCurve?.creator || campaign?.creator) : campaign?.creator}
                   creatorAvatarUrl={creatorProfile?.avatarUrl}
                   creatorDisplayName={creatorProfile?.displayName}
@@ -5887,11 +5995,11 @@ const toSeconds = (ts: number): number => {
                           </div>
                           <div className={cp.tile}>
                             <p className={cp.tileLabel}>Curve progress</p>
-                            <p className={cp.tileValue}>{curveProgress.pct.toFixed(2)}%</p>
+                            <p className={cp.tileValue}>{(gen8State ? pageProgressPct : curveProgress.pct).toFixed(2)}%</p>
                           </div>
                           <div className={cp.tile}>
                             <p className={cp.tileLabel}>Remaining to graduate</p>
-                            <p className={cp.tileValue}>{remainingCurveLabel.primary}</p>
+                            <p className={cp.tileValue}>{gen8State ? gen8RemainingText : remainingCurveLabel.primary}</p>
                           </div>
                         </div>
                       </AccordionContent>

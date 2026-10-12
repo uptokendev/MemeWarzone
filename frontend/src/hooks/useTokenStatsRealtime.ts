@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { isSolanaChainId, type SupportedChainId } from "@/lib/chainConfig";
+import { isSolanaChainId } from "@/lib/chainConfig";
+import { tokenStatsChainId } from "@/lib/tokenStatsChain";
 import { useAblyTokenChannel } from "@/hooks/useAblyTokenChannel";
 
 const API_BASE = String(import.meta.env.VITE_REALTIME_API_BASE || "").replace(/\/$/, "");
@@ -151,13 +152,10 @@ export function useTokenStatsRealtime(campaignAddress?: string, chainId?: number
   const [error, setError] = useState<string | null>(null);
   const initialLoadedRef = useRef(false);
 
-  const cid = useMemo<SupportedChainId>(() => {
-    const n = Number(chainId ?? 56);
-    if (n === 56 || n === 97 || isSolanaChainId(n)) return n as SupportedChainId;
-    const addr = String(campaignAddress || "");
-    if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr) && !addr.startsWith("0x")) return 101;
-    return 56;
-  }, [campaignAddress, chainId]);
+  const cid = useMemo(
+    () => tokenStatsChainId(chainId, campaignAddress),
+    [campaignAddress, chainId],
+  );
 
   const url = useMemo(() => {
     if (!API_BASE || !campaignAddress) return "";
