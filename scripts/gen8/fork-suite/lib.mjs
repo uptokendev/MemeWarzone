@@ -1,22 +1,11 @@
 // Shared helpers for the V4 hook fork proof. Research only.
 import { spawn } from "node:child_process";
-import fs from "node:fs";
 import { ethers } from "ethers";
 
 export const WAD = 10n ** 18n;
 export const Q96 = 1n << 96n;
 export const Q192 = 1n << 192n;
 export const BPS = 10_000n;
-
-export function readEnvFile(file) {
-  const out = {};
-  if (!fs.existsSync(file)) return out;
-  for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
-    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
-    if (m) out[m[1]] = m[2].replace(/^['"]|['"]$/g, "");
-  }
-  return out;
-}
 
 export async function startAnvil(rpc, port, label, chainId, forkBlock) {
   // pin the fork a few blocks behind the tip (fresh-block "header not found" flakes on public nodes)

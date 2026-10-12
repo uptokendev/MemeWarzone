@@ -128,3 +128,8 @@ cache-gen8
 artifacts-gen8
 typechain-types-gen8
 reports/gen8/local-*.json
+# gen-8 audit PoC re-run (scripts/gen8/audit-rerun.sh copies the audit branches' PoCs here; never committed)
+audit-rerun
+cache-audit-rerun
+artifacts-audit-rerun
+typechain-types-audit-rerun

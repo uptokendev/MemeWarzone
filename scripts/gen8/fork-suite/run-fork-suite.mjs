@@ -17,7 +17,7 @@ import * as gen7 from "../../../frontend/shared/evmGen7Curve.mjs";
 import { loadArtifacts } from "./artifacts.mjs";
 import { runStep2, STEP2_AREAS } from "./step2.mjs";
 import * as TM from "./tickmath.mjs";
-import { WAD, Q96, BPS, readEnvFile, startAnvil, stopAnvil, fmt, absDiff, ppm, ceilDiv, amount0Delta, amount1Delta, mcFromSqrt, revertOf } from "./lib.mjs";
+import { WAD, Q96, BPS, startAnvil, stopAnvil, fmt, absDiff, ppm, ceilDiv, amount0Delta, amount1Delta, mcFromSqrt, revertOf } from "./lib.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -29,7 +29,8 @@ const TARGETS = argVal("--targets", "30000,50000").split(",").map((x) => BigInt(
 const ONLY_AREAS = process.env.STEP2_AREAS ? process.env.STEP2_AREAS.split(",") : STEP2_AREAS;
 const PHASE_TIMEOUT_MS = Number(process.env.PHASE_TIMEOUT_MS || 480_000);
 const PHASES = argVal("--phases", "base,step2").split(",").flatMap((p) => (p === "step2" ? ONLY_AREAS.map((a) => "step2:" + a) : [p]));
-const ENV = readEnvFile(process.env.MWZ_ENV_FILE || "/mnt/e/network/Zakelijk/MemeWarzone/.env");
+// RPCs: already-exported env vars, else the chains' public read-only RPCs. No .env file is ever read (founder rule).
+const PUBLIC_RPC = { bsc: "https://bsc-dataseed.bnbchain.org", rh: "https://rpc.mainnet.chain.robinhood.com" };
 
 const SUPPLY = 1_000_000_000n * WAD;
 const COINS_A = 850_000_000n * WAD;
@@ -44,11 +45,11 @@ const CHAIN_CFG = {
   bsc: {
     label: "BNB Chain mainnet fork (56)",
     chainId: 56n,
-    rpc: process.env.BSC_MAINNET_RPC || ENV.BSC_MAINNET_RPC,
+    rpc: process.env.BSC_MAINNET_RPC || PUBLIC_RPC.bsc,
     port: 8661,
     oracle: "0x9D204406d5ECA0f18e48427fDD983A32FdF57C9B",
-    minNativeUsd: 50n * WAD, // L3 sane band (deploy parameter), BNB/USD
-    maxNativeUsd: 20_000n * WAD,
+    minNativeUsd: 10n * WAD, // L3 sane band (deploy parameter), BNB/USD: F6 $10 .. $100,000
+    maxNativeUsd: 100_000n * WAD,
     wNative: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", // WBNB: display pairs on BNB only
     pm: "0x28e2ea090877bf75740558f6bfb36a5ffee9e9df",
     posm: "0x7a4a5c919ae2541aed11041a1aeee68f1287f95b",
@@ -75,11 +76,11 @@ const CHAIN_CFG = {
   rh: {
     label: "Robinhood Chain mainnet fork (4663)",
     chainId: 4663n,
-    rpc: process.env.ROBINHOOD_MAINNET_RPC || ENV.ROBINHOOD_MAINNET_RPC,
+    rpc: process.env.ROBINHOOD_MAINNET_RPC || PUBLIC_RPC.rh,
     port: 8662,
     oracle: "0xe635AA43fE5707561c8c3C655225da5C3e4C2239",
-    minNativeUsd: 100n * WAD, // L3 sane band (deploy parameter), ETH/USD
-    maxNativeUsd: 50_000n * WAD,
+    minNativeUsd: 50n * WAD, // L3 sane band (deploy parameter), ETH/USD: F6 $50 .. $500,000
+    maxNativeUsd: 500_000n * WAD,
     pm: "0x8366a39cc670b4001a1121b8f6a443a643e40951",
     posm: "0x58daec3116aae6d93017baaea7749052e8a04fa7",
     urs: { "UR (docs main)": "0x8876789976decbfcbbbe364623c63652db8c0904", "UR 2.1.2": "0x204FAca1764B154221e35c0d20aBb3c525710498" },
@@ -499,9 +500,9 @@ let REQ_SALT = 1n;
 /** Production launch: a request signed by the API key (D3) and the launcher's fixed rates. A coin with other rates
  *  (the research "coin 2") cannot be launched through the production launcher; it is created through the hook
  *  directly with the launcher impersonated on the fork, to prove that rates are stored per coin. */
-async function launchCoin(env, wallet, target, firstBuy, fees, label = "Gen8 Fork Coin", feeChoice = 1, feeCreatorPct = 0) {
+async function launchCoin(env, wallet, target, firstBuy, fees, label = "Gen8 Fork Coin", feeChoice = 1, feeCreatorPct = 0, openAt = 0n) {
   if (fees.join(",") !== FEES.join(",")) return rawLaunch(env, wallet, target, fees, label);
-  const req = [label, "RV4", "ipfs://logo", "", "", "", ethers.id(label), target, feeChoice, feeCreatorPct, firstBuy, 0n, REQ_SALT++];
+  const req = [label, "RV4", "ipfs://logo", "", "", "", ethers.id(label), target, feeChoice, feeCreatorPct, firstBuy, 0n, REQ_SALT++, openAt];
   const latest = BigInt((await env.provider.getBlock("latest")).timestamp);
   const deadline = latest + 3600n;
   const reqHash = await env.launcher.hashRequest(req);
@@ -511,8 +512,8 @@ async function launchCoin(env, wallet, target, firstBuy, fees, label = "Gen8 For
   const rcL = await txL.wait();
   const ev = rcL.logs.map((l) => { try { return env.launcher.interface.parseLog(l); } catch { return null; } }).find((e) => e?.name === "Launched");
   const P = makePool(env, ev.args.token, Number(ev.args.tickStart), Number(ev.args.tickGrad));
-  P.launchTs = BigInt((await env.provider.getBlock(rcL.blockNumber)).timestamp);
   const st = await env.hook.pools(P.id);
+  P.launchTs = BigInt(st.openAt); // B: the decay clock starts at openAt (== the launch block time when not scheduled)
   P.liqA = st.liqA;
   P.liqB = st.liqB;
   P.sqrtGrad = st.sqrtGrad;
@@ -533,7 +534,9 @@ async function rawLaunch(env, wallet, target, fees, label) {
   await env.provider.send("anvil_setBalance", [L, "0x56BC75E2D63100000"]);
   const ls = await env.provider.getSigner(L);
   await (await new ethers.Contract(tok.target, ERC20_ABI, ls).transfer(env.hook.target, COINS_A + COINS_B)).wait();
-  const rcL = await (await env.hook.connect(ls).createPool(tok.target, await wallet.getAddress(), tickStart, tickGrad, COINS_A, COINS_B, fees)).wait();
+  const oa = BigInt((await env.provider.getBlock("latest")).timestamp) + 1n;
+  await setNextTs(env, oa);
+  const rcL = await (await env.hook.connect(ls).createPool(tok.target, await wallet.getAddress(), tickStart, tickGrad, COINS_A, COINS_B, fees, oa)).wait();
   await env.provider.send("anvil_stopImpersonatingAccount", [L]);
   const P = makePool(env, tok.target, Number(tickStart), Number(tickGrad));
   P.launchTs = BigInt((await env.provider.getBlock(rcL.blockNumber)).timestamp);
@@ -597,7 +600,8 @@ async function runTarget(env, targetUsd) {
   const fakeKey = [ethers.ZeroAddress, nextTokenGuess, 0x800000, SPACING, env.hook.target];
   const rInit = await revertOf(() => env.attackerC.connect(env.W.attacker).tryInitialize.staticCall(fakeKey, TM.getSqrtRatioAtTick(Number(tickStart))), env.ifaces);
   check("outside PoolManager.initialize with our hook reverts (launch front-run impossible)", rInit && rInit.includes("OnlyThisHookMayInitialize"), rInit);
-  const rCreate = await revertOf(() => env.hook.connect(env.W.attacker).createPool.staticCall(nextTokenGuess, env.A.attacker, tickStart, tickGrad, 1n, 1n, FEES), env.ifaces);
+  const okOpenAt = BigInt((await env.provider.getBlock("latest")).timestamp) + 600n;
+  const rCreate = await revertOf(() => env.hook.connect(env.W.attacker).createPool.staticCall(nextTokenGuess, env.A.attacker, tickStart, tickGrad, 1n, 1n, FEES, okOpenAt), env.ifaces);
   // production launcher (L1): no caller-supplied rates exist in its interface; the hook still enforces its caps
   const launchFn = env.launcher.interface.getFunction("launch");
   const reqFields = launchFn.inputs[0].components.map((c) => c.name);
@@ -614,7 +618,7 @@ async function runTarget(env, targetUsd) {
     ["creator bonding share above 10% of the fee", [200, 100, 50, 9000, 1001]],
   ]) {
     const f5 = f.length === 4 ? [...f, 560] : f;
-    const r = await revertOf(() => env.hook.createPool.staticCall(nextTokenGuess, env.A.attacker, tickStart, tickGrad, COINS_A, COINS_B, f5, { from: env.launcher.target }), env.ifaces);
+    const r = await revertOf(() => env.hook.createPool.staticCall(nextTokenGuess, env.A.attacker, tickStart, tickGrad, COINS_A, COINS_B, f5, okOpenAt, { from: env.launcher.target }), env.ifaces);
     check(`fee cap enforced at launch: ${lbl} reverts`, r && r.includes("FeeCapExceeded"), r);
   }
 
@@ -899,14 +903,15 @@ async function runTarget(env, targetUsd) {
     ["direct", false, false, R / 100n + 5n, 50_000_000n * WAD],
   ]) {
     const ob = await owedAll(env, P);
+    const post = (await slot0(env, P)).sqrtP <= P.sqrtGrad; // F1: the phase is the price at the start of the swap
     const { q } = await quote(env, P, buy, exactIn, amount);
     const t = await trade(env, P, { via, urName, wallet: env.W.bot, buy, exactIn, amount, limit });
     const oa = await owedAll(env, P);
     const [ok, d] = feeExact(t, buy, exactIn, amount);
-    const lbl = `post-grad ${via} ${buy ? "BUY" : "SELL"} exact${exactIn ? "In" : "Out"}`;
-    check(`${lbl}: fee 1%, gen-7 definition`, ok && t.rate === 100n, d);
-    const cExp = (t.gross * 50n) / BPS;
-    check(`${lbl}: creator gets exactly 0.5% of native volume, router bucket the rest`, oa.creator - ob.creator === cExp && oa.router - ob.router === t.fee - cExp, `volume ${fmt(t.gross)} creator ${fmt(oa.creator - ob.creator, 9)} router ${fmt(oa.router - ob.router, 9)}`);
+    const lbl = `post-grad ${via} ${buy ? "BUY" : "SELL"} exact${exactIn ? "In" : "Out"}${post ? "" : " (started back in A)"}`;
+    check(`${lbl}: fee ${post ? "1%" : "2% (F1)"}, gen-7 definition`, ok && t.rate === (post ? 100n : 200n), d);
+    const cExp = post ? (t.gross * 50n) / BPS : (t.fee * 560n) / BPS;
+    check(`${lbl}: creator gets exactly ${post ? "0.5% of native volume" : "5.6% of the fee"}, router bucket the rest`, oa.creator - ob.creator === cExp && oa.router - ob.router === t.fee - cExp, `volume ${fmt(t.gross)} creator ${fmt(oa.creator - ob.creator, 9)} router ${fmt(oa.router - ob.router, 9)}`);
     check(`${lbl}: V4Quoter == executed; no second graduation`, q === quotedSide(t, buy, exactIn) && t.graduated === null, `quote ${q}`);
     if (P.pair) {
       const [dok, dd] = await checkDisplay(env, P, t, buy, env.W.bot);
@@ -921,11 +926,15 @@ async function runTarget(env, targetUsd) {
     await partialFill(env, P, { label: "post-grad exact-out SELL, limit inside B", buy: false, amount: R * 2n, limit: s2.sqrtP + (P.sqrtGrad - s2.sqrtP) / 3n, wallet: env.W.bot });
     await partialFill(env, P, { label: "post-grad exact-out SELL, limit exactly at the A/B boundary (from B)", buy: false, amount: R * 2n, limit: P.sqrtGrad, wallet: env.W.bot });
     await partialFill(env, P, { label: "post-grad exact-out SELL from the boundary to a limit inside A", buy: false, amount: R * 5n, limit: P.sqrtGrad + P.sqrtGrad / 20n, wallet: env.W.bot });
-    check("after falling back into A: still graduated, still 1%", (await env.hook.pools(P.id)).graduated && (await env.lens.currentFeeBps(P.id, env.A.bot)) === 100n);
+    check("[F1] after falling back into A: still graduated (latch), but the bonding rate 2% applies again", (await env.hook.pools(P.id)).graduated && (await env.lens.currentFeeBps(P.id, env.A.bot)) === 200n);
     const ob = await owedAll(env, P);
+    const pg = await env.hook.pendingGradFees();
+    const pbf = await env.hook.pendingBondingFees();
     const t2 = await trade(env, P, { via: "direct", wallet: env.W.bot, buy: true, exactIn: true, amount: R, limit: 0n });
     const oa = await owedAll(env, P);
-    check("re-crossing the threshold does not graduate again or take another 2%", t2.graduated === null && oa.router - ob.router === t2.fee - (t2.gross * 50n) / BPS && t2.rate === 100n);
+    check("[F1] re-crossing the threshold does not graduate again or take another 2% graduation fee; it starts in A, so it is a bonding swap", t2.graduated === null && t2.rate === 200n && t2.creatorShare === (t2.fee * 560n) / BPS && oa.router - ob.router === t2.fee - t2.creatorShare && (await env.hook.pendingGradFees()) === pg && (await env.hook.pendingBondingFees()) - pbf === t2.fee);
+    const t3 = await trade(env, P, { via: "direct", wallet: env.W.bot, buy: true, exactIn: true, amount: R / 50n, limit: 0n });
+    check("[F1] the next swap starts past graduation: post rate 1%, creator 0.5% of volume", t3.rate === 100n && t3.creatorShare === (t3.gross * 50n) / BPS);
   }
 
   // ---- creator rights (decision 2): ledger per coin, claim(to), two-step transfer, owner has no power
@@ -984,8 +993,10 @@ async function runTarget(env, targetUsd) {
     // router: permissionless claim to the current TreasuryRouter
     const rOwed = await env.hook.routerOwed();
     const tb = await env.provider.getBalance(env.splitter.target);
-    await (await env.hook.connect(env.W.attacker).claimRouter()).wait();
-    check("claimRouter (anyone) pays the router bucket to the current TreasuryRouter", (await env.provider.getBalance(env.splitter.target)) - tb === rOwed && rOwed > 0n, fmt(rOwed));
+    const rForeign = await revertOf(() => env.hook.connect(env.W.attacker).claimRouter.staticCall(), env.ifaces);
+    check("[F4] claimRouter by a third party reverts NotRouterCaller", rForeign?.includes("NotRouterCaller"), rForeign);
+    await (await env.hook.connect(env.W.operator).claimRouter()).wait();
+    check("[F4] claimRouter by the splitter operator (read from the splitter) pays the router bucket to the current TreasuryRouter", (await env.provider.getBalance(env.splitter.target)) - tb === rOwed && rOwed > 0n, fmt(rOwed));
     const paid = await env.hook.routerPaid(env.splitter.target);
     check("[gen8] the hook records what it paid the splitter, with the bonding and graduation fees inside it (D1 bands)", paid.amount >= rOwed && paid.gradFees > 0n && paid.bondingFees > 0n, `paid ${fmt(paid.amount)} bonding fees ${fmt(paid.bondingFees)} graduation fees ${fmt(paid.gradFees)}`);
     // timelock
@@ -1013,7 +1024,9 @@ async function runTarget(env, targetUsd) {
     const rStranger = await revertOf(() => env.hook.connect(env.W.attacker).executeTreasuryRouter.staticCall(), env.ifaces);
     const sBefore = await env.provider.getBalance(env.splitter.target);
     await (await env.hook.connect(env.W.safe).executeTreasuryRouter()).wait();
-    check("[gen8] A4: executeTreasuryRouter first pays the bucket accrued so far to the OLD router", pendingAtChange > 0n && (await env.provider.getBalance(env.splitter.target)) - sBefore === pendingAtChange && (await env.hook.routerOwed()) === 0n, fmt(pendingAtChange));
+    check("[F3] A4: executeTreasuryRouter parks the bucket accrued so far for the OLD router (no payout, no external call)", pendingAtChange > 0n && (await env.provider.getBalance(env.splitter.target)) === sBefore && (await env.hook.routerParked(env.splitter.target)).amount === pendingAtChange && (await env.hook.parkedOwed()) === pendingAtChange && (await env.hook.routerOwed()) === 0n, fmt(pendingAtChange));
+    await (await env.hook.connect(env.W.attacker).payParkedRouter(env.splitter.target)).wait();
+    check("[F3] anyone pays the parked bucket, only to the OLD router", (await env.provider.getBalance(env.splitter.target)) - sBefore === pendingAtChange && (await env.hook.parkedOwed()) === 0n, fmt(pendingAtChange));
     check("after 48 h only the owner executes; router changed", rStranger?.includes("NotOwner") && (await env.hook.treasuryRouter()) === env.A.treasury2, `eta ${eta2}`);
     const after1 = (await env.hook.pools(P.id)).fees.map(Number).join(",");
     const after2 = (await env.hook.pools(P2.id)).fees.map(Number).join(",");
@@ -1023,11 +1036,11 @@ async function runTarget(env, targetUsd) {
     await trade(env, P, { via: "direct", wallet: env.W.bot, buy: true, exactIn: true, amount: R / 10n, limit: 0n });
     const rOwed2 = await env.hook.routerOwed();
     const t2b = await env.provider.getBalance(env.A.treasury2);
-    await (await env.hook.connect(env.W.attacker).claimRouter()).wait();
+    await (await env.hook.connect(env.W.safe).claimRouter()).wait(); // treasury2 is an EOA without operator(): the Safe claims
     check("router bucket now pays the NEW TreasuryRouter", (await env.provider.getBalance(env.A.treasury2)) - t2b === rOwed2 && rOwed2 > 0n, fmt(rOwed2));
     const claims = await env.pm.balanceOf(env.hook.target, 0n);
-    const sumOwed = (await env.hook.routerOwed()) + (await env.hook.creatorOwed(P.id)) + (await env.hook.creatorOwed(P2.id));
-    check("ERC6909 claims held by the hook == router bucket + creator buckets", claims === sumOwed, fmt(claims));
+    const sumOwed = (await env.hook.routerOwed()) + (await env.hook.parkedOwed()) + (await env.hook.creatorOwed(P.id)) + (await env.hook.creatorOwed(P2.id));
+    check("ERC6909 claims held by the hook == router bucket + parked buckets + creator buckets", claims === sumOwed, fmt(claims));
     check("hook never received coins", (await P.coin.balanceOf(env.hook.target)) === 0n && (await env.pm.balanceOf(env.hook.target, BigInt(P.token))) === 0n);
     // D6: after graduation anyone releases the reserve to the coin's current creator
     const ben = await env.reserveLock.beneficiaryOf(P.id);

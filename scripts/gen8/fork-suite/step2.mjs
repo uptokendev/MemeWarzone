@@ -17,9 +17,11 @@
 //           prices aligned; the exact events a side-pool watcher must follow, with sample logs (step 3).
 //   grad    graduation edge cases: crossing via every router, exact-output crossing, price limit at the boundary,
 //           re-crossing, falling back below, display pair continuity (BNB).
+//   fixes   the 2026-10-12 fix round (fixes.mjs): the AI-audit PoCs replayed against the fixed contracts.
 import { ethers } from "ethers";
 import { WAD, Q96, BPS, fmt, absDiff, ppm, amount0Delta, amount1Delta, revertOf } from "./lib.mjs";
 import * as TM from "./tickmath.mjs";
+import { areaFixes } from "./fixes.mjs";
 
 const coder = ethers.AbiCoder.defaultAbiCoder();
 const DEAD = "0x000000000000000000000000000000000000dEaD";
@@ -299,7 +301,7 @@ function urV2Sell(W, coin, amountIn, style) {
 }
 
 // ------------------------------------------------------------------ entry
-export const STEP2_AREAS = ["split", "choice", "escrow", "side", "grad"];
+export const STEP2_AREAS = ["split", "choice", "escrow", "side", "grad", "fixes"];
 
 export async function runStep2(env, targetUsd, H, onlyAreas = null) {
   const { check, note } = H;
@@ -330,6 +332,7 @@ export async function runStep2(env, targetUsd, H, onlyAreas = null) {
     ["escrow", () => areaEscrow(env, H, S, P, out)],
     ["side", () => areaSidePools(env, H, S, P, out)],
     ["grad", () => areaGraduation(env, H, S, P, out)],
+    ["fixes", () => areaFixes(env, H, S, out)], // 2026-10-12 fix round (F1, F2, F3, F6, B): audit PoCs replayed
   ];
   const only = onlyAreas ?? (process.env.STEP2_AREAS ? process.env.STEP2_AREAS.split(",") : null);
   for (const [name, fn] of areas) {
@@ -497,16 +500,19 @@ async function areaSplitter(env, H, S, P, out) {
       const rcL = await (await op.route(2n, paid, rsaMin, 0n, 0n, root, { gasLimit: 2_000_000n })).wait();
       const evL = rcL.logs.map((l) => { try { return sp.interface.parseLog(l); } catch { return null; } }).find((e) => e?.name === "Routed");
       check("a fee landing between the operator's claim and route stays in the hook for the next run (not swept into protocol)", evL.args.run.total === tot && late > 0n && (await env.hook.routerOwed()) >= late, `planned ${fmt(tot, 9)} routed ${fmt(evL.args.run.total, 9)}, late fee ${fmt(late, 9)} left in the hook`);
-      // a third party claims between plan and route: the stale plan reverts, the re-plan routes
+      // F4: a third party can no longer claim between plan and route; a second claim of our own (operator or Safe)
+      // still makes the stale plan revert, and the re-plan routes
       const paidB = await claimForPlan(env);
       await H.trade(env, P, { via: "direct", wallet: env.W.unl1, buy: true, exactIn: true, amount: S.R / 50n, limit: 0n });
-      await (await env.hook.connect(env.W.attacker).claimRouter()).wait();
+      const whyForeign = await revertOf(() => env.hook.connect(env.W.attacker).claimRouter.staticCall(), env.ifaces);
+      check("[F4] a third-party claimRouter between plan and route reverts NotRouterCaller (C-M1 / D-L3)", whyForeign?.includes("NotRouterCaller"), whyForeign);
+      await (await env.hook.connect(env.W.safe).claimRouter()).wait();
       const why3 = await revertOf(() => op.route.staticCall(3n, paidB, 0n, 0n, 0n, root), env.ifaces);
       const paidC = await claimForPlan(env);
       const [, B3, G3] = await sp.pending();
       const b3 = await sp.bands(B3, G3);
       const ok3 = await revertOf(() => op.route.staticCall(3n, paidC, b3[2], 0n, 0n, root), env.ifaces);
-      check("a third-party claim between plan and route reverts PaidMismatch; the re-plan routes", why3?.includes("PaidMismatch") && ok3 === null, `${why3} / re-plan ${ok3 ?? "ok"}`);
+      check("a second claim of our own (the Safe) between plan and route reverts PaidMismatch; the re-plan routes", why3?.includes("PaidMismatch") && ok3 === null, `${why3} / re-plan ${ok3 ?? "ok"}`);
       await H.revert(env, s2);
     }
     const whyAtt = await revertOf(() => sp.connect(env.W.attacker).route.staticCall(2n, paid, rsaMin, 0n, 0n, root), env.ifaces);
@@ -856,7 +862,7 @@ async function areaChoiceVault(env, H, S, out) {
     check("proposed: holder balances moved into the batch, liabilities unchanged until execution", (await v.holderBalance(coins.holders.id)) === 0n && (await v.holderBalance(coins.split.id)) === 0n && (await invariant()));
     await S.safeCall("per batch: authorize the batch on the distributor (max = batch total)", distC, "authorizeBatch", [batchId, total, t0, t0 + 8n * 86400n], { contractName: "gen-8 holder distributor (RewardDistributor code)" });
     const whyUnappr = await revertOf(() => opV.executeHolderBatch.staticCall(batchId), env.ifaces);
-    await S.safeCall("per batch: approve the exact root and total in the choice vault", v, "approveHolderBatch", [batchId, tree.root, total], { contractName: "MwzCreatorChoiceVault" });
+    await S.safeCall("per batch: approve the exact root, total and claim deadline in the choice vault (F5)", v, "approveHolderBatch", [batchId, tree.root, total, deadline], { contractName: "MwzCreatorChoiceVault" });
     const whyEarly = await revertOf(() => opV.executeHolderBatch.staticCall(batchId), env.ifaces);
     check("execute before approval reverts NotApproved; before the 24 h delay reverts TooSoon", whyUnappr?.includes("NotApproved") && whyEarly?.includes("TooSoon"), `${whyUnappr} / ${whyEarly}`);
     await warpTo(env, t0 + 86400n + 5n);
@@ -1437,7 +1443,8 @@ async function areaGraduation(env, H, S, P, out) {
       const tb = await H.trade(env, P, { via, urName, wallet: env.W.og1, buy: true, exactIn: true, amount: (await crossIn()) + BigInt(i++), limit: 0n });
       const oa = await H.owedAll(env, P);
       const below = (await H.slot0(env, P)).sqrtP < P.sqrtGrad;
-      check(`[ur] ${lbl}: fall back below the boundary (sell at 1%) and re-cross (buy at 1%): no second graduation, no second 2%, creator 0.5%`, above && below && ts.rate === 100n && tb.rate === 100n && tb.graduated === null && ts.graduated === null && oa.router - ob.router === tb.fee - (tb.gross * 50n) / BPS && oa.creator - ob.creator === (tb.gross * 50n) / BPS, `above after sell ${above}, below after buy ${below}, rates ${ts.rate}/${tb.rate}, graduated events ${ts.graduated !== null}/${tb.graduated !== null}, router +${fmt(oa.router - ob.router, 9)} creator +${fmt(oa.creator - ob.creator, 9)}`);
+      const cs = (tb.fee * 560n) / BPS;
+      check(`[ur] ${lbl}: fall back below the boundary (sell at 1%, it starts past graduation) and re-cross (buy at 2%, it starts in A: F1): no second graduation, no second 2% graduation fee, creator 5.6% of the fee`, above && below && ts.rate === 100n && tb.rate === 200n && tb.graduated === null && ts.graduated === null && tb.creatorShare === cs && oa.router - ob.router === tb.fee - cs && oa.creator - ob.creator === cs, `above after sell ${above}, below after buy ${below}, rates ${ts.rate}/${tb.rate}, graduated events ${ts.graduated !== null}/${tb.graduated !== null}, router +${fmt(oa.router - ob.router, 9)} creator +${fmt(oa.creator - ob.creator, 9)}`);
       if (P.pair) {
         const [d2, dd2] = await H.checkDisplay(env, P, tb, true, env.W.og1);
         check(`${lbl}: BNB display follows the fall-back and the re-cross (Sync + Swap, reserves == pool price)`, d1 && d2, `fall-back sell: ${dd1} | re-cross buy: ${dd2}`);

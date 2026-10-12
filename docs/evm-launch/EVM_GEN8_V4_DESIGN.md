@@ -3,6 +3,24 @@
 Status 2026-10-11: design for founder approval, then for the external audit and the build. Nothing here is
 deployed or built for production. The research contracts are proven on local forks only.
 
+Amendments 2026-10-12 (founder go after the AI audit; built on `build/evm-gen8`, diff audit in
+`GEN8_INTERNAL_AUDIT.md` section 15). Where this document says otherwise, these win:
+
+- **Fee phase by price (F1).** The rate and split of a swap follow the pool price at the START of the swap: inside A
+  (below the graduation price) the bonding rate with the bonding split and the launch decay; at or past the
+  graduation price the post-graduation rate (1%, creator 0.5% of volume). Graduation itself stays instant on the
+  crossing swap (2% fee, `Graduated`, latch); the latch no longer selects the rate. `HookFee.graduated` is the phase
+  of that swap by this rule. The reserve lock releases only when the latch is set, the price is at or past the
+  graduation price, and the PoolManager is not mid-unlock.
+- **No sell may leave the price above the start price (F2).**
+- **Router change parks the old router's bucket (F3)** (`routerParked`, `payParkedRouter`, event `RouterParked`);
+  no payout and no external call inside `executeTreasuryRouter`. **`claimRouter` only by the router, its
+  operator or the owner (F4).**
+- **Holder-batch claim deadline** is bounded (7 days after execution at least, 365 days at most) and part of the
+  Safe's approval (F5). **Oracle band** deploy inputs BNB $10 to $100,000, ETH $50 to $500,000 (F6).
+- **Scheduled trading open (B).** The signed request carries `openAt` (0 or past = now, at most now + 30 days); no
+  swap before it except the creator first buy inside `launch()`; the 60 s launch-fee decay starts at `openAt`.
+
 Every point carries one of two markers:
 
 - **[Decided]**: a founder decision of 2026-10-10/11 or a fact measured in the proof. Do not reopen without the founder.

@@ -1,6 +1,7 @@
 # EVM generation 8: internal audit of the production contracts (step 1)
 
-Status 2026-10-11. Branch `build/evm-gen8` (worktree `~/mwz-wt/evm-gen8`, from `research/v4-hook-fork-proof` at
+Status 2026-10-12 (fix round after the AI audit: section 15; earlier sections updated where the fixes changed
+them, marked "(2026-10-12)"). First written 2026-10-11. Branch `build/evm-gen8` (worktree `~/mwz-wt/evm-gen8`, from `research/v4-hook-fork-proof` at
 `8f73d7fd`). Nothing here is deployed. All runs are local: the hardhat network and anvil forks of BNB Chain 56 and
 Robinhood Chain 4663 with fresh test keys. This is our own review, written so an external auditor can start from it;
 it is not a substitute for the paid external audit (D11).
@@ -10,7 +11,8 @@ A1 to A15 in 8.2). Research proof: `scripts/research/v4-hook/` (702/702 on both 
 
 Contents: 1 scope, 2 results, 3 actors and trust, 4 money paths per contract, 5 invariants, 6 auditor points A1 to A15,
 7 top risks, 8 known limitations, 9 deviations from the design doc, 10 what steps 2 and 3 need, 11 external audit
-scope, 12 deployment (dry run), 13 gas and sizes, 14 verification manifest.
+scope, 12 deployment (dry run), 13 gas and sizes, 14 verification manifest, 15 fix round 2026-10-12 (diff audits and
+audit PoC re-runs).
 
 ---
 
@@ -18,17 +20,17 @@ scope, 12 deployment (dry run), 13 gas and sizes, 14 verification manifest.
 
 | File | Lines (total / code) | Role |
 |---|---|---|
-| `contracts/gen8/MwzLaunchHook.sol` | 693 / 548 | The V4 hook: fees, liquidity lock, graduation latch, creator ledger, router bucket, display call |
+| `contracts/gen8/MwzLaunchHook.sol` | 766 / 589 (2026-10-12) | The V4 hook: fees, liquidity lock, graduation latch, creator ledger, router bucket, display call |
 | `contracts/gen8/libraries/MwzSwapSim.sol` | 125 / 101 | External library (linked): exact replay of `Pool.swap` for price-limited swaps |
-| `contracts/gen8/libraries/MwzFeeMath.sol` | 37 / 20 | Internal library: rate schedule and exact-output gross, shared by hook and lens |
-| `contracts/gen8/interfaces/IMwzLaunchHook.sol` | 50 / 40 | `FeeConfig` and the hook view interface |
-| `contracts/gen8/MwzLaunchLens.sol` | 79 / 57 | Stateless views: `currentFeeBps`, `previewFill`, `grossForNet`, `progress` |
-| `contracts/gen8/MwzV4Launcher.sol` | 460 / 367 | One-transaction launch with L1 to L5 |
+| `contracts/gen8/libraries/MwzFeeMath.sol` | 39 / 20 | Internal library: rate schedule and exact-output gross, shared by hook and lens |
+| `contracts/gen8/interfaces/IMwzLaunchHook.sol` | 60 / 50 | `FeeConfig` and the hook view interface |
+| `contracts/gen8/MwzLaunchLens.sol` | 92 / 66 | Stateless views: `currentFeeBps`, `previewFill`, `grossForNet`, `progress` |
+| `contracts/gen8/MwzV4Launcher.sol` | 473 / 377 | One-transaction launch with L1 to L5 |
 | `contracts/gen8/MwzV4Token.sol` | 13 / 7 | Plain 1B ERC20 |
-| `contracts/gen8/MwzReserveLock.sol` | 83 / 60 | 2% creator reserve until graduation (D6 R2) |
+| `contracts/gen8/MwzReserveLock.sol` | 100 / 72 | 2% creator reserve until graduation (D6 R2) |
 | `contracts/gen8/MwzCreatorEscrow.sol` | 126 / 96 | App creator-buy escrow, gen-7 schedule (D5 E1) |
 | `contracts/gen8/MwzFeeSplitter.sol` | 189 / 144 | Bounded router-bucket splitter (D1 A) |
-| `contracts/gen8/MwzCreatorChoiceVault.sol` | 468 / 373 | Holders / split / buyback choice (D2) |
+| `contracts/gen8/MwzCreatorChoiceVault.sol` | 480 / 380 | Holders / split / buyback choice (D2) |
 | `contracts/gen8/MwzDisplayPair.sol` | 130 / 93 | Display pair + factory with `factory()` (D10, BNB only) |
 
 Total 2,453 lines, about 1,906 lines of code. Out of scope: `contracts/gen8/test/*` (test helpers), the unchanged gen-7
@@ -44,9 +46,9 @@ none changed behaviour between the two).
 
 | Suite | Command | Result |
 |---|---|---|
-| Local unit + property + gas/size (hardhat, v4-core 1.0.2 PoolManager built locally) | `npx hardhat --config hardhat.gen8.config.ts test` | 80 tests passing (77 before V13; +3 splitter plan tests) in about 5 minutes, including 10 seeded property runs of 220 actions (see 2.1) |
+| Local unit + property + gas/size (hardhat, v4-core 1.0.2 PoolManager built locally) | `npx hardhat --config hardhat.gen8.config.ts test` | 2026-10-12: 101 passing after the fix round (15.9). Before: 80 tests passing (77 before V13; +3 splitter plan tests) in about 5 minutes, including 10 seeded property runs of 220 actions (see 2.1) |
 | Property runs, larger campaign | `GEN8_FUZZ_SEEDS=101..140 GEN8_FUZZ_STEPS=300` | 40 seeds x 300 random actions, all invariants checked after every action: 40 / 40 passing (after V13 the splitter step also lands fees and third-party claims between plan and route: 74 late fees, 79 re-plans) (12,000 actions, about 8 minutes) |
-| Fork suite, production contracts, BSC 56 + Robinhood 4663, $30K + $50K | `node scripts/gen8/fork-suite/run-fork-suite.mjs` | 746 / 746 PASS (134 s) |
+| Fork suite, production contracts, BSC 56 + Robinhood 4663, $30K + $50K | `node scripts/gen8/fork-suite/run-fork-suite.mjs` | 2026-10-12: 2,376 / 2,376 PASS incl. step 2 and the `fixes` area (15.9). Step 1: 746 / 746 PASS (134 s) |
 | Research equivalence | `node scripts/gen8/fork-suite/compare-with-research.mjs` | all 702 research checks present and passing (one renamed on purpose, D6) |
 
 ### 2.1 What the local suite covers
@@ -89,11 +91,11 @@ none changed behaviour between the two).
 | Any trader, bot, router, aggregator | Trade at the coin's stored rate; set any `hookData` (analytics only); set price limits | Avoid the fee in our pool; add, remove or donate liquidity; initialize a pool with our hook |
 | Coin creator (hook) | Claim the coin's creator ledger to any address; hand the right over in two steps | Touch rates, liquidity, other coins, the router |
 | Human creator (choice vault, holders / split / buyback coins) | Claim the split part; hand the right over in two steps; receive the reserve at graduation | Change the choice; move holder or buyback balances |
-| MemeWarzone Safe as hook owner | Redirect the router bucket after 48 h (bucket accrued before the change is flushed to the old router first); transfer ownership in two steps | Change rates, creators, creator balances or liquidity; pause trading; withdraw anything |
+| MemeWarzone Safe as hook owner | Redirect the router bucket after 48 h (bucket accrued before the change is parked for the old router and paid only to it, 2026-10-12 F3); claim the router bucket for the current router (F4); transfer ownership in two steps | Change rates, creators, creator balances or liquidity; pause trading; withdraw anything |
 | Safe as launcher owner | Pause / open launches; rotate the create signer; transfer ownership | Touch any launched coin, any balance or trading |
 | API create signer (D3) | Authorize a launch for a named creator wallet, request and deadline (max 1 day) | Trade, move money, change rates; reuse an authorization; authorize for another wallet, chain or launcher |
 | Safe as splitter admin | Set the operator; run the same bounded route | Change destinations or bands; withdraw |
-| Splitter operator (new key, Zodiac Roles) | Choose, per run, how the recruiter + squad + airdrop band is split (inside the band, squad capped) and when to run | Send money to a wallet, change the league share or the protocol remainder, skip or invent value |
+| Splitter operator (new key, Zodiac Roles) | Claim the hook's router bucket into the splitter (F4: only the router, its operator or the hook owner may); choose, per run, how the recruiter + squad + airdrop band is split (inside the band, squad capped) and when to run | Send money to a wallet, change the league share or the protocol remainder, skip or invent value |
 | Safe as choice-vault admin | Approve or veto holder batches; set caps (impact cap at most 50 bps); set the operator; re-credit unclaimed holder payouts; rescue native above every liability | Move creator, holder or buyback balances elsewhere |
 | Choice-vault operator | Propose holder batches (need admin approval); execute approved batches after the delay; run capped buybacks | Pay itself; exceed caps; execute an unapproved batch |
 | Gen-7 GraduationOracle (Chainlink feed) | Size the curve of a coin at launch | Affect trading, fees or graduation of any launched coin |
@@ -109,7 +111,8 @@ Trust assumptions, stated plainly:
 3. The splitter operator computes the per-trade split off chain. A stolen key can only move value between the airdrop
    pot and the recruiter / squad pots inside the band, and only into our vaults. Reproducibility: `accrualRoot`.
 4. The oracle is read once per launch, never during trading. A wrong price mis-sizes one coin's curve within the
-   immutable band (BNB $50 to $20,000, ETH $100 to $50,000 in the draft inputs).
+   immutable band (BNB $10 to $100,000, ETH $50 to $500,000 in the deploy inputs since 2026-10-12, F6). Robinhood has
+   no Chainlink sequencer uptime feed (15.7).
 5. The four destination vaults of the splitter accept plain native (they do for the gen-7 router today). If one stops
    accepting, splitter runs revert and the funds wait in the splitter (see 7, risk 4).
 
@@ -139,6 +142,11 @@ over/underflow; how it can be griefed.
   buy pays 1 wei and receives 0 coins (no harm; the indexer must not count it as a buyer). Display gas forcing only
   drops one display update (A2).
 
+**Fee phase (2026-10-12, F1)**: the rate and split of a swap follow the pool price at its START (`slot0` read in
+`beforeSwap`): inside A the bonding rate with the launch decay and the bonding split; at or past `sqrtGrad` the post
+rate and split. The latch below decides only the one-time graduation (15.1). Before `openAt` only the launcher's
+swap passes (B, 15.8). A sell may not end above `sqrtStart` (F2, 15.2).
+
 **_graduate** (the latch)
 - Inside `afterSwap` only. `graduated = true` is written first and never reset (I7). Then the only liquidity removal
   that exists: `floor(liqA * 200 / 10000)` from A, which at a price at or below `sqrtGrad` is native only (I6); the
@@ -155,17 +163,20 @@ over/underflow; how it can be griefed.
 - States: any time, any phase. Only the current creator; the owner has no path (I9).
 - Griefing: none on others; the recipient can only hurt its own claim.
 
-**claimRouter()** and **executeTreasuryRouter()** (`_payRouter`)
-- Guard: `nonReentrant`.
-- CEI: the bucket and the pending bonding / graduation fee counters are moved into `routerPaid[router]` and zeroed,
-  then the payout is the last call. In `executeTreasuryRouter` the payout to the old router is tolerant: on failure
-  the state is restored exactly and `RouterFlushFailed` is emitted, then the router changes; the bucket follows the new
-  router. This prevents a refusing router from blocking a change forever.
-- States: `claimRouter` any time with a non-zero bucket, by anyone; `executeTreasuryRouter` only by the owner, only
-  with a pending proposal at or after its eta (48 h).
-- Over/underflow: `routerPaid` sums are `uint256`.
-- Griefing: anyone can call `claimRouter` at any time; it only pays the current router. The owner could make a flush
-  fail only by having proposed a router that refuses native 48 h earlier (it already controls the destination).
+**claimRouter()**, **payParkedRouter(r)** and **executeTreasuryRouter()** (2026-10-12, F3 / F4; diff audits 15.3, 15.4)
+- Guard: `claimRouter` and `payParkedRouter` are `nonReentrant`; `executeTreasuryRouter` makes no external call.
+- CEI: `claimRouter` checks the caller (router, owner, or the router's `operator()` read by a gas-capped staticcall)
+  and the amount, zeroes the bucket and the pending bonding / graduation counters, records `routerPaid[router]`, then
+  pays as the last call. `executeTreasuryRouter` moves the bucket into `routerParked[old]` (no payout) and switches the
+  router. `payParkedRouter(r)` zeroes `routerParked[r]`, records `routerPaid[r]`, then pays `r` as the last call; a
+  refusing `r` reverts the call and the bucket stays parked for `r`.
+- States: `claimRouter` any time with a non-zero bucket, by the router, its operator or the owner;
+  `executeTreasuryRouter` only by the owner, only with a pending proposal at or after its eta (48 h);
+  `payParkedRouter` by anyone, any time, only to the router the bucket was accrued under.
+- Over/underflow: `routerPaid` / `routerParked` sums are `uint256`; `parkedOwed -= amount` follows an earlier `+=`.
+- Griefing: a third party cannot claim (C-M1 / D-L3 closed). The old text here ("the flush is tolerant ... the bucket
+  follows the new router") described the A-2 hole: an owner contract executing inside an unlock made the flush fail
+  and moved the old router's bucket to the new router. There is no flush any more (15.3).
 
 **createPool** (launcher only) and **unlockCallback**
 - `createPool` checks the caller, every cap (bonding <= 200, post <= 100, creator post <= post, start in
@@ -201,7 +212,8 @@ unlockCallback`. There is no rate setter, no withdraw, no pause, no liquidity fu
 
 - `lock`: launcher only, once per pool, after the launcher transferred the reserve (`balanceOf >= amount`; the coin is
   brand new, so the balance is exactly this reserve).
-- `release(id)`: `nonReentrant`; checks (amount > 0, hook says graduated, beneficiary non-zero), effect (amount = 0),
+- `release(id)`: `nonReentrant`; checks (amount > 0, hook says graduated, the PoolManager is locked, the pool price
+  is at or past the graduation price now (2026-10-12, F1), beneficiary non-zero), effect (amount = 0),
   then the token transfer (our plain ERC20, no callbacks). Beneficiary: the hook creator, or the human creator in the
   choice vault when the hook creator is the vault. Permissionless, once.
 - If a coin never graduates, its reserve stays locked (same as gen-7). No owner, no rescue.
@@ -219,7 +231,8 @@ unlockCallback`. There is no rate setter, no withdraw, no pause, no liquidity fu
 
 - `route(runId, expectedPaid, recruiter, squad, airdrop, accrualRoot)` (V13): operator or admin, `nonReentrant`,
   `runId == runs + 1`, and `hook.routerPaid(this).amount == expectedPaid` or `PaidMismatch(expected, actual)`. It never
-  claims: the operator claims (`hook.claimRouter()`, permissionless) and plans first. It reads
+  claims: the operator claims (`hook.claimRouter()`, since 2026-10-12 only the router, its operator or the hook
+  owner, F4) and plans first. It reads
   `hook.routerPaid(this)` and routes exactly the difference since its last run: league = floor(3750 x B / 10000), weekly
   30% of that, monthly the rest; `recruiter + squad + airdrop` in [1500 B + 1750 G, 1750 B + 2000 G] / 10000 and
   `squad <= 250 (B + G) / 10000`; protocol = total minus the rest. Effects (run counter, routed totals) before the
@@ -234,8 +247,8 @@ unlockCallback`. There is no rate setter, no withdraw, no pause, no liquidity fu
 - `pull(id)`: `nonReentrant`; permissionless; claims the hook ledger into the vault and requires the balance delta to
   equal the claimed amount before crediting by the fixed choice.
 - `claimCreatorFees(id, to)`: human creator only, `nonReentrant`, zero then pay.
-- Holder batches: operator proposes (moves holder balances into the batch, weekly cap), admin approves the exact root
-  and total, operator executes after the delay (`totalLiabilities -= total`, then `createBatch{value}`), admin can veto
+- Holder batches: operator proposes (moves holder balances into the batch, weekly cap; claim deadline in
+  [executableAt + 7 days, now + 365 days], F5), admin approves the exact root, total and claim deadline, operator executes after the delay (`totalLiabilities -= total`, then `createBatch{value}`), admin can veto
   until execution (balances restored). Unclaimed re-credit is admin-only and requires `msg.value` equal to the sum.
 - `buyback(id, amountIn)`: operator, `nonReentrant`; buyback coins only; caps per tx, per coin-week and interval;
   outside the 60 s window; before graduation `(nativeInA + amountIn) <= 95%` of A's target; the swap carries a price
@@ -255,8 +268,8 @@ clamped to `uint112` for display. The lens and `MwzSwapSim` are views.
 |---|---|---|---|
 | I1 | Fee = gen-7 formula to the wei (+0..2 wei on exact-input buys) | `beforeSwap` / `afterSwap` math | hook.spec (all types, quoter), invariants (every trade), fork suite (every router path) |
 | I2 | Fee only on the filled part of a limited swap | `MwzSwapSim` replay + `PartialFill` check | hook.spec partial fills, invariants, fork suite |
-| I3 | Rate <= 9000 in the window, == bonding after, == post after graduation | `MwzFeeMath.rate`, launcher constants, hook caps | hook.spec decay table, invariants (every trade vs block time) |
-| I4 | Claims held == routerOwed + sum(creatorOwed) | single `_accrue` / `_graduate` / payout paths | after every action in the property runs; payout reentrancy test |
+| I3 | Rate <= 9000 in the window (from `openAt`), == bonding after, == post for a swap that starts at or past the graduation price (2026-10-12, F1) | `MwzFeeMath.rate`, launcher constants, hook caps | hook.spec decay table, fixes spec, invariants (every trade vs block time and start price) |
+| I4 | Claims held == routerOwed + parkedOwed + sum(creatorOwed) (parked buckets since 2026-10-12, F3) | single `_accrue` / `_graduate` / payout paths | after every action in the property runs; payout reentrancy test |
 | I5 | The hook never holds coins | dust burned at seed; no coin path | property runs, fork suite |
 | I6 | A and B lose liquidity only once, floor(liqA x 2%) from A at graduation | no remove path; add / donate / initialize revert | position liquidity read from PoolManager storage after every action |
 | I7 | `graduated` false to true once, only at price <= sqrtGrad | latch in `afterSwap` | property runs (latch condition and monotonic), hook.spec |
@@ -266,6 +279,9 @@ clamped to `uint112` for display. The lens and `MwzSwapSim` are views.
 | I11 | A swap never reverts because of the display | 60k gas cap, no return data | hook.spec, fork suite, property runs |
 | I12 | Stored rates never change | no setter | property runs, fork suite |
 | I13 | Supply 850M + 130M + 20M, seed uses the coins sent, dust burned | launcher constants, seed | hook.spec, property runs |
+| I14 (2026-10-12) | Fee phase and bucket follow the start price; `price <= sqrtGrad` implies the latch | `beforeSwap` phase, `_accrue` | property runs: HookFee phase, `pendingBondingFees` delta, latch implication after every action |
+| I15 (2026-10-12) | The price never sits above `sqrtStart` | `afterSwap` F2 check | property runs (incl. a full-dump action after graduation) |
+| I16 (2026-10-12) | No swap before `openAt` except the launcher's first buy | `beforeSwap` B check | property runs with a scheduled third coin (direct, sell, escrow attempts) |
 
 ## 6. Auditor points A1 to A15
 
@@ -274,7 +290,7 @@ clamped to `uint112` for display. The lens and `MwzSwapSim` are views.
 | A1 | Simulation drift | `MwzSwapSim` is the proof's replay, moved verbatim into a linked library; `afterSwap` still reverts `PartialFill` on any difference. Exact under the 0.1% protocol fee (unit and fork). |
 | A2 | Display gas forcing | Accepted: one missed display update, `DisplayUpdateFailed`; money never reads the display. |
 | A3 | `tx.origin` in the display `to` | Display only; nowhere else. |
-| A4 | Router redirect window | Implemented: `executeTreasuryRouter` flushes the bucket to the old router first, tolerant of a refusing old router. Alert on `RouterProposed` stays an indexer task (step 3). |
+| A4 | Router redirect window | 2026-10-12 (F3): `executeTreasuryRouter` parks the bucket for the old router (`routerParked`, `RouterParked`); anyone pays it to that router only (`payParkedRouter`). The earlier tolerant flush was bypassable (A-2). Alert on `RouterProposed` stays an indexer task (step 3). |
 | A5 | Side pools | Out of contract scope; watcher in step 3. |
 | A6 | Uniswap protocol fee up to 0.1% | Our fee stays gen-7 exact on the curve amount the PoolManager reports; quotes include it (tested both places). Disclose. |
 | A7 | Timestamp | 60 s decay on `block.timestamp`, as gen-7. Accepted. |
@@ -282,7 +298,7 @@ clamped to `uint112` for display. The lens and `MwzSwapSim` are views.
 | A9 | Hook size | 16,708 bytes runtime (target 21,500; limit 24,576) after moving the replay into `MwzSwapSim` and previews into the lens. |
 | A10 | Exact-input buy fee = g - cost | 0..2 wei above the gen-7 floor; measured 0..1 on forks, 0..2 bound proven over 60 sizes. In the protocol's favour. |
 | A11 | Launcher rate exception | Launcher swaps only from its callback, which only runs inside `launch` (OZ guard entered) and only from the PoolManager. Tested. |
-| A12 | Crossing swap pays bonding on its whole amount | Kept by design; `HookFee.graduated == false` for that swap, so the indexer books it as bonding. |
+| A12 | Crossing swap pays bonding on its whole amount | Kept by design; `HookFee.graduated == false` for that swap, so the indexer books it as bonding. Since 2026-10-12 (F1) the same rule holds for every swap: the phase is the start price. |
 | A13 | Claim to a contract that rejects native | Reverts, balance stays, claim to another address works. Tested. |
 | A14 | Reentrancy | Claims and the router flush share one `nonReentrant` lock and zero state before paying; callbacks are PoolManager-only; `unlockCallback` only through the hook's own unlock. New fact found while building: a payout recipient runs while the PoolManager is unlocked and can swap in our pool from its `receive()`; this is safe because every swap books itself (tested). |
 | A15 | Research launcher accepted caller fees and any target | Fixed: rates are launcher constants (no fee field in the request), targets are an allow-list. |
@@ -325,6 +341,14 @@ clamped to `uint112` for display. The lens and `MwzSwapSim` are views.
   power over assets by design). The choice vault can rescue native above its liabilities.
 - A reserve of a coin that never graduates stays locked, as in gen-7.
 - Splitter destinations are immutable (see risk 4).
+- (2026-10-12) A sell that would take the price above the start price reverts `PriceAboveStart` (F2). After graduation
+  the coins in circulation can exceed what A takes back; such a sell needs a price limit at or below `sqrtStart` (it
+  then partially fills). UniversalRouter V4 swaps carry no limit, so the app must cap the sell size.
+- (2026-10-12) The graduation latch can still be forced with a buy-and-sell-back; it no longer changes fees, League
+  counting or the reserve (F1), but `Graduated` fires early and the one-time graduation fee is taken then. A
+  three-transaction same-block bundle (buy to the graduation price, `release`, sell back) can release a creator's
+  reserve early (15.1, residual).
+- (2026-10-12) Robinhood Chain has no Chainlink L2 sequencer uptime feed (15.7).
 
 ## 9. Deviations from the design doc (all deliberate, each needs the founder's eye)
 
@@ -387,23 +411,24 @@ ABIs: `contracts/gen8/abi/*.abi.json` (regenerate with `node scripts/gen8/export
 
 | Contract | Event | topic0 |
 |---|---|---|
-| Launcher | `Launched(address indexed token, bytes32 indexed id, address indexed creator, address hookCreator, uint256 targetUsd, uint256 marketCapNative, uint256 virtualNative, uint256 virtualToken, int24 tickStart, int24 tickGrad, uint8 feeChoice, uint8 feeCreatorPct, uint256 firstBuyIn, uint256 firstBuyOut)` | `0x088cfcd47a3402b49e48e3f02ab27f94e17c8faf2fd7174441c6a1b2f22e8202` |
+| Launcher | `Launched(address indexed token, bytes32 indexed id, address indexed creator, address hookCreator, uint256 targetUsd, uint256 marketCapNative, uint256 virtualNative, uint256 virtualToken, int24 tickStart, int24 tickGrad, uint8 feeChoice, uint8 feeCreatorPct, uint256 firstBuyIn, uint256 firstBuyOut, uint40 openAt)` (2026-10-12: `openAt` added; old topic `0x088cfcd4...e8202` is gone) | `0x31a17dc08a6e6d68b3756995fcffd6409e467aecf1e327d19f4a6d5d2493abad` |
 | Launcher | `LaunchMetadata(address indexed token, bytes32 indexed id, string name, string symbol, string logoURI, string xAccount, string website, string extraLink, bytes32 metadataHash)` | `0xb1da1fbea51ed6d80051f5210a2219d6337b68bf121164963927cd17d0a248a4` |
 | Launcher | `CreatePauseUpdated(bool)`, `CreateSignerUpdated(address,address)` | `0x28c36262...2c2e07`, `0xc5a5f992...0e541e` |
-| Hook | `PoolLaunched(bytes32 indexed id, address indexed token, address indexed creator, int24 tickStart, int24 tickGrad, uint128 liqA, uint128 liqB, (uint16,uint16,uint16,uint16,uint16) fees, address display)` | `0x882a00429193dca8fdb004116ad7dab1dccf4e77ab2999afc6e0909732bd7f01` |
-| Hook | `HookFee(bytes32 indexed id, address indexed swapSender, address indexed referrer, bool buy, bool graduated, uint256 curveAmount, uint256 fee, uint256 feeBps, uint256 creatorShare)` | `0xb77d9c06aa8d782c4be19bbd7a54af4d03bb0eaf618c887f8d1eb5f7b0213ad2` |
+| Hook | `PoolLaunched(bytes32 indexed id, address indexed token, address indexed creator, int24 tickStart, int24 tickGrad, uint128 liqA, uint128 liqB, (uint16,uint16,uint16,uint16,uint16) fees, address display, uint40 openAt)` (2026-10-12: `openAt` added; old topic `0x882a0042...d7f01` is gone) | `0xdd7c18f0da19abbb07777bcf2ee68f0abe4c034ef678a7a2c11c32cdd02d0b08` |
+| Hook | `HookFee(bytes32 indexed id, address indexed swapSender, address indexed referrer, bool buy, bool graduated, uint256 curveAmount, uint256 fee, uint256 feeBps, uint256 creatorShare)` (signature unchanged; since 2026-10-12 `graduated` = the swap STARTED at or past the graduation price, F1) | `0xb77d9c06aa8d782c4be19bbd7a54af4d03bb0eaf618c887f8d1eb5f7b0213ad2` |
 | Hook | `Graduated(bytes32 indexed id, uint256 gradFeeNative, uint256 nativeInA, uint128 liquidityRemoved)` | `0x9408aa53590d2acf7d72e624d65745b71ea5a308a6cc5f2c7cbee7163b3dc332` |
 | Hook | `CreatorClaimed(bytes32 indexed id, address indexed to, uint256 amount)` | `0xc1d27057937a5216efd7c1ee2b680a2a34893e3f35e3a33f70c4bf0935312664` |
 | Hook | `CreatorProposed(bytes32 indexed id, address indexed current, address indexed proposed)` | `0x1cf5caa2b6a5e78ae6ef887c184ec7769be961dc26752723f916f81b41c60b0a` |
 | Hook | `CreatorTransferred(bytes32 indexed id, address indexed previous, address indexed next)` | `0x144ce8a4ec60039eca39fc887805725944bd0789eadedc386cdaf0cc731e48c2` |
 | Hook | `RouterClaimed(address indexed router, uint256 amount, uint256 bondingFees, uint256 gradFees)` | `0x2a665e6945441ed891d04bf4224d831464c1973f64bc3826a762686cc02bb1d2` |
-| Hook | `RouterFlushFailed(address indexed router, uint256 amount)` | `0xab328c600f1136ae1f2cc5a41598d1474d4dd6ca3f64b5e2df7a1a215856f8ed` |
+| Hook | `RouterParked(address indexed router, uint256 amount, uint256 bondingFees, uint256 gradFees)` (2026-10-12, F3; replaces `RouterFlushFailed`, removed) | `0x506167ba2006e49cff0621af84213321ef12c7bcbd489bbb9072a59247567d66` |
 | Hook | `RouterProposed(address indexed router, uint256 eta)` | `0xef16fd666847c0c0678edfd1d0ffd1bfa37b9d6be4af7ce29e8b0e01dcb94d59` |
 | Hook | `RouterChanged(address indexed previous, address indexed next)` | `0xc736654a613824c69968e0ec25ac1a428ccd49e15c28e97b5dfd2c6059757e2a` |
 | Hook | `RouterProposalCancelled(address indexed router)` | `0x2da9e1f0074f0b00eb9265a391bbfbe3620e2dd942a4c34944ab3c8c0d18f4f4` |
 | Hook | `DisplayUpdateFailed(bytes32 indexed id)` | `0xd025c44224b2edf45f377e00f22d95292dda4ecbb55f69cc49701ad6fd5951c3` |
 | Splitter | `Routed(uint256 indexed runId, bytes32 indexed accrualRoot, address indexed caller, (uint256 total, uint256 bondingFees, uint256 gradFees, uint256 weeklyLeague, uint256 monthlyLeague, uint256 recruiter, uint256 squad, uint256 airdrop, uint256 protocol) run)` | `0x57881eb45e99d6dfb862adfc2e825ffc08734a496e850ef6106dd14bb24b2ef3` |
-| Choice vault | `CoinRegistered`, `Pulled`, `CreatorFeesClaimed`, `CreatorTransferred`, `HolderBatch*`, `Buyback` | see ABI |
+| Choice vault | `HolderBatchApproved(bytes32 indexed batchId, bytes32 root, uint256 total, uint64 claimDeadline)` (2026-10-12, F5: deadline added) | `0x22070f74010d6fdb033b5195480fe86205d63d57f90005cca85ea9967cf8b9c1` |
+| Choice vault | `CoinRegistered`, `Pulled`, `CreatorFeesClaimed`, `CreatorTransferred`, `HolderBatchProposed` / `Vetoed` / `Executed`, `Buyback` | see ABI |
 | Reserve lock | `ReserveLocked`, `ReserveReleased` | `0xcf641ecd...128cdc`, `0x014cc1b5...d173ad` |
 | Escrow | `EscrowBuy(bytes32 indexed id, address indexed token, address indexed beneficiary, uint256 nativeSpent, uint256 coinsEscrowed)`, `EscrowClaimed` | `0x7e577df8...584b21` |
 | Display (BNB) | V2 `PairCreated`, `Sync`, `Mint`, `Swap` (exact Uniswap V2 signatures) | standard |
@@ -416,8 +441,13 @@ can hold several swaps of one pool through a router.
 
 ### 10.2 Indexer rules these contracts imply (step 3)
 
-- Volume = `HookFee.curveAmount`; fee = `HookFee.fee`; phase = `HookFee.graduated` (the crossing swap is bonding);
-  D14 split at the block of `Graduated` (the crossing swap goes to `curve_trades`).
+- Volume = `HookFee.curveAmount`; fee = `HookFee.fee`; phase = `HookFee.graduated` (2026-10-12: the phase of THAT
+  swap by its start price; the crossing swap and every swap back inside A after a graduation are bonding swaps, League
+  counting follows the flag, not the `Graduated` event); D14 split at the block of `Graduated` (the crossing swap goes
+  to `curve_trades`). A coin shows as graduated in the app when the latch is set AND the price is at or past the
+  graduation price (lens `progress().postPhase`), since a forced latch with a sell-back is possible (15.1).
+- Scheduled open (B): `Launched.openAt` / `PoolLaunched.openAt`; no trade before it except the launch transaction's
+  first buy; `lens.tradingOpen(id)`.
 - D1 accruals: for each `HookFee` with `graduated == false`, the router part is `fee - creatorShare`; league 37.5% of
   `fee`; recruiter / squad / airdrop by the trader's profile at trade time; for `Graduated`, the creator's profile
   (store it at launch). Run amounts must be computed from the run's totals with `MwzFeeSplitter.bands(B, G)` where
@@ -428,7 +458,10 @@ can hold several swaps of one pool through a router.
   the vault's `CreatorTransferred`. `Launched.hookCreator == choiceVault` marks a choice coin.
 - League exclusion: `tx.from` equals the current creator, or the swap sender is the escrow.
 - Holder census exclusions: PoolManager, hook, `0xdEaD`, launcher, reserve lock, escrow, choice vault.
-- Alerts: `RouterProposed`, `RouterFlushFailed`, `DisplayUpdateFailed` bursts, `CreatePauseUpdated`,
+- Router change: `RouterParked(old, ...)`, then `payParkedRouter(old)` emits `RouterClaimed(old, ...)` (counts for the
+  old splitter's next run exactly like a claim). The splitter operator's claims: `claimRouter()` from the operator key
+  (F4); a `NotRouterCaller` revert means a wrong key.
+- Alerts: `RouterProposed`, `RouterParked`, `DisplayUpdateFailed` bursts, `CreatePauseUpdated`,
   `CreateSignerUpdated`, splitter backlog (`pending().total` growing without `Routed`).
 
 ### 10.3 Step 2 (extended fork suite) starting points
@@ -513,7 +546,7 @@ gen-8, the vault caps, and everything on the testnets (Uniswap V4 availability o
 
 ## 13. Gas and sizes
 
-Sizes (runtime / initcode bytes): hook 16,708 / 17,715; MwzSwapSim 5,558; lens 3,682; launcher 14,363 / 15,935
+Sizes after the 2026-10-12 fix round: see 15.9 (hook 17,529 runtime). Step-1 sizes (runtime / initcode bytes): hook 16,708 / 17,715; MwzSwapSim 5,558; lens 3,682; launcher 14,363 / 15,935
 (includes the token's creation code); token 1,502; reserve lock 2,081; escrow 5,022; splitter 3,567 (3,868 before V13); choice vault
 12,842; display pair 1,924; display factory 3,496. All under EIP-170; hook under the 21,500 target.
 
@@ -545,3 +578,226 @@ price-limited buy (library replay) +14k over an unlimited one.
 | Pinned packages | `@uniswap/v4-core` 1.0.2, `@uniswap/v4-periphery` 1.0.3, `@openzeppelin/contracts` 5.4.0 (lockfile) |
 | Hook flags | `0x28EC` (beforeInitialize, beforeAddLiquidity, beforeSwap, afterSwap, beforeDonate, beforeSwapReturnDelta, afterSwapReturnDelta) |
 | Build | `npx hardhat --config hardhat.gen8.config.ts compile` (outputs `artifacts-gen8/`) |
+
+## 15. Fix round 2026-10-12 (after the AI audit): diff audits
+
+Founder go 2026-10-12 for the contract findings of the AI audit (`docs/build_plans/GEN8_AI_AUDIT_FINDINGS.md`,
+reviewers A hook, B launcher and periphery, C money distribution, D economics). Base `aac801d5`. Each entry states the
+change, then the CLAUDE.md money-path questions: reentrancy guard, checks-effects-interactions order, which states can
+and cannot reach it, over/underflow, griefing. The audit PoCs are re-run against the fixed code by
+`scripts/gen8/audit-rerun.sh` (copies them from the audit commits with path-only changes; results in 15.9).
+
+### 15.1 F1 forced graduation: fee phase by the start price, reserve release by the current price
+
+Change (hook). `beforeSwap` reads `slot0` and sets `post = sqrtP <= sqrtGrad` (V4 price is coins per native, so this
+is "coin price at or past the graduation price"). The rate is `MwzFeeMath.rate(fees, post, isLauncher, openAt, now)`:
+post rate when `post`, else the bonding rate with the 60 s launch decay; the launcher's own swap stays at the bonding
+rate. `post` is handed to `afterSwap` in a new transient slot (`T_POST`) next to `T_RATE`, so the two fee paths of a
+swap use one phase. `_accrue` books by `post` instead of the latch: bonding phase, creator `floor(fee * 560 / 10000)`
+and the full fee into `pendingBondingFees`; post phase, creator `floor(curve * 50 / 10000)` capped at the fee.
+`HookFee.graduated` now carries `post`. Graduation itself is unchanged: the first swap that ENDS at or past
+`sqrtGrad` sets the latch, removes 2% of A's liquidity, books the graduation fee and emits `Graduated`; that crossing
+swap started inside A, so it pays the bonding rate (as before, A12).
+
+Change (reserve lock). `release` additionally requires (a) the PoolManager to be locked (`TransientStateLibrary
+.isUnlocked == false`, error `PoolManagerUnlocked`) and (b) `slot0.sqrtP <= sqrtGrad` now (error
+`PriceBelowGraduation`), on top of the latch.
+
+Change (lens). `currentFeeBps` follows the same price rule; `progress()` gains `postPhase`; new `tradingOpen()`.
+
+Everything else gated on graduation: the choice vault's buyback progress cap (`if (!graduated)` 95% of A's target)
+stays latch-based: its purpose is "a buyback can never trigger graduation", and once the latch is set there is
+nothing left to trigger. The display pair has no phase. The splitter routes what the hook books, by bucket.
+
+- Reentrancy: `beforeSwap` / `afterSwap` stay `onlyPoolManager` without a lock (unchanged reason, 4.1); the new
+  reads (`getSlot0`, `tload`) are views. `release` keeps `nonReentrant`; its new checks are views on the PoolManager.
+- CEI: the phase is decided before any accounting; `_accrue` is unchanged in order (mint claim, then ledgers);
+  `release` still zeroes the reserve before the transfer.
+- States: `post == true` is reachable only after the latch (the pool starts at `sqrtStart > sqrtGrad`, and the first
+  swap that ends at or past `sqrtGrad` latches; no liquidity can be added or donated). The property runs assert
+  `price <= sqrtGrad => graduated` after every action. A swap starting exactly at `sqrtGrad` is post (tested).
+- Over/underflow: none new (a comparison and a transient bool).
+- Griefing and what is left of A-1 / D-H1:
+  - One transaction (buy to `sqrtGrad`, sell back, A-1) and two transactions in one block (D-H1): the latch still
+    fires (founder design: instant graduation), the graduation fee is paid out of the attacker's own buy, and the
+    price is back in A. Every later swap that starts in A pays 2% with the bonding split, books into
+    `pendingBondingFees` and is flagged `graduated = false` for the indexer (League counting continues). The reserve
+    cannot be released: inside the attacker's unlock `release` reverts `PoolManagerUnlocked`; after it,
+    `PriceBelowGraduation`. Measured locally: the one-transaction round trip costs about 5% of A's raise and gains
+    nothing on fees. Fork numbers in 15.9.
+  - Residual (measured, reported, not fixed): a bundle of THREE transactions in one block (buy to `sqrtGrad`, then
+    `release` as its own transaction while the price sits at the graduation price and the PoolManager is locked,
+    then the sell back) releases the creator's 20M reserve before a real graduation. It needs A's whole raise as
+    capital for one block (on BSC a builder bundle; on Robinhood back-to-back transactions from one sender) and costs
+    the same round trip as D-H1. The beneficiary is always the coin's creator, so only a creator has a motive; the
+    fee motive (0.5% creator share of volume vs 0.112%) is gone. Closing it needs a time condition on release (for
+    example "at or past the graduation price at two different block timestamps", or a minimum time since the latch),
+    which is a design change and is left to the founder.
+  - Other effects of a forced latch that remain by design: the `Graduated` event fires early (the indexer and the app
+    must show "graduated" from the price, not from the event alone; see 10.2 below), and the one-time 2% graduation fee
+    is taken at the forced crossing and never again (A keeps 98% of its liquidity for the real crossing).
+
+### 15.2 F2 no sell may leave the price above the start price
+
+Change (hook, `afterSwap`). After the fee paths: `if (!zeroForOne && sqrtAfter > getSqrtPriceAtTick(tickStart))
+revert PriceAboveStart()`. The `slot0` read is shared with the latch check and the display call (the display no
+longer reads `slot0` itself).
+
+- Reentrancy / CEI: a revert inside the PoolManager callback reverts the whole swap; nothing was booked that survives.
+- States: before graduation every coin outside the pool came out of A, so selling all of them back ends at most at
+  the start price (rounding is in the pool's favour); the revert is reachable only at the start price with zero
+  liquidity (A-3) or after graduation, when A holds 98% of its liquidity and the 20M reserve is in circulation, by a
+  sell larger than A can take back. Such a sell must carry a price limit at or below `sqrtStart` and then partially
+  fills to exactly `sqrtStart` (tested, local and fork, every UR). UniversalRouter V4 swaps carry no price limit, so
+  through a UR the oversize sell reverts; the app must cap a sell at what A can absorb (lens `progress`) or use the
+  limit. At the start price itself a limit equal to the price is refused by the PoolManager (`PriceLimitAlreadyExceeded`).
+- Over/underflow: none (`TickMath` on a stored, validated tick).
+- Griefing: A-3 is closed: the price can no longer be pushed to `MAX_SQRT_PRICE` for free, so the next buyer's gas
+  and the shown market cap stay normal. `MwzSwapSim` keeps its above-start code path (now unreachable).
+
+### 15.3 F3 router change: parked bucket, no try/catch
+
+Change (hook). `executeTreasuryRouter` no longer pays anything. It moves `routerOwed`, `pendingBondingFees` and
+`pendingGradFees` into `routerParked[old]` (same three counters as `routerPaid`), adds the amount to `parkedOwed`,
+emits `RouterParked(old, amount, bondingFees, gradFees)`, then switches the router. New permissionless
+`payParkedRouter(r)` pays a parked bucket to `r` only: it deletes `routerParked[r]`, lowers `parkedOwed`, records
+`routerPaid[r]` and pays through the hook's own unlock, emitting `RouterClaimed` like a claim. The try/catch and
+`RouterFlushFailed` are removed. Invariant I4 becomes `claims == routerOwed + parkedOwed + sum(creatorOwed)`.
+
+- Reentrancy: `executeTreasuryRouter` makes no external call at all (its old `nonReentrant` is no longer needed and is
+  removed); `payParkedRouter` is `nonReentrant` (hook-wide lock shared with the claims).
+- CEI: `payParkedRouter` checks (amount > 0), effects (delete parked, `parkedOwed -= amount`, `routerPaid += `), then
+  the payout as the last call; a refusing router reverts the whole call and the bucket stays parked.
+- States: execute by the owner only, with a pending proposal at or after its eta; pay parked by anyone, any time,
+  only to the router the bucket was accrued under. Re-proposing the same router parks to itself (paid by the same
+  call path); proposing an old router again adds to its parked counters.
+- Over/underflow: `routerParked` and `parkedOwed` are `uint256` sums of `uint128` buckets; `parkedOwed -= amount`
+  cannot underflow because every parked amount was added to it first.
+- Griefing: A-2 (owner contract executing inside an unlock to make the flush fail) is gone: there is no flush to fail.
+  A refusing old router no longer redirects its bucket to the new router; it stays parked until that router accepts
+  (it cannot block the change). `payParkedRouter` is one-shot per change, so it can move the old splitter's
+  cumulative paid between that splitter's plan and route at most once per change (the operator re-plans).
+- Internal audit text corrected: 4.1 said "a broken router can never block the change" and "the bucket follows the
+  new router"; the second half was the A-2 hole. 4.1 now points here.
+
+### 15.4 F4 claimRouter access
+
+Change (hook). `claimRouter` reverts `NotRouterCaller` unless `msg.sender` is the current router, the owner, or the
+router's operator, read live with a 30,000-gas `staticcall` to `operator()` (a router without one, one that reverts,
+returns short data or burns the gas simply has no operator). The splitter itself has no claim path (V13 unchanged:
+`route` never claims and is pinned to `expectedPaid`).
+
+- Reentrancy: `nonReentrant` unchanged; the operator read is a gas-capped `staticcall` before any state change, so
+  the router cannot write or re-enter.
+- CEI: checks (caller, amount) then effects (bucket zeroed, `routerPaid`) then the payout.
+- States: any time with a non-zero bucket. When the splitter admin rotates the operator, the hook follows at once
+  (tested). A Zodiac Roles operator acts through the Safe, which is the owner, so it passes too.
+- Over/underflow: none new.
+- Griefing: C-M1 / D-L3 are closed: a third party can no longer move `routerPaid` between the operator's plan and its
+  `route` (on chain: `NotRouterCaller`). Our own second claim (two workers, or the Safe) still makes a stale plan
+  revert `PaidMismatch`, which the worker handles by re-planning. C-M2 (a third-party dust claim parking the worker
+  below its minimum) loses its on-chain trigger; the worker's below-minimum rule is still an off-chain item (F11).
+  A malicious router could return any address from `operator()`; the router is chosen by the owner behind the 48 h
+  timelock, and whoever it names can only pay the router its own bucket.
+
+### 15.5 F5 holder-batch claim deadline
+
+Change (choice vault). `proposeHolderBatch` requires `executableAt + 7 days <= claimDeadline <= now + 365 days`
+(`MIN_CLAIM_WINDOW`, `MAX_CLAIM_WINDOW`, error `BadClaimDeadline`), so 0 is impossible. `approveHolderBatch(batchId,
+root, total, claimDeadline)` must name the stored deadline (else `BadBatch`) and emits `HolderBatchApproved(batchId,
+root, total, claimDeadline)`. `executeHolderBatch` refuses a batch whose deadline is less than 7 days away at execution
+(the Safe vetoes and the operator re-proposes).
+
+- Reentrancy: unchanged (`proposeHolderBatch` and `executeHolderBatch` `nonReentrant`; approve has no external call).
+- CEI: the new checks sit with the other checks before any effect; execute still sets `status`, lowers liabilities,
+  then calls the distributor.
+- States: proposal by the operator only; approval by the admin only, with the exact root, total and deadline.
+- Over/underflow: `uint64` deadline compared in `uint256`; `now + 365 days` cannot overflow.
+- Griefing: C-L2 is closed: the Safe now sees and signs the deadline, and the distributor can always reach
+  `recoverUnclaimed` after it (tested: recover after the deadline returns the unclaimed amount).
+
+### 15.6 F6 oracle band
+
+No contract change: the band was already two immutable constructor parameters. Deploy inputs
+(`scripts/gen8/deploy/inputs.example.json`), the fork suite and the local fixture now use BNB $10 to $100,000
+(56, 97) and ETH $50 to $500,000 (4663, 46630). B-05's price of $50,001 now launches; prices just outside the new band
+are refused (tested both chains' bands).
+
+### 15.7 F17 Robinhood sequencer uptime
+
+Checked 2026-10-12 (read-only): Chainlink's L2 sequencer uptime page lists 11 mainnets (Arbitrum, Base, Celo, Mantle,
+MegaETH, Metis, OP, Scroll, Soneium, X Layer, zkSync) and says it is no longer adding networks; Chainlink's
+Robinhood mainnet feed listing (58 entries) has no uptime feed; Robinhood's own oracle page recommends checking one
+but names no address. On chain: the gen-7 oracle `0xe635AA43...` reads ETH/USD `0x78F3556b...` (8 decimals, 24 h
+heartbeat, 0.5% deviation), `maxPriceAge` 90,000 s. **No uptime feed exists, so nothing is added**; the launcher keeps
+its band and the oracle's own staleness rule. If the founder wants a guard, the options are a tighter age for
+Robinhood launches or a second price source; both are design changes.
+
+### 15.8 B scheduled trading open
+
+Change (launcher). `LaunchRequest` gains `uint64 openAt` as its last field, included in `hashRequest` (so the API
+signs it). `launch` computes the effective open time: 0 or a time not after the block time opens now (gen-1
+`LaunchCampaign` rule); later than `now + 30 days` reverts `OpenAtTooFar` (draft scheduler bound, `MAX_OPEN_DELAY`).
+`Launched` gains `uint40 openAt`. Change (hook). `PoolState.launchTime` becomes `openAt` (same slot, same width);
+`createPool` takes `openAt` and requires `now <= openAt <= now + 30 days` (`BadOpenAt`); `beforeSwap` reverts
+`TradingNotOpen` before `openAt` unless the swap sender is the launcher (whose swap can only run inside `launch()`,
+A11); the 60 s decay runs from `openAt`; `PoolLaunched` gains `uint40 openAt`. The choice vault's buyback window reads
+the same field, so buybacks start at `openAt + 60 s`.
+
+- Reentrancy: unchanged (`launch` `nonReentrant`; the hook check is a comparison).
+- CEI: the bound is a check before the authorization is consumed.
+- States: before `openAt`: only the creator first buy in the launch transaction (bonding rate, as before); claims,
+  creator transfers, router claims and the reserve lock work (no swap involved). From `openAt`: as an unscheduled coin
+  launched at `openAt`. Graduation unchanged.
+- Over/underflow: `uint40` holds `now + 30 days` for 30,000 years; `openAt + 60` in `uint256`.
+- Griefing: none new; nobody can trade a scheduled coin early through any router, the escrow or the vault (tested on
+  both forks through every UR). The creator holds the first-buy coins through the wait with no market; that is the
+  product choice.
+
+### 15.9 Results of the fix round
+
+| Suite | Result |
+|---|---|
+| Local unit + property + gas/size (`npx hardhat --config hardhat.gen8.config.ts test`, fresh deterministic keys since this round) | 101 passing (80 before; +21: `test/gen8/fixes-2026-10-12.spec.ts` 19, hook.spec +2 for F3 / F4) in about 5 minutes |
+| Property runs (10 seeds x 220 actions, default) | all invariants after every action, plus I14 (phase by start price, bucket delta, latch implication), I15 (price <= sqrtStart, incl. a full-dump action), I16 (scheduled third coin: every attempt before `openAt` refused), F4 (a random user's `claimRouter` refused before every claim), F1 release rule (release succeeds at/past the graduation price, refused back in A). Over the 10 seeds: 130 to 145 trades each, 27 to 80 post-phase trades, 23 to 68 swaps back in A after graduation, up to 10 refused pre-open attempts, up to 3 refused oversize dumps, up to 9 refused releases |
+| Fork suite, BSC 56 + Robinhood 4663, $30K + $50K (`node scripts/gen8/fork-suite/run-fork-suite.mjs`, public read-only RPCs, no .env) | 2,376 / 2,376 PASS (2,116 before; new area `fixes` 42 per chain; base and step-2 checks adapted to F1 / F3 / F4 / F5 / B) in 1,101 s |
+| Audit PoC re-run (`scripts/gen8/audit-rerun.sh`, then `npx hardhat --config hardhat.audit-rerun.config.ts test` and `node audit-rerun/D/fork-econ.mjs --sims grad,grad2,splitter`) | see the table below |
+
+Audit PoCs against the fixed code (a FAILING PoC is an exploit that no longer works):
+
+| PoC | Finding | Outcome now | Evidence |
+|---|---|---|---|
+| A-1 (`auditA.spec.ts`) | forced graduation, one unlock | fixed (F1): fails at `release` | `reverted with custom error 'PriceBelowGraduation()'`; fees after the round trip 2% (fixes spec, fork `fixes`) |
+| A-2 | owner skips the A4 flush from inside an unlock | fixed (F3): fails | no `RouterFlushFailed` exists; the bucket is parked for the old router (hook.spec, fork `fixes`) |
+| A-3 | free price push to MAX | fixed (F2): fails | `WrappedError(... 0xb47b2fb1) <- PriceAboveStart` |
+| A coverage (`MwzSwapSim == Pool.swap`, 160 swaps) | check | still passes | |
+| B-05 | immutable oracle band | fixed by inputs (F6): fails | $50,001 now launches; outside the new band refused (fixes spec) |
+| B-01, B "checked" items (5) | info / checks | still pass | |
+| C-M1 | third-party `claimRouter` griefing | fixed (F4): fails | `reverted with custom error 'NotRouterCaller()'` at the attacker's claim |
+| C-L2 | deadline 0 in holder batches | fixed (F5): fails | `reverted with custom error 'BadClaimDeadline()'` |
+| C-L1, C-COV, C-I1, C-M3 | operator band bound, band property, forced native, airdrop pot root (F16) | as written they now stop at their own setup claim (`NotRouterCaller`, default signer); with that setup claim made by the operator (copy `tests/C-operator-setup`, exploit steps unchanged) all four still reproduce: they are bounded-by-design items or open decisions (F16), not part of this round | |
+| C-M2 (indexer worker, off chain) | dust claim parks the worker | on-chain trigger removed (F4); the worker's below-minimum rule is still an off-chain fix (F11) | |
+| D grad (one unlock, sell-back WITHOUT a price limit) | D-H1 | fixed: the whole round trip reverts (F2), the latch is never set | BSC and Robinhood, $30K and $50K: `SIM grad FAILED: transaction execution reverted`; same flow locally: `PriceAboveStart` (fixes spec) |
+| D grad2 (two transactions, one block) | D-H1 | fixed: the sell-back transaction reverts (status 0, F2); the attacker is left holding A's coins at the graduation price, i.e. a real graduation paid in full ($4,058 BSC / $4,059 RH at $30K, $6,764 / $6,766 at $50K) | `rerun-d.log` |
+| D grad with the sell-back limited at the start price (our fork `fixes` area) | D-H1 variant | latch fires, nothing else changes: fees back to 2% through every router, reserve locked | below |
+| D splitter | D-L3 | fixed (F4): the griefer's claim reverts | `data="0x544df468"` (`NotRouterCaller`) on both forks |
+
+Remaining cost / benefit of forcing graduation (fork `fixes` area, oracle prices at the fork blocks: BNB $753, ETH
+$2,529): one transaction or two in one block, sell-back limited at the start price: BSC $198 ($30K target, fresh
+coin), $128 (after $1,000 of buyers), $330 / $250 ($50K); Robinhood $198 / $128 ($30K), $330 / $251 ($50K). About
+40% of that is the 2% graduation fee, paid to the router bucket. Gain: none on fees (every later swap in A pays 2%
+with the bonding split, through every router), League counting continues (phase flag), reserve locked. The only
+remaining gain is the three-transaction bundle that releases the creator's reserve early (same cost, plus A's raise
+as one-block capital: $3,980 at $30K, $6,631 at $50K); see 15.1.
+
+Gas (local table `reports/gen8/local-gas.json`, before -> after): bonding swaps +0.5k to +1.6k on BNB, +1.7k to +2.8k
+on Robinhood (one `slot0` read in `beforeSwap`, the phase in transient storage, the F2 check on sells); post-phase
+swaps +3.7k to +4.8k BNB, +3.7k to +5.9k Robinhood (they read no price before; a graduated buy without a display still
+skips the `afterSwap` read); crossing swap +0.7k / +1.8k; launch +1.0k to +2.9k (the `openAt` field and events);
+`claimRouter` +5.4k (operator read); reserve release +6.9k (lock check and price read); everything else within
++0.1k. Forks (direct, warm): BSC buy 150,401 / sell 156,589 (was 149,827 / 154,944), Robinhood 135,340 / 141,231 (was
+134,520 / 139,377); crossing BSC 250,037 (was 249,520), Robinhood 235,837 (was 233,826); launch with first buy BSC
+1,798,800 (was 1,797,506), Robinhood 1,226,539 (was 1,223,237).
+
+Sizes (runtime / initcode): hook 17,529 / 18,536 (was 16,708; limit 24,576, target 21,500), launcher 14,670 / 16,242,
+lens 4,042 / 4,491, reserve lock 2,515 / 2,955, choice vault 13,119 / 13,688; others unchanged.
