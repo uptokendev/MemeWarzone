@@ -106,7 +106,7 @@ export function createBnbLaunchpadAdapter(): LaunchpadAdapter {
           chain: "bnb",
           side,
           reasons: [],
-          warnings: ["Connect a BNB wallet to run wallet-specific creator and cluster protection checks."],
+          warnings: ["Connect a BNB wallet to run the creator buy lock check."],
         };
       }
 

@@ -84,13 +84,14 @@ test("creator funding detection uses persisted RPC evidence, not explorer APIs",
 
   assert.equal(typeof security.creatorClusterFundingDetectorConfigured, "function");
   assert.equal(typeof detector.persistDirectFundingCluster, "function");
-  assert.match(securitySource, /detectDirectCreatorFunding/);
-  assert.match(securitySource, /relationship = directCreator[\s\S]*direct_creator_funding/);
-  assert.match(securitySource, /creatorDatabaseClusterId/);
+  assert.doesNotMatch(securitySource, /detectDirectCreatorFunding/);
+  assert.doesNotMatch(securitySource, /CREATOR_CLUSTER_BUY_LOCKED/);
+  assert.match(securitySource, /creatorLinked: directCreator/);
+  assert.match(securitySource, /buyerClusterId: null/);
   assert.match(
     securitySource,
-    /if \(!directCreator && !onChainClusterMatch && !databaseClusterMatch\)[\s\S]*detectDirectCreatorFunding/,
-    "the literal creator lock must not depend on the indexer lookup",
+    /BNB no longer applies wallet-cluster or direct-funding links/,
+    "BNB buys must not lock a wallet because it shares a cluster or received creator funding",
   );
 
   assert.match(detectorSource, /public\.creator_funding_edges/);
