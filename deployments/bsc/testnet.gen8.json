@@ -1,0 +1,267 @@
+{
+  "kind": "bsc-testnet-gen8",
+  "network": "bscTestnet",
+  "chainId": 97,
+  "status": "deployed-create-open",
+  "deployedAt": "2026-10-12T20:31:04.384Z",
+  "contractsCommit": "e129712b9f78d6b57073bf564dd5b96060780e8e",
+  "deployer": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "admin": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "createSigner": "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0",
+  "factoryStartBlock": 136422123,
+  "wrappedNative": "0xcd2c34926894616F6768F15F15614b1F7816bC2E",
+  "wrappedNativeNote": "Gen-7 and Topaz testnet WBNB. The public Pancake testnet WBNB 0xae13d989dac2f0debff460ac112a837c89baa7cd is a different token and is not used.",
+  "pins": {
+    "poolManager": "0xCf8159DeE2Bd92aDAb7182E46B4Dcf65AcB66ef1",
+    "quoter": "0x93d31216baFECAcaccEc83663d0597BAAA2dB597",
+    "universalRouter": "0x33983281dA43C3f51BD7DBB40414ce01C4ba216d",
+    "routerLayout": "v2.1",
+    "unsupportedProtocol": "0xE1E13c1909F01F641a3E8AC9fb42C6FE60217D40",
+    "permit2": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+    "graduationOracle": "0xc9Ee6b5bAA4c7b6C5fA0995FE29D358C59bC52Cb",
+    "nativeUsdFeed": "0x2514895c72f50D8bd4B4F9b1110F0D6bD2c97526",
+    "weekly": "0xEc505ebE1Eb5e70275D2600CE5620fF13F1f5B41",
+    "monthly": "0x0Ffc7293482bB711D24124Dd8c1aBa9505eD7205",
+    "recruiter": "0xA8A4F570ac984a1F10Dc6999254f46c056c640De",
+    "protocol": "0xa1b2e68469d042d3A641251851825AdAcD4291B5"
+  },
+  "uniswap": {
+    "poolManager": {
+      "address": "0xCf8159DeE2Bd92aDAb7182E46B4Dcf65AcB66ef1",
+      "package": "@uniswap/v4-core@1.0.2",
+      "initKeccak": "0x2aa0ab6866fc2e2b2a0a9128e66982a049eb04516c012690426ab110f92966f8"
+    },
+    "v4Quoter": {
+      "address": "0x93d31216baFECAcaccEc83663d0597BAAA2dB597",
+      "package": "@uniswap/v4-periphery@1.0.3",
+      "initKeccak": "0x0b884bcb97af0a5fdeb0bd809f81007179651002aa1e08728e3c61ef711a915f"
+    },
+    "universalRouter": {
+      "address": "0x33983281dA43C3f51BD7DBB40414ce01C4ba216d",
+      "release": "Uniswap/universal-router 2.1.2",
+      "layout": "v2.1",
+      "runtimeBytes": 24380,
+      "initKeccak": "0xba3abc8a84eedf306aed27cb8ca10a609e951d995b2a8dd2e48705b60425c55a",
+      "officialBscMainnet": "0xDc264714F68d84CF29BC605589405E78bDBE7C9f"
+    },
+    "unsupportedProtocol": {
+      "address": "0xE1E13c1909F01F641a3E8AC9fb42C6FE60217D40",
+      "initKeccak": "0xb47585b570f5f05a72ea178477bdd31fc9639dbbc44de8f48a44bbb8abd7ce92",
+      "officialBscMainnet": "0x5302086A3a25d473aAbBd0356eFf8Dd811a4d89B",
+      "standsInFor": [
+        "v2Factory",
+        "v3Factory",
+        "v3NFTPositionManager",
+        "v4PositionManager",
+        "spokePool"
+      ]
+    },
+    "note": "Chain 97 has no Uniswap V2 or V3. PancakeSwap factories on 97 are a different protocol, so the official router points those slots at UnsupportedProtocol. V4 swaps use this PoolManager."
+  },
+  "oracle": {
+    "address": "0xc9Ee6b5bAA4c7b6C5fA0995FE29D358C59bC52Cb",
+    "maxPriceAge": "3600",
+    "nativeUsdPrice": "745376946330000000000",
+    "note": "Gen-7 BSC testnet GraduationOracle reused. maxPriceAge is 3600, inside the launcher limit of 2 days. The Chainlink feed was not written."
+  },
+  "addresses": {
+    "PoolManager": "0xCf8159DeE2Bd92aDAb7182E46B4Dcf65AcB66ef1",
+    "V4Quoter": "0x93d31216baFECAcaccEc83663d0597BAAA2dB597",
+    "UnsupportedProtocol": "0xE1E13c1909F01F641a3E8AC9fb42C6FE60217D40",
+    "UniversalRouter": "0x33983281dA43C3f51BD7DBB40414ce01C4ba216d",
+    "MwzSwapSim": "0x9C66D28beb31ab65fd17CAF932DAbcd16F3C77D7",
+    "MwzDisplayPairFactory": "0x043C66347eB8DB45FE893A7bFc1f7aF80c6B933d",
+    "MwzLaunchHook": "0xBf2a6BA5E0a9D8730D56f65d0a38457D083568eC",
+    "hookSalt": "0x0000000000000000000000000000000000000000000000000000000000008408",
+    "CommunityRewardsVault": "0x97cde58328A6385c9ab58f04C490De3Af859a93f",
+    "MwzFeeSplitter": "0xD62223B6264217C3B0a427612445390ab875bab6",
+    "MwzCreatorChoiceVault": "0x43E3fb61F25eb8199fEad6dc26066C4D6918cFF3",
+    "MwzReserveLock": "0x7796457F2aa89cB8Cc2109218D50AbD768191A07",
+    "MwzV4Launcher": "0xb7778CE2192c5eEec035272f93A78898Cb0CFF01",
+    "MwzLaunchLens": "0x62f06676680b36b7aBB0dD83004B5bEfbdF9AB0a",
+    "MwzCreatorEscrow": "0xD47E9e74F5FE26160EC36EC3797049AF3Fc3A6d9",
+    "GraduationOracle": "0xc9Ee6b5bAA4c7b6C5fA0995FE29D358C59bC52Cb",
+    "holderDistributor": "0x2B5483cBc7db0812d6244d8ee0CA36087B52785A",
+    "airdropDistributor": "0x5DFD0C0469e3cE14203e6DB358F836aE7F483B54"
+  },
+  "caps": {
+    "maxBuyPerTx": "650000000000000000",
+    "maxBuybackPerCoinWeek": "6500000000000000000",
+    "minBuyInterval": "21600",
+    "maxImpactBps": "50",
+    "maxHolderBatchPerWeek": "32000000000000000000"
+  },
+  "capsSource": "CreatorRewardsVaultV2 0x1dEaCe42107c005502D1fAdac0768ad994AeE2E6 limits() on chain 97",
+  "gasUsed": "31013397",
+  "txs": [
+    {
+      "label": "PoolManager",
+      "nonce": 605,
+      "hash": "0x2edcbdde75584ef1d3153f22359150f050d186df40b3c0446ee44221129db405",
+      "gasUsed": "5243583",
+      "blockNumber": 136422123
+    },
+    {
+      "label": "V4Quoter",
+      "nonce": 606,
+      "hash": "0x46bfdff75e3236a057232f206fc0af82bfbb5192096fa672eb132386b5ce3bda",
+      "gasUsed": "1370175",
+      "blockNumber": 136422135
+    },
+    {
+      "label": "UnsupportedProtocol",
+      "nonce": 607,
+      "hash": "0x954f847fbc314aa43ef27ce9f5c7c716f79e26b89028e9953a743809bfb56c02",
+      "gasUsed": "76435",
+      "blockNumber": 136422147
+    },
+    {
+      "label": "UniversalRouter",
+      "nonce": 608,
+      "hash": "0x7ac43e7d502ae10b6f27b9f765141f95b49da1fec31f1c45f2d6ccc3ec565e29",
+      "gasUsed": "5312557",
+      "blockNumber": 136422160
+    },
+    {
+      "label": "MwzSwapSim",
+      "nonce": 609,
+      "hash": "0x566aae9a0b3567ac252417c56c62cc3dd3208e12440153b7e2a8e223464c22c8",
+      "gasUsed": "1253657",
+      "blockNumber": 136422173
+    },
+    {
+      "label": "MwzDisplayPairFactory",
+      "nonce": 610,
+      "hash": "0x5f1d5c7c5469b787ba5ab8fbd9205f0db923985345ad9864d80003421f9aa168",
+      "gasUsed": "806504",
+      "blockNumber": 136422185
+    },
+    {
+      "label": "CommunityRewardsVault",
+      "nonce": 611,
+      "hash": "0x815b8206634dd223bd6602978a407c7a795be9206b49c3b5e343039963578a9b",
+      "gasUsed": "684090",
+      "blockNumber": 136422198
+    },
+    {
+      "label": "MwzLaunchHook CREATE2",
+      "nonce": 612,
+      "hash": "0xb4cd0059ee78e09589de4c537e7064014bc2f3a4373a939546dc4edbd2354e44",
+      "gasUsed": "3954716",
+      "blockNumber": 136422216
+    },
+    {
+      "label": "MwzDisplayPairFactory.setHook",
+      "nonce": 613,
+      "hash": "0x330a49cf959efa164cfaed7a4f7579f970935dfb21e71d33850bed58ca2ba138",
+      "gasUsed": "45036",
+      "blockNumber": 136422223
+    },
+    {
+      "label": "MwzFeeSplitter",
+      "nonce": 614,
+      "hash": "0x9d59b346fc2fd24cffc5a31f93b840be46a032df53154905026b8c85ee2a70b6",
+      "gasUsed": "883895",
+      "blockNumber": 136422236
+    },
+    {
+      "label": "MwzCreatorChoiceVault",
+      "nonce": 615,
+      "hash": "0xae4eeb072d26dce056e96d0461b6aec602113c16973aeb60453aa60ecc7042fc",
+      "gasUsed": "2924604",
+      "blockNumber": 136422248
+    },
+    {
+      "label": "MwzReserveLock",
+      "nonce": 616,
+      "hash": "0x79ce2e880fa6a78f7058b17d8e2c60cb2e8016c7d81c485d148c3643a0e69d5b",
+      "gasUsed": "655014",
+      "blockNumber": 136422262
+    },
+    {
+      "label": "MwzV4Launcher",
+      "nonce": 617,
+      "hash": "0xfa4ce2041b7b8db26c1aaf3b215e41f4c340c0e8f91bb1015ec8ae625ac1a9fd",
+      "gasUsed": "3330989",
+      "blockNumber": 136422274
+    },
+    {
+      "label": "MwzLaunchLens",
+      "nonce": 618,
+      "hash": "0xc55229b77d1848cc066e37931219891c872ce69cd601f5064c3f53b1105a4647",
+      "gasUsed": "950746",
+      "blockNumber": 136422288
+    },
+    {
+      "label": "MwzCreatorEscrow",
+      "nonce": 619,
+      "hash": "0x196aab1283d6bc634ddd32e04601383d9701869fe0155f5c5e8fbb7983982490",
+      "gasUsed": "1169429",
+      "blockNumber": 136422299
+    },
+    {
+      "label": "RewardDistributor (holders)",
+      "nonce": 620,
+      "hash": "0x11d0345c053e55c88065cc0324a4cdf7df082fa80214748c990d6f3d0829cf43",
+      "gasUsed": "978242",
+      "blockNumber": 136422312
+    },
+    {
+      "label": "RewardDistributor (airdrop pot)",
+      "nonce": 621,
+      "hash": "0x47f33f9e876bd6d4d6408f0ca850c1885d0c52d229a78380f4b72d8ec6f652b6",
+      "gasUsed": "978242",
+      "blockNumber": 136422325
+    },
+    {
+      "label": "vault.setHolderDistributorOnce",
+      "nonce": 622,
+      "hash": "0xdb41a336ad5dd88c2e413514e49808b982d366b7a7aad1464823838764e58894",
+      "gasUsed": "45012",
+      "blockNumber": 136422336
+    },
+    {
+      "label": "vault.setOperator",
+      "nonce": 623,
+      "hash": "0x5e005cbacefdf6819ee31239a3b3d1cce5959d77278b7dded1d290de96bf900c",
+      "gasUsed": "45794",
+      "blockNumber": 136422344
+    },
+    {
+      "label": "vault.setCaps",
+      "nonce": 624,
+      "hash": "0x4f906c52cf3fb7f14dc12b0a4edeb3026a9f84c4e5f29617ceff4c1f7191a005",
+      "gasUsed": "135731",
+      "blockNumber": 136422360
+    },
+    {
+      "label": "community.setRewardDistributor",
+      "nonce": 625,
+      "hash": "0x5a29e2e55f1df37318d0bcd38fc0cad92f6b7ea4c1f39acf2f0961842ecd9ebf",
+      "gasUsed": "45488",
+      "blockNumber": 136422368
+    },
+    {
+      "label": "community.setAirdropOperator",
+      "nonce": 626,
+      "hash": "0x84fe4b43e0e9b43143f8de38cd31259adec94bcee78130cbc5d25b09df66eda3",
+      "gasUsed": "45313",
+      "blockNumber": 136422376
+    },
+    {
+      "label": "airdropDist.setBatchOperator",
+      "nonce": 627,
+      "hash": "0x82e45ad592ea5943825356e0256006e947f92408349cff1a3a303a483424743d",
+      "gasUsed": "47870",
+      "blockNumber": 136422388
+    },
+    {
+      "label": "launcher.setCreatePaused(false)",
+      "nonce": 628,
+      "hash": "0xe912daccd1a395a3343f44b1652923b7eb34b85c063f45abb57c2c490530d7bb",
+      "gasUsed": "30275",
+      "blockNumber": 136422402
+    }
+  ],
+  "note": "Gen-7 factories were left as they were. Launcher create is open for the testnet create-signer. The deployer is admin and does not hold user money."
+}
