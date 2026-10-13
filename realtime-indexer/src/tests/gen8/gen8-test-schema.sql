@@ -22,6 +22,8 @@ alter table public.token_candles
 
 alter table public.dex_trades
   add column if not exists base_amount_raw text, add column if not exists quote_amount_raw text,
+  add column if not exists base_amount numeric, add column if not exists quote_amount numeric,
+  add column if not exists price_quote numeric,
   add column if not exists quote_asset_type text, add column if not exists quote_token_address text,
   add column if not exists volume_usd numeric, add column if not exists reference_price_usd numeric,
   add column if not exists reference_price_updated_at timestamptz;
