@@ -14,6 +14,7 @@ import { pool } from "./db.js";
 import { ENV } from "./env.js";
 import { deriveFeeEscrowAddress } from "./solanaIndexer.js";
 import { ACQUIRE_LEASE_SQL, CLAIM_FLUSH_SQL, CLAIM_INIT_SQL } from "./solanaFeeEscrowClaimSql.js";
+import { escrowPairKey, prefetchEscrowAccounts } from "./solanaFeeEscrowPrefetch.js";
 import {
   TRADE_AUTHORIZATION_BYTES,
   chunk,
@@ -460,6 +461,11 @@ async function processFlushes(connection: Connection, payer: Keypair, reconcilin
     [SOLANA_CHAIN_ID],
   );
   const now = Date.now();
+  // One getMultipleAccounts per 50 rows (escrow + campaign each) instead of one per row. The
+  // per-row read below stays as the fallback when the batch read fails, so errors behave as before.
+  const prefetched = await prefetchEscrowAccounts(connection, rows.rows, (campaign) =>
+    deriveFeeEscrowAddress(campaign, programId().toBase58()),
+  );
   for (const row of rows.rows) {
     if (!(await acquireLease())) return;
     const campaign = new PublicKey(String(row.campaign_address));
@@ -467,10 +473,9 @@ async function processFlushes(connection: Connection, payer: Keypair, reconcilin
       String(row.escrow_address || deriveFeeEscrowAddress(campaign.toBase58(), programId().toBase58())),
     );
     try {
-      const [escrowInfo, campaignInfo] = await connection.getMultipleAccountsInfo(
-        [escrow, campaign],
-        "confirmed",
-      );
+      const [escrowInfo, campaignInfo] =
+        prefetched?.get(escrowPairKey(escrow, campaign)) ??
+        (await connection.getMultipleAccountsInfo([escrow, campaign], "confirmed"));
       if (!escrowInfo || !escrowInfo.owner.equals(programId())) {
         // The flush instruction would fail with FeeEscrowNotInitialized;
         // the row's 'initialized' status is stale.
