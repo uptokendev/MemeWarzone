@@ -136,6 +136,7 @@ function normalizeMarketTradeSource(value: unknown): MarketTradeSource {
   const source = String(value || "").trim().toLowerCase();
   if (source === "bonding") return "bonding";
   if (source === "robinhood_v3") return "robinhood_v3";
+  if (source === "gen8_v4") return "gen8_v4";
   return "topaz";
 }
 
@@ -149,7 +150,7 @@ function realtimeTrade(data: any, chainId: number): MarketTrade | null {
     campaignAddress: campaignKey(chainId, data.campaignAddress || data.campaign_address || ""),
     tokenAddress: campaignKey(chainId, data.tokenAddress || data.token_address || ""),
     pairAddress: data.pairAddress || data.pair_address ? campaignKey(chainId, data.pairAddress || data.pair_address) : null,
-    marketStage: String(data.marketStage || (source === "robinhood_v3" ? "DEX" : source === "topaz" ? "TOPAZ" : "BONDING")),
+    marketStage: String(data.marketStage || (source === "robinhood_v3" || source === "gen8_v4" ? "DEX" : source === "topaz" ? "TOPAZ" : "BONDING")),
     source,
     side: String(data.side || "buy") === "sell" ? "sell" : "buy",
     wallet: campaignKey(chainId, data.wallet || ""),

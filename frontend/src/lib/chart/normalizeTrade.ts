@@ -3,6 +3,7 @@ import type { CurveTradePoint } from "@/hooks/useCurveTrades";
 import { isSolanaChainId } from "@/lib/chainConfig";
 import type { MarketTrade } from "@/lib/marketContinuityApi";
 import { isValidTradeTxHash, normalizeTradeTxHash } from "@/lib/tradeDedupe";
+import { isGen8DexSource } from "@/lib/chart/gen8TokenPage";
 
 const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const EVM_ADDRESS_RE = /^0x[a-f0-9]{40}$/;
@@ -108,7 +109,7 @@ export function timestampSec(value: unknown): number {
 
 function venueFromSource(source: unknown, soldTokensAfterRaw: bigint | null): CurveTradePoint["venue"] {
   const raw = String(source || "").toLowerCase();
-  if (raw === "dex" || raw === "topaz" || raw === "meteora") return "dex";
+  if (raw === "dex" || raw === "topaz" || raw === "meteora" || isGen8DexSource(raw)) return "dex";
   if (raw === "curve" || raw === "bonding") return "curve";
   if (soldTokensAfterRaw != null) return "curve";
   return undefined;
