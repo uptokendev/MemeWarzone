@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+// Must stay the first import: installs the RPC counters before any module captures fetch.
+import "./arenaWorkerRpcUsageInstall.mjs";
 import { pool } from "../server/db.js";
 import { installRpcUsageCounters } from "../api/lib/rpcUsage.js";
 import { publishBattleFinished, startArenaBattleRealtimeWorker, stopArenaBattleRealtimeWorker } from "../api/lib/arenaBattleRealtime.js";

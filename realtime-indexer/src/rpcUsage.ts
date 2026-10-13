@@ -53,6 +53,9 @@ const STACK_FRAME = /^\s*at (?:async )?(?:(.+?) \()?(?:file:\/\/)?([^()\s]+?):\d
 
 /** "solanaFeeEscrowWorker.js:processFlushes" for the first frame of ours below the plumbing. */
 export function rpcCallSource(stack: string | undefined, packageDir = PACKAGE_DIR): string {
+  // The first frame of ours, plus the nearest different caller above it: shared helpers
+  // (solanaIndexer's rpc, getLogsSafe) would otherwise lump every loop into one key.
+  const frames: Array<{ name: string; fn: string }> = [];
   for (const line of String(stack || "").split("\n").slice(1)) {
     const match = STACK_FRAME.exec(line);
     if (!match) continue;
@@ -60,9 +63,19 @@ export function rpcCallSource(stack: string | undefined, packageDir = PACKAGE_DI
     if (!packageDir || !file.includes(packageDir) || file.includes("/node_modules/") || PLUMBING_FILE.test(file)) continue;
     const name = file.slice(file.lastIndexOf("/") + 1);
     const fn = String(match[1] || "").replace(/^(?:Object|Timeout|process)\./, "").replace(/^async /, "") || "<top>";
-    return `${name}:${fn}`.slice(0, 120);
+    if (!frames.length) {
+      frames.push({ name, fn });
+      continue;
+    }
+    if (fn === frames[0].fn && name === frames[0].name) continue;
+    frames.push({ name, fn });
+    break;
   }
-  return "unattributed";
+  if (!frames.length) return "unattributed";
+  const [first, parent] = frames;
+  const head = `${first.name}:${first.fn}`;
+  if (!parent) return head.slice(0, 120);
+  return `${head}<${parent.name === first.name ? parent.fn : `${parent.name}:${parent.fn}`}`.slice(0, 120);
 }
 
 function attributeRpcCall(chain: unknown, n = 1) {
