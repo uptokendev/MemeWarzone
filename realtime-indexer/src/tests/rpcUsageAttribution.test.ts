@@ -19,7 +19,7 @@ test("rpcCallSource: first frame of ours below the RPC plumbing, as file:functio
     "    at async processFlushes (file:///app/dist/solanaFeeEscrowWorker.js:470:52)",
     "    at async tick (file:///app/dist/solanaFeeEscrowWorker.js:747:5)",
   ].join("\n");
-  assert.equal(rpcCallSource(stack, "/app/dist/"), "solanaFeeEscrowWorker.js:processFlushes");
+  assert.equal(rpcCallSource(stack, "/app/dist/"), "solanaFeeEscrowWorker.js:processFlushes<tick");
 });
 
 test("rpcCallSource: rawRpcCall in rpcProvider is skipped in favour of its caller", () => {
@@ -28,8 +28,20 @@ test("rpcCallSource: rawRpcCall in rpcProvider is skipped in favour of its calle
     "    at rawRpcCall (/app/dist/rpcProvider.js:103:3)",
     "    at probeRpcUrl (/app/dist/rpcProvider.js:150:5)",
     "    at async getRpcDiagnostics (/app/dist/server.js:2900:20)",
+    "    at async statusRoute (/app/dist/statusRoutes.js:40:3)",
   ].join("\n");
-  assert.equal(rpcCallSource(stack, "/app/dist/"), "server.js:getRpcDiagnostics");
+  assert.equal(rpcCallSource(stack, "/app/dist/"), "server.js:getRpcDiagnostics<statusRoutes.js:statusRoute");
+});
+
+test("rpcCallSource: a shared helper is split by its caller; recursion is skipped", () => {
+  const stack = [
+    "Error",
+    "    at countedFetch (/app/dist/rpcUsage.js:200:7)",
+    "    at async rpc (/app/dist/solanaIndexer.js:430:20)",
+    "    at async rpc (/app/dist/solanaIndexer.js:440:20)",
+    "    at async runTipLane (/app/dist/solanaIndexer.js:2200:9)",
+  ].join("\n");
+  assert.equal(rpcCallSource(stack, "/app/dist/"), "solanaIndexer.js:rpc<runTipLane");
 });
 
 test("rpcCallSource: nothing of ours on the stack", () => {

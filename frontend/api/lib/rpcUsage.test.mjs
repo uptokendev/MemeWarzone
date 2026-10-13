@@ -84,7 +84,7 @@ test("rpcCallSource: first frame of ours below the counter, as file:function", a
     "    at async rpc (file:///app/frontend/api/lib/solanaImportTrades.js:138:17)",
     "    at async Object.trades (file:///app/frontend/api/lib/solanaImportTrades.js:155:20)",
   ].join("\n");
-  assert.equal(rpcCallSource(stack, "/app/frontend/"), "solanaImportTrades.js:rpc");
+  assert.equal(rpcCallSource(stack, "/app/frontend/"), "solanaImportTrades.js:rpc<trades");
   assert.equal(rpcCallSource("Error\n    at listOnTimeout (node:internal/timers:573:17)", "/app/frontend/"), "unattributed");
 });
 
