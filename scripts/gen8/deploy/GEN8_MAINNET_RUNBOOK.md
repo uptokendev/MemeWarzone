@@ -22,6 +22,27 @@ The rehearsal batches under `deployments/*/fork-rehearsal/` use an anvil address
 
 The Safe pays for the setup batch. That gas is not in the deployer figure.
 
+## Same address on both chains
+
+A CREATE address is `keccak256(rlp([deployer, nonce]))`. The chain id is not part of it. The same deployer at the same nonce produces the same address on BNB and on Robinhood.
+
+That is what the BNB setup file was showing. On the nonce-0 rehearsal, the BNB choice vault and the Robinhood launcher are both the deployer's nonce 6, so both are `0x67AF3De471644eaEC8fb1674338F60Fa9fd31b19`. The BNB setup batch calls that address because it is the BNB vault. The same bytes are the Robinhood launcher. The file was the BNB batch. It was not a Robinhood launcher copied into the BNB file.
+
+The same nonce matches on these other pairs too. BNB has two extra transactions (the display factory and its one-time `setHook`), so later contracts shift by two. The hook does not match: it is CREATE2, and its init code includes that chain's PoolManager.
+
+| Nonce | BNB | Robinhood |
+| --- | --- | --- |
+| 0 | swap sim | swap sim |
+| 1 | display factory | community vault |
+| 5 | splitter | reserve lock |
+| 6 | choice vault | launcher |
+| 7 | reserve lock | lens |
+| 8 | launcher | escrow |
+| 9 | lens | holder distributor |
+| 10 | escrow | airdrop distributor |
+
+The real deploy does this again when both chains start at nonce 0 on the same key. Leave the nonces alone. The Safe batch carries the chain id, and the signing files are built from that chain's deploy record after the send. A Robinhood batch checked against the BNB record is refused. `scripts/gen8/deploy/gen8-mainnet-batches.test.mjs` covers the shared nonce and that refusal.
+
 ## 1. Fresh deployer (founder)
 
 In the founder's own terminal. The agent only receives the address. If a command prints a private key or a seed phrase, do not paste it into chat.
@@ -40,7 +61,7 @@ Fund that address, one chain at a time, from a wallet the founder already contro
 - BNB: the measured deploy plus one retry is **0.0018595216 BNB** at 0.05 gwei. BSC gas is often higher. At 3 gwei the same 18,595,216 gas twice is about 0.112 BNB. Send **0.2 BNB**.
 - ETH on Robinhood: the measured deploy plus one retry is **0.0007115108212 ETH** at the gas price above. Send **0.01 ETH**.
 
-After the deploy the key must hold no owner, operator, signer, pauser, or distributor. The BNB display factory keeps the deployer address in an immutable slot. That slot can call `setHook` once. The deploy does that call, and the postflight proves a second call reverts. Sweep any leftover BNB and ETH back afterwards. The leftover is a balance, not a role.
+After the deploy the key must hold no owner, operator, signer, pauser, or distributor. The BNB display factory keeps the deployer address in an immutable slot. That slot can call `setHook` once. The deploy does that call, and the postflight proves a second call reverts. The leftover BNB and ETH are a balance, not a role. Sweep them to the Safe after that chain's postflight, in section 3.
 
 ## 2. Preflight (founder, read-only)
 
@@ -67,29 +88,43 @@ Repeat with `--chain 4663` after BNB postflight has passed.
 
 The script runs its own preflight, deploys with launches paused, passes the Safe as owner and admin in the constructors, and on BNB calls `setHook` once. Postflight then proves the Safe owns every ownable contract, `createPaused` is true, the create signer is `0xb989…`, and the deployer holds no live role.
 
+After that postflight has passed, sweep the deployer's leftover native to the Safe `0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7`. One chain at a time, from the founder's terminal. The keystore password stays on that terminal. Do not paste the key or the password into chat. Read the balance, subtract the transfer gas (21000), and send the rest. A native transfer at 3 gwei costs 0.000063 of that chain's native. If the send reverts for insufficient funds, lower the value and send again.
+
+```
+ADDR=$(cast wallet address --keystore "$HOME/.mwz-keys/mwz-gen8-deployer")
+cast balance "$ADDR" --rpc-url https://bsc-dataseed.bnbchain.org
+cast send 0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7 \
+  --rpc-url https://bsc-dataseed.bnbchain.org \
+  --keystore "$HOME/.mwz-keys/mwz-gen8-deployer" \
+  --value AMOUNT_IN_WEI
+```
+
+Robinhood uses `https://rpc.mainnet.chain.robinhood.com` and the same Safe. Do this only after that chain's postflight. The deploy still needs the gas before then.
+
 Rollback: the contracts cannot be deleted. Leave `createPaused` true. Gen-7 is still open, so production launches keep using gen-7. Do not point LIVE env at the new addresses.
 
-## 4. Safe batches (founder signs, after the address exists)
+## 4. Safe batches (founder signs, after the deploy record exists)
 
-Contract addresses depend on the deployer nonce. Regenerate the signing files once, with the funded address, before anyone opens Safe. Nonce 0 if the key has never sent a transaction.
+Do not predict addresses. The writer refuses `--deployer` and `--nonce`. It reads `deployments/bsc/mainnet.gen8.json` or `deployments/robinhood/mainnet.gen8.json`, and only a record with status `deployed-create-paused`. It encodes the batch from that record, compares every chain id, call, `to`, and address argument with the record, and refuses on any difference. It then reads the files back and checks again.
 
 ```
-node scripts/gen8/deploy/write-gen8-mainnet-batches.mjs --chain 56 --deployer 0xTHE_ADDRESS --nonce 0
-node scripts/gen8/deploy/write-gen8-mainnet-batches.mjs --chain 4663 --deployer 0xTHE_ADDRESS --nonce 0
+node scripts/gen8/deploy/write-gen8-mainnet-batches.mjs --chain 56
+node scripts/gen8/deploy/write-gen8-mainnet-batches.mjs --chain 4663
 ```
 
-Each chain gets four unsigned Safe Transaction Builder files under `deployments/{bsc,robinhood}/mainnet-batches/`, and a readable decode next to each:
+Each chain gets three unsigned Safe Transaction Builder files under `deployments/{bsc,robinhood}/mainnet-batches/`, and a readable decode next to each:
 
 1. `mainnet.gen8.setup` — creates stay paused. Vault operator `0x20652bdb1d986220fEc30f4733587F279403E773`, caps copied from live gen-7 (BNB 0.65 / 6.5 / 6 h / 50 bps / 32 ether; Robinhood 0.19 / 1.9 / 6 h / 50 bps / 9.3 ether), holder and airdrop distributors, splitter operator, airdrop operator `0xdcf07EB07e6D6722c246161e7530dc905F9eaA50`.
-2. `mainnet.gen8.roles` — selector `0xc62732bb` (`approveHolderBatch(bytes32,bytes32,uint256,uint64)`) on the gen-8 choice vault. `applied: false`. The Roles module `0xEeeE0082257bc4A3189e38f0a2881f129E101c70` has no code on 56 or 4663, and this Safe has no modules, so the batch cannot land until that module is deployed and enabled by the existing payout-roles process. This blocks holder-batch approvals. It does not block a paused deploy.
-3. `mainnet.gen8.opening-day` — `setCreatePaused(false)` on gen-8 and `setCreatePaused(true)` on the gen-7 factories (BNB `0x948463E91d63a7A51cEeC0342735D1B738044aea`, Robinhood `0x399E529c0C6888543E6501FD137ac49CA3E1Df58`). Existing gen-7 coins keep trading. Leave this unsigned until the founder says go.
-4. `mainnet.gen8.set-create-signer` — spare `setCreateSigner`. The argument is `0xb989…`. Signing it unchanged is a no-op. The Safe UI can edit the address. Do not put the zero address.
+2. `mainnet.gen8.opening-day` — `setCreatePaused(false)` on gen-8 and `setCreatePaused(true)` on the gen-7 factories (BNB `0x948463E91d63a7A51cEeC0342735D1B738044aea`, Robinhood `0x399E529c0C6888543E6501FD137ac49CA3E1Df58`). Existing gen-7 coins keep trading. Leave this unsigned until the founder says go.
+3. `mainnet.gen8.set-create-signer` — spare `setCreateSigner`. The argument is `0xb989…`. Signing it unchanged sets the same signer again. A later rotation is a new batch. Do not edit this checked file.
 
-Sign setup first, on both chains. Then read the five cap getters on the gen-8 choice vault (`maxBuyPerTx`, `maxBuybackPerCoinWeek`, `minBuyInterval`, `maxImpactBps`, `maxHolderBatchPerWeek`) and match them to the setup decode. A second deploy is refused once `mainnet.gen8.json` exists.
+There is no Roles batch. The Roles module `0xEeeE0082257bc4A3189e38f0a2881f129E101c70` has no code on 56 or 4663, and this Safe's module list was empty. Do not deploy that module for gen-8. Do not write `mainnet.gen8.payout-roles.json`.
+
+Sign setup first, on both chains. Check the chain id in the Safe UI before signing (56, then 4663). Then read the five cap getters on the gen-8 choice vault (`maxBuyPerTx`, `maxBuybackPerCoinWeek`, `minBuyInterval`, `maxImpactBps`, `maxHolderBatchPerWeek`) and match them to the setup decode. A second deploy is refused once `mainnet.gen8.json` exists.
 
 Rollback after setup: leave creates paused. The Safe can set the vault operator paused. Gen-7 is untouched.
 
-Holder payouts still need a batch authorization on the holder `RewardDistributor` (`authorizeBatch` before `createBatch`). The Roles file above does not grant that. Widening it is a separate decision.
+Holder payouts are one Safe proposal per batch, from `planGen8HolderWeek` in `realtime-indexer/src/evm/evmGen8HolderBatch.ts` on `release/evm-gen8`. The program is `airdrop_holders_gen8`. The proposal is two calls: `approveHolderBatch(bytes32,bytes32,uint256,uint64)` (selector `0xc62732bb`) on the gen-8 choice vault, and `authorizeBatch` on the holder `RewardDistributor`. `sends` is empty. `safe.applied` is false and `safe.executes` is false. `executeHolderBatch` is not in the proposal. Safe owners sign. Nothing executes by itself. Do not point gen-8 at the gen-6/7 three-argument `approveHolderBatch` helper.
 
 ## 5. Production SQL (founder pastes, do not run from a script)
 
@@ -128,11 +163,11 @@ Rollback: the Safe calls `setCreatePaused(true)` on the gen-8 launcher and `setC
 1. Founder creates the keystore and sends the address.
 2. Founder funds 0.2 BNB and 0.01 ETH.
 3. Founder runs preflight.
-4. Founder runs the deploy on 56, reads postflight, then 4663.
-5. Regenerate the four Safe batches per chain with that address. Sign setup only.
+4. Founder runs the deploy on 56, reads postflight, then sweeps leftover BNB to the Safe. Then 4663, postflight, and sweeps leftover ETH to the Safe.
+5. Write the three signing batches from each chain's `mainnet.gen8.json`. The writer refuses a predicted address and refuses a batch that differs from that record. Sign setup only. No Roles batch.
 6. Founder pastes `PROD_APPLY.sql` in production.
 7. Founder sets LIVE env from the two coolify files and redeploys.
-8. Push `release/evm-gen8` if the checks passed, point TEST at it, browser-check the four coins, then the founder merges to live when they want. Creates still paused.
+8. `release/evm-gen8` is already at `2bdcb6c8`. Point the TEST app, API, and indexer at it and redeploy. Browser-check G8DIR, G8WAIT, B8DIR, and B8WAIT only after both `/health` sourceCommit values are `2bdcb6c8`. The founder merges to live when they want. Creates still paused.
 9. Opening-day batch only when the founder says go.
 
 The battle `is_active` fix stays parked. Graduated coins still cannot enter battles. Solana program upgrades stay in the combined release and are not part of this deploy. The external audit stays deferred.

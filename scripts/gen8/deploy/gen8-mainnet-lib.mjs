@@ -1,7 +1,11 @@
 /**
  * Shared plan for a paused gen-8 deploy on BNB chain 56 and Robinhood chain 4663.
- * No private keys. Addresses follow the deployer nonce, so a fresh key at nonce 0
- * matches a dry run that passes that same address.
+ * No private keys.
+ *
+ * A CREATE address is keccak256(rlp([deployer, nonce])) and does not include the
+ * chain id. The same deployer at the same nonce yields the same address on 56 and
+ * on 4663. Signing batches are not predicted from that formula. writeSigningBatches
+ * reads deployments/{bsc,robinhood}/mainnet.gen8.json after the real deploy.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -13,8 +17,6 @@ export const CREATE_SIGNER = "0xb989A99823eA96552c3E3198A40CdBF682EDf1aA";
 export const FORBIDDEN_DEPLOYER = "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714";
 export const VAULT_OPERATOR = "0x20652bdb1d986220fEc30f4733587F279403E773";
 export const AIRDROP_OPERATOR = "0xdcf07EB07e6D6722c246161e7530dc905F9eaA50";
-export const ROLES_MODULE = "0xEeeE0082257bc4A3189e38f0a2881f129E101c70";
-export const ROLE_KEY = ethers.encodeBytes32String("payout-watchdog");
 export const CREATE2_PROXY = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
 export const PERMIT2 = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
 export const HOOK_FLAGS = 0x28ecn;
@@ -23,9 +25,6 @@ export const HOLDER_BATCH_DELAY = 24 * 3600;
 export const MIN_NATIVE_USD = ethers.parseEther("10");
 export const MAX_NATIVE_USD = ethers.parseEther("100000");
 export const MAX_ORACLE_AGE = 2 * 24 * 3600;
-const CLAIM_DEADLINE_MAX = (1n << 64n) - 1n;
-
-const word = (n) => ethers.zeroPadValue(ethers.toBeHex(n), 32);
 
 export const CHAINS = {
   56: {
@@ -231,32 +230,6 @@ export function signerCalls(plan, nextSigner = CREATE_SIGNER) {
   ];
 }
 
-function gen8RoleConditions(cap) {
-  return [
-    [0, 5, 5, "0x"],
-    [0, 1, 0, "0x"],
-    [0, 1, 0, "0x"],
-    [0, 1, 18, word(cap + 1n)],
-    [0, 0, 1, "0x"],
-    [4, 1, 17, word(0n)],
-    [4, 1, 18, word(CLAIM_DEADLINE_MAX + 1n)],
-  ];
-}
-
-export function rolesCalls(plan) {
-  const cap = plan.chain.caps.maxHolderBatchPerWeek;
-  return [
-    { contract: "IZodiacRolesV2", to: ROLES_MODULE, fn: "scopeTarget", args: [ROLE_KEY, plan.addr.vault] },
-    {
-      contract: "IZodiacRolesV2",
-      to: ROLES_MODULE,
-      fn: "scopeFunction",
-      args: [ROLE_KEY, plan.addr.vault, "0xc62732bb", gen8RoleConditions(cap), 0],
-      note: `approveHolderBatch total <= ${cap}; claim deadline > 0 and <= uint64 max; value 0; call only`,
-    },
-  ];
-}
-
 const ABI = {
   MwzCreatorChoiceVault: [
     "function setOperator(address operator_, bool paused_)",
@@ -274,10 +247,6 @@ const ABI = {
     "function setCreateSigner(address next)",
   ],
   LaunchFactoryGen7: ["function setCreatePaused(bool paused)"],
-  IZodiacRolesV2: [
-    "function scopeTarget(bytes32 roleKey, address targetAddress)",
-    "function scopeFunction(bytes32 roleKey, address targetAddress, bytes4 selector, tuple(uint8 parent, uint8 paramType, uint8 operator, bytes compValue)[] conditions, uint8 options)",
-  ],
 };
 
 function encodeCall(call) {
@@ -342,42 +311,215 @@ export function decodeBatch(batch) {
   return lines.join("\n") + "\n";
 }
 
-export function writeBatchSet(dir, plan, { rehearsal = false } = {}) {
-  fs.mkdirSync(dir, { recursive: true });
+const SIGNING_SLUGS = ["setup", "opening-day", "set-create-signer"];
+const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+const RECORD_ADDRESS_KEYS = ["swapSim", "factory", "community", "hook", "splitter", "vault", "lock", "launcher", "lens", "escrow", "holder", "airdrop"];
+const ROLES_LEFTOVERS = ["mainnet.gen8.payout-roles.json", "mainnet.gen8.roles.safe-batch.json", "mainnet.gen8.roles.txt"];
+
+function capText(plan) {
+  const c = plan.chain.caps;
+  return `${ethers.formatEther(c.maxBuyPerTx)} / ${ethers.formatEther(c.maxBuybackPerCoinWeek)} / 6 h / 50 bps / ${ethers.formatEther(c.maxHolderBatchPerWeek)}`;
+}
+
+function batchSpecs(plan, { rehearsal }) {
   const banner = rehearsal
     ? "FORK REHEARSAL. These addresses belong to the anvil deployer, not the funded keystore. Do not sign."
-    : "Unsigned. Sign only after the deployer address in the plan matches the funded keystore.";
-  const capText = `${ethers.formatEther(plan.chain.caps.maxBuyPerTx)} / ${ethers.formatEther(plan.chain.caps.maxBuybackPerCoinWeek)} / 6 h / 50 bps / ${ethers.formatEther(plan.chain.caps.maxHolderBatchPerWeek)}`;
-  const files = [
-    ["setup", `Gen-8 setup (${plan.chain.name})`, `${banner} Creates stay paused. Caps copied from live gen-7: ${capText}. Vault operator ${VAULT_OPERATOR}. Airdrop operator ${AIRDROP_OPERATOR}.`, setupCalls(plan)],
-    ["roles", `Gen-8 holder-batch role (${plan.chain.name})`, `${banner} applied: false. Allows approveHolderBatch selector 0xc62732bb on the gen-8 choice vault. The Roles module ${ROLES_MODULE} had no code on 2026-10-13 and the Safe module list was empty. Do not execute until that module is deployed and enabled.`, rolesCalls(plan)],
-    ["opening-day", `Gen-8 opening day (${plan.chain.name})`, `${banner} DO NOT SIGN until the founder says go. Opens gen-8 creates and pauses gen-7 creates. Existing gen-7 coins keep trading.`, openingCalls(plan)],
-    ["set-create-signer", `Gen-8 spare create signer (${plan.chain.name})`, `${banner} Spare. The argument is the current signer ${CREATE_SIGNER}. Edit it to the new signer and re-encode before signing. Signing it unchanged sets the same signer again.`, signerCalls(plan)],
-  ];
+    : "Unsigned. Built from this chain's mainnet.gen8.json after the deploy. Every address was checked against that record.";
+  return {
+    setup: {
+      name: `Gen-8 setup (${plan.chain.name})`,
+      description: `${banner} Creates stay paused. Caps copied from live gen-7: ${capText(plan)}. Vault operator ${VAULT_OPERATOR}. Airdrop operator ${AIRDROP_OPERATOR}.`,
+      calls: setupCalls(plan),
+    },
+    "opening-day": {
+      name: `Gen-8 opening day (${plan.chain.name})`,
+      description: `${banner} DO NOT SIGN until the founder says go. Opens gen-8 creates and pauses gen-7 creates. Existing gen-7 coins keep trading.`,
+      calls: openingCalls(plan),
+    },
+    "set-create-signer": {
+      name: `Gen-8 spare create signer (${plan.chain.name})`,
+      description: `${banner} Spare. The argument is the current signer ${CREATE_SIGNER}. Signing it unchanged sets the same signer again. A later rotation is a new batch, encoded on its own. Do not edit this checked file.`,
+      calls: signerCalls(plan),
+    },
+  };
+}
+
+export function batchesFromPlan(plan, { rehearsal = false } = {}) {
+  const specs = batchSpecs(plan, { rehearsal });
+  const out = {};
+  for (const slug of SIGNING_SLUGS) {
+    const spec = specs[slug];
+    out[slug] = safeBatch(plan.chain.id, spec.name, spec.description, spec.calls);
+  }
+  return out;
+}
+
+function removeRolesFiles(dir) {
+  for (const name of ROLES_LEFTOVERS) {
+    const file = path.join(dir, name);
+    if (fs.existsSync(file)) fs.unlinkSync(file);
+  }
+}
+
+function writeBatchFiles(dir, batches) {
+  fs.mkdirSync(dir, { recursive: true });
+  removeRolesFiles(dir);
   const written = [];
-  for (const [slug, name, description, calls] of files) {
-    const batch = safeBatch(plan.chain.id, name, description, calls);
+  for (const slug of SIGNING_SLUGS) {
+    const batch = batches[slug];
     const jsonPath = path.join(dir, `mainnet.gen8.${slug}.safe-batch.json`);
     const textPath = path.join(dir, `mainnet.gen8.${slug}.txt`);
     fs.writeFileSync(jsonPath, JSON.stringify(batch, null, 2) + "\n");
     fs.writeFileSync(textPath, decodeBatch(batch));
     written.push(jsonPath, textPath);
   }
-  const rolesRecord = {
-    applied: false,
-    executes: false,
-    chainId: plan.chain.id,
-    vault: plan.addr.vault,
-    module: ROLES_MODULE,
-    moduleHasCode: false,
-    signature: "approveHolderBatch(bytes32,bytes32,uint256,uint64)",
-    selector: "0xc62732bb",
-    maxTotalWei: plan.chain.caps.maxHolderBatchPerWeek.toString(),
-    note: "Do not send this from a worker. The module address had no code when this file was written.",
+  return written;
+}
+
+function readBatchFiles(dir) {
+  const batches = {};
+  for (const slug of SIGNING_SLUGS) {
+    batches[slug] = JSON.parse(fs.readFileSync(path.join(dir, `mainnet.gen8.${slug}.safe-batch.json`), "utf8"));
+  }
+  return batches;
+}
+
+/**
+ * Fork rehearsal only. Signing files are writeSigningBatches, from the deploy record.
+ * There is no Roles file. The Roles module has no code on 56 or 4663.
+ */
+export function writeBatchSet(dir, plan, { rehearsal = false } = {}) {
+  if (!rehearsal) {
+    throw new Error("signing batches are written only from deployments/<chain>/mainnet.gen8.json after the real deploy");
+  }
+  return writeBatchFiles(dir, batchesFromPlan(plan, { rehearsal: true }));
+}
+
+function takeAddress(value, label) {
+  if (typeof value !== "string" || !ADDRESS_RE.test(value)) throw new Error(`${label} is missing`);
+  return ethers.getAddress(value);
+}
+
+/**
+ * A plan whose addresses come from the deploy record, not from a predicted nonce.
+ * Refuses a rehearsal file and any record that is not a paused mainnet deploy.
+ */
+export function planFromRecord(record) {
+  if (!record || typeof record !== "object") throw new Error("deploy record required");
+  if (record.rehearsal || record.doNotSign) {
+    throw new Error("refusing a rehearsal record; signing batches come from mainnet.gen8.json after the real deploy");
+  }
+  if (record.kind !== "mainnet-gen8") throw new Error(`record kind ${record.kind} is not mainnet-gen8`);
+  if (record.status !== "deployed-create-paused") {
+    throw new Error(`record status ${record.status} is not deployed-create-paused`);
+  }
+  const chain = chainById(record.chainId);
+  const deployer = takeAddress(record.deployer, "record.deployer");
+  if (deployer === ethers.getAddress(FORBIDDEN_DEPLOYER)) throw new Error("refusing the old deployer");
+  if (deployer === ethers.getAddress(SAFE) || deployer === ethers.getAddress(CREATE_SIGNER)) {
+    throw new Error("record deployer must not be the Safe or the create signer");
+  }
+  if (takeAddress(record.admin, "record.admin") !== ethers.getAddress(SAFE)) throw new Error("record admin is not the Safe");
+  if (takeAddress(record.createSigner, "record.createSigner") !== ethers.getAddress(CREATE_SIGNER)) {
+    throw new Error("record create signer is not the production signer");
+  }
+  const src = record.addresses;
+  if (!src || typeof src !== "object") throw new Error("record has no addresses");
+  const addr = {};
+  for (const key of RECORD_ADDRESS_KEYS) {
+    if (key === "factory" && !chain.displayFactory) {
+      const raw = src.factory;
+      if (raw == null || raw === "" || takeAddress(raw, "record.addresses.factory") === ethers.ZeroAddress) {
+        addr.factory = ethers.ZeroAddress;
+        continue;
+      }
+      throw new Error("Robinhood record must not carry a display factory");
+    }
+    addr[key] = takeAddress(src[key], `record.addresses.${key}`);
+    if (addr[key] === ethers.ZeroAddress) throw new Error(`record.addresses.${key} is the zero address`);
+  }
+  const seen = new Set();
+  for (const key of RECORD_ADDRESS_KEYS) {
+    if (addr[key] === ethers.ZeroAddress) continue;
+    if (seen.has(addr[key])) throw new Error(`record address ${addr[key]} is used twice (${key})`);
+    seen.add(addr[key]);
+  }
+  return { chain, deployer, addr, fromRecord: true };
+}
+
+function allowedBatchAddresses(plan) {
+  const allowed = new Set();
+  const add = (value) => {
+    if (typeof value !== "string" || !ADDRESS_RE.test(value)) return;
+    const addr = ethers.getAddress(value);
+    if (addr === ethers.ZeroAddress) return;
+    allowed.add(addr);
   };
-  const rolesPath = path.join(dir, "mainnet.gen8.payout-roles.json");
-  fs.writeFileSync(rolesPath, JSON.stringify(rolesRecord, null, 2) + "\n");
-  written.push(rolesPath);
+  for (const value of Object.values(plan.addr)) add(value);
+  add(plan.chain.gen7Factory);
+  add(VAULT_OPERATOR);
+  add(AIRDROP_OPERATOR);
+  add(CREATE_SIGNER);
+  add(SAFE);
+  return allowed;
+}
+
+/**
+ * Re-encodes every signing batch from the deploy record and refuses a difference
+ * in chain id, call count, `to`, calldata, or any address argument.
+ */
+export function postflightBatches(record, batches) {
+  const plan = planFromRecord(record);
+  const expected = batchesFromPlan(plan, { rehearsal: false });
+  const allowed = allowedBatchAddresses(plan);
+  if (!batches || typeof batches !== "object") throw new Error("batches required");
+  const gotSlugs = Object.keys(batches);
+  if (gotSlugs.length !== SIGNING_SLUGS.length || SIGNING_SLUGS.some((slug) => !batches[slug])) {
+    throw new Error(`batch set must be exactly ${SIGNING_SLUGS.join(", ")}`);
+  }
+  for (const slug of SIGNING_SLUGS) {
+    const want = expected[slug];
+    const got = batches[slug];
+    if (String(got.chainId) !== String(want.chainId)) {
+      throw new Error(`${slug} chainId ${got.chainId} is not ${want.chainId}`);
+    }
+    const gtx = got.transactions || [];
+    const wtx = want.transactions;
+    if (gtx.length !== wtx.length) throw new Error(`${slug} has ${gtx.length} calls, record encodes ${wtx.length}`);
+    gtx.forEach((tx, i) => {
+      const to = takeAddress(tx.to, `${slug} call ${i + 1} to`);
+      if (to !== ethers.getAddress(wtx[i].to)) {
+        throw new Error(`${slug} call ${i + 1} to ${to} is not the record address ${wtx[i].to}`);
+      }
+      if (String(tx.data).toLowerCase() !== String(wtx[i].data).toLowerCase()) {
+        throw new Error(`${slug} call ${i + 1} data does not match the record`);
+      }
+      if (!allowed.has(to)) throw new Error(`${slug} call ${i + 1} to ${to} is not in this chain's deploy record`);
+      const gotInputs = tx.contractInputsValues || {};
+      const wantInputs = wtx[i].contractInputsValues || {};
+      const names = new Set([...Object.keys(gotInputs), ...Object.keys(wantInputs)]);
+      for (const name of names) {
+        if (gotInputs[name] !== wantInputs[name]) {
+          throw new Error(`${slug} call ${i + 1} ${name} differs from the record`);
+        }
+        const value = gotInputs[name];
+        if (typeof value === "string" && ADDRESS_RE.test(value)) {
+          const addr = ethers.getAddress(value);
+          if (!allowed.has(addr)) throw new Error(`${slug} call ${i + 1} ${name} ${addr} is not in this chain's deploy record`);
+        }
+      }
+    });
+  }
+  return { ok: true, chainId: plan.chain.id };
+}
+
+/** Write the three unsigned signing batches from a real deploy record. No network. No signature. */
+export function writeSigningBatches(record, dir) {
+  const plan = planFromRecord(record);
+  const batches = batchesFromPlan(plan, { rehearsal: false });
+  postflightBatches(record, batches);
+  const written = writeBatchFiles(dir, batches);
+  postflightBatches(record, readBatchFiles(dir));
   return written;
 }
 
