@@ -229,6 +229,11 @@ async function solanaQuote({ token, side, amountRaw, slippage }) {
     slippageBps: String(slippage),
     platformFeeBps: String(SOLANA_FEE_BPS),
     swapMode: "ExactIn",
+    // RouteV2. The V1 Route instruction refuses our WSOL fee account whenever the coin is a
+    // Token-2022 mint (Jupiter 6014 IncorrectTokenProgramID): every buy of a new pump.fun coin
+    // failed in the wallet. Simulated on mainnet 2026-10-13 over all 16 Solana imports: the 8
+    // Token-2022 ones fail on V1 and pass on V2, the classic ones pass on both, fee unchanged.
+    instructionVersion: "V2",
   });
   const quote = await fetchJson(`${JUPITER_BASE}/quote?${params}`, { headers: jupiterHeaders() }, "Jupiter quote");
   if (!quote?.outAmount) throw Object.assign(new Error("No Jupiter route for this token"), { status: 422, code: "IMPORT_SWAP_NO_ROUTE" });
