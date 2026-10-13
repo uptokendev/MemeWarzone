@@ -74,3 +74,45 @@ test("chain of a URL: exact match on the configured lists first, then the same h
   assert.equal(of("https://unknown.example/"), null);
   assert.equal(of("not a url"), null);
 });
+
+test("rpcCallSource: first frame of ours below the counter, as file:function", async () => {
+  const { rpcCallSource } = await import("./rpcUsage.js");
+  const stack = [
+    "Error",
+    "    at attributeRpcRequest (file:///app/frontend/api/lib/rpcUsage.js:60:13)",
+    "    at countedFetch (file:///app/frontend/api/lib/rpcUsage.js:140:11)",
+    "    at async rpc (file:///app/frontend/api/lib/solanaImportTrades.js:138:17)",
+    "    at async Object.trades (file:///app/frontend/api/lib/solanaImportTrades.js:155:20)",
+  ].join("\n");
+  assert.equal(rpcCallSource(stack, "/app/frontend/"), "solanaImportTrades.js:rpc");
+  assert.equal(rpcCallSource("Error\n    at listOnTimeout (node:internal/timers:573:17)", "/app/frontend/"), "unattributed");
+});
+
+async function importTradesLikeCaller(fetchImpl) {
+  await fetchImpl("https://rpc.invalid", {
+    method: "POST",
+    body: JSON.stringify([
+      { jsonrpc: "2.0", id: 0, method: "getTransaction", params: [] },
+      { jsonrpc: "2.0", id: 1, method: "getTransaction", params: [] },
+    ]),
+  });
+}
+
+test("fetch hook attributes each batch entry to the calling function", async () => {
+  resetRpcUsage();
+  const counted = countingFetch(async () => new Response("[]"));
+  await importTradesLikeCaller(counted);
+  const snap = rpcUsageSnapshot();
+  assert.equal(snap.byChain.solana.methods.getTransaction, 2);
+  const keys = Object.keys(snap.bySourcePerDay);
+  assert.ok(keys.some((k) => k.startsWith("solana rpcUsage.test.mjs:importTradesLikeCaller")), JSON.stringify(keys));
+});
+
+test("server.mjs installs the counters with its first import, before modules that capture fetch", async () => {
+  const { readFileSync } = await import("node:fs");
+  const server = readFileSync(new URL("../server.mjs", import.meta.url), "utf8");
+  const firstImport = server.split("\n").find((line) => line.startsWith("import "));
+  assert.equal(firstImport, 'import "./lib/rpcUsageInstall.js";');
+  const worker = readFileSync(new URL("../../scripts/run-arena-battle-realtime-worker.mjs", import.meta.url), "utf8");
+  assert.equal(worker.split("\n").find((line) => line.startsWith("import ")), 'import "./arenaWorkerRpcUsageInstall.mjs";');
+});
