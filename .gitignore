@@ -122,6 +122,10 @@ env.zip
 **/env.zip
 *.env.zip
 deployments/fork-rehearsal/
+# Anvil rehearsal only. The addresses are not the funded deployer. Do not sign.
+deployments/*/fork-rehearsal/
+deployments/*/mainnet.gen8.fork-plan.json
+deployments/*/mainnet.gen8.fork-gas.json
 
 # gen-8 hardhat build outputs (hardhat.gen8.config.ts)
 cache-gen8
