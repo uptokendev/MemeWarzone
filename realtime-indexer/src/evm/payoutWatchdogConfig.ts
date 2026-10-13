@@ -9,6 +9,7 @@ import { ethers } from "ethers";
 import { FORBIDDEN_KEEPER_ADDRESSES } from "./evmGraduationKeeper.js";
 import { choiceConfig, operatedVaults, truthy, type OperatedVault } from "./evmCreatorChoiceConfig.js";
 import { EVM_GEN7_HOLDER_PROGRAM } from "./evmGen7Fees.js";
+import { GEN8_HOLDER_PROGRAM } from "./evmGen8HolderBatch.js";
 
 export const TREASURY_SAFE = "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7";
 export const WATCHDOG_CHAINS = [56, 4663, 97, 46630] as const;
@@ -86,6 +87,15 @@ export function watchdogWallet(chainId: number, env: NodeJS.ProcessEnv = process
 }
 
 export type WatchdogVaultLane = OperatedVault & { startBlock: number; holderCapWei: bigint | null };
+/** Not a member of `vaults`. The 3-arg approve probe must not target this vault. */
+export type Gen8WatchdogVault = {
+  label: "gen-8";
+  vault: string;
+  program: typeof GEN8_HOLDER_PROGRAM;
+  startBlock: number;
+  hook: string | null;
+  expectedRouter: string | null;
+};
 export type WatchdogDistributorLane = { label: string; kind: "holders" | "airdrop"; address: string | null; vault?: string; program?: string; pot?: string; capWei: bigint | null };
 
 export type WatchdogConfig = {
@@ -94,6 +104,8 @@ export type WatchdogConfig = {
   roles: string | null;
   safe: string;
   vaults: WatchdogVaultLane[];
+  /** Choice vaults. Watched for balance and router facts. Never approved with the 3-arg selector. */
+  gen8Vaults?: Gen8WatchdogVault[];
   airdrops: WatchdogDistributorLane[];
   weeks: number;
   intervalMs: number;
@@ -108,6 +120,26 @@ export type WatchdogConfig = {
   excluded: Set<string>;
   masterSecret: string | null;
 };
+
+/** Gen-8 choice vault from EVM_GEN8_CHOICE_VAULT_<id> ("0xaddr" or "0xaddr@startBlock"). Not added to the gen-6/7 list. */
+function gen8VaultLanes(chainId: number, env: NodeJS.ProcessEnv): Gen8WatchdogVault[] {
+  const raw = String(env[`EVM_GEN8_CHOICE_VAULT_${chainId}`] || "").trim();
+  if (!raw) return [];
+  const [addressPart, blockPart] = raw.split("@");
+  const vault = addressEnv(addressPart || "");
+  if (!vault) return [];
+  const block = Number(String(blockPart || "").trim());
+  const hook = addressEnv(String(env[`EVM_GEN8_HOOK_${chainId}`] || "").split("@")[0] || "");
+  const expectedRouter = addressEnv(String(env[`EVM_GEN8_SPLITTER_${chainId}`] || "").split("@")[0] || "");
+  return [{
+    label: "gen-8",
+    vault,
+    program: GEN8_HOLDER_PROGRAM,
+    startBlock: Number.isInteger(block) && block > 0 ? block : 0,
+    hook,
+    expectedRouter,
+  }];
+}
 
 /** Gen-6 and gen-7 vaults with their start blocks (the creator-choice operator's own variables). */
 function vaultLanes(chainId: number, env: NodeJS.ProcessEnv): WatchdogVaultLane[] {
@@ -140,6 +172,7 @@ export function watchdogConfig(chainId: number, env: NodeJS.ProcessEnv = process
     roles: addressEnv(String(env[`PAYOUT_WATCHDOG_ROLES_${chainId}`] || "")),
     safe: safeRaw ?? TREASURY_SAFE,
     vaults: vaultLanes(chainId, env),
+    gen8Vaults: gen8VaultLanes(chainId, env),
     airdrops,
     weeks: intEnv(env.PAYOUT_WATCHDOG_WEEKS, 12, 1, 26),
     intervalMs: intEnv(env.PAYOUT_WATCHDOG_INTERVAL_MS, 60_000, 10_000, 3_600_000),

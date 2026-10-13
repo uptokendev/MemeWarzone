@@ -7,6 +7,11 @@ import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 import {
   APPROVE_HOLDER_BATCH,
   AUTHORIZE_BATCH,
+  GEN8_APPROVE_HOLDER_BATCH,
+  GEN8_APPROVE_SELECTOR,
+  GEN8_CLAIM_DEADLINE_ROLES_MAX,
+  RH_TESTNET_GEN8_CHOICE_VAULT,
+  RH_TESTNET_GEN8_HOLDER_CAP_WEI,
   ExecutionOptions,
   KNOWN_FORBIDDEN_WATCHDOGS,
   Operator,
@@ -16,9 +21,12 @@ import {
   SENTINEL_MODULES,
   allowanceKeyFor,
   allowancePlanFor,
+  approveGen8HolderBatchConditions,
   approveHolderBatchConditions,
   authorizeBatchConditions,
   buildPayoutRolesPolicy,
+  conditionTuples,
+  gen8RolesPolicyFile,
   disableModuleCall,
   rolesProxyPlan,
 } from "../scripts/lib/payoutRolesPolicy";
@@ -71,6 +79,42 @@ describe("payout watchdog Roles policy (pure)", function () {
     expect(SELECTOR.authorizeBatch).to.equal(ethers.id(AUTHORIZE_BATCH).slice(0, 10));
     expect(() => approveHolderBatchConditions(0n)).to.throw(/positive/);
     expect(() => approveHolderBatchConditions(1n << 255n)).to.throw(/2\^255/);
+    const g8 = approveGen8HolderBatchConditions(32n * E18, 2_000_000_000n);
+    expect(g8.map((c) => [c.parent, c.paramType, c.operator])).to.deep.equal([
+      [0, ParamType.Calldata, Operator.Matches],
+      [0, ParamType.Static, Operator.Pass],
+      [0, ParamType.Static, Operator.Pass],
+      [0, ParamType.Static, Operator.LessThan],
+      [0, ParamType.None, Operator.And],
+      [4, ParamType.Static, Operator.GreaterThan],
+      [4, ParamType.Static, Operator.LessThan],
+    ]);
+    expect(SELECTOR.approveGen8HolderBatch).to.equal(GEN8_APPROVE_SELECTOR);
+    expect(SELECTOR.approveGen8HolderBatch).to.equal(ethers.id(GEN8_APPROVE_HOLDER_BATCH).slice(0, 10));
+    expect(SELECTOR.approveGen8HolderBatch).to.not.equal(SELECTOR.approveHolderBatch);
+    const withGen8 = buildPayoutRolesPolicy({
+      ...base(),
+      gen8Vaults: [{ label: "gen-8", address: A(0x801), maxTotalWei: 32n * E18, claimDeadlineMax: GEN8_CLAIM_DEADLINE_ROLES_MAX }],
+    });
+    const selectors = withGen8.calls.filter((c) => c.fn === "scopeFunction").map((c) => c.args[2]);
+    expect(selectors.slice(0, 2)).to.deep.equal([SELECTOR.approveHolderBatch, SELECTOR.approveHolderBatch]);
+    expect(selectors[2]).to.equal(GEN8_APPROVE_SELECTOR);
+    expect(withGen8.calls.filter((c) => c.fn === "scopeFunction" && c.args[2] === SELECTOR.approveHolderBatch).map((c) => c.args[1])).to.deep.equal([A(0x601), A(0x701)]);
+    const file = gen8RolesPolicyFile({ chainId: 46630, vault: RH_TESTNET_GEN8_CHOICE_VAULT, maxTotalWei: RH_TESTNET_GEN8_HOLDER_CAP_WEI });
+    expect(file.applied).to.equal(false);
+    expect(file.executes).to.equal(false);
+    expect(file.selector).to.equal(GEN8_APPROVE_SELECTOR);
+    expect(file.calls.map((c) => c.fn)).to.deep.equal(["scopeTarget", "scopeFunction"]);
+    expect(file.calls.every((c) => c.to === null)).to.equal(true);
+    const onDisk = JSON.parse(fs.readFileSync(path.join(__dirname, "../deployments/robinhood/testnet.gen8.payout-roles.json"), "utf8"));
+    expect(onDisk.selector).to.equal(file.selector);
+    expect(onDisk.vault).to.equal(file.vault);
+    expect(onDisk.maxTotalWei).to.equal(file.maxTotalWei);
+    expect(onDisk.claimDeadlineMax).to.equal(file.claimDeadlineMax);
+    expect(onDisk.conditions).to.deep.equal(file.conditions);
+    expect(onDisk.calls[1].args[2]).to.equal(GEN8_APPROVE_SELECTOR);
+    expect(onDisk.calls[1].args[3]).to.deep.equal(conditionTuples(file.conditions));
+    expect(onDisk.applied).to.equal(false);
   });
 
   it("allowance: one week of authorizations per week, at most maxWeeks weeks, starting at initialWeeks", function () {
@@ -315,5 +359,27 @@ describe("payout watchdog Roles module on the real Roles v2.1.0 bytecode (local 
     for (const tx of batch.transactions) await d.asSafe(tx.to, tx.data);
     expect(await d.safe.isModuleEnabled(d.out.record.roles)).to.equal(false);
     await expect(d.exec(V, V.interface.encodeFunctionData("approveHolderBatch", [d.batchId, d.root, d.holderBalance]))).to.be.revertedWithCustomError(d.safe, "ModuleNotEnabled");
+  });
+
+  it("gen-8 vault: Roles allows selector 0xc62732bb inside the bounds and refuses the 3-arg selector", async function () {
+    const d = await deployed();
+    const stub = await (await ethers.getContractFactory("Gen8ApproveStub")).deploy();
+    const cap = 10n * E18;
+    const deadlineMax = 2_000_000_000n;
+    const conditions = approveGen8HolderBatchConditions(cap, deadlineMax);
+    const vault = await stub.getAddress();
+    const roles = d.roles;
+    await d.asSafe(roles, roles.interface.encodeFunctionData("scopeTarget", [PAYOUT_WATCHDOG_ROLE_KEY, vault]));
+    await d.asSafe(roles, roles.interface.encodeFunctionData("scopeFunction", [PAYOUT_WATCHDOG_ROLE_KEY, vault, SELECTOR.approveGen8HolderBatch, conditionTuples(conditions), ExecutionOptions.None]));
+    const okDeadline = 1_800_000_000;
+    const data = stub.interface.encodeFunctionData("approveHolderBatch", [d.batchId, d.root, 1n, okDeadline]);
+    expect(data.slice(0, 10)).to.equal(GEN8_APPROVE_SELECTOR);
+    await expect(d.exec(stub, data)).to.emit(stub, "Approved").withArgs(d.batchId, d.root, 1n, okDeadline);
+    const three = d.vaults[0].interface.encodeFunctionData("approveHolderBatch", [d.batchId, d.root, 1n]);
+    expect(three.slice(0, 10)).to.equal(SELECTOR.approveHolderBatch);
+    await expect(d.exec(stub, three)).to.be.revertedWithCustomError(roles, "ConditionViolation").withArgs(STATUS.FunctionNotAllowed, anyValue);
+    await expect(d.exec(stub, stub.interface.encodeFunctionData("approveHolderBatch", [d.batchId, d.root, 1n, 0]))).to.be.revertedWithCustomError(roles, "ConditionViolation").withArgs(8, anyValue);
+    await expect(d.exec(stub, stub.interface.encodeFunctionData("approveHolderBatch", [d.batchId, d.root, cap + 1n, okDeadline]))).to.be.revertedWithCustomError(roles, "ConditionViolation").withArgs(STATUS.ParameterGreaterThanAllowed, anyValue);
+    await expect(d.exec(stub, stub.interface.encodeFunctionData("approveHolderBatch", [d.batchId, d.root, 1n, Number(deadlineMax) + 1]))).to.be.revertedWithCustomError(roles, "ConditionViolation").withArgs(STATUS.ParameterGreaterThanAllowed, anyValue);
   });
 });
