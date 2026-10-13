@@ -1,5 +1,5 @@
 import { ethers, FetchRequest, Network } from "ethers";
-import { countRpcRequest, hookEthersRpcCounter } from "./rpcUsage.js";
+import { attributeRpcRequest, countRpcRequest, hookEthersRpcCounter } from "./rpcUsage.js";
 
 // Count every JSON-RPC request this process sends (by chain and method; never the URL).
 hookEthersRpcCounter();
@@ -100,6 +100,7 @@ export async function rawRpcCall(
   chainId: number | null = null,
 ): Promise<unknown> {
   countRpcRequest(chainId ?? "unknown", method);
+  attributeRpcRequest(chainId ?? "unknown", method);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1_000, timeoutMs));
   try {
