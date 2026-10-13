@@ -230,3 +230,34 @@ export function maskRpcUrl(url: string): string {
     return "rpc";
   }
 }
+
+// Hosts whose URLs carry a paid key. Matching by host keeps IPFS/logo/metadata URLs in market data
+// untouched while every provider URL inside an error message is cut to scheme + host.
+const RPC_PROVIDER_HOST =
+  /(?:^|\.)(?:chainstack\.com|helius-rpc\.com|helius\.xyz|helius\.dev|quiknode\.pro|alchemy\.com|alchemyapi\.io|infura\.io|blockpi\.network|drpc\.org|ankr\.com|getblock\.io|nodereal\.io|blastapi\.io|tatum\.io|onfinality\.io)$/i;
+const KEY_QUERY_PARAM = /[?&](?:api[-_]?key|apikey|key|token|access[-_]?token)=/i;
+const URL_IN_TEXT = /\b(?:https?|wss?):\/\/[^\s"'\\<>`]+/gi;
+
+/**
+ * Mask every RPC provider URL inside free text (an ethers error carries `requestUrl` with the full
+ * key; public status routes return error text). Non-provider URLs without a key param are kept.
+ */
+export function redactRpcSecretsInText(text: string): string {
+  if (!text || !text.includes("://")) return text;
+  return text.replace(URL_IN_TEXT, (match) => {
+    let host = "";
+    try {
+      host = new URL(match).hostname;
+    } catch {
+      return match;
+    }
+    return RPC_PROVIDER_HOST.test(host) || KEY_QUERY_PARAM.test(match) ? maskRpcUrl(match) : match;
+  });
+}
+
+/** Express middleware: every string response body (res.json ends in res.send) goes through the redactor. */
+export function redactRpcSecretsMiddleware(_req: unknown, res: { send: (body?: any) => any }, next: () => void) {
+  const send = res.send.bind(res);
+  res.send = (body?: any) => send(typeof body === "string" ? redactRpcSecretsInText(body) : body);
+  next();
+}
