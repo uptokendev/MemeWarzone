@@ -9,7 +9,7 @@ export function assertOnchainLogoUri(value: unknown): string {
       "Logo storage is not configured. The image was not uploaded, so deploy was blocked. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY on the API, then upload again.",
     );
   }
-  if (!/^https?:\/\//i.test(url)) {
+  if (!/^https:\/\//i.test(url)) {
     throw new Error("Campaign logo must be an https URL. Upload the image again.");
   }
   if (url.length > MAX_ONCHAIN_LOGO_URI_CHARS) {

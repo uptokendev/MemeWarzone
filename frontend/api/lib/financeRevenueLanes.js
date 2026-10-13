@@ -70,6 +70,8 @@
 
 import { publicHiddenWhere } from "./publicHiddenSql.js";
 import { snapshotCacheFor, snapshotKeys } from "./financeSnapshots.js";
+import { gen8PostgradLaneSpec } from "./financeGen8.js";
+import { gen8ConfigFor } from "./evmGen8Config.js";
 
 export const USD_CENTS_DECIMALS = 2;
 
@@ -303,6 +305,10 @@ export const LANE_SPECS = Object.freeze({
     time: "c.expired_at", amount: "c.creator_raw",
     tx: "f.tx_hash", logIndex: "f.log_index", campaign: "c.token_address", ref: "f.side", eventId: "c.fee_id::text",
   },
+  // EVM generation 8 after graduation: MemeWarzone's 0.5% of volume (the router part of a post-phase HookFee is
+  // protocol in full). Bonding and graduation protocol slices of gen-8 are reward_events rows, so they are in the
+  // bonding and graduation_fee lanes already. Defined only for chains with gen-8 configured (laneDefinitions).
+  gen8_postgrad: gen8PostgradLaneSpec(campaignNotHiddenSql),
   graduation_fee: {
     from: "public.reward_events r",
     where: `r.chain_id = $1
@@ -399,6 +405,10 @@ export function laneDefinitions(network, { includeCore = false } = {}) {
     defs.push({ key: "dbc_migration_fee", lane: "bonding_curve_fee", source: "DBC migration fee (partner share)", ...native, sourceInventoryId: inventoryId(network, "dbcMigration") });
   } else {
     defs.push({ key: "graduation_fee", lane: "bonding_curve_fee", source: "Graduation fee (finalize) protocol share", ...native, sourceInventoryId: inventoryId(network, "finalize") });
+    // Generation 8 (only where EVM_GEN8_LAUNCHER_<id> / EVM_GEN8_HOOK_<id> are set; financeGen8.js).
+    if (gen8ConfigFor(network.chainId)) {
+      defs.push({ key: "gen8_postgrad", lane: "lp_protocol_share", source: "Gen-8 post-graduation fee 0.5% (protocol)", ...native, sourceInventoryId: inventoryId(network, "finalize") });
+    }
   }
   // `chain` goes on every aggregate: the dashboard checks each row belongs to
   // the chain section it came in (it was missing, so every chain section failed).

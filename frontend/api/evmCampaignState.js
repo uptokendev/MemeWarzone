@@ -2,6 +2,8 @@ import { ethers } from "ethers";
 import { badMethod, getQuery, json } from "../server/http.js";
 import { getRpcUrls, getServerReadProvider } from "./lib/getServerReadProvider.js";
 import { parseGen5QuoteParams, readGen5CampaignState } from "./lib/evmGen5CampaignState.js";
+import { gen8ConfigFor } from "./lib/evmGen8Config.js";
+import { gen8IndexedCampaignState, readGen8CampaignState, readGen8IndexedPool, readGen8Pool } from "./lib/evmGen8CampaignState.js";
 
 /**
  * GET /api/evm/campaign-state?chainId=56|4663&campaign=0x..[&wallet=0x..][&buyNativeWei=..|&buyTokens=..|&sellTokens=..]
@@ -23,6 +25,15 @@ const MAX_CACHE_ENTRIES = 2000;
 function cacheMs() {
   const n = Number(process.env.EVM_CAMPAIGN_STATE_CACHE_MS);
   return Number.isFinite(n) && n >= 0 ? n : 10_000;
+}
+
+async function gen8Db(deps) {
+  if (deps.db !== undefined) return deps.db;
+  try {
+    return (await import("../server/db.js")).pool;
+  } catch {
+    return null;
+  }
 }
 
 export function clearEvmCampaignStateCache() {
@@ -66,7 +77,30 @@ export async function evmCampaignStateHandler(req, res, deps = {}) {
   try {
     const provider = await getProvider(chainId);
     if (!provider) return json(res, 503, { error: `No RPC is configured for chain ${chainId}.`, code: "EVM_RPC_NOT_CONFIGURED" });
-    const state = await read({ provider, campaignAddress: campaign, wallet: wallet || null, quoteParams });
+    // Generation 8 (only where EVM_GEN8_LAUNCHER_<id> / EVM_GEN8_HOOK_<id> are set): the address is the coin's
+    // token and its state lives in the hook's pool, not in a campaign contract. One hook read decides; anything
+    // else falls through to the generation 5/6/7 reader unchanged.
+    const gen8Cfg = (deps.gen8Config || gen8ConfigFor)(chainId);
+    let state = null;
+    if (gen8Cfg) {
+      const findPool = deps.readGen8Pool || readGen8Pool;
+      let hookReadFailed = false;
+      const gen8Pool = await findPool({ provider, cfg: gen8Cfg, token: campaign }).catch((error) => {
+        console.warn("[api/evm/campaign-state] gen-8 pool read failed; trying the indexer, then the campaign reader", error?.shortMessage || error?.message || error);
+        hookReadFailed = true;
+        return null;
+      });
+      // The indexer's open_at / last_phase stand in for what the chain read cannot answer (fix round 2026-10-12).
+      const loadIndexed = deps.loadGen8Indexed || (async () => readGen8IndexedPool(await gen8Db(deps), chainId, campaign));
+      if (gen8Pool) {
+        const indexed = await loadIndexed().catch(() => null);
+        state = await (deps.readGen8State || readGen8CampaignState)({ provider, cfg: gen8Cfg, token: campaign, wallet: wallet || null, pool: gen8Pool, indexed });
+      } else if (hookReadFailed) {
+        const indexed = await loadIndexed().catch(() => null);
+        if (indexed) return json(res, 200, { chainId, ...gen8IndexedCampaignState({ cfg: gen8Cfg, indexed }), cached: false });
+      }
+    }
+    if (!state) state = await read({ provider, campaignAddress: campaign, wallet: wallet || null, quoteParams });
     const value = { chainId, ...state };
     if (cache.size >= MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value);
     cache.set(key, { value, expiresAt: Date.now() + cacheMs() });

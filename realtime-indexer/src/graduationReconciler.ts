@@ -76,6 +76,7 @@ async function listCandidates(chainId: number): Promise<Candidate[]> {
      where c.chain_id=$1
        and c.support_enabled=true
        and c.indexing_enabled=true
+       and coalesce(c.factory_generation,0) <> 8
        and coalesce(cms.market_stage,c.market_stage,'BONDING') in ('BONDING','GRADUATING','TOPAZ_PENDING','TOPAZ_DEGRADED')
      order by
        case when c.graduated_block is not null then 0 else 1 end,

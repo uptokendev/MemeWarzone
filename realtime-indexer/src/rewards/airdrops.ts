@@ -2,7 +2,9 @@ import crypto from "node:crypto";
 import type { PoolClient, QueryResult } from "pg";
 import { pool } from "../db.js";
 import { ENV } from "../env.js";
+import { curveTradeGen5Columns } from "../evm/curveTradeGen5Columns.js";
 import { getEpochById, type RewardEpochRecord } from "./epochs.js";
+import { gen8NettedCurveTradesSql } from "./leagueLeaderboard.js";
 import { bigintToString, computeAirdropWeightTier, parseNumericBigInt } from "./rewardMath.js";
 
 export const AIRDROP_DRAW_PROGRAMS = ["airdrop_trader", "airdrop_creator"] as const;
@@ -825,9 +827,10 @@ export async function getCurrentAirdropSnapshot(chainId: number) {
   let estimated = "0";
   let tradeCount = 0;
   try {
+    const trades = await airdropTrades();
     const { rows } = await pool.query(
       `select coalesce(sum(bnb_amount_raw::numeric), 0)::numeric as volume_raw, count(*)::int as trade_count
-         from public.curve_trades
+         from ${trades.bare}
         where chain_id = $1
           and block_time >= now() - interval '7 days'`,
       [chainId],
@@ -856,6 +859,19 @@ export async function getCurrentAirdropSnapshot(chainId: number) {
         : `Estimated from ${tradeCount} bonding trades in the last 7 days. Not a funded pot — claims stay closed.`,
     materializedAt: new Date().toISOString(),
   };
+}
+
+/**
+ * Gen-8 rows in the airdrop estimate and preview (founder, 2026-10-12): read the netted trades
+ * (rewards/leagueLeaderboard.ts gen8NettedCurveTradesSql: one row per coin, wallet and transaction with
+ * the trader-side amount, so a wash pair inside one transaction is its net), as the weekly draw does.
+ * Every other row passes through unchanged; the plain table (`bare` without alias, `t` with it) until
+ * the gen-5 columns exist. Display only, so no money bound: the preview shows the chain head.
+ */
+async function airdropTrades(): Promise<{ bare: string; t: string }> {
+  const cols = await curveTradeGen5Columns(pool);
+  const on = cols.leagueExcluded && cols.feeRaw;
+  return { bare: on ? gen8NettedCurveTradesSql("t") : "public.curve_trades", t: on ? gen8NettedCurveTradesSql("t") : "public.curve_trades t" };
 }
 
 function epochWindowUtc(now = new Date()) {
@@ -905,10 +921,11 @@ export async function getAirdropPreview(chainId: number, opts: { window?: "last"
   };
 
   try {
+    const trades = await airdropTrades();
     const [volume, traders, creators] = await Promise.all([
       pool.query(
         `select coalesce(sum(bnb_amount_raw::numeric), 0)::numeric as volume_raw, count(*)::int as trade_count
-           from public.curve_trades
+           from ${trades.bare}
           where chain_id = $1 and block_time >= $2 and block_time < $3`,
         [chainId, window.start, window.end],
       ),
@@ -917,7 +934,7 @@ export async function getAirdropPreview(chainId: number, opts: { window?: "last"
                 sum(t.bnb_amount_raw::numeric)::text as "volumeRaw",
                 count(*)::int as "tradeCount",
                 count(distinct (t.block_time at time zone 'utc')::date)::int as "activeDays"
-           from public.curve_trades t
+           from ${trades.t}
            join public.campaigns c on c.chain_id = t.chain_id and c.campaign_address = t.campaign_address
           where t.chain_id = $1 and t.block_time >= $2 and t.block_time < $3
             and t.side in ('buy','sell') and ${walletNeq}
@@ -932,7 +949,7 @@ export async function getAirdropPreview(chainId: number, opts: { window?: "last"
                 sum(t.bnb_amount_raw::numeric)::text as "volumeRaw",
                 count(distinct ${wallet})::int as "uniqueBuyers",
                 count(distinct t.campaign_address)::int as "eligibleCampaignCount"
-           from public.curve_trades t
+           from ${trades.t}
            join public.campaigns c on c.chain_id = t.chain_id and c.campaign_address = t.campaign_address
           where t.chain_id = $1 and t.block_time >= $2 and t.block_time < $3
             and t.side = 'buy' and ${walletNeq}

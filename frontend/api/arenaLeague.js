@@ -19,6 +19,7 @@ import { utcDay } from "./lib/arenaLeagueScoreMath.js";
 import { publicHiddenWhere } from "./lib/publicHiddenSql.js";
 import { recordMwlFinalization } from "./lib/arenaMwlRollover.js";
 import { creatorStreakStatus, hasCreatorStreaks, recordCreatorCheckin } from "./lib/creatorStreak.js";
+import { gen8PhaseRuleOn, graduatedSqlFor } from "./lib/evmGen8PlatformSql.js";
 import {
   MwlIdentityError,
   assertMwlSeasonIdentity,
@@ -229,7 +230,7 @@ async function ownedCoin(chainId, wallet, token) {
       where chain_id = $1
         and (lower(coalesce(token_address::text, '')) = lower($2) or lower(campaign_address::text) = lower($2))
         and lower(creator_address::text) = lower($3)
-        and graduated_at_chain is not null
+        and ${graduatedSqlFor("", await gen8PhaseRuleOn(pool, id), "campaigns.")}
       order by created_block desc nulls last
       limit 1`,
     [id, address, owner],
@@ -277,7 +278,7 @@ async function ownedLeagueCoins(chainId, wallet, seasonId) {
             select 1 from public.campaigns c
              where c.chain_id = $2
                and lower(c.creator_address::text) = lower($3)
-               and c.graduated_at_chain is not null
+               and ${graduatedSqlFor("c.", await gen8PhaseRuleOn(pool, id))}
                and (
                  lower(coalesce(c.token_address::text, '')) = lower(e.token_address)
                  or lower(c.campaign_address::text) = lower(e.token_address)

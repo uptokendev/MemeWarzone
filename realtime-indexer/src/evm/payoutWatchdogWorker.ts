@@ -84,30 +84,34 @@ async function safeQuery(db: Queryable | null, sql: string, params: unknown[] = 
   }
 }
 
-/** One open alert per (kind, chain, subject): a repeat while it is open writes nothing. */
-export async function raiseAlert(db: Queryable | null, a: { severity: "critical" | "warning" | "info"; kind: string; chainId: number; subject?: string; title: string; message: string; extra?: Record<string, unknown> }) {
+/**
+ * One open alert per (kind, chain, subject): a repeat while it is open writes nothing. `rewardType` defaults to
+ * 'payout_watchdog'; other workers (gen-8 hook / splitter / side pools) pass their own.
+ */
+export async function raiseAlert(db: Queryable | null, a: { severity: "critical" | "warning" | "info"; kind: string; chainId: number; subject?: string; title: string; message: string; extra?: Record<string, unknown>; rewardType?: string }) {
   if (!db) return false;
   const subject = a.subject ?? "";
+  const rewardType = a.rewardType ?? ALERT_REWARD_TYPE;
   const open = await safeQuery(
     db,
     `select id from public.reward_alerts where status = 'open' and reward_type = $1 and metadata->>'kind' = $2 and metadata->>'chainId' = $3 and coalesce(metadata->>'subject','') = $4 limit 1`,
-    [ALERT_REWARD_TYPE, a.kind, String(a.chainId), subject],
+    [rewardType, a.kind, String(a.chainId), subject],
   );
   if (open.rows.length) return false;
   await safeQuery(
     db,
     `insert into public.reward_alerts (severity, reward_type, title, message, status, metadata) values ($1, $2, $3, $4, 'open', $5::jsonb)`,
-    [a.severity, ALERT_REWARD_TYPE, a.title, a.message, JSON.stringify({ kind: a.kind, chainId: a.chainId, subject, ...(a.extra || {}) })],
+    [a.severity, rewardType, a.title, a.message, JSON.stringify({ kind: a.kind, chainId: a.chainId, subject, ...(a.extra || {}) })],
   );
   return true;
 }
 
-export async function resolveAlerts(db: Queryable | null, kind: string, chainId: number, subject?: string) {
+export async function resolveAlerts(db: Queryable | null, kind: string, chainId: number, subject?: string, rewardType: string = ALERT_REWARD_TYPE) {
   await safeQuery(
     db,
-    `update public.reward_alerts set status = 'resolved', resolved_at = now(), resolved_by = 'payout_watchdog'
+    `update public.reward_alerts set status = 'resolved', resolved_at = now(), resolved_by = $${subject == null ? 4 : 5}
       where status = 'open' and reward_type = $1 and metadata->>'kind' = $2 and metadata->>'chainId' = $3 ${subject == null ? "" : "and coalesce(metadata->>'subject','') = $4"}`,
-    subject == null ? [ALERT_REWARD_TYPE, kind, String(chainId)] : [ALERT_REWARD_TYPE, kind, String(chainId), subject],
+    subject == null ? [rewardType, kind, String(chainId), rewardType] : [rewardType, kind, String(chainId), subject, rewardType],
   );
 }
 

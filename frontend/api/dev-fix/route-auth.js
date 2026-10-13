@@ -30,9 +30,14 @@ import {
 import { prepareRobinhoodStockCreateAuthorization } from "./robinhoodStockCreatePolicy.js";
 import { prepareBnbBasicQuoteCreateAuthorization, readBnbBasicCreationPreflight } from "./bnbBasicQuoteCreatePolicy.js";
 import { defaultEvmChainId } from "../lib/defaultEvmChain.js";
-import { refuseCreateIfCanaryBlocked } from "../lib/createCanary.js";
+import { createCanaryRefusalBody, isCreateAllowedForWallet, refuseCreateIfCanaryBlocked } from "../lib/createCanary.js";
 import { EVM_GEN7_FACTORY_GENERATION, GEN7_TARGET_TEST_USD, isGen7TargetAllowed } from "../../shared/evmGen7Curve.mjs";
 import { isCreatorArmCooldownActive, normalizeCreatorArmCooldownEndsAt } from "../lib/creatorArmCooldown.js";
+import { pool } from "../../server/db.js";
+import { gen8CreateAuthorization, gen8CreateSigner, gen8RoutingStatus, isGen8CreateRequest } from "./evmGen8CreateAuthorization.js";
+import { findGen8Coin, gen8TradeAuthorizationRefusal } from "../lib/evmGen8Coins.js";
+import { gen8ConfigFor } from "../lib/evmGen8Config.js";
+import { strictEvmWallet } from "../lib/evmGen8StrictWallet.js";
 
 const VALID_PROFILES = new Set([
   ROUTE_PROFILE_STANDARD_LINKED,
@@ -357,6 +362,14 @@ export async function routingStatus(req, res) {
   if (!methodAllowed(req, res, ["GET"])) return;
   const q = getQuery(req);
   const chainId = parsePositiveInt(q.chainId, defaultEvmChainId());
+  // Generation 8 launcher named (only where gen-8 is configured): its own readiness (createSigner, pause, hook).
+  if (isGen8CreateRequest({ chainId, factoryAddress: q.factoryAddress || q.launcherAddress, generation: q.generation })) {
+    return json(res, 200, await gen8RoutingStatus({
+      chainId,
+      signer: gen8CreateSigner(process.env, getRouteAuthorityPrivateKey()),
+      getProvider: async (id) => (getRpcUrls(id).length ? getServerReadProvider(id) : null),
+    }));
+  }
   const factoryAddress = normalizeAddress(q.factoryAddress) || getFactoryAddressFromEnv(chainId);
   const signer = getSigner();
   const rpcUrlConfigured = Boolean(getRpcUrl(chainId));
@@ -408,10 +421,39 @@ export async function routingStatus(req, res) {
   });
 }
 
+/**
+ * Generation 8 create authorization (D3), from routingCreateAuthorization when the request names the chain's gen-8
+ * launcher, or from POST /api/routing/gen8/create-authorization. evmGen8CreateAuthorization.js has the rules.
+ */
+async function routingGen8CreateAuthorizationBody(res, body) {
+  // Strict 0x wallet before the canary (audit B-02): a bare-hex or ICAP wallet is refused, never passed on unchecked.
+  const wallet = strictEvmWallet(body.walletAddress);
+  if (!wallet.ok) return json(res, 400, { error: "Invalid or missing walletAddress", code: "GEN8_WALLET_INVALID" });
+  if (refuseCreateIfCanaryBlocked(res, wallet.address)) return;
+  const { status, body: out } = await gen8CreateAuthorization({ ...body, walletAddress: wallet.address }, {
+    signer: gen8CreateSigner(process.env, getRouteAuthorityPrivateKey()),
+    getProvider: async (id) => (getRpcUrls(id).length ? getServerReadProvider(id) : null),
+    evaluateCreatePreflight,
+    getRouteDecision,
+    logRouteAuthorization,
+    canaryAllows: (w) => isCreateAllowedForWallet(w),
+    canaryRefusal: createCanaryRefusalBody,
+  });
+  return json(res, status, out);
+}
+
+export async function routingGen8CreateAuthorization(req, res) {
+  if (!methodAllowed(req, res, ["POST"])) return;
+  const body = await readJson(req);
+  return routingGen8CreateAuthorizationBody(res, { ...body, generation: 8 });
+}
+
 export async function routingCreateAuthorization(req, res) {
   if (!methodAllowed(req, res, ["POST"])) return;
 
   const body = await readJson(req);
+  // Generation 8 (only where EVM_GEN8_LAUNCHER_<id> / EVM_GEN8_HOOK_<id> are set and the request names that launcher).
+  if (isGen8CreateRequest(body)) return routingGen8CreateAuthorizationBody(res, body);
   const signer = getSigner();
   if (!signer) return routeSignerUnavailable(res);
 
@@ -621,6 +663,17 @@ export async function routingTradeAuthorization(req, res) {
   if (!methodAllowed(req, res, ["POST"])) return;
 
   const body = await readJson(req);
+  // Generation 8 coins are never signed for trading (D3): a clear 409 instead of a signature the pool would not read.
+  // Only asked where gen-8 is configured for the chain; a gen-6/7 coin is answered from its campaigns row.
+  if (gen8ConfigFor(Number(body?.chainId)) && isAddress(String(body?.campaignAddress || "").trim())) {
+    const coin = await findGen8Coin({
+      chainId: Number(body.chainId),
+      address: String(body.campaignAddress).trim(),
+      db: pool,
+      getProvider: async (id) => (getRpcUrls(id).length ? getServerReadProvider(id) : null),
+    });
+    if (coin) return json(res, 409, gen8TradeAuthorizationRefusal(coin, body.chainId));
+  }
   const signer = getSigner();
   if (!signer) return routeSignerUnavailable(res);
 
