@@ -107,16 +107,16 @@ export function CreatorProtectionDialog() {
 
     if (code === "CREATOR_CLUSTER_BUY_CAP_EXCEEDED") {
       return {
-        title: "Creator Cluster Buy Cap Reached",
-        body: `This buy would exceed the ${cap} combined purchase allowance for the ${tierLabel} creator wallet and its confirmed linked wallets.`,
-        note: detail?.remainingWei != null ? `Remaining creator-cluster allowance: ${formatNativeAmount(detail.remainingWei)}.` : null,
+        title: "Creator Buy Cap Reached",
+        body: `This buy would exceed the ${cap} purchase allowance for the ${tierLabel} creator wallet.`,
+        note: detail?.remainingWei != null ? `Remaining creator allowance: ${formatNativeAmount(detail.remainingWei)}.` : null,
       };
     }
 
     if (code === "CREATOR_CLUSTER_CHECK_UNAVAILABLE" || code === "CREATOR_CLUSTER_CAP_CHECK_UNAVAILABLE") {
       return {
         title: "Protection Check Unavailable",
-        body: "MemeWarzone could not safely verify the creator-cluster protection for this campaign. No trading authorization was issued and MetaMask was not opened.",
+        body: "MemeWarzone could not safely verify the creator buy lock for this campaign. No trading authorization was issued and the wallet was not opened.",
         note: "Try again after the security service and RPC connection are healthy.",
       };
     }
@@ -126,8 +126,8 @@ export function CreatorProtectionDialog() {
         title: "Creator-Linked Wallet",
         body: `This wallet is linked to the ${tierLabel} campaign creator. Creator-linked wallets cannot buy this campaign during the creator protection period.`,
         note: noCap
-          ? `This campaign-specific restriction ends at ${unlock}. After that time there is no creator-cluster buy cap on this campaign.`
-          : `This campaign-specific restriction ends at ${unlock}. The combined creator-cluster allowance after that time is ${cap}.`,
+          ? `This campaign-specific restriction ends at ${unlock}. After that time there is no creator buy cap on this campaign.`
+          : `This campaign-specific restriction ends at ${unlock}. The creator allowance after that time is ${cap}.`,
       };
     }
 
@@ -135,8 +135,8 @@ export function CreatorProtectionDialog() {
       title: `Tier ${tierNumber} Creator Buy Protection`,
       body: `As a ${tierLabel} creator, you cannot buy your own token during the first ${tierNumber === 1 ? "24 hours" : tierNumber === 2 ? "6 hours" : "1 hour"}.`,
       note: noCap
-        ? `You can participate after ${unlock}. This campaign has no buy cap for your creator wallet and confirmed linked wallets.`
-        : `You can participate after ${unlock}. Your creator wallet and confirmed linked wallets share a combined allowance of ${cap}.`,
+        ? `You can participate after ${unlock}. This campaign has no buy cap for your creator wallet.`
+        : `You can participate after ${unlock}. Your creator wallet allowance is ${cap}.`,
     };
   }, [detail]);
 
