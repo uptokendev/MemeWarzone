@@ -23,6 +23,7 @@ import { getSquadAllocationPreview } from "./rewards/squads.js";
 import {
   createStaticJsonRpcProvider,
   maskRpcUrl,
+  redactRpcSecretsMiddleware,
   parseRpcList,
   probeRpcUrl,
   rawRpcCall,
@@ -37,6 +38,8 @@ import { parseWalletAddressOrNull, walletEqualsSql } from "./walletAddress.js";
 import type { Request, Response, NextFunction, RequestHandler } from "express";
 
 const app = express();
+// Status and error JSON can carry ethers error text with the RPC URL (and its key); mask it on the way out.
+app.use(redactRpcSecretsMiddleware);
 const tokenResponseCache = createTokenResponseCache();
 app.use(express.json({ limit: "256kb" }));
 
