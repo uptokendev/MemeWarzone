@@ -18,6 +18,8 @@ A local anvil copy of each mainnet, deployer nonce 0, impersonated. No broadcast
 
 Postflight after the deploy passed: owners and admins are the Safe, `createPaused` is true, the create signer is `0xb989…`, oracle / hook / lens / splitter wiring matches, and the deployer holds none of the live role slots. On BNB the display factory hook is set and a second `setHook` reverts. The Safe was then impersonated on the fork only, the setup batch was applied, and the gen-7 cap numbers matched.
 
+Repeated on 2026-10-14 for `0xE242e3536f386d947BbED83a3481cAa2c4dAB749`. Nonce 0 on both chains, balance 0, no code. Local anvil only. Gas used matched the table. The chain gas price at that read was 50,000,000 wei on BNB and 20,060,000 wei on Robinhood, so deploy plus one retry is **0.0018595216 BNB** and **0.00071186568944 ETH**. Anvil's own fee quote was about 1 gwei. That quote is not the funding price. Send amounts stay **0.2 BNB** and **0.01 ETH**. At nonce 6 the BNB choice vault and the Robinhood launcher are both `0xaf11784a69964A576716a5e4b514341F4437CAd3`. The fork batches are marked do not sign. `mainnet.gen8.json` was not written.
+
 The rehearsal batches under `deployments/*/fork-rehearsal/` use an anvil address. Do not sign them. They are gitignored.
 
 The Safe pays for the setup batch. That gas is not in the deployer figure.
@@ -26,7 +28,7 @@ The Safe pays for the setup batch. That gas is not in the deployer figure.
 
 A CREATE address is `keccak256(rlp([deployer, nonce]))`. The chain id is not part of it. The same deployer at the same nonce produces the same address on BNB and on Robinhood.
 
-That is what the BNB setup file was showing. On the nonce-0 rehearsal, the BNB choice vault and the Robinhood launcher are both the deployer's nonce 6, so both are `0x67AF3De471644eaEC8fb1674338F60Fa9fd31b19`. The BNB setup batch calls that address because it is the BNB vault. The same bytes are the Robinhood launcher. The file was the BNB batch. It was not a Robinhood launcher copied into the BNB file.
+That is what the BNB setup file was showing. On the first nonce-0 rehearsal the BNB choice vault and the Robinhood launcher were both the deployer's nonce 6, so both were `0x67AF3De471644eaEC8fb1674338F60Fa9fd31b19`. For `0xE242e3536f386d947BbED83a3481cAa2c4dAB749` the same pair is `0xaf11784a69964A576716a5e4b514341F4437CAd3`. The BNB setup batch calls that address because it is the BNB vault. The same bytes are the Robinhood launcher. The file was the BNB batch. It was not a Robinhood launcher copied into the BNB file.
 
 The same nonce matches on these other pairs too. BNB has two extra transactions (the display factory and its one-time `setHook`), so later contracts shift by two. The hook does not match: it is CREATE2, and its init code includes that chain's PoolManager.
 
