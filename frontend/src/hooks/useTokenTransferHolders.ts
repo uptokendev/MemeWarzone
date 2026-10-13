@@ -1,5 +1,5 @@
 import { ethers } from "ethers";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { isEvmChainId, type SupportedChainId } from "@/lib/chainConfig";
 import { scanContractLogs } from "@/lib/rpcLogScan";
 import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
@@ -16,8 +16,11 @@ export function useTokenTransferHolders(args: {
   chainId: number;
   enabled?: boolean;
   excludeAddresses?: Array<string | null | undefined>;
+  /** Changes on every new trade; triggers a delta scan instead of waiting for the slow poll. */
+  refreshKey?: string;
 }) {
   const [holders, setHolders] = useState<TransferHolderRow[]>([]);
+  const refreshRef = useRef<(() => void) | null>(null);
   const [complete, setComplete] = useState(false);
   const [loading, setLoading] = useState(false);
   const excludeKey = (args.excludeAddresses || [])
@@ -134,22 +137,48 @@ export function useTokenTransferHolders(args: {
       }
     };
 
-    void load();
-    // Paused while the tab is hidden; one catch-up scan when it shows again.
-    const stopPolling = setVisibleInterval(() => {
-      // Re-initialize AbortController if it was aborted
-      if (ac.signal.aborted) {
-        ac = new AbortController();
+    // One scan at a time: a trade that lands mid-scan queues one follow-up delta scan, so the
+    // first 200k-block scan is never started twice.
+    let running = false;
+    let rerun = false;
+    const run = async () => {
+      if (running) {
+        rerun = true;
+        return;
       }
-      void load();
-    }, 20_000);
-    
+      running = true;
+      try {
+        // Re-initialize AbortController if it was aborted
+        if (ac.signal.aborted) {
+          ac = new AbortController();
+        }
+        await load();
+      } finally {
+        running = false;
+        if (rerun && !cancelled) {
+          rerun = false;
+          void run();
+        }
+      }
+    };
+
+    void run();
+    refreshRef.current = () => void run();
+    // New trades trigger a delta scan (refreshKey); this slow poll covers plain wallet transfers.
+    // Paused while the tab is hidden; one catch-up scan when it shows again.
+    const stopPolling = setVisibleInterval(() => void run(), 60_000);
+
     return () => {
       cancelled = true;
+      refreshRef.current = null;
       ac.abort();
       stopPolling();
     };
   }, [args.chainId, args.enabled, args.tokenAddress, excludeKey]);
+
+  useEffect(() => {
+    if (args.refreshKey) refreshRef.current?.();
+  }, [args.refreshKey]);
 
   return { holders, complete, loading };
 }
