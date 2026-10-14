@@ -128,6 +128,22 @@ export function intEnv(value: unknown, fallback: number, min: number, max = Numb
   return Math.max(min, Math.min(max, Math.trunc(n)));
 }
 
+/**
+ * Gen-8 chain reads. The default and the floor are both 60 s, so a short env (the old 4 s / 15 s values)
+ * cannot bring a faster loop back. The coin page refreshes on a new trade; these are the safety polls.
+ */
+export function gen8IngestPollMs(env: NodeJS.ProcessEnv = process.env): number {
+  return intEnv(env.EVM_GEN8_POLL_MS, 60_000, 60_000);
+}
+
+export function gen8HolderPollMs(env: NodeJS.ProcessEnv = process.env): number {
+  return intEnv(env.EVM_GEN8_HOLDERS_POLL_MS, 60_000, 60_000);
+}
+
+export function gen8SidePollMs(env: NodeJS.ProcessEnv = process.env): number {
+  return intEnv(env.EVM_GEN8_SIDE_POLL_MS, 60_000, 60_000);
+}
+
 // ------------------------------------------------------------------ reorg safety (audit C-M5, F10)
 
 export type Gen8HeadTag = "finalized" | "safe" | "latest";

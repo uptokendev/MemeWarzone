@@ -1898,6 +1898,12 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
   // clears the reserve on Solana pages).
   const evmTradeKey = isSolanaPage ? "" : latestTradeKey;
   const solanaTradeKey = isSolanaPage ? latestTradeKey : "";
+  // Gen-8 lens (GET /api/evm/campaign-state). gen8Live is a boolean so replacing gen8.state does not call refresh again.
+  const gen8Live = Boolean(gen8State);
+  useEffect(() => {
+    if (!latestTradeKey || !gen8Live) return;
+    gen8.refresh();
+  }, [latestTradeKey, gen8Live, gen8.refresh]);
   const transferHolders = useTokenTransferHolders({
     tokenAddress: campaign?.token,
     chainId: chainIdForStorage,

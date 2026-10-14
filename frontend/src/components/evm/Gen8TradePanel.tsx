@@ -30,7 +30,8 @@ import {
   readProtectedRpcChoice,
   rememberProtectedRpcChoice,
 } from "@/lib/bscProtectedRpc.mjs";
-import { useNowSeconds, type Gen8CoinState } from "@/hooks/useGen8Coin";
+import { GEN8_COIN_POLL_MS, useNowSeconds, type Gen8CoinState } from "@/hooks/useGen8Coin";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 type Quote = {
   side: "buy" | "sell";
@@ -116,6 +117,7 @@ export function Gen8TradePanel({
   const [rpcBusy, setRpcBusy] = useState(false);
   const [balances, setBalances] = useState<{ nativeRaw: bigint; tokenRaw: bigint } | null>(null);
   const [balanceTick, setBalanceTick] = useState(0);
+  const spotKey = state.market?.sqrtPriceX96 ?? "";
   const [maxSellable, setMaxSellable] = useState<bigint | null>(null);
   const graduated = (state.platformStatus || state.graduation?.phase) === "graduated";
   const openAt = Number(state.openAt ?? state.tradeFee?.openAt ?? state.tradeFee?.launchAt ?? 0);
@@ -149,7 +151,7 @@ export function Gen8TradePanel({
     return () => {
       cancelled = true;
     };
-  }, [account, readProvider, token, balanceTick]);
+  }, [account, readProvider, token, balanceTick, spotKey]);
 
   useEffect(() => {
     if (!readProvider || !cfg || !state.gen8?.poolId || state.gen8.tickStart == null) {
@@ -167,7 +169,7 @@ export function Gen8TradePanel({
     return () => {
       cancelled = true;
     };
-  }, [readProvider, cfg, state.gen8?.poolId, state.gen8?.tickStart, state.graduation?.phase, balanceTick]);
+  }, [readProvider, cfg, state.gen8?.poolId, state.gen8?.tickStart, state.graduation?.phase, balanceTick, spotKey]);
 
   const amountRaw = parseUnitsSafe(amount, 18);
   const overSellCap = Boolean(side === "sell" && amountRaw && maxSellable != null && amountRaw > maxSellable);
@@ -199,7 +201,10 @@ export function Gen8TradePanel({
       window.clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setupError, amount, side, token, readProvider, cfg, escrowBuy, state.graduation?.phase, slippageArg, tradingOpen, overSellCap]);
+  }, [setupError, amount, side, token, readProvider, cfg, escrowBuy, state.graduation?.phase, slippageArg, tradingOpen, overSellCap, spotKey]);
+
+  // Safety read of the wallet balance and the sell cap. A new pool price refreshes them through spotKey.
+  useEffect(() => setVisibleInterval(() => setBalanceTick((n) => n + 1), GEN8_COIN_POLL_MS), []);
 
   const gasReserve = evmBuyGasReserveWei(robinhood);
   const overBalance = Boolean(

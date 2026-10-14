@@ -13,7 +13,7 @@ import { Wallet, verifyTypedData, TypedDataEncoder, SigningKey, getBytes, Signat
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const compiled = await build({
   absWorkingDir: dir,
-  stdin: { contents: `export { hexValue, typedDataJson, findEvmWallet, formatPriceImpact, slippageRequest, shouldOfferProtectedRpc } from "./gen8Widget.ts";`, resolveDir: dir, sourcefile: "gen8Harness.ts", loader: "ts" },
+  stdin: { contents: `export { hexValue, typedDataJson, findEvmWallet, formatPriceImpact, slippageRequest, shouldOfferProtectedRpc, GEN8_WIDGET_REFRESH_MS } from "./gen8Widget.ts";`, resolveDir: dir, sourcefile: "gen8Harness.ts", loader: "ts" },
   bundle: true,
   write: false,
   format: "esm",
@@ -28,8 +28,16 @@ try {
 } finally {
   fs.rmSync(harness, { force: true });
 }
-const { hexValue, typedDataJson, findEvmWallet, formatPriceImpact, slippageRequest, shouldOfferProtectedRpc } = mod;
+const { hexValue, typedDataJson, findEvmWallet, formatPriceImpact, slippageRequest, shouldOfferProtectedRpc, GEN8_WIDGET_REFRESH_MS } = mod;
 const { gen8PermitTypedData } = await import("../../shared/evmGen8Swap.mjs");
+
+test("the widget reloads the lens on a 60s timer, not a 5s one", () => {
+  assert.equal(GEN8_WIDGET_REFRESH_MS, 60_000);
+  const src = fs.readFileSync(path.join(dir, "gen8Widget.ts"), "utf8");
+  assert.match(src, /setInterval\(\(\) => void this\.refreshLive\(\), GEN8_WIDGET_REFRESH_MS\)/);
+  assert.match(src, /void this\.loadToken\(\);\s*void this\.loadBalances\(\)/);
+  assert.match(src, /setInterval\(\(\) => this\.paintOpens\(\), 1000\)/);
+});
 
 test("hex values for eth_sendTransaction", () => {
   assert.equal(hexValue("0"), "0x0");

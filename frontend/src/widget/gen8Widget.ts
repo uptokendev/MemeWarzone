@@ -51,6 +51,8 @@ type NeedsPermit = { needsPermit: true; approval: { to: string; data: string; va
 
 const DEFAULT_API = "https://api.memewar.zone";
 const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+/** Lens and balances. A confirmed swap also reloads immediately. The 1 s paintOpens clock is not an RPC read. */
+export const GEN8_WIDGET_REFRESH_MS = 60_000;
 /** Native kept for gas on buys (as the app's evmBuyGasReserveWei). */
 const GAS_RESERVE: Record<number, bigint> = { 56: 500_000_000_000_000n, 97: 500_000_000_000_000n, 4663: 200_000_000_000_000n, 46630: 200_000_000_000_000n };
 
@@ -108,6 +110,7 @@ export class Gen8SwapWidget {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private quoteSeq = 0;
   private openTimer: ReturnType<typeof setInterval> | null = null;
+  private refreshTimer: ReturnType<typeof setInterval> | null = null;
   private el: Record<string, HTMLElement> = {};
 
   constructor(host: HTMLElement, private options: Gen8MountOptions) {
@@ -117,6 +120,14 @@ export class Gen8SwapWidget {
     this.render();
     void this.loadToken();
     this.openTimer = setInterval(() => this.paintOpens(), 1000);
+    this.refreshTimer = setInterval(() => void this.refreshLive(), GEN8_WIDGET_REFRESH_MS);
+  }
+
+  /** Token state (the lens, via the API) and balances. Re-quotes only when an amount is already typed. */
+  private async refreshLive() {
+    await this.loadToken();
+    await this.loadBalances();
+    if (this.amountRaw()) void this.fetchQuote();
   }
 
   private wallet(): Eip1193 | null {
@@ -443,6 +454,7 @@ export class Gen8SwapWidget {
       this.quote = null;
       this.paintQuote();
       this.options.onSwap?.({ txHash: hash, side: this.side, token: this.token.token, chainId: this.token.chainId });
+      void this.loadToken();
       void this.loadBalances();
     } catch (error) {
       const text = error instanceof Error ? error.message : String((error as { message?: string })?.message || "Swap failed.");

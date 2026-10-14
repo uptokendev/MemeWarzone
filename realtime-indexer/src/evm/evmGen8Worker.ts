@@ -2,13 +2,13 @@
  * Starts every gen-8 loop (ingest, holder census, side-pool watcher, fee routing). Nothing starts, and no RPC or DB
  * call is made, unless EVM_GEN8_LAUNCHER_<id> and EVM_GEN8_HOOK_<id> are set for at least one chain.
  *   EVM_GEN8_RPC_<id>             optional RPC for gen-8 (default: the chain's indexer RPC, BSC_RPC_HTTP_<id> / ROBINHOOD_RPC_HTTP_<id>)
- *   EVM_GEN8_POLL_MS              ingest interval (4000)
+ *   EVM_GEN8_POLL_MS              ingest interval (60000; floor 60000 — launcher, hook and splitter)
  *   EVM_GEN8_DISPLAY_HEAD_TAG(_<id>)  what the UI rows follow: latest (Robinhood) / finalized (BNB); rolled back on a reorg
  *   EVM_GEN8_MONEY_HEAD_TAG(_<id>)    what the money rows wait for: safe (Robinhood) / finalized (BNB); never rolled back
  *   EVM_GEN8_CONFIRMATIONS        blocks behind head for a `latest` tag (1)
  *   EVM_GEN8_LINK_ROUTERS_<id> / EVM_GEN8_LINK_DENY(_<id>) / EVM_GEN8_LINK_MAX_SWAP_SENDERS: link eligibility (evmGen8Config.ts)
  *   EVM_GEN8_ROUTER_CLAIMERS_<id>: wallets besides the splitter operator allowed to claimRouter() without an alert
- *   EVM_GEN8_HOLDERS_POLL_MS      holder census interval (15000)  EVM_GEN8_SIDE_POLL_MS   side-pool watcher interval (60000)
+ *   EVM_GEN8_HOLDERS_POLL_MS      holder census interval (60000; floor 60000)  EVM_GEN8_SIDE_POLL_MS   side-pool watcher (60000; floor 60000)
  *   EVM_GEN8_SIDE_POOLS=0         turns the side-pool watcher off
  *   EVM_GEN8_FEE_ROUTING_ENABLED / _SEND / EVM_GEN8_OPERATOR_KEY_<id>: evmGen8FeeRouting.ts
  */
@@ -16,7 +16,7 @@ import { ethers } from "ethers";
 import { pool } from "../db.js";
 import { bscRpcUrls } from "../canonicalCandleMaterializer.js";
 import { createStaticJsonRpcProvider, parseRpcList } from "../rpcProvider.js";
-import { configuredGen8Chains, intEnv } from "./evmGen8Config.js";
+import { configuredGen8Chains, gen8HolderPollMs, gen8SidePollMs } from "./evmGen8Config.js";
 import { startEvmGen8Indexer } from "./evmGen8Pool.js";
 import { startEvmGen8FeeRoutingWorker } from "./evmGen8FeeRouting.js";
 import { runGen8HolderCensusOnce } from "./evmGen8Holders.js";
@@ -48,7 +48,8 @@ function loop(label: string, ms: number, fn: () => Promise<unknown>) {
       running = false;
     }
   };
-  const first = setTimeout(() => void tick(), 5_000);
+  // First tick waits the same interval. There is no 5 s startup timer.
+  const first = setTimeout(() => void tick(), ms);
   first.unref?.();
   const t = setInterval(() => void tick(), ms);
   t.unref?.();
@@ -69,9 +70,9 @@ export function startEvmGen8Workers(env: NodeJS.ProcessEnv = process.env) {
     for (const cfg of chains) {
       const provider = gen8Provider(cfg.chainId, env);
       if (!provider) continue;
-      loop(`holders ${cfg.chainId}`, intEnv(env.EVM_GEN8_HOLDERS_POLL_MS, 15_000, 2_000), () => runGen8HolderCensusOnce({ db: pool as any, cfg, provider: provider as any, env }));
+      loop(`holders ${cfg.chainId}`, gen8HolderPollMs(env), () => runGen8HolderCensusOnce({ db: pool as any, cfg, provider: provider as any, env }));
       if (String(env.EVM_GEN8_SIDE_POOLS ?? "1").trim() !== "0") {
-        loop(`side pools ${cfg.chainId}`, intEnv(env.EVM_GEN8_SIDE_POLL_MS, 60_000, 5_000), () =>
+        loop(`side pools ${cfg.chainId}`, gen8SidePollMs(env), () =>
           runGen8SidePoolWatcherOnce({ db: pool, cfg, provider: provider as any, env, alert: (a) => watchdog.raiseAlert(pool as any, { ...a, rewardType: GEN8_SIDE_ALERT_TYPE }) }),
         );
       }

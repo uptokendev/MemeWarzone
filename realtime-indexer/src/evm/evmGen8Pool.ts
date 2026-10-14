@@ -21,7 +21,7 @@
  * Inert without EVM_GEN8_LAUNCHER_<id> + EVM_GEN8_HOOK_<id> (evmGen8Config.ts).
  */
 import { ethers } from "ethers";
-import { configuredGen8Chains, gen8DisplayHead, gen8LeagueExcluded, gen8LinkCheck, gen8LinkPolicy, gen8MoneyHead, intEnv, type Gen8ChainConfig, type Gen8LinkPolicy } from "./evmGen8Config.js";
+import { configuredGen8Chains, gen8DisplayHead, gen8IngestPollMs, gen8LeagueExcluded, gen8LinkCheck, gen8LinkPolicy, gen8MoneyHead, intEnv, type Gen8ChainConfig, type Gen8LinkPolicy } from "./evmGen8Config.js";
 export { gen8LeagueExcluded } from "./evmGen8Config.js";
 import { GEN8_TOPICS, gen8PoolId } from "./evmGen8Abi.js";
 import { decodeGen8Log, groupByTx, joinSwapsWithFees, traderNative, type Gen8Event, type JoinedSwap, type LogLike } from "./evmGen8Decode.js";
@@ -894,7 +894,7 @@ export function startEvmGen8Indexer(opts: { db: Queryable; providerFor: (chainId
     console.log("[gen8] indexer off (set EVM_GEN8_LAUNCHER_<chainId> and EVM_GEN8_HOOK_<chainId>)");
     return;
   }
-  const intervalMs = intEnv(env.EVM_GEN8_POLL_MS, 4_000, 1_000);
+  const intervalMs = gen8IngestPollMs(env);
   void (async () => {
     const sinks = await defaultGen8Sinks(opts.db);
     for (const cfg of chains) {

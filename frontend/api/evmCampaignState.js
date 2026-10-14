@@ -16,15 +16,40 @@ import { gen8IndexedCampaignState, readGen8CampaignState, readGen8IndexedPool, r
  *
  * Cached per campaign + quote parameters for EVM_CAMPAIGN_STATE_CACHE_MS (default 10 s): the fee
  * changes every second only during the first minute, and graduation state changes with trades.
+ * A generation 8 answer is cached for 60 s. A newer row in evm_gen8_swaps bypasses that cache so a
+ * trade-triggered refetch reads the lens again. The 10 s cache is unchanged for every other generation.
  */
 
 const EVM_CHAIN_IDS = new Set([56, 97, 4663, 46630, 31337]);
+const GEN8_CAMPAIGN_STATE_CACHE_MS = 60_000;
 const cache = new Map();
 const MAX_CACHE_ENTRIES = 2000;
 
 function cacheMs() {
   const n = Number(process.env.EVM_CAMPAIGN_STATE_CACHE_MS);
   return Number.isFinite(n) && n >= 0 ? n : 10_000;
+}
+
+/** True when the indexer has a gen-8 swap newer than this cache entry. A DB error keeps the cache. */
+async function gen8IndexedSwapNewer(deps, chainId, token, storedAt) {
+  let db = null;
+  try {
+    db = await gen8Db(deps);
+  } catch {
+    return false;
+  }
+  if (!db || typeof db.query !== "function") return false;
+  try {
+    const found = await db.query(
+      `select 1 as hit from public.evm_gen8_swaps
+        where chain_id = $1 and lower(token_address) = lower($2) and block_time > $3
+        limit 1`,
+      [chainId, token, new Date(storedAt)],
+    );
+    return Array.isArray(found?.rows) && found.rows.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 async function gen8Db(deps) {
@@ -72,7 +97,10 @@ export async function evmCampaignStateHandler(req, res, deps = {}) {
     quoteParams.sellTokens ?? "",
   ].join(":");
   const hit = cache.get(key);
-  if (hit && hit.expiresAt > Date.now()) return json(res, 200, { ...hit.value, cached: true });
+  if (hit && hit.expiresAt > Date.now()) {
+    const newerGen8Swap = hit.gen8 && await gen8IndexedSwapNewer(deps, chainId, campaign, hit.storedAt);
+    if (!newerGen8Swap) return json(res, 200, { ...hit.value, cached: true });
+  }
 
   try {
     const provider = await getProvider(chainId);
@@ -82,6 +110,7 @@ export async function evmCampaignStateHandler(req, res, deps = {}) {
     // else falls through to the generation 5/6/7 reader unchanged.
     const gen8Cfg = (deps.gen8Config || gen8ConfigFor)(chainId);
     let state = null;
+    let gen8Served = false;
     if (gen8Cfg) {
       const findPool = deps.readGen8Pool || readGen8Pool;
       let hookReadFailed = false;
@@ -95,15 +124,20 @@ export async function evmCampaignStateHandler(req, res, deps = {}) {
       if (gen8Pool) {
         const indexed = await loadIndexed().catch(() => null);
         state = await (deps.readGen8State || readGen8CampaignState)({ provider, cfg: gen8Cfg, token: campaign, wallet: wallet || null, pool: gen8Pool, indexed });
+        gen8Served = Boolean(state);
       } else if (hookReadFailed) {
         const indexed = await loadIndexed().catch(() => null);
-        if (indexed) return json(res, 200, { chainId, ...gen8IndexedCampaignState({ cfg: gen8Cfg, indexed }), cached: false });
+        if (indexed) {
+          state = gen8IndexedCampaignState({ cfg: gen8Cfg, indexed });
+          gen8Served = true;
+        }
       }
     }
     if (!state) state = await read({ provider, campaignAddress: campaign, wallet: wallet || null, quoteParams });
     const value = { chainId, ...state };
+    const gen8 = gen8Served || Number(state?.generation?.factoryGeneration) === 8;
     if (cache.size >= MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value);
-    cache.set(key, { value, expiresAt: Date.now() + cacheMs() });
+    cache.set(key, { value, expiresAt: Date.now() + (gen8 ? GEN8_CAMPAIGN_STATE_CACHE_MS : cacheMs()), gen8, storedAt: Date.now() });
     return json(res, 200, { ...value, cached: false });
   } catch (error) {
     console.error("[api/evm/campaign-state]", error);

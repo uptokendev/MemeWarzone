@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/apiBase";
 import { gen8AppConfig, isGen8Coin } from "@/lib/evmGen8Client.mjs";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
+
+/** Safety poll for the gen-8 lens. A new trade calls refresh(); this is the slow fallback. */
+export const GEN8_COIN_POLL_MS = 60_000;
 
 /** The API's coin-page state of a generation 8 coin (GET /api/evm/campaign-state, frontend/api/lib/evmGen8CampaignState.js). */
 export type Gen8CoinState = {
@@ -57,7 +61,8 @@ export type Gen8CoinState = {
 /**
  * Generation 8 coin state for the coin page, or null for every other coin. Only asked where the app has a gen-8 hook
  * configured for the chain (VITE_EVM_GEN8_HOOK_<id>), so other chains and generations make no extra request.
- * Refreshes every 15 s and on demand.
+ * Refreshes when refresh() is called (the coin page does that on a new trade) and otherwise every 60 s.
+ * The poll pauses while the tab is hidden or idle.
  */
 export function useGen8Coin(chainId: number | null, address: string | null | undefined, account: string | null | undefined) {
   const [state, setState] = useState<Gen8CoinState | null>(null);
@@ -84,10 +89,10 @@ export function useGen8Coin(chainId: number | null, address: string | null | und
       }
     };
     void load();
-    const timer = window.setInterval(() => void load(), 15_000);
+    const stopPolling = setVisibleInterval(() => void load(), GEN8_COIN_POLL_MS);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [enabled, chainId, address, account, tick]);
 
