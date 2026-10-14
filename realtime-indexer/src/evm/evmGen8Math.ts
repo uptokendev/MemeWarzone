@@ -70,6 +70,29 @@ export function coinsOutOfA(liqA: bigint, sqrtStart: bigint, sqrtP: bigint): big
 export type Gen8Progress = { soldRaw: bigint; capacityRaw: bigint; bps: number; complete: boolean };
 
 /**
+ * Spot price, market cap and coins sold for token_stats. Sold follows the current price phase
+ * (post when the price is at or past graduation), not HookFee.graduated. A latch-back sell is
+ * therefore under 850M again. Same phase rule as gen8PricePhase.
+ */
+export function gen8DisplayStats(input: { liqA: bigint; tickStart: number; tickGrad: number; sqrtPriceX96: bigint }): {
+  phase: "bonding" | "post";
+  price: number;
+  mcap: number;
+  soldRaw: bigint;
+  soldWhole: number;
+} {
+  const phase = input.sqrtPriceX96 <= sqrtAtTick(input.tickGrad) ? "post" : "bonding";
+  const progress = gen8Progress({ ...input, graduated: phase === "post" });
+  return {
+    phase,
+    price: nativePerCoin(input.sqrtPriceX96),
+    mcap: rawToDecimal(marketCapWei(input.sqrtPriceX96)),
+    soldRaw: progress.soldRaw,
+    soldWhole: rawToDecimal(progress.soldRaw),
+  };
+}
+
+/**
  * Curve progress from the pool price (design 6.4: coins sold from A over A's coins, exact). Buying moves the price
  * down from sqrtStart (tickStart) to sqrtGrad (tickGrad); at or below sqrtGrad A is sold out. liqA is the
  * launch liquidity (PoolLaunched.liqA), so the result does not move when the latch removes 2% of A.

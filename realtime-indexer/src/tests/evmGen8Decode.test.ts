@@ -10,7 +10,7 @@ import fx from "./fixtures/gen8-logs.json" with { type: "json" };
 import { GEN8_TOPICS, gen8PoolId, V4_POOL_MANAGER_IFACE, GEN8_HOOK_IFACE } from "../evm/evmGen8Abi.js";
 import { decodeGen8Log, gen8TradeTable, groupByTx, joinSwapsWithFees, traderNative, type Gen8Event } from "../evm/evmGen8Decode.js";
 import { configuredGen8Chains, evmGen8Config, gen8HolderPollMs, gen8IngestPollMs, gen8SidePollMs } from "../evm/evmGen8Config.js";
-import { gen8PoolHoldings, gen8Progress, marketCapWei, nativePerCoinWei, sqrtAtTick, Q96, WAD } from "../evm/evmGen8Math.js";
+import { gen8DisplayStats, gen8PoolHoldings, gen8Progress, marketCapWei, nativePerCoin, nativePerCoinWei, sqrtAtTick, Q96, WAD } from "../evm/evmGen8Math.js";
 import { transferDeltas, TRANSFER_TOPIC, gen8HolderExclusions, DEAD } from "../evm/evmGen8Holders.js";
 import { findSidePools, sideSwapCoinVolume, sideFactories, SIDE_TOPICS } from "../evm/evmGen8SidePools.js";
 
@@ -175,6 +175,21 @@ test("price, market cap and progress from sqrtPriceX96 (exact integer maths)", (
   assert.ok(swap.sqrtPriceX96 <= sqrtAtTick(pl.tickGrad));
   const held = gen8PoolHoldings({ liqA: pl.liqA, liqB: pl.liqB, tickStart: pl.tickStart, tickGrad: pl.tickGrad, sqrtPriceX96: swap.sqrtPriceX96, graduated: true });
   assert.ok(held.native > 0n && held.coins > 0n && held.liquidityNativeWei > held.native);
+});
+
+test("a latch-back price restates sold from the spot, not from the latched 850M", () => {
+  const pl = decodeStep("launch_with_first_buy")[0] as Extract<Gen8Event, { kind: "PoolLaunched" }>;
+  const sqrtGrad = sqrtAtTick(pl.tickGrad);
+  const backInA = (sqrtAtTick(pl.tickStart) + sqrtGrad) / 2n;
+  assert.ok(backInA > sqrtGrad);
+  const back = gen8DisplayStats({ liqA: pl.liqA, tickStart: pl.tickStart, tickGrad: pl.tickGrad, sqrtPriceX96: backInA });
+  assert.equal(back.phase, "bonding");
+  assert.equal(back.price, nativePerCoin(backInA));
+  assert.ok(back.soldWhole < 850_000_000, String(back.soldWhole));
+  assert.ok(back.soldRaw > 0n);
+  const stillPost = gen8DisplayStats({ liqA: pl.liqA, tickStart: pl.tickStart, tickGrad: pl.tickGrad, sqrtPriceX96: sqrtGrad });
+  assert.equal(stillPost.phase, "post");
+  assert.equal(stillPost.soldRaw, gen8Progress({ liqA: pl.liqA, tickStart: pl.tickStart, tickGrad: pl.tickGrad, sqrtPriceX96: sqrtGrad, graduated: true }).soldRaw);
 });
 
 test("gen-8 polls stay at 60s: a shorter env cannot bring back a 4s, 5s or 15s loop", () => {

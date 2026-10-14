@@ -29,6 +29,7 @@ import {
   rawRpcCall,
 } from "./rpcProvider.js";
 import { resolveMarketIdentity, resolveMarketIdentityOrPassthrough } from "./marketIdentity.js";
+import { queryTokenTrades } from "./tokenTradeList.js";
 import { runGraduationReconcilerOnce } from "./graduationReconciler.js";
 import { ensureDexPoolForCampaign } from "./marketApi.js";
 import { registerLpFeesRoutes } from "./lpFeesRoutes.js";
@@ -2340,19 +2341,7 @@ async function handleTokenTrades(req: any, res: any) {
 
   // Fast path: never block the HTTP response on multi-minute getLogs backfills.
   // AWTT-style empty history used to hang /trades for 90s+ and starve the UI.
-  const r = await pool.query(
-    `select
-       tx_hash, log_index, block_number, block_time,
-       side, wallet,
-       token_amount_raw, bnb_amount_raw,
-       token_amount, bnb_amount, price_bnb,
-       sold_tokens_after_raw
-     from public.curve_trades
-     where chain_id=$1 and campaign_address=$2
-     order by block_number desc, log_index desc
-     limit $3`,
-    [chainId, campaign, limit],
-  );
+  const r = await queryTokenTrades(pool, chainId, campaign, limit);
 
   if ((r.rowCount ?? 0) > 0) {
     const items = r.rows.map((row: Record<string, unknown>) => serializeCurveTradeRow(row));
@@ -2416,19 +2405,7 @@ async function handleTokenTrades(req: any, res: any) {
     // keep campaign
   }
 
-  const r2 = await pool.query(
-    `select
-       tx_hash, log_index, block_number, block_time,
-       side, wallet,
-       token_amount_raw, bnb_amount_raw,
-       token_amount, bnb_amount, price_bnb,
-       sold_tokens_after_raw
-     from public.curve_trades
-     where chain_id=$1 and campaign_address=$2
-     order by block_number desc, log_index desc
-     limit $3`,
-    [chainId, campaign, limit],
-  );
+  const r2 = await queryTokenTrades(pool, chainId, campaign, limit);
 
   res.json(r2.rows.map((row: Record<string, unknown>) => serializeCurveTradeRow(row)));
 }

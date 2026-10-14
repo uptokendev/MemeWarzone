@@ -8,7 +8,9 @@
  *   4. per transaction: Swap joined with its HookFee (evmGen8Decode.joinSwapsWithFees), then everything in log order.
  * A trade goes to curve_trades (+ token_candles bonding, token_stats) when HookFee.graduated is false (F1, 2026-10-12:
  * the swap started inside range A and paid the bonding rate; the crossing swap included) and to dex_trades
- * (+ token_candles dex, market_stats) when it is true (started at or past the graduation price). Wallet = tx.from.
+ * (+ token_candles dex, market_stats) when it is true (started at or past the graduation price). A dex swap also
+ * restates token_stats from the spot and the current price phase. Wallet = tx.from. The curve/dex split for
+ * leagues and fees stays on HookFee.graduated.
  * Hook `Graduated` (the latch) drives the gen-7 markEvmCampaignGraduated path (campaigns.graduated_*, notification,
  * league feed). The market stage follows the price: DEX_ACTIVE while the latch is set and the last swap was post
  * phase, BONDING again when a later swap ran back inside A (gen8PlatformStatus). Every HookFee and Graduated becomes a
@@ -26,7 +28,7 @@ export { gen8LeagueExcluded } from "./evmGen8Config.js";
 import { GEN8_TOPICS, gen8PoolId } from "./evmGen8Abi.js";
 import { decodeGen8Log, groupByTx, joinSwapsWithFees, traderNative, type Gen8Event, type JoinedSwap, type LogLike } from "./evmGen8Decode.js";
 import { gen8GraduationSlices, gen8TradeSlices } from "./evmGen8Fees.js";
-import { gen8PoolHoldings, gen8Progress, marketCapWei, nativePerCoin, nativePerCoinWei, rawToDecimal, sqrtAtTick } from "./evmGen8Math.js";
+import { gen8DisplayStats, gen8PoolHoldings, gen8Progress, marketCapWei, nativePerCoin, nativePerCoinWei, rawToDecimal, sqrtAtTick } from "./evmGen8Math.js";
 import {
   deleteGen8Candles,
   deleteGen8DisplayRows,
@@ -486,6 +488,8 @@ async function applyTrade(ctx: Ctx, pool: Gen8PoolRow, j: JoinedSwap, tx: TxInfo
   }
 
   await restateGen8MarketStats(ctx, pool, { sqrtPriceX96: j.swap.sqrtPriceX96, price: state.price, mcap: state.mcap, lastTradeBlock: j.swap.blockNumber, lastTradeAt: blockTime });
+  // token_stats follows the spot and the price phase. HookFee.graduated still chose dex_trades above.
+  await restateGen8DexTokenStats(ctx, pool, j.swap.sqrtPriceX96);
   await sinks.publishTokenEvent(cfg.chainId, pool.token, "market_trade", {
     eventId: `${cfg.chainId}:${j.swap.txHash}:${j.swap.logIndex}`, source: "gen8_v4", origin: "unknown", side: j.side, wallet: txFrom, recipient: txFrom,
     pairAddress: cfg.hook.address, baseTokenAddress: pool.token, quoteAssetType: "WRAPPED_NATIVE", baseAmountRaw: j.coinRaw.toString(), quoteAmountRaw: j.fee.curveAmount.toString(),
@@ -522,6 +526,58 @@ async function syncGen8MarketStage(ctx: Ctx, pool: Gen8PoolRow, blockNumber: num
   await sinks.publishTokenEvent(cfg.chainId, pool.token, "market_stage_changed", {
     eventId: `${cfg.chainId}:${pool.token}:${blockNumber}:${to}`, from: from ?? "BONDING", to, marketStage: to, blockNumber, txHash, reason: to === "DEX_ACTIVE" ? "gen8_post_phase" : "gen8_back_in_range_a",
   }).catch(() => undefined);
+}
+
+/**
+ * token_stats from the pool spot and the current price phase. No raised-delta: dex volume stays out of the
+ * bonding league total. Also the startup repair for swaps already stored in evm_gen8_swaps.
+ */
+export async function restateGen8TokenStatsFromSqrt(db: Queryable, input: { chainId: number; token: string; liqA: bigint; tickStart: number; tickGrad: number; sqrtPriceX96: bigint }) {
+  const stats = gen8DisplayStats(input);
+  const patched = await patchGen8TokenStats(db, { chainId: input.chainId, token: input.token, price: stats.price, soldWhole: stats.soldWhole, mcap: stats.mcap });
+  return { ...stats, vol24h: patched.vol24h };
+}
+
+async function restateGen8DexTokenStats(ctx: Ctx, pool: Gen8PoolRow, sqrtPriceX96: bigint) {
+  const { cfg, db, sinks } = ctx;
+  const stats = await restateGen8TokenStatsFromSqrt(db, { chainId: cfg.chainId, token: pool.token, liqA: pool.liqA, tickStart: pool.tickStart, tickGrad: pool.tickGrad, sqrtPriceX96 });
+  const patch = { lastPriceBnb: String(stats.price), marketcapBnb: String(stats.mcap), vol24hBnb: String(stats.vol24h) };
+  await sinks.publishStats(cfg.chainId, pool.token, { type: "stats_patch", ...patch }).catch(() => undefined);
+  try {
+    sinks.leagueFeed.queueStats(cfg.chainId, pool.token, patch);
+  } catch {
+    // best-effort
+  }
+  return stats;
+}
+
+/** One pass at indexer start. Reads evm_gen8_swaps already in the database. No RPC and no hand-written SQL. */
+export async function repairGen8TokenStatsFromSwaps(db: Queryable, chainIds: number[]): Promise<number> {
+  if (!chainIds.length) return 0;
+  const { rows } = await db.query(
+    `select p.chain_id, p.token_address, p.tick_start, p.tick_grad, p.liq_a, s.sqrt_price_x96
+       from public.evm_gen8_pools p
+       join lateral (
+         select sqrt_price_x96
+           from public.evm_gen8_swaps s
+          where s.chain_id = p.chain_id and s.pool_id = p.pool_id
+          order by s.block_number desc, s.log_index desc
+          limit 1
+       ) s on true
+      where p.chain_id = any($1::int[])`,
+    [chainIds],
+  );
+  for (const r of rows) {
+    await restateGen8TokenStatsFromSqrt(db, {
+      chainId: Number(r.chain_id),
+      token: String(r.token_address),
+      liqA: BigInt(String(r.liq_a)),
+      tickStart: Number(r.tick_start),
+      tickGrad: Number(r.tick_grad),
+      sqrtPriceX96: BigInt(String(r.sqrt_price_x96)),
+    });
+  }
+  return rows.length;
 }
 
 /** token_stats + the stats_patch publish after a bonding swap (also used to restate a coin after a rollback). */
@@ -897,6 +953,12 @@ export function startEvmGen8Indexer(opts: { db: Queryable; providerFor: (chainId
   const intervalMs = gen8IngestPollMs(env);
   void (async () => {
     const sinks = await defaultGen8Sinks(opts.db);
+    try {
+      const restated = await repairGen8TokenStatsFromSwaps(opts.db, chains.map((c) => c.chainId));
+      if (restated) console.log("[gen8] restated token_stats from indexed swaps", { coins: restated });
+    } catch (error) {
+      console.error("[gen8] token_stats restate from indexed swaps failed", error instanceof Error ? error.message : String(error));
+    }
     for (const cfg of chains) {
       const provider = opts.providerFor(cfg.chainId);
       if (!provider) {
