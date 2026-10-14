@@ -315,7 +315,8 @@ test("token page entry, war-room row and trade panel keep 6281971 instead of def
   assert.match(page, /\) : isV3GraduatedTradePage && \(contractGraduated \|\| isUniswapTradingActive\) \? \(/);
   assert.match(page, /enabled: hasValidCampaignAddress && contractGraduatedEarly && !isSolanaPage && !isV3GraduatedTradePage,/);
   assert.match(page, /if \(isV3GraduatedTradePage && contractGraduatedEarly\) \{\s*const indexed = Number\(unifiedMarket\.summary\?\.last_price_bnb\);/);
-  assert.match(page, /contractGraduatedEarly,\s*isSolanaPage,\s*isV3GraduatedTradePage,\s*metrics\?\.currentPrice,/);
+  // gen8State is gen-8's own dependency (release/evm-gen8, merged in 126ffbc8b); the DogeOS change is isV3GraduatedTradePage.
+  assert.match(page, /contractGraduatedEarly,\s*gen8State,\s*isSolanaPage,\s*isV3GraduatedTradePage,\s*metrics\?\.currentPrice,/);
   assert.match(page, /if \(isV3GraduatedTradePage && unifiedNative\) \{/);
   assert.match(page, /if \(isV3GraduatedTradePage && isDexStage\) return "—";/);
   assert.equal((page.match(/evmBuyGasReserveWeiForChain\(chainIdForStorage\)/g) || []).length, 3);
