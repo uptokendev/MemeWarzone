@@ -7,6 +7,15 @@ import { fileURLToPath } from "node:url";
 const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../robinhoodCmsHeal.ts"), "utf8");
 const skipSql = source.slice(source.indexOf("export const CMS_ALREADY_HEALED_SQL"), source.indexOf("async function cmsAlreadyHealed"));
 
+test("a gen-8 campaign returns before any chain read", () => {
+  const body = source.slice(source.indexOf("export async function healRobinhoodGraduatedCms"));
+  const gate = body.indexOf("isGen8Campaign(");
+  const already = body.indexOf("cmsAlreadyHealed(");
+  const firstRead = body.indexOf("new ethers.Contract(");
+  assert.ok(gate > 0 && already > gate && firstRead > gate);
+  assert.match(body.slice(gate, already), /return \{ healed: false, reason: "gen8" \}/);
+});
+
 test("the already-healed check runs before any chain read", () => {
   const body = source.slice(source.indexOf("export async function healRobinhoodGraduatedCms"));
   const skip = body.indexOf("cmsAlreadyHealed(");
