@@ -1,5 +1,5 @@
 {
-  "$comment": "Read by scripts/dogeos-chain-list-guard.test.mjs (plan t23, spec section 6). A 46630 site without 6281971 within 3 lines passes only through an entry here. 'exceptions' may exclude 6281971 (an exception means 'may exclude'); 'categories' are the named exceptions of the plan's global constraints, plus 'plan-directed' for sites the plan or spec names explicitly. 'dogeosSiblings' are not exceptions: the 46630 line is Robinhood's own value, and the DogeOS branch for the same thing is a separate statement ('sibling', in 'siblingFile' or the same file), which the guard checks still exists. A pattern is a plain substring of the source line. Every entry must still match an uncovered site, or the guard fails it as stale.",
+  "$comment": "Read by scripts/dogeos-chain-list-guard.test.mjs (plan t23, spec section 6). A 46630 site without 6281971 within 3 lines passes only through an entry here. 'exceptions' may exclude 6281971 (an exception means 'may exclude'); 'categories' are the named exceptions of the plan's global constraints, plus 'plan-directed' for sites the plan or spec names explicitly, plus two categories for features merged in from release/evm-gen8 after the plan was written ('evm-gen8-v4', 'partner-api'). 'dogeosSiblings' are not exceptions: the 46630 line is Robinhood's own value, and the DogeOS branch for the same thing is a separate statement ('sibling', in 'siblingFile' or the same file), which the guard checks still exists. A pattern is a plain substring of the source line. Every entry must still match an uncovered site, or the guard fails it as stale.",
   "categories": {
     "indexer-active-or-mainnet-only": "the hard-coded indexer ACTIVE lists and mainnet-only sets",
     "stock-quote-catalog": "stock/quote/Robinhood-stock paths and the quote catalog plus its admin/verification",
@@ -8,7 +8,9 @@
     "finance-fee-routing": "finance fee-routing registry (lib/financeFeeRoutingEvm.js:19,112)",
     "sub-project-3": "arena, battles, leagues, MWL, votes, vote treasury, war pools and tournaments: sub-project 3",
     "robinhood-only": "Robinhood-only features (beat-the-market, local scanner, RH dev scripts)",
-    "plan-directed": "not in the global-constraints list: the plan or spec names this exact site as unchanged (source in the reason)"
+    "plan-directed": "not in the global-constraints list: the plan or spec names this exact site as unchanged (source in the reason)",
+    "evm-gen8-v4": "EVM generation 8 (Uniswap V4 hook pools, BNB 56/97 and Robinhood 4663/46630), merged from release/evm-gen8: DogeOS is out of gen-8 (EVM_GEN8_V4_DESIGN.md Appendix A, 'DogeOS (not in this generation) [Decided: waits]'; no Uniswap V4 on Chikyu) and stays on gen-7 + MuchFi V3 graduation",
+    "partner-api": "partner integrations outside sub-project #1 (the CrypticPump /api/partner stats endpoint), merged from release/evm-gen8"
   },
   "exceptions": [
     { "file": "db/migrations/20260902_000001_robinhood_generic_market_pairs.sql", "pattern": "chain_id in (4663,46630)", "category": "stock-quote-catalog", "reason": "Robinhood Stock Battlefield market-pair backfills and the robinhood_market_pairs_v view; applied history." },
@@ -58,6 +60,10 @@
     { "file": "realtime-indexer/src/evm/payoutWatchdogConfig.ts", "pattern": "WATCHDOG_CHAINS", "category": "imports-and-jobs", "reason": "Payout watchdog chains." },
     { "file": "realtime-indexer/src/importCreatorFeeEvmWorker.ts", "pattern": "chainId === 46630", "category": "imports-and-jobs", "reason": "Import-fee worker RPC." },
     { "file": "realtime-indexer/src/importCreatorFeesEvm.ts", "pattern": "46630", "category": "imports-and-jobs", "reason": "Import-fee chains and defaults." },
+    { "file": "frontend/api/lib/arenaImportScan.js", "pattern": "if (id === 4663 || id === 46630) return \"evm\";", "category": "imports-and-jobs", "reason": "Import admission scanner chain family; 6281971 stays null (unsupported_chain), like the other import paths." },
+    { "file": "frontend/api/lib/arenaImportScan.js", "pattern": "if (id === 46630) {", "category": "imports-and-jobs", "reason": "Import scanner RPC; no DogeOS import scanning (no BNB fallback: an unlisted chain gets \"\")." },
+    { "file": "frontend/api/lib/arenaImportScan.js", "pattern": "return id === 4663 || id === 46630;", "category": "imports-and-jobs", "reason": "isRobinhoodChain() picks the Uniswap V3 import venue; ROBINHOOD sets never gain 6281971." },
+    { "file": "frontend/scripts/backfill-import-admission.mjs", "pattern": "const SCANNABLE_CHAINS = [56, 97, 101, 102, 4663, 46630]", "category": "imports-and-jobs", "reason": "Import admission backfill: chains the scanner can read." },
 
     { "file": "frontend/api/leagueRecruiter.js", "pattern": "const payoutChains =", "category": "recruiter", "reason": "Recruiter payout chain families." },
     { "file": "frontend/api/lib/recruiterEvmPayout.js", "pattern": "chainId === 46630", "category": "recruiter", "reason": "Recruiter payout RPC." },
@@ -90,6 +96,18 @@
     { "file": "realtime-indexer/src/robinhoodBeatTheMarketService.ts", "pattern": "chainId !== 46630", "category": "robinhood-only", "reason": "Beat-the-market service." },
     { "file": "realtime-indexer/src/robinhoodLocalScanner.ts", "pattern": "46630", "category": "robinhood-only", "reason": "RH local scanner." },
     { "file": "scripts/lib/frontendEnv.cjs", "pattern": "Number(chainId) === 46630", "category": "robinhood-only", "reason": "RH deploy tooling: builds the RH frontend env from an RH manifest; DogeOS env blocks come from its own generator (plan t24)." },
+
+    { "file": "frontend/api/admin/finance.js", "pattern": "if (chainIds.some((id) => ![56, 97, 4663, 46630].includes(id))) {", "category": "evm-gen8-v4", "reason": "GET /api/admin/finance/gen8 chain gate: gen-8 fee accruals, splitter runs and hook claims. DogeOS has no gen-8 hook or splitter (Appendix A); its finance stays out like the fee-routing registry." },
+    { "file": "frontend/api/admin/finance.js", "pattern": "Gen-8 finance covers BNB 56 / 97 and Robinhood 4663 / 46630", "category": "evm-gen8-v4", "reason": "Error text of the gen-8 finance chain gate above." },
+    { "file": "frontend/api/gen8Swap.js", "pattern": "const NATIVE_SYMBOL = { 56: \"BNB\", 97: \"tBNB\", 4663: \"ETH\", 46630: \"ETH\", 31337: \"ETH\" };", "category": "evm-gen8-v4", "reason": "Gen-8 V4 hook swap builder (lens/hook ABIs); only reached for a chain with gen-8 config (gen8ConfigFor refuses chains outside GEN8_API_CHAIN_IDS). DogeOS is not on gen-8 (Appendix A)." },
+    { "file": "frontend/api/lib/evmGen8Config.js", "pattern": "export const GEN8_API_CHAIN_IDS = Object.freeze([56, 97, 4663, 46630, 31337]);", "category": "evm-gen8-v4", "reason": "Gen-8 API chains (EVM_GEN8_LAUNCHER_/HOOK_<id>). Adding 6281971 would put DogeOS on the V4 path; DogeOS waits (Appendix A)." },
+    { "file": "frontend/shared/evmGen8.mjs", "pattern": "export const GEN8_TEST_TARGET_CHAIN_IDS = Object.freeze([97, 46630, 31337]);", "category": "evm-gen8-v4", "reason": "MwzV4Launcher $150 test-target chains; gen-8 only (Appendix A)." },
+    { "file": "frontend/src/widget/gen8Widget.ts", "pattern": "const GAS_RESERVE: Record<number, bigint> = { 56:", "category": "evm-gen8-v4", "reason": "Gen-8 swap widget buy gas reserve; the widget trades gen-8 V4 pools only (Appendix A). DogeOS buy reserve lives in tradeBalanceReserve.ts." },
+    { "file": "realtime-indexer/src/evm/evmGen8Config.ts", "pattern": "46630: \"0x52a47a33930b8a90a2000b1ba3cb96e879569670\",", "category": "evm-gen8-v4", "reason": "GEN8_WRAPPED_NATIVE: quote for gen-8 dex_trades; gen-8 indexer only (Appendix A)." },
+    { "file": "realtime-indexer/src/evm/evmGen8Config.ts", "pattern": "export const GEN8_EVM_CHAIN_IDS = [56, 97, 4663, 46630] as const;", "category": "evm-gen8-v4", "reason": "Gen-8 indexer chains; DogeOS is indexed by the gen-7 + MuchFi V3 paths, not V4 (Appendix A)." },
+    { "file": "realtime-indexer/src/evm/evmGen8Config.ts", "pattern": "const isRobinhood = (chainId: number) => chainId === 4663 || chainId === 46630;", "category": "evm-gen8-v4", "reason": "Gen-8 display/money head tag per chain; only read for gen-8 chains (Appendix A)." },
+    { "file": "realtime-indexer/src/evm/evmGen8Pool.ts", "pattern": "quoteAsset: cfg.chainId === 4663 || cfg.chainId === 46630 ? \"ETH\" : \"BNB\"", "category": "evm-gen8-v4", "reason": "Gen-8 V4 graduation market quote; cfg exists only for GEN8_EVM_CHAIN_IDS, so 6281971 never reaches the BNB default (Appendix A)." },
+    { "file": "realtime-indexer/src/partnerTokenStats.ts", "pattern": "const PARTNER_CHAIN_IDS = new Set([56, 97, 101, 4663, 46630]);", "category": "partner-api", "reason": "CrypticPump partner Live Stats endpoint (/api/partner); a partner integration, not part of the DogeOS launch (sub-project #1). An unlisted chain is refused (400 Invalid address or chainId), never a BNB fallback." },
 
     { "file": "frontend/api/dev-fix/draft-deploy-base.js", "pattern": "cid === 46630 || cid === 101", "category": "plan-directed", "reason": "Plan t16: leave the $6 tier alone; gen-7 arming rejects $6, so adding 6281971 would save DogeOS drafts that can never be armed." },
     { "file": "frontend/scripts/dev-vite.mjs", "pattern": "configuredAllowedChainIds, 56, 101, 46630", "category": "plan-directed", "reason": "Spec section 7: keeps the configured VITE_ALLOWED_CHAIN_IDS (which carry 6281971) and needs no change." },
