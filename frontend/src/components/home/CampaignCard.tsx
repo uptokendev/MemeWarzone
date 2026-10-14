@@ -8,10 +8,9 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { useWallet } from "@/contexts/WalletContext";
 import {
-  chainAddressCompatibilityMessage,
   followCampaign,
-  isChainAddressCompatible,
   isFollowingCampaign,
+  pickFollowWallet,
   unfollowCampaign,
 } from "@/lib/followApi";
 import { useLaunchpad } from "@/lib/launchpadClient";
@@ -76,10 +75,9 @@ export function CampaignCard({
   const navigate = useNavigate();
   const wallet = useWallet();
   const { solanaAccount, isSolanaConnected } = useSolanaWallet();
-  // Follow uses the wallet that matches the coin's chain: Phantom/Solflare on Solana, the EVM wallet elsewhere.
-  const followerAccount = isSolanaChainId(chainIdForStorage)
-    ? (isSolanaConnected && solanaAccount ? String(solanaAccount) : null)
-    : wallet.account || null;
+  // Follow with any connected wallet; the coin's own chain wallet first when both are connected.
+  const followerAccount =
+    pickFollowWallet(isSolanaChainId(chainIdForStorage), isSolanaConnected ? solanaAccount : null, wallet.account) || null;
   const { toast } = useToast();
   const { fetchCampaignLogoURI } = useLaunchpad();
   const [followBusy, setFollowBusy] = useState(false);
@@ -161,10 +159,6 @@ export function CampaignCard({
           if (alive) setFollowed(false);
           return;
         }
-        if (!isChainAddressCompatible(chainIdForStorage, followerAccount, addr)) {
-          if (alive) setFollowed(false);
-          return;
-        }
         const v = await isFollowingCampaign(followerAccount, addr, chainIdForStorage);
         if (alive) setFollowed(v);
       } catch {
@@ -188,14 +182,6 @@ export function CampaignCard({
       } catch {
         // non-fatal
       }
-      return;
-    }
-
-    if (!isChainAddressCompatible(chainIdForStorage, followerAccount, addr)) {
-      toast({
-        title: "Follow unavailable",
-        description: chainAddressCompatibilityMessage(chainIdForStorage),
-      });
       return;
     }
 

@@ -1,24 +1,22 @@
 import { pool } from "../../server/db.js";
-import { badMethod, getQuery, isAddress, isSolanaChain, normalizeAddress, json } from "../../server/http.js";
+import { badMethod, getQuery, normalizeWalletFlexible, json } from "../../server/http.js";
 
 export default async function handler(req, res) {
   if (req.method !== "GET") return badMethod(res);
   try {
     const q = getQuery(req);
-    const chainId = Number(q.chainId ?? 0) || 0;
-    const rawUser = String(q.user ?? "").trim();
-    const isSol = isSolanaChain(chainId);
-    const user = normalizeAddress(rawUser, chainId);
+    // Coin follows are chainless (see follows/campaign.js): every coin this wallet follows, any chain.
+    const user = normalizeWalletFlexible(q.user);
     if (!user) return json(res, 400, { error: "Invalid address" });
-    if (!isSol && !isAddress(user)) return json(res, 400, { error: "Invalid address" });
 
     const { rows } = await pool.query(
       `SELECT campaign_address
          FROM public.campaign_follows
-        WHERE chain_id=$1 AND user_address=$2
-     ORDER BY created_at DESC
+        WHERE user_address=$1
+     GROUP BY campaign_address
+     ORDER BY max(created_at) DESC
         LIMIT 500`,
-      [chainId, user]
+      [user]
     );
 
     return json(res, 200, { items: (rows || []).map((r) => r.campaign_address) });
