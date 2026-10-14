@@ -1,5 +1,6 @@
 # Barkswap on DogeOS Chikyu testnet: verified fact sheet
-n> Copied from the read-only research run of 2026-10-14. `src/` and `scripts/` paths below refer to that run's scratch directory, not to this repo.
+
+> Copied from the read-only research run of 2026-10-14. `src/` and `scripts/` paths below refer to that run's scratch directory, not to this repo.
 
 Date: 2026-10-14. Chain 6281971, RPC https://rpc.testnet.dogeos.com (latest block ~8,577,550, gasLimit 10,000,000, ~3 s blocks).
 Read-only research. No transactions were sent and nothing was signed.
