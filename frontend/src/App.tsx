@@ -63,6 +63,7 @@ import { MobileTabBar } from "@/components/shell/MobileTabBar";
 import { ShellBackBar, useHasBackBar } from "@/components/shell/ShellBackBar";
 import { IncomingChallengeListener } from "@/components/arena/IncomingChallengeListener";
 import { DbcScheduledLaunchListener } from "@/components/dbc/DbcScheduledLaunchListener";
+import { RobinhoodWalletRpcNotice } from "@/components/wallet/RobinhoodWalletRpcNotice";
 import { RankPromotionListener } from "@/components/rank/RankPromotionListener";
 import { LiveStreamOverlay } from "@/components/live/LiveStreamOverlay";
 import { ScheduledTokenAccessRoute } from "@/components/token/ScheduledTokenAccessRoute";
@@ -190,6 +191,7 @@ function AppShellLayout({
       <RankPromotionListener />
       <IncomingChallengeListener />
       <DbcScheduledLaunchListener />
+      <RobinhoodWalletRpcNotice />
       <LiveStreamOverlay />
       <RewardUnlockFlight />
       <VictoryUnlockModal />
