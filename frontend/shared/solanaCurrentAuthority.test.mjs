@@ -146,8 +146,17 @@ test("paid UpVote blocks explicit legacy 102 before Solana payment", async () =>
   assert.match(text, /!legacySolanaChain/);
   assert.match(text, /Legacy Solana chain 102 cannot authorize a current paid UpVote/);
   assert.match(text, /SOLANA_CHAIN_ID/);
-  assert.match(text, /ROBINHOOD_CHAIN_ID/);
-  assert.match(text, /ROBINHOOD_TESTNET_CHAIN_ID/);
+  // The Robinhood (4663 / 46630) unit and network label moved out of the dialog into chainPresentation.ts
+  // (DogeOS t12): the dialog takes both from there, and the helpers keep ETH / "Robinhood" for both Robinhood ids and
+  // BNB for the rest; the only addition is the DogeOS branch just before the BNB fallback.
+  assert.match(text, /import \{ upvoteNativeUnit, upvoteNetworkLabel \} from "@\/lib\/chainPresentation";/);
+  assert.match(text, /const nativeUnit = upvoteNativeUnit\(Number\(chainId\), isSolanaCampaign\);/);
+  assert.match(text, /upvoteNetworkLabel\(Number\(chainId\)\)/);
+  const presentation = await source("frontend/src/lib/chainPresentation.ts");
+  assert.match(presentation, /export function upvoteNativeUnit\(chainId: number, isSolanaCampaign: boolean\): string \{\r?\n\s+if \(isSolanaCampaign\) return "SOL";\r?\n\s+if \(isRobinhoodChainId\(chainId\)\) return "ETH";\r?\n\s+if \(isDogeosChainId\(chainId\)\) return getNativeSymbol\(chainId\);\r?\n\s+return "BNB";\r?\n\}/);
+  assert.match(presentation, /export function upvoteNetworkLabel\(chainId: number\): string \{\r?\n\s+if \(isRobinhoodChainId\(chainId\)\) return "Robinhood";\r?\n\s+if \(isDogeosChainId\(chainId\)\) return DOGEOS_SHORT_LABEL;\r?\n\s+return "BNB";\r?\n\}/);
+  const chainConfig = await source("frontend/src/lib/chainConfig.ts");
+  assert.match(chainConfig, /export function isRobinhoodChainId\(chainId\?: number \| null\): boolean \{\r?\n\s+return chainId === ROBINHOOD_CHAIN_ID \|\| chainId === ROBINHOOD_TESTNET_CHAIN_ID;/);
 });
 
 test("ticker reservation boundary rejects 102 without changing BNB or Robinhood identifiers", async () => {
