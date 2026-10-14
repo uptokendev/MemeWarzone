@@ -1,0 +1,1155 @@
+{
+  "generatedAt": "2026-10-14T15:19:25.356Z",
+  "passed": 117,
+  "failed": 0,
+  "total": 117,
+  "results": [
+    {
+      "ctx": "setup",
+      "name": "tickmath self-test",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "setup",
+      "name": "fork chainId is DogeOS Chikyu 6281971",
+      "pass": true,
+      "detail": "block 8578734"
+    },
+    {
+      "ctx": "setup",
+      "name": "fork block gas limit is Chikyu's 10,000,000",
+      "pass": true,
+      "detail": "10000000"
+    },
+    {
+      "ctx": "setup",
+      "name": "code at Barkswap factory",
+      "pass": true,
+      "detail": "0xF3961157f56C983316657f0267B4C04460beE43f 10699 bytes"
+    },
+    {
+      "ctx": "setup",
+      "name": "code at Barkswap poolDeployer",
+      "pass": true,
+      "detail": "0x4151224471B0EeA41eE4295c632cc61779d339C2 24137 bytes"
+    },
+    {
+      "ctx": "setup",
+      "name": "code at Barkswap ep",
+      "pass": true,
+      "detail": "0x19B1A502Ea56843343E60e44a4a95B3cf4C914f5 3286 bytes"
+    },
+    {
+      "ctx": "setup",
+      "name": "code at Barkswap router",
+      "pass": true,
+      "detail": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531 12561 bytes"
+    },
+    {
+      "ctx": "setup",
+      "name": "code at Barkswap npm",
+      "pass": true,
+      "detail": "0xf596329a6c7E03F0708199cB5435f86783DB4302 21976 bytes"
+    },
+    {
+      "ctx": "setup",
+      "name": "code at Barkswap quoterV2",
+      "pass": true,
+      "detail": "0x187b41968063Cb8A04A5f4d2113844EF2Ba21493 9262 bytes"
+    },
+    {
+      "ctx": "setup",
+      "name": "code at Barkswap wdoge",
+      "pass": true,
+      "detail": "0xF6BDB158A5ddF77F1B83bC9074F6a472c58D78aE 5294 bytes"
+    },
+    {
+      "ctx": "setup",
+      "name": "code at Barkswap vault",
+      "pass": true,
+      "detail": "0xA305F8BDf7EaA3233b3918A39d1e0867c6116c83 4432 bytes"
+    },
+    {
+      "ctx": "setup",
+      "name": "EP is the only CUSTOM_POOL_DEPLOYER (no per-deployer grant needed)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "setup",
+      "name": "EP holds POOLS_ADMINISTRATOR (setTickSpacing / setFee / setPluginConfig forwarders work)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "setup",
+      "name": "router poolDeployer / WNativeToken match",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "setup",
+      "name": "factory defaultCommunityFee = 30 (3% of every swap fee)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "setup",
+      "name": "plugin P deployed by D, P.launcher == D",
+      "pass": true,
+      "detail": "0x544a84786752c8b97e2611C2234064DAeA25aebf"
+    },
+    {
+      "ctx": "1 launch",
+      "name": "launch fits far under the 10M block gas limit (direct pool.mint, tickSpacing 200)",
+      "pass": true,
+      "detail": "6131654 gas, 61.3% of 10M"
+    },
+    {
+      "ctx": "1 launch",
+      "name": "launch fits far under the 10M block gas limit (NPM mint (2 NFTs to D), tickSpacing 200)",
+      "pass": true,
+      "detail": "6636853 gas, 66.4% of 10M"
+    },
+    {
+      "ctx": "1 launch",
+      "name": "NPM variant: both position NFTs owned by D, liquidity recorded",
+      "pass": true,
+      "detail": "ids 845/846"
+    },
+    {
+      "ctx": "1 launch",
+      "name": "launch fits far under the 10M block gas limit (direct pool.mint, tickSpacing 60 (default, no setTickSpacing))",
+      "pass": true,
+      "detail": "6123293 gas, 61.2% of 10M"
+    },
+    {
+      "ctx": "1 launch",
+      "name": "launch fits far under the 10M block gas limit (direct pool.mint, tickSpacing 10)",
+      "pass": true,
+      "detail": "6132142 gas, 61.3% of 10M"
+    },
+    {
+      "ctx": "1 launch",
+      "name": "launch fits far under the 10M block gas limit (direct pool.mint, tickSpacing 200, coin side-pool guard on)",
+      "pass": true,
+      "detail": "6158392 gas, 61.6% of 10M"
+    },
+    {
+      "ctx": "1 launch",
+      "name": "launch fits far under the 10M block gas limit (direct pool.mint, tickSpacing 200, creator first buy 10 DOGE)",
+      "pass": true,
+      "detail": "6298252 gas, 63.0% of 10M"
+    },
+    {
+      "ctx": "1 launch",
+      "name": "launch fits far under the 10M block gas limit (direct pool.mint, tickSpacing 200, LP-fee mode (lastFee stays 500))",
+      "pass": true,
+      "detail": "6123743 gas, 61.2% of 10M"
+    },
+    {
+      "ctx": "1 launch",
+      "name": "pool address == factory.computeCustomPoolAddress(D, coin, WDOGE) and registered under D",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "1 launch",
+      "name": "coin is token0, WDOGE token1 (launcher enforces, salt picked off chain)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "1 launch",
+      "name": "pool.plugin() == the shared plugin P",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "1 launch",
+      "name": "plugin config 135 = BEFORE_SWAP|AFTER_SWAP|BEFORE_POSITION_MODIFY|DYNAMIC_FEE",
+      "pass": true,
+      "detail": "135"
+    },
+    {
+      "ctx": "1 launch",
+      "name": "tick spacing 200 set through EP.setTickSpacing",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "1 launch",
+      "name": "lastFee 0 (EP.setFee(0) before DYNAMIC_FEE): LP fee 0, total fee = plugin fee",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "1 launch",
+      "name": "communityFee 30 and vault 0xA305 set by the factory (D cannot change either)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "1 launch",
+      "name": "initialized exactly at the grid start price (tick == tickStart)",
+      "pass": true,
+      "detail": "tick -171200"
+    },
+    {
+      "ctx": "1 launch",
+      "name": "position A owned by D with the planned liquidity",
+      "pass": true,
+      "detail": "L 193350877107756743066217"
+    },
+    {
+      "ctx": "1 launch",
+      "name": "position B owned by D with the planned liquidity",
+      "pass": true,
+      "detail": "L 158479493606881292137336"
+    },
+    {
+      "ctx": "1 launch",
+      "name": "pool holds A + B coins (one-sided, coin only), no WDOGE",
+      "pass": true,
+      "detail": "979999999 coins (A 849999999.9999 B 129999999.9999)"
+    },
+    {
+      "ctx": "1 launch",
+      "name": "creator got the 20M reserve; rounding dust burned to 0xdEaD; D keeps 0 coins",
+      "pass": true,
+      "detail": "dust 2227 wei"
+    },
+    {
+      "ctx": "1 launch",
+      "name": "D's only state-changing functions: launch, callbacks, takeGraduationFee, collectLpFees (no withdraw path for A/B)",
+      "pass": true,
+      "detail": "algebraMintCallback,algebraSwapCallback,collectLpFees,launch,takeGraduationFee"
+    },
+    {
+      "ctx": "1 launch",
+      "name": "beforeInitialize reverts for any sender but D (anti front-run), returns the selector for D",
+      "pass": true,
+      "detail": "OnlyLauncherMayInitialize / 0x636fd804"
+    },
+    {
+      "ctx": "1 launch",
+      "name": "re-initialize reverts (alreadyInitialized)",
+      "pass": true,
+      "detail": "alreadyInitialized"
+    },
+    {
+      "ctx": "1 launch",
+      "name": "nobody but D can create a custom pool under deployer D (EP: Only deployer)",
+      "pass": true,
+      "detail": "Error(Only deployer)"
+    },
+    {
+      "ctx": "2 curve",
+      "name": "tickSpacing 10: grid rounding keeps grad MC, start MC and raise within 1,000 ppm of gen-7",
+      "pass": true,
+      "detail": "worst 482.04647 ppm"
+    },
+    {
+      "ctx": "2 curve",
+      "name": "tickSpacing 60: within 6,000 ppm of gen-7",
+      "pass": true,
+      "detail": "worst 2102.192731 ppm"
+    },
+    {
+      "ctx": "2 curve",
+      "name": "tickSpacing 200 (Barkswap's usual): within 20,000 ppm (<=1% price step / 2)",
+      "pass": true,
+      "detail": "worst 9240.635349 ppm (grid step 2.02% in price)"
+    },
+    {
+      "ctx": "2 curve",
+      "name": "$150 sp 200: buying all of A stops exactly at the graduation price",
+      "pass": true,
+      "detail": "tick -134200 == tickGrad -134200"
+    },
+    {
+      "ctx": "2 curve",
+      "name": "$150 sp 200: coins out == A (850M minus rounding)",
+      "pass": true,
+      "detail": "849999999.999999"
+    },
+    {
+      "ctx": "2 curve",
+      "name": "$150 sp 200: native into A (ex fee) == planned raise (V3 math) within 2 wei",
+      "pass": true,
+      "detail": "198.643221043 DOGE vs plan 198.643221043; gen-7 R 198.959693877 (1590.63792 ppm); at $0.10: $19.86"
+    },
+    {
+      "ctx": "2 curve",
+      "name": "$150 sp 200: fee on that buy is the gen-7 2% on top of the curve cost",
+      "pass": true,
+      "detail": "fee 3.972690171 = 1.9999% of curve cost"
+    },
+    {
+      "ctx": "2 curve",
+      "name": "$150 sp 200: the latch fires at the graduation price (price >= sqrtGrad)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "2 curve",
+      "name": "$150 sp 10: buying all of A stops exactly at the graduation price",
+      "pass": true,
+      "detail": "tick -134110 == tickGrad -134110"
+    },
+    {
+      "ctx": "2 curve",
+      "name": "$150 sp 10: coins out == A (850M minus rounding)",
+      "pass": true,
+      "detail": "849999999.999999"
+    },
+    {
+      "ctx": "2 curve",
+      "name": "$150 sp 10: native into A (ex fee) == planned raise (V3 math) within 2 wei",
+      "pass": true,
+      "detail": "198.941394541 DOGE vs plan 198.941394541; gen-7 R 198.959693877 (91.975093 ppm); at $0.10: $19.89"
+    },
+    {
+      "ctx": "2 curve",
+      "name": "$150 sp 10: fee on that buy is the gen-7 2% on top of the curve cost",
+      "pass": true,
+      "detail": "fee 3.978653379 = 1.9999% of curve cost"
+    },
+    {
+      "ctx": "2 curve",
+      "name": "$150 sp 10: the latch fires at the graduation price (price >= sqrtGrad)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "2 curve",
+      "name": "$30K sp 200: buying all of A stops exactly at the graduation price",
+      "pass": true,
+      "detail": "tick -81200 == tickGrad -81200"
+    },
+    {
+      "ctx": "2 curve",
+      "name": "$30K sp 200: coins out == A (850M minus rounding)",
+      "pass": true,
+      "detail": "849999999.999999"
+    },
+    {
+      "ctx": "2 curve",
+      "name": "$30K sp 200: native into A (ex fee) == planned raise (V3 math) within 2 wei",
+      "pass": true,
+      "detail": "39785.005506489 DOGE vs plan 39785.005506489; gen-7 R 39791.938775510 (174.238029 ppm); at $0.10: $3978.50"
+    },
+    {
+      "ctx": "2 curve",
+      "name": "$30K sp 200: fee on that buy is the gen-7 2% on top of the curve cost",
+      "pass": true,
+      "detail": "fee 795.665210752 = 1.9999% of curve cost"
+    },
+    {
+      "ctx": "2 curve",
+      "name": "$30K sp 200: the latch fires at the graduation price (price >= sqrtGrad)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "3 fees",
+      "name": "creator first buy inside launch pays the bonding rate (2%), not the 90% launch fee",
+      "pass": true,
+      "detail": "pluginFee 19607 = 2/102 of input"
+    },
+    {
+      "ctx": "3 fees",
+      "name": "first fee after creation is pushed at once (lastFeeTransferTimestamp was 0): handlePluginFee in the launch tx",
+      "pass": true,
+      "detail": "P got 0.190187900 WDOGE"
+    },
+    {
+      "ctx": "3 fees",
+      "name": "decay t+1s: plugin fee = gen-7 rate 88.5333% on top (input share 46.96%)",
+      "pass": true,
+      "detail": "fee 0.469589 of 1 DOGE, curve 0.530411, fee/curve 88.533%"
+    },
+    {
+      "ctx": "3 fees",
+      "name": "decay t+10s: plugin fee = gen-7 rate 75.3333% on top (input share 42.97%)",
+      "pass": true,
+      "detail": "fee 0.429657 of 1 DOGE, curve 0.570343, fee/curve 75.333%"
+    },
+    {
+      "ctx": "3 fees",
+      "name": "decay t+30s: plugin fee = gen-7 rate 46% on top (input share 31.51%)",
+      "pass": true,
+      "detail": "fee 0.315068 of 1 DOGE, curve 0.684932, fee/curve 45.9998%"
+    },
+    {
+      "ctx": "3 fees",
+      "name": "decay t+45s: plugin fee = gen-7 rate 24% on top (input share 19.35%)",
+      "pass": true,
+      "detail": "fee 0.193548 of 1 DOGE, curve 0.806452, fee/curve 23.9999%"
+    },
+    {
+      "ctx": "3 fees",
+      "name": "decay t+59s: plugin fee = gen-7 rate 3.4666% on top (input share 3.35%)",
+      "pass": true,
+      "detail": "fee 0.033504 of 1 DOGE, curve 0.966496, fee/curve 3.4665%"
+    },
+    {
+      "ctx": "3 fees",
+      "name": "decay t+60s: plugin fee = gen-7 rate 2% on top (input share 1.96%)",
+      "pass": true,
+      "detail": "fee 0.019607 of 1 DOGE, curve 0.980393, fee/curve 1.9999%"
+    },
+    {
+      "ctx": "3 fees",
+      "name": "decay t+61s: plugin fee = gen-7 rate 2% on top (input share 1.96%)",
+      "pass": true,
+      "detail": "fee 0.019607 of 1 DOGE, curve 0.980393, fee/curve 1.9999%"
+    },
+    {
+      "ctx": "3 fees",
+      "name": "bonding buy: fee 2% on top of the curve cost (gen-7 definition)",
+      "pass": true,
+      "detail": "in 5.000000 curve 4.901965000 fee 0.098035000"
+    },
+    {
+      "ctx": "3 fees",
+      "name": "buy fee is collected in the INPUT token: WDOGE (token1) only",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "3 fees",
+      "name": "community vault share = 3% of the whole fee (plugin keeps 97%)",
+      "pass": true,
+      "detail": "community 0.002941050 plugin 0.095093950 = 1.9399% of curve volume to us"
+    },
+    {
+      "ctx": "3 fees",
+      "name": "LP fee is 0: totalFeeGrowth unchanged (overrideFee 0 + lastFee 0)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "3 fees",
+      "name": "not pushed yet (8 h timer): fees wait in getPluginFeePending",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "3 fees",
+      "name": "sell fee is collected in the INPUT token: the coin (token0), not native",
+      "pass": true,
+      "detail": "plugin 38800.00 coins, community 1200.00 coins"
+    },
+    {
+      "ctx": "3 fees",
+      "name": "sell fee = 2% of the coins sold within 1,000 wei (price-step rounding dust lands in the fee; gen-7 takes 2% of the native payout: same value, other token)",
+      "pass": true,
+      "detail": "fee 40000.00 coins of 2000000 (diff 12 wei, pluginFee 20000, override 0); seller got 0.145492508 DOGE"
+    },
+    {
+      "ctx": "3 overrideFee",
+      "name": "LP-fee mode: lastFee stays 500 but overrideFee != 0 replaces it; pluginFee 0",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "3 overrideFee",
+      "name": "LP-fee mode: nothing goes to plugin pending; fee accrues as LP fee growth to our positions",
+      "pass": true,
+      "detail": "LP fee ~0.095093949 WDOGE, community 0.002941050"
+    },
+    {
+      "ctx": "3 overrideFee",
+      "name": "LP-fee mode: treasury collects the LP fees at once (no 8 h wait, no handlePluginFee)",
+      "pass": true,
+      "detail": "0.285281849 WDOGE (first-buy + this buy, 97% of fees)"
+    },
+    {
+      "ctx": "4 LP block",
+      "name": "outsider NPM mint (coin-only above price) into our pool reverts LiquidityIsLocked",
+      "pass": true,
+      "detail": "LiquidityIsLocked"
+    },
+    {
+      "ctx": "4 LP block",
+      "name": "outsider NPM mint (WDOGE-only below price) reverts LiquidityIsLocked",
+      "pass": true,
+      "detail": "LiquidityIsLocked"
+    },
+    {
+      "ctx": "4 LP block",
+      "name": "outsider direct pool.mint (own callback) reverts LiquidityIsLocked",
+      "pass": true,
+      "detail": "LiquidityIsLocked"
+    },
+    {
+      "ctx": "4 LP block",
+      "name": "NPM.createAndInitializePoolIfNecessary with deployer D is a no-op on our initialized pool",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "7 router",
+      "name": "QuoterV2.quoteExactInputSingle(deployer = D) quotes our custom pool incl. the plugin fee exactly",
+      "pass": true,
+      "detail": "quote 37627885.37 == got 37627885.37"
+    },
+    {
+      "ctx": "7 router",
+      "name": "router exactInputSingle(deployer = D, native value) swaps in our pool (router wraps DOGE)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "7 router",
+      "name": "router with deployer = address(0) targets the (non-existent) default pool and reverts",
+      "pass": true,
+      "detail": "revert (no data)"
+    },
+    {
+      "ctx": "5 graduation",
+      "name": "takeGraduationFee before the latch reverts NotGraduated",
+      "pass": true,
+      "detail": "NotGraduated"
+    },
+    {
+      "ctx": "5 graduation",
+      "name": "crossing buy started below the graduation price and ended above it",
+      "pass": true,
+      "detail": "tick -163109 -> -134099 (grad -134200)"
+    },
+    {
+      "ctx": "5 graduation",
+      "name": "crossing buy pays the bonding rate (price at swap START was inside A, F1)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "5 graduation",
+      "name": "afterSwap latch: graduated = true, graduatedAt = block time, Graduated event",
+      "pass": true,
+      "detail": "graduatedAt 1791991325"
+    },
+    {
+      "ctx": "5 graduation",
+      "name": "plugin reconfigured the pool from afterSwap (pool unlocked): config 135 -> 133, afterSwap off",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "5 graduation",
+      "name": "post-graduation buy pays 1% on top (price at start >= graduation price)",
+      "pass": true,
+      "detail": "fee 0.019800000"
+    },
+    {
+      "ctx": "5 graduation",
+      "name": "graduation fee step: A returns only native (amount0 0) and the treasury receives it",
+      "pass": true,
+      "detail": "3.972864420 WDOGE"
+    },
+    {
+      "ctx": "5 graduation",
+      "name": "graduation fee == 2% of the native in A within 2 wei (gen-8 one-time 2%)",
+      "pass": true,
+      "detail": "want floor(2% of 198.643221043) = 3.972864420"
+    },
+    {
+      "ctx": "5 graduation",
+      "name": "A keeps 98% of its liquidity; B untouched",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "5 graduation",
+      "name": "second takeGraduationFee reverts AlreadyTaken",
+      "pass": true,
+      "detail": "AlreadyTaken"
+    },
+    {
+      "ctx": "5 graduation",
+      "name": "sell starting at/above the graduation price pays 1% (in coins)",
+      "pass": true,
+      "detail": "price fell back into A: tick -147483"
+    },
+    {
+      "ctx": "5 graduation",
+      "name": "next sell starting inside A pays the bonding 2% again (F1), latch stays set",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "5 graduation",
+      "name": "inline variant: afterSwap latch calls D.takeGraduationFee in the same swap (pool unlocked, D's burn passes the plugin)",
+      "pass": true,
+      "detail": "3.972864420 WDOGE to treasury"
+    },
+    {
+      "ctx": "6 payout",
+      "name": "fees from all M swaps since the launch push are pending in both tokens",
+      "pass": true,
+      "detail": "1513200.00 coins + 3.704371792 WDOGE"
+    },
+    {
+      "ctx": "6 payout",
+      "name": "a swap 10 s before the 8 h mark does not push (pending grows)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "6 payout",
+      "name": "with handlePluginFee reverting, swaps before the 8 h mark still work (handler not called)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "6 payout",
+      "name": "a reverting handlePluginFee reverts every payout swap (P must never revert)",
+      "pass": true,
+      "detail": "ResearchRevert"
+    },
+    {
+      "ctx": "6 payout",
+      "name": "8 h later the next fee-bearing swap calls P.handlePluginFee(fee0, fee1) once",
+      "pass": true,
+      "detail": "fee0 1513200.00 coins, fee1 3.742409372 WDOGE"
+    },
+    {
+      "ctx": "6 payout",
+      "name": "handlePluginFee amounts == pending + this swap's fee; pending now 0",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "6 payout",
+      "name": "P receives BOTH tokens (coin from sells, WDOGE from buys) and its balances move by exactly those amounts",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "6 payout",
+      "name": "community vault receives its pending 3% in both tokens in the same swap",
+      "pass": true,
+      "detail": "vault +46799.99 coins, +0.115744619 WDOGE"
+    },
+    {
+      "ctx": "6 payout",
+      "name": "lastFeeTransferTimestamp reset to the payout block",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "6 payout",
+      "name": "per-pool attribution (msg.sender = pool): sum of feesNative over our pools == P's WDOGE balance",
+      "pass": true,
+      "detail": "M 3.932597272 G 0.190187900 L 0.000000000 (LP mode) = 4.122785172"
+    },
+    {
+      "ctx": "6 payout",
+      "name": "per-pool coin books == P's balance of each coin",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "6 payout",
+      "name": "P's own swap skips beforeSwap/afterSwap: overrideFee 0, pluginFee 0, no community fee (lastFee 0)",
+      "pass": true,
+      "detail": "sold 1513200.00 coins for 0.608626133 WDOGE"
+    },
+    {
+      "ctx": "6 payout",
+      "name": "after conversion P holds only WDOGE for M and the books still reconcile",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "8 side pool",
+      "name": "router swaps on our pool keep working with the guarded coin (buy and sell)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "ctx": "8 side pool",
+      "name": "outsider created a default (side) pool for our unguarded coin, next to our custom pool",
+      "pass": true,
+      "detail": "0xa70722f0C538b916A4a5361BaCd328F896d560BA"
+    },
+    {
+      "ctx": "8 side pool",
+      "name": "unguarded coin: outsider adds coin liquidity to the side pool (we cannot stop it)",
+      "pass": true,
+      "detail": "ok"
+    },
+    {
+      "ctx": "8 side pool",
+      "name": "outsider created a default (side) pool for our guarded coin, next to our custom pool",
+      "pass": true,
+      "detail": "0x6BE3B4165122B73B1bC0Ac4A66aef9E7418d9a8b"
+    },
+    {
+      "ctx": "8 side pool",
+      "name": "guarded coin: outsider's NPM mint into the side pool reverts (coin refuses the transfer; NPM reports STF)",
+      "pass": true,
+      "detail": "Error(STF)"
+    },
+    {
+      "ctx": "8 side pool",
+      "name": "guarded coin: a direct transfer to the side pool reverts SidePoolBlocked",
+      "pass": true,
+      "detail": "SidePoolBlocked(0x6BE3B4165122B73B1bC0Ac4A66aef9E7418d9a8b)"
+    },
+    {
+      "ctx": "8 side pool",
+      "name": "guarded coin: after our pool graduates the guard lifts (side-pool mint works)",
+      "pass": true,
+      "detail": "ok"
+    }
+  ],
+  "gas": [
+    {
+      "step": "deploy launcher D (+ shared plugin P in its constructor), once per chain",
+      "gas": 4599820,
+      "detail": "D runtime 15401 B, P runtime 5407 B"
+    },
+    {
+      "step": "standalone coin deploy (reference: the coin CREATE inside launch)",
+      "gas": 763441,
+      "detail": ""
+    },
+    {
+      "step": "launch tx: direct pool.mint, tickSpacing 200",
+      "gas": 6131654,
+      "detail": ""
+    },
+    {
+      "step": "launch tx: NPM mint (2 NFTs to D), tickSpacing 200",
+      "gas": 6636853,
+      "detail": ""
+    },
+    {
+      "step": "launch tx: direct pool.mint, tickSpacing 60 (default, no setTickSpacing)",
+      "gas": 6123293,
+      "detail": ""
+    },
+    {
+      "step": "launch tx: direct pool.mint, tickSpacing 10",
+      "gas": 6132142,
+      "detail": ""
+    },
+    {
+      "step": "launch tx: direct pool.mint, tickSpacing 200, coin side-pool guard on",
+      "gas": 6158392,
+      "detail": ""
+    },
+    {
+      "step": "launch tx: direct pool.mint, tickSpacing 200, creator first buy 10 DOGE",
+      "gas": 6298252,
+      "detail": ""
+    },
+    {
+      "step": "launch tx: direct pool.mint, tickSpacing 200, LP-fee mode (lastFee stays 500)",
+      "gas": 6123743,
+      "detail": ""
+    },
+    {
+      "step": "buy out all of A ($150, sp 200, crosses into graduation, price-limited multicall)",
+      "gas": 285237,
+      "detail": ""
+    },
+    {
+      "step": "buy out all of A ($150, sp 10, crosses into graduation, price-limited multicall)",
+      "gas": 285293,
+      "detail": ""
+    },
+    {
+      "step": "buy out all of A ($30K, sp 200, crosses into graduation, price-limited multicall)",
+      "gas": 285289,
+      "detail": ""
+    },
+    {
+      "step": "launch M with creator first buy 10 DOGE (1 tx)",
+      "gas": 6298144,
+      "detail": ""
+    },
+    {
+      "step": "router buy 5 DOGE (exactInputSingle, native in), bonding, no payout",
+      "gas": 175645,
+      "detail": ""
+    },
+    {
+      "step": "direct pool.swap buy 1 WDOGE (helper contract, no router), bonding",
+      "gas": 149178,
+      "detail": ""
+    },
+    {
+      "step": "router sell 2M coins (multicall exactInputSingle + unwrapWNativeToken), bonding",
+      "gas": 158294,
+      "detail": ""
+    },
+    {
+      "step": "LP-fee mode: collectLpFees (poke A+B with burn 0, collect both)",
+      "gas": 164954,
+      "detail": ""
+    },
+    {
+      "step": "graduation-crossing buy (latch + plugin drops its afterSwap flag)",
+      "gas": 183257,
+      "detail": ""
+    },
+    {
+      "step": "post-graduation buy 2 DOGE (1%, no afterSwap call)",
+      "gas": 136930,
+      "detail": ""
+    },
+    {
+      "step": "takeGraduationFee (burn 2% of A + collect to treasury), separate permissionless tx",
+      "gas": 143660,
+      "detail": ""
+    },
+    {
+      "step": "graduation-crossing buy WITH inline 2% graduation fee in afterSwap (pool L)",
+      "gas": 310057,
+      "detail": ""
+    },
+    {
+      "step": "payout swap: buy 1 DOGE that triggers the 8 h push (plugin + community, 2 tokens each)",
+      "gas": 234093,
+      "detail": ""
+    },
+    {
+      "step": "convertCoinFees: P sells its coin fees into the pool (hooks skipped)",
+      "gas": 144774,
+      "detail": ""
+    },
+    {
+      "step": "router buy 2 DOGE, coin WITHOUT guard (twin pool)",
+      "gas": 175681,
+      "detail": ""
+    },
+    {
+      "step": "router buy 2 DOGE, coin WITH side-pool guard",
+      "gas": 175821,
+      "detail": "+140"
+    },
+    {
+      "step": "router sell 500K coins, coin WITHOUT guard",
+      "gas": 158307,
+      "detail": ""
+    },
+    {
+      "step": "router sell 500K coins, coin WITH guard",
+      "gas": 160648,
+      "detail": "+2341"
+    },
+    {
+      "step": "plain transfer to an EOA, no guard / guard",
+      "gas": 51433,
+      "detail": "guard 54073, +2640"
+    },
+    {
+      "step": "plain transfer to a contract (not a pool), no guard / guard",
+      "gas": 51433,
+      "detail": "guard 56818, +5385"
+    },
+    {
+      "step": "side pool: factory.createPool(coin, WDOGE) by an outsider (unguarded)",
+      "gas": 8114099,
+      "detail": "deploys a BasePluginV1 per pool"
+    },
+    {
+      "step": "side pool: factory.createPool(coin, WDOGE) by an outsider (guarded)",
+      "gas": 8114099,
+      "detail": "deploys a BasePluginV1 per pool"
+    }
+  ],
+  "data": {
+    "fork": {
+      "chainId": 6281971,
+      "block": 8578734,
+      "timestamp": 1791990760,
+      "gasLimit": 10000000
+    },
+    "launchVariants": [
+      {
+        "label": "direct pool.mint, tickSpacing 200",
+        "gas": 6131654
+      },
+      {
+        "label": "NPM mint (2 NFTs to D), tickSpacing 200",
+        "gas": 6636853
+      },
+      {
+        "label": "direct pool.mint, tickSpacing 60 (default, no setTickSpacing)",
+        "gas": 6123293
+      },
+      {
+        "label": "direct pool.mint, tickSpacing 10",
+        "gas": 6132142
+      },
+      {
+        "label": "direct pool.mint, tickSpacing 200, coin side-pool guard on",
+        "gas": 6158392
+      },
+      {
+        "label": "direct pool.mint, tickSpacing 200, creator first buy 10 DOGE",
+        "gas": 6298252
+      },
+      {
+        "label": "direct pool.mint, tickSpacing 200, LP-fee mode (lastFee stays 500)",
+        "gas": 6123743
+      }
+    ],
+    "curve": [
+      {
+        "target": "$150",
+        "spacing": 200,
+        "tickStart": -171200,
+        "tickGrad": -134200,
+        "gradMcDoge": "1486.1390",
+        "targetMcDoge": "1500.0000",
+        "gradMcPpm": 9240.635349,
+        "startMcDoge": "36.7493",
+        "gen7StartMcDoge": "36.5259",
+        "startMcPpm": 6118.427809,
+        "raiseADoge": "198.643221",
+        "gen7RaiseDoge": "198.959693",
+        "raisePpm": 1590.63792,
+        "coinsAWei": "849999999999999999999998505",
+        "coinsBWei": "129999999999999999999999268"
+      },
+      {
+        "target": "$150",
+        "spacing": 60,
+        "tickStart": -171240,
+        "tickGrad": -134100,
+        "gradMcDoge": "1501.0742",
+        "targetMcDoge": "1500.0000",
+        "gradMcPpm": 716.16148,
+        "startMcDoge": "36.6026",
+        "gen7StartMcDoge": "36.5259",
+        "startMcPpm": 2102.192731,
+        "raiseADoge": "199.240015",
+        "gen7RaiseDoge": "198.959693",
+        "raisePpm": 1408.937302,
+        "coinsAWei": "849999999999999999999998729",
+        "coinsBWei": "129999999999999999999999385"
+      },
+      {
+        "target": "$150",
+        "spacing": 10,
+        "tickStart": -171260,
+        "tickGrad": -134110,
+        "gradMcDoge": "1499.5739",
+        "targetMcDoge": "1500.0000",
+        "gradMcPpm": 284.004506,
+        "startMcDoge": "36.5295",
+        "gen7StartMcDoge": "36.5259",
+        "startMcPpm": 100.091218,
+        "raiseADoge": "198.941394",
+        "gen7RaiseDoge": "198.959693",
+        "raisePpm": 91.975093,
+        "coinsAWei": "849999999999999999999998510",
+        "coinsBWei": "129999999999999999999999886"
+      },
+      {
+        "target": "$30K",
+        "spacing": 200,
+        "tickStart": -118200,
+        "tickGrad": -81200,
+        "gradMcDoge": "297649.4735",
+        "targetMcDoge": "300000.0000",
+        "gradMcPpm": 7835.088176,
+        "startMcDoge": "7360.3060",
+        "gen7StartMcDoge": "7305.1828",
+        "startMcPpm": 7545.764203,
+        "raiseADoge": "39785.005506",
+        "gen7RaiseDoge": "39791.938775",
+        "raisePpm": 174.238029,
+        "coinsAWei": "849999999999999999999999925",
+        "coinsBWei": "129999999999999999999999983"
+      },
+      {
+        "target": "$30K",
+        "spacing": 60,
+        "tickStart": -118260,
+        "tickGrad": -81120,
+        "gradMcDoge": "300040.0995",
+        "targetMcDoge": "300000.0000",
+        "gradMcPpm": 133.665202,
+        "startMcDoge": "7316.2786",
+        "gen7StartMcDoge": "7305.1828",
+        "startMcPpm": 1518.88966,
+        "raiseADoge": "39824.808420",
+        "gen7RaiseDoge": "39791.938775",
+        "raisePpm": 826.037773,
+        "coinsAWei": "849999999999999999999999851",
+        "coinsBWei": "129999999999999999999999945"
+      },
+      {
+        "target": "$30K",
+        "spacing": 10,
+        "tickStart": -118280,
+        "tickGrad": -81120,
+        "gradMcDoge": "300040.0995",
+        "targetMcDoge": "300000.0000",
+        "gradMcPpm": 133.665202,
+        "startMcDoge": "7301.6614",
+        "gen7StartMcDoge": "7305.1828",
+        "startMcPpm": 482.04647,
+        "raiseADoge": "39785.005506",
+        "gen7RaiseDoge": "39791.938775",
+        "raisePpm": 174.238029,
+        "coinsAWei": "849999999999999999999999772",
+        "coinsBWei": "129999999999999999999999962"
+      }
+    ],
+    "buyOutA_$150_200": {
+      "totalIn": "202.615911214",
+      "curveIn": "198.643221043",
+      "fee": "3.972690171",
+      "plan": "198.643221043",
+      "gen7": "198.959693877",
+      "gas": 285237
+    },
+    "buyOutA_$150_10": {
+      "totalIn": "202.920047920",
+      "curveIn": "198.941394541",
+      "fee": "3.978653379",
+      "plan": "198.941394541",
+      "gen7": "198.959693877",
+      "gas": 285293
+    },
+    "buyOutA_$30K_200": {
+      "totalIn": "40580.670717242",
+      "curveIn": "39785.005506489",
+      "fee": "795.665210752",
+      "plan": "39785.005506489",
+      "gen7": "39791.938775510",
+      "gas": 285289
+    },
+    "decay": [
+      {
+        "t": 1,
+        "rateBps": 8853.33,
+        "pluginFeeReturned": 469589,
+        "feeDoge": "0.469589000",
+        "feeShareOfInput": "46.959%"
+      },
+      {
+        "t": 10,
+        "rateBps": 7533.33,
+        "pluginFeeReturned": 429657,
+        "feeDoge": "0.429657000",
+        "feeShareOfInput": "42.966%"
+      },
+      {
+        "t": 30,
+        "rateBps": 4600,
+        "pluginFeeReturned": 315068,
+        "feeDoge": "0.315068000",
+        "feeShareOfInput": "31.507%"
+      },
+      {
+        "t": 45,
+        "rateBps": 2400,
+        "pluginFeeReturned": 193548,
+        "feeDoge": "0.193548000",
+        "feeShareOfInput": "19.355%"
+      },
+      {
+        "t": 59,
+        "rateBps": 346.66,
+        "pluginFeeReturned": 33504,
+        "feeDoge": "0.033504000",
+        "feeShareOfInput": "3.350%"
+      },
+      {
+        "t": 60,
+        "rateBps": 200,
+        "pluginFeeReturned": 19607,
+        "feeDoge": "0.019607000",
+        "feeShareOfInput": "1.961%"
+      },
+      {
+        "t": 61,
+        "rateBps": 200,
+        "pluginFeeReturned": 19607,
+        "feeDoge": "0.019607000",
+        "feeShareOfInput": "1.961%"
+      }
+    ],
+    "pools": {
+      "M": "0x65D19DF6e865cD3C645A14234320cc7CDb38fd9B",
+      "G": "0x29Ab09f7E04231F34706d66f945A1242162Ec1f7",
+      "L": "0xE12dA76aD1CF254c5FC9f55Be6Deb69b79Dd060e",
+      "coinM": "0x0983BC5E46Bf45Ba6367406411e2a461E234BB17",
+      "coinG": "0xDbaAb8578d9B636bcAC2fbE9c617aBc49Eaf392f",
+      "coinL": "0x76e183db88baF84407446dFBbe852Fb38720cd09"
+    },
+    "bondingBuy": {
+      "in": "5.000000000",
+      "curve": "4.901965000",
+      "fee": "0.098035000",
+      "plugin": "0.095093950",
+      "community": "0.002941050",
+      "gas": 175645
+    },
+    "bondingSell": {
+      "coinsIn": "2000000",
+      "feeCoins": "40000.000000",
+      "nativeOut": "0.145492508",
+      "gas": 158294
+    },
+    "lpMode": {
+      "buyFeeApprox": "0.098039215",
+      "collected": "0.285281849",
+      "collectGas": 164954
+    },
+    "graduation": {
+      "crossingIn": "184.764471482",
+      "crossingGas": 183257,
+      "graduatedAt": 1791991325
+    },
+    "graduationFee": {
+      "got": "3.972864420",
+      "want": "3.972864420",
+      "nativeInA": "198.643221043",
+      "gas": 143660
+    },
+    "payout": {
+      "fee0": "1513200.000000",
+      "fee1": "3.742409372",
+      "vaultCoins": "46799.999999",
+      "vaultWdoge": "0.115744619",
+      "payoutGas": 234093,
+      "convertGas": 144774
+    },
+    "sidePool": {
+      "side": "0x6BE3B4165122B73B1bC0Ac4A66aef9E7418d9a8b",
+      "guardBuyExtraGas": 140,
+      "guardSellExtraGas": 2341,
+      "guardEoaTransferExtraGas": 2640,
+      "guardContractTransferExtraGas": 5385,
+      "createPoolGas": 8114099
+    }
+  },
+  "addresses": {
+    "factory": "0xF3961157f56C983316657f0267B4C04460beE43f",
+    "poolDeployer": "0x4151224471B0EeA41eE4295c632cc61779d339C2",
+    "ep": "0x19B1A502Ea56843343E60e44a4a95B3cf4C914f5",
+    "router": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+    "npm": "0xf596329a6c7E03F0708199cB5435f86783DB4302",
+    "quoterV2": "0x187b41968063Cb8A04A5f4d2113844EF2Ba21493",
+    "wdoge": "0xF6BDB158A5ddF77F1B83bC9074F6a472c58D78aE",
+    "vault": "0xA305F8BDf7EaA3233b3918A39d1e0867c6116c83",
+    "admin": "0xFB1525e16FDA109a5180a3Ec23A7146b870E045b"
+  },
+  "fees1e6": {
+    "bonding": 20000,
+    "post": 10000,
+    "sniper": 900000
+  },
+  "dogeUsd": "0.10"
+}
