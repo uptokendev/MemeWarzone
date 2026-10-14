@@ -96,6 +96,22 @@ test("comments: signed by the wallet, text bound into the signature, rate limite
   assert.ok(list.body.comments.length >= 1);
 });
 
+test("comments: a feed session posts a body-only payload", async () => {
+  const db = installFakeDb();
+  const query = pool.query;
+  pool.query = async (sql, params = []) => {
+    if (String(sql).includes("update public.social_feed_sessions")) {
+      return { rows: [{ wallet_address: voter.address.toLowerCase(), chain_id: 56, expires_at: new Date(Date.now() + 60_000).toISOString() }] };
+    }
+    return query(sql, params);
+  };
+  const res = { statusCode: 200, body: null, setHeader() {}, status(code) { this.statusCode = code; return this; }, json(data) { this.body = data; }, end(raw) { this.body = raw ? JSON.parse(String(raw)) : null; } };
+  await handler({ method: "POST", path: `/arena/battles/${BATTLE}/comments`, url: "/", body: { body: "  gm   battle " }, headers: { authorization: "Bearer session-token" } }, res);
+  assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+  assert.equal(res.body.comment.body, "gm battle");
+  assert.equal(db.comments[0].author_wallet, voter.address.toLowerCase());
+});
+
 test("comment validation and unknown routes", async () => {
   installFakeDb();
   assert.equal((await call("POST", `/arena/battles/${BATTLE}/comments`, { chainId: 56, body: "  " })).body.code, "BATTLE_COMMENT_EMPTY");
