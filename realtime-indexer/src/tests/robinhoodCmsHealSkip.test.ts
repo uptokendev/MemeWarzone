@@ -12,7 +12,7 @@ test("the already-healed check runs before any chain read", () => {
   const skip = body.indexOf("cmsAlreadyHealed(");
   const firstRead = body.indexOf("new ethers.Contract(");
   assert.ok(skip > 0 && firstRead > 0 && skip < firstRead);
-  assert.match(body.slice(skip, firstRead), /return \{ healed: true, reason: "already_healed" \}/);
+  assert.match(body.slice(skip, firstRead), /return \{ healed: true, reason: "already_healed", anchor: healedAnchor \}/);
 });
 
 test("every column the heal writes is required by the skip condition", () => {
@@ -44,5 +44,35 @@ test("a BONDING stage row is never skipped (the heal would move it to GRADUATING
 
 test("a failed lookup falls through to the full heal", () => {
   const helper = source.slice(source.indexOf("async function cmsAlreadyHealed"), source.indexOf("export async function healRobinhoodGraduatedCms"));
-  assert.match(helper, /catch \{[\s\S]*return false;/);
+  assert.match(helper, /catch \{[\s\S]*return null;/);
+});
+
+test("idle bonding coins: launched() at most once per interval, new logs force a re-check", async () => {
+  const { skipBondingRecheck } = await import("../robinhoodCmsHealThrottle.js");
+  const t0 = 1_000_000;
+  assert.equal(skipBondingRecheck(undefined, t0, false, 600_000), false, "never checked: check");
+  assert.equal(skipBondingRecheck(t0, t0 + 599_999, false, 600_000), true, "inside the interval: skip");
+  assert.equal(skipBondingRecheck(t0, t0 + 600_000, false, 600_000), false, "interval over: check");
+  assert.equal(skipBondingRecheck(t0, t0 + 1, true, 600_000), false, "new campaign logs: check now");
+  assert.equal(skipBondingRecheck(t0, t0 + 1, false, 0), false, "interval 0 = old behaviour");
+});
+
+test("throttle sits after the already-healed check and before the first chain read; launched() result drives it", () => {
+  const body = source.slice(source.indexOf("export async function healRobinhoodGraduatedCms"));
+  const skip = body.indexOf("cmsAlreadyHealed(");
+  const throttle = body.indexOf("skipBondingRecheck(");
+  const firstRead = body.indexOf("new ethers.Contract(");
+  assert.ok(skip < throttle && throttle < firstRead);
+  assert.match(body, /if \(!launched\) \{\s*notLaunchedCheckedAt\.set\(throttleKey, Date\.now\(\)\);/);
+  assert.match(body, /notLaunchedCheckedAt\.delete\(throttleKey\);/);
+});
+
+test("graduated coins keep their real graduation: the pass writes the heal's anchor, never head/now/zero hash", () => {
+  const indexer = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../indexer.ts"), "utf8");
+  assert.ok(!indexer.includes("setCampaignGraduated(chain.chainId, camp, target, new Date(), ethers.ZeroHash)"));
+  assert.match(indexer, /setCampaignGraduated\(chain\.chainId, camp, healed\.anchor\.block, healed\.anchor\.time, healed\.anchor\.txHash\)/);
+  assert.match(source, /return \{ healed: true, reason: "seeded_graduating", pair, anchor \};/);
+  assert.match(source, /return \{ healed: true, reason: "already_healed", anchor: healedAnchor \};/);
+  // The scan forces the heal when it saw campaign logs.
+  assert.match(indexer, /healRobinhoodGraduatedCms\(provider, chainId, campaign, tokenAddr, \{ force: sawCampaignLogs \}\)/);
 });
