@@ -54,6 +54,7 @@ Never mix targets. The dashboard and all expansion work run on the TEST stack un
 | `payouts-and-rewards.md` | protocol fee flush, league vaults, poker payouts, airdrop runner + recovery, recruiter/creator payouts, payout operator, monthly vault cap bug |
 | `story-mode.md` | Story Mode API, share cards, `/s/` links |
 | `meteora-dbc.md` | Meteora DBC launch type, fees, tx shape, mainnet canary |
+| `dogeos.md` | DogeOS Chikyū testnet (6281971): Barkswap custom-pool launch (gen-8 on Algebra), sub-projects and their branches, founder decisions |
 
 Also: `docs/solana-mainnet-squads-upgrade-runbook.md`, `docs/runbooks/`, and the gitignored
 `docs/build_plans/` (go-live and mainnet-deploy runbooks, on disk only).
