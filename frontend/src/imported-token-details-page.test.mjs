@@ -28,7 +28,7 @@ test("public token route intercepts authoritative project imports before live To
 
 test("pending ownership refreshes from the authoritative API without a hard reload", () => {
   assert.match(entry, /project\.ownershipStatus !== "ownership_pending" && project\.ownershipStatus !== "ownership_manual_review"/);
-  assert.match(entry, /window\.setInterval\(\(\) => \{ void refresh\(\); \}, 10_000\)/);
+  assert.match(entry, /setVisibleInterval\(\(\) => \{ void refresh\(\); \}, 10_000\)/);
   assert.match(entry, /window\.addEventListener\("focus", onFocus\)/);
   assert.match(entry, /document\.addEventListener\("visibilitychange", onVisibility\)/);
 });

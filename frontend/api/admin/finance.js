@@ -17,6 +17,9 @@ import financeAccounting, { isFinanceAccountingPath } from "./financeAccounting.
 import { sharedRevenueLanes, summaryRevenueLanes, valueRevenueLanes } from "../lib/financeRevenueLanes.js";
 import { ageSnapshotMeta, runWithSnapshotUsage, snapshotCacheFor, snapshotKeys, snapshotMeta, trackSnapshots } from "../lib/financeSnapshots.js";
 import { refreshFinanceSnapshots } from "../lib/financeSnapshotJobs.js";
+import { buildGen8Finance } from "../lib/financeGen8.js";
+import { configuredGen8ChainIds } from "../lib/evmGen8Config.js";
+import { getRpcUrls, getServerReadProvider } from "../lib/getServerReadProvider.js";
 
 // Finance shows mainnets only (founder decision 2026-10-04): nothing is earned
 // on a testnet. chainId=all reads all three and adds a cross-chain total.
@@ -937,6 +940,35 @@ export async function financeFeeRouting(req, res, { build = cachedFeeRouting, db
   }
 }
 
+// GET /api/admin/finance/gen8?chainId=56|4663|97|46630|all: gen-8 fee accruals per phase and bucket, splitter
+// runs, creator / router claims and unclaimed balances (indexed, plus live from the hook and splitter when an RPC is
+// set). Bearer only with finance.view, like fee routing. Chains without gen-8 config answer { configured: false }.
+export async function financeGen8(req, res, { build = buildGen8Finance, db = pool } = {}) {
+  const method = String(req.method || "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD") {
+    res.setHeader("Allow", "GET");
+    return res.status(405).json({ ok: false, error: "Gen-8 finance is read-only (GET)." });
+  }
+  if (!req.dashboardPrincipal || !dashboardPrincipalCan(req.dashboardPrincipal, "finance.view")) {
+    return res.status(401).json({ ok: false, error: "Dashboard sign-in with finance.view is required.", code: "FINANCE_VIEW_REQUIRED" });
+  }
+  const raw = String(req.query?.chainId ?? "all").trim().toLowerCase();
+  const chainIds = raw === "" || raw === "all" ? configuredGen8ChainIds() : [Number(raw)];
+  if (chainIds.some((id) => ![56, 97, 4663, 46630].includes(id))) {
+    return res.status(400).json({ ok: false, error: "Gen-8 finance covers BNB 56 / 97 and Robinhood 4663 / 46630 (or chainId=all)." });
+  }
+  try {
+    const getProvider = async (id) => (getRpcUrls(id).length ? getServerReadProvider(id) : null);
+    const chains = [];
+    for (const chainId of chainIds) chains.push(await build({ db, chainId, getProvider }));
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).json({ ok: true, chains });
+  } catch (error) {
+    console.error("[api/admin/finance/gen8]", error);
+    return res.status(500).json({ ok: false, error: "Gen-8 finance read failed." });
+  }
+}
+
 // GET /api/admin/finance/summary: the plain summary page in one read. Bearer
 // only, like fee routing (it carries the fee-routing balances): the dashboard
 // gate in railwayProxy.js resolves finance.view for a GET. Cached 60 s.
@@ -1074,6 +1106,8 @@ async function financeAdminRoutes(req, res) {
   // Payouts overview (read-only, bearer + finance.view): api/lib/financePayouts.js.
   if (routePath === "/api/admin/finance/payouts") return financePayouts(req, res, { db: pool, canView: (p) => dashboardPrincipalCan(p, "finance.view") });
   if (routePath === "/api/admin/finance/summary") return financeSummary(req, res);
+  // EVM generation 8 (read-only, bearer + finance.view): api/lib/financeGen8.js.
+  if (routePath === "/api/admin/finance/gen8") return financeGen8(req, res);
   // Accounting (costs, close, tax reserve, exports, distributions): dashboard sign-in only, see financeAccounting.js.
   if (isFinanceAccountingPath(routePath)) return financeAccounting(req, res);
 

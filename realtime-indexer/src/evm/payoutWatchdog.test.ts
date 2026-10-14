@@ -440,4 +440,41 @@ test("config: chains, send flag, vaults from the operator's variables, airdrop d
   assert.equal(cfg.weeks, 12);
   assert.equal(watchdogConfig(56, { ...env, PAYOUT_WATCHDOG_SEND: "true", PAYOUT_WATCHDOG_WEEKS: "40" }).weeks, 26);
   assert.equal(holderBatchId(56, "2026-09-28", "airdrop_holders").length, 66);
+  assert.deepEqual(cfg.gen8Vaults, []);
+});
+
+test("tick: a gen-8 vault shortfall alerts and the 3-arg approve is not sent to it", async () => {
+  const { file, proposal } = build();
+  const s = scriptedChain({ proposal });
+  const gen8 = ethers.getAddress("0x00000000000000000000000000000000000008aa");
+  const alerts: any[] = [];
+  const report = await runWatchdogTick({
+    db: recordingDb(alerts),
+    cfg: tickConfig({
+      gen8Vaults: [{ label: "gen-8", vault: gen8, program: "airdrop_holders_gen8", startBlock: 1, hook: null, expectedRouter: null }],
+    }),
+    chain: s.chain,
+    sender: s.sender,
+    memory: emptyMemory(),
+    riskExcluded: async () => new Set(),
+    leafFile: async () => file,
+    readGen8Vault: async () => ({
+      chainId: CHAIN,
+      vault: gen8,
+      balanceWei: 1n,
+      totalLiabilitiesWei: 5n,
+      treasuryRouter: null,
+      expectedRouter: null,
+      foreignClaims: [],
+    }),
+    log: () => {},
+  });
+  assert.ok(alerts.some((a) => a.kind === "gen8_vault_short" && a.severity === "critical"));
+  assert.ok(report.alerts.some((a) => a.kind === "gen8_vault_short"));
+  assert.equal(s.sent.some((tx) => tx.to.toLowerCase() === gen8.toLowerCase()), false);
+  const approve = s.sent.find((tx) => tx.to === ethers.getAddress(V));
+  assert.equal(
+    approve?.data.slice(0, 10),
+    WATCHDOG_VAULT_IFACE.encodeFunctionData("approveHolderBatch", [file.batchId, file.root, BigInt(file.total)]).slice(0, 10),
+  );
 });

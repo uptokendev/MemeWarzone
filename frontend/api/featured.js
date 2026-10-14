@@ -5,6 +5,7 @@ import { publicHiddenWhere } from "./lib/publicHiddenCampaigns.js";
 import { liveVoteWindowsJoin } from "./lib/liveVoteWindows.js";
 import { resolveSolUsdPrice } from "./lib/solUsdPrice.js";
 import { withSolanaLaunchpadMarketCap } from "./lib/solanaCampaignProgress.js";
+import { gen8PhaseRuleOn, graduatedSqlFor } from "./lib/evmGen8PlatformSql.js";
 
 const SORT_MAP = {
   activity: "last_activity_at",
@@ -97,6 +98,8 @@ const LOGO_JOINS = `
 const LIFECYCLE_JOIN = LOGO_JOINS;
 
 async function readFeaturedFromVotes({ chainId, sortCol, limit }) {
+  const gen8On = await gen8PhaseRuleOn(pool, chainId);
+  const liveNotGraduated = gen8On ? `not (${graduatedSqlFor("c.", true)})` : "c.graduated_at_chain IS NULL";
   // Windowed columns come from the live recount (vw); the stored ones never decay.
   const orderByExpr =
     sortCol === "last_activity_at" ? "ca.last_activity_at" : sortCol === "votes_all_time" ? "va.votes_all_time" : `vw.${sortCol}`;
@@ -163,7 +166,7 @@ ${LIFECYCLE_JOIN}
       AND ca.campaign_address = c.campaign_address
      WHERE va.chain_id = $1
        AND c.campaign_address IS NOT NULL
-       AND c.graduated_at_chain IS NULL
+       AND ${liveNotGraduated}
        AND COALESCE(c.is_active, true) = true
        -- Hidden test campaigns stay out of Featured like every other public listing.
        AND NOT ${publicHiddenWhere("c")}
@@ -179,6 +182,8 @@ ${LIFECYCLE_JOIN}
 }
 
 async function readFeaturedFromCampaigns({ chainId, limit }) {
+  const gen8On = await gen8PhaseRuleOn(pool, chainId);
+  const liveNotGraduated = gen8On ? `not (${graduatedSqlFor("c.", true)})` : "c.graduated_at_chain IS NULL";
   const { rows } = await pool.query(
     `SELECT
        c.chain_id AS "chainId",
@@ -218,7 +223,7 @@ ${LIFECYCLE_JOIN}
      ) cc ON true
      WHERE c.chain_id = $1
        AND c.campaign_address IS NOT NULL
-       AND c.graduated_at_chain IS NULL
+       AND ${liveNotGraduated}
        AND COALESCE(c.is_active, true) = true
        -- Hidden test campaigns stay out of Featured like every other public listing.
        AND NOT ${publicHiddenWhere("c")}

@@ -61,6 +61,33 @@ export function selectUnknownPdaTipSignatures(input: {
   return out;
 }
 
+/**
+ * Signatures the campaign tip lane treats as known: every curve_trades row, plus
+ * signatures marked scanned (solana_pda_scan_sigs) at least graceMs ago. A
+ * successful non-trade transaction is marked scanned, so inside the grace window
+ * it is still retried, and after it the tip lane stops fetching it every pass.
+ */
+export function tipKnownSignatures(input: {
+  tradeSignatures: Iterable<string>;
+  scanned: Array<{ signature?: string | null; markedAtMs?: number | null }>;
+  nowMs: number;
+  graceMs: number;
+}): Set<string> {
+  const known = new Set<string>();
+  for (const value of input.tradeSignatures || []) {
+    const signature = String(value || "").trim();
+    if (signature) known.add(signature);
+  }
+  const graceMs = Math.max(0, Number(input.graceMs) || 0);
+  for (const item of input.scanned || []) {
+    const signature = String(item?.signature || "").trim();
+    const markedAtMs = Number(item?.markedAtMs);
+    if (!signature || !Number.isFinite(markedAtMs)) continue;
+    if (input.nowMs - markedAtMs >= graceMs) known.add(signature);
+  }
+  return known;
+}
+
 export type RpcSignatureLike = {
   signature: string;
   slot: number;

@@ -325,6 +325,7 @@ function mapDbCampaign(item: any, idx: number, chainId: number): CampaignInfo | 
     tokenVault: item?.tokenVault ? String(item.tokenVault) : null,
     solVault: item?.solVault ? String(item.solVault) : null,
     campaignIdHex: item?.campaignIdHex ? String(item.campaignIdHex) : null,
+    ...(Number(item?.generation) === 8 ? { generation: 8 } : {}),
   };
 }
 

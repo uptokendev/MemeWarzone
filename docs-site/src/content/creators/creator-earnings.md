@@ -12,9 +12,15 @@ On chains and launch types that offer it, you choose in the **Bond** step of Cre
 
 You claim creator earnings from your Command Center, under **Rewards and claims**.
 
-## What matters most
+## The numbers
 
-The exact numbers belong to the current fee model. When they change, the fee pages are the reference.
+| Source | What you get |
+| --- | --- |
+| Trades on your bonding curve | 5.6% of the 2% trade fee, which is 0.112% of every buy and sell |
+| Graduation | the 2% creator reserve, 20M tokens |
+| Pool fees after graduation | 80% of the fees your locked liquidity earns |
+
+Coins launched before October 2026 earn 5% of the trade fee (0.10% of every trade). Read **[Fee Routing](/fees/fee-routing)** and **[After Graduation](/fees/after-graduation)**.
 
 ## How creators should think about earnings
 

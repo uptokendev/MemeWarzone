@@ -68,6 +68,7 @@ function emptySnapshot(chainId, tokenAddress, reason, identity = null) {
     creatorAddress: identity?.creatorAddress || null,
     feeRecipientAddress: identity?.feeRecipientAddress || null,
     marketCapUsd: null,
+    priceUsd: null,
     holders: null,
     liquidityUsd: null,
     volume24hUsd: null,
@@ -197,7 +198,7 @@ async function readImportMarketStats(query, chainId, tokenAddress) {
   if (!tokenAddress) return null;
   try {
     const result = await query(
-      `select market_cap_usd, liquidity_usd, volume_24h_usd, holders, updated_at
+      `select price_usd, market_cap_usd, liquidity_usd, volume_24h_usd, holders, updated_at
          from public.arena_import_market_stats
         where chain_id = $1 and ${identityEquals(chainId, "token_address", "$2")}
         limit 1`,
@@ -364,6 +365,7 @@ export async function getArenaMarketSnapshot(chainId, tokenIdentity, deps = {}) 
     creatorAddress: identity.creatorAddress,
     feeRecipientAddress: identity.feeRecipientAddress,
     marketCapUsd,
+    priceUsd: importFeed ? positiveNumber(stats?.price_usd) : null,
     holders: holders === null ? null : Math.max(0, Math.floor(holders)),
     liquidityUsd,
     volume24hUsd,

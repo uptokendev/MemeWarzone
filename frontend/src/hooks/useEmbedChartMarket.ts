@@ -11,6 +11,7 @@ import {
   type EmbedChartIdentity,
   type EmbedChartResolution,
 } from "@/lib/embedChart";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 type EmbedChartMarket = {
   candles: MarketCandle[];
@@ -95,10 +96,10 @@ export function useEmbedChartMarket(
     }
     const controller = new AbortController();
     void refresh(controller.signal);
-    const timer = window.setInterval(() => void refresh(), EMBED_CHART_POLL_MS);
+    const stopPolling = setVisibleInterval(() => void refresh(), EMBED_CHART_POLL_MS);
     return () => {
       controller.abort();
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [chainId, token, refresh]);
 

@@ -220,6 +220,8 @@ async function loadGraduatedRows(chainId: number, limit: number) {
            on cms.chain_id = c.chain_id
           and lower(cms.campaign_address) = lower(c.campaign_address)
         where c.chain_id = $1
+          -- Gen-8 coins have no LP locker (the hook takes every fee per swap).
+          and coalesce(c.factory_generation, 0) <> 8
           and (
             c.graduated_at_chain is not null
             or c.graduated_block is not null

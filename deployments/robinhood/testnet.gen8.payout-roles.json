@@ -1,0 +1,123 @@
+{
+  "applied": false,
+  "executes": false,
+  "chainId": 46630,
+  "vault": "0x13537C6273dF312067cE775AAf9635c217A931fd",
+  "signature": "approveHolderBatch(bytes32,bytes32,uint256,uint64)",
+  "selector": "0xc62732bb",
+  "maxTotalWei": "9300000000000000000",
+  "claimDeadlineMax": "18446744073709551615",
+  "conditions": [
+    {
+      "parent": 0,
+      "paramType": 5,
+      "operator": 5,
+      "compValue": "0x"
+    },
+    {
+      "parent": 0,
+      "paramType": 1,
+      "operator": 0,
+      "compValue": "0x"
+    },
+    {
+      "parent": 0,
+      "paramType": 1,
+      "operator": 0,
+      "compValue": "0x"
+    },
+    {
+      "parent": 0,
+      "paramType": 1,
+      "operator": 18,
+      "compValue": "0x00000000000000000000000000000000000000000000000081103cb9fb220001"
+    },
+    {
+      "parent": 0,
+      "paramType": 0,
+      "operator": 1,
+      "compValue": "0x"
+    },
+    {
+      "parent": 4,
+      "paramType": 1,
+      "operator": 17,
+      "compValue": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "parent": 4,
+      "paramType": 1,
+      "operator": 18,
+      "compValue": "0x0000000000000000000000000000000000000000000000010000000000000000"
+    }
+  ],
+  "calls": [
+    {
+      "contract": "IZodiacRolesV2",
+      "to": null,
+      "fn": "scopeTarget",
+      "args": [
+        "0x7061796f75742d7761746368646f670000000000000000000000000000000000",
+        "0x13537C6273dF312067cE775AAf9635c217A931fd"
+      ],
+      "note": "function-level clearance on the gen-8 choice vault"
+    },
+    {
+      "contract": "IZodiacRolesV2",
+      "to": null,
+      "fn": "scopeFunction",
+      "args": [
+        "0x7061796f75742d7761746368646f670000000000000000000000000000000000",
+        "0x13537C6273dF312067cE775AAf9635c217A931fd",
+        "0xc62732bb",
+        [
+          [
+            0,
+            5,
+            5,
+            "0x"
+          ],
+          [
+            0,
+            1,
+            0,
+            "0x"
+          ],
+          [
+            0,
+            1,
+            0,
+            "0x"
+          ],
+          [
+            0,
+            1,
+            18,
+            "0x00000000000000000000000000000000000000000000000081103cb9fb220001"
+          ],
+          [
+            0,
+            0,
+            1,
+            "0x"
+          ],
+          [
+            4,
+            1,
+            17,
+            "0x0000000000000000000000000000000000000000000000000000000000000000"
+          ],
+          [
+            4,
+            1,
+            18,
+            "0x0000000000000000000000000000000000000000000000010000000000000000"
+          ]
+        ],
+        0
+      ],
+      "note": "selector 0xc62732bb; total <= 9300000000000000000; claimDeadline > 0 and <= 18446744073709551615; value 0; call only"
+    }
+  ],
+  "note": "Founder applies these two calls on the chain Roles module (PAYOUT_WATCHDOG_ROLES_<chainId> is the `to`). Do not send this file from a worker. Gen-6 and gen-7 keep approveHolderBatch(bytes32,bytes32,uint256). The vault still requires the stored claim deadline."
+}

@@ -1,8 +1,10 @@
 import type { PoolClient, QueryResult } from "pg";
 import { LEGACY_BNB_THRESHOLDS, airdropThresholdsForChain, fetchAirdropNativeUsd, type AirdropNativeThresholds } from "./airdropThresholds.js";
 import { pool } from "../db.js";
+import { curveTradeGen5Columns } from "../evm/curveTradeGen5Columns.js";
 import { parseWalletAddressOrNull } from "../walletAddress.js";
 import { getEpochById, type RewardEpochRecord } from "./epochs.js";
+import { gen8MoneySafeSql, gen8NettedCurveTradesSql } from "./leagueLeaderboard.js";
 import { ELIGIBILITY_PROGRAMS, ELIGIBILITY_REASON_CODES, EXCLUSION_FLAG_SEVERITIES, isEligibilityProgram, isEligibilityReasonCode, isExclusionFlagSeverity, type EligibilityProgram, type EligibilityReasonCode, type ExclusionFlagSeverity } from "./reasonCodes.js";
 
 // Volume thresholds are USD rules converted per chain per epoch -- see airdropThresholds.ts.
@@ -205,6 +207,23 @@ function walletSqlKey(chainId: number | string): (expr: string) => string {
   return (expr) => (solana ? expr : `lower(${expr})`);
 }
 
+/**
+ * Gen-8 rows in the money queries (founder, 2026-10-12): the trade metrics, the creator metrics and the
+ * wallet-splitting volume read the netted trades (rewards/leagueLeaderboard.ts gen8NettedCurveTradesSql:
+ * one row per coin, wallet and transaction with the trader-side amount, so a wash pair inside one
+ * transaction is its net) and only rows below the chain's money cursor (gen8MoneySafeSql: eligibility
+ * decides money). Every other row passes through unchanged; the plain table until the gen-5 columns
+ * exist. The exclusion detectors keep reading the raw rows: every leg is evidence.
+ */
+async function gen8MoneyTrades(db: DbLike, alias = "t"): Promise<{ from: string; final: string }> {
+  const cols = await curveTradeGen5Columns(db);
+  const on = cols.leagueExcluded && cols.feeRaw;
+  return {
+    from: on ? gen8NettedCurveTradesSql(alias) : `public.curve_trades ${alias}`,
+    final: on ? ` and ${gen8MoneySafeSql(alias)}` : "",
+  };
+}
+
 async function getEpoch(db: DbLike, epochId: number): Promise<RewardEpochRecord> {
   const epoch = await getEpochById(epochId, db);
   if (!epoch) throw new Error(`Reward epoch ${epochId} not found`);
@@ -248,8 +267,9 @@ async function getCandidateWallets(db: DbLike, epoch: RewardEpochRecord): Promis
   return r.rows.map((row: any) => String(row.wallet_address));
 }
 
-async function getTradeMetricsMap(db: DbLike, epoch: RewardEpochRecord): Promise<Map<string, WalletTradeMetrics>> {
+export async function getTradeMetricsMap(db: DbLike, epoch: RewardEpochRecord): Promise<Map<string, WalletTradeMetrics>> {
   const wk = walletSqlKey(epoch.chainId);
+  const g8 = await gen8MoneyTrades(db);
   const r = await db.query(
     `select
        ${wk("t.wallet")} as wallet_address,
@@ -257,12 +277,12 @@ async function getTradeMetricsMap(db: DbLike, epoch: RewardEpochRecord): Promise
        count(*)::int as trade_count,
        count(distinct date_trunc('day', t.block_time at time zone 'utc'))::int as active_days,
        count(*) filter (where ${wk("t.wallet")} = ${wk("c.creator_address")})::int as own_campaign_trade_count
-     from public.curve_trades t
+     from ${g8.from}
      left join public.campaigns c
        on c.chain_id = t.chain_id and c.campaign_address = t.campaign_address
      where t.chain_id = $1
        and t.block_time >= $2
-       and t.block_time < $3
+       and t.block_time < $3${g8.final}
      group by ${wk("t.wallet")}`,
     [epoch.chainId, epoch.startAt, epoch.endAt]
   );
@@ -279,8 +299,9 @@ async function getTradeMetricsMap(db: DbLike, epoch: RewardEpochRecord): Promise
   return map;
 }
 
-async function getCreatorMetricsMap(db: DbLike, epoch: RewardEpochRecord, thresholds: AirdropNativeThresholds): Promise<Map<string, WalletCreatorMetrics>> {
+export async function getCreatorMetricsMap(db: DbLike, epoch: RewardEpochRecord, thresholds: AirdropNativeThresholds): Promise<Map<string, WalletCreatorMetrics>> {
   const wk = walletSqlKey(epoch.chainId);
+  const g8 = await gen8MoneyTrades(db);
   const r = await db.query(
     `with per_campaign as (
        select
@@ -289,11 +310,11 @@ async function getCreatorMetricsMap(db: DbLike, epoch: RewardEpochRecord, thresh
          coalesce(sum(case when t.side = 'buy' then t.bnb_amount_raw::numeric else 0 end), 0)::numeric(78,0) as buy_volume_raw,
          count(distinct case when t.side = 'buy' and ${wk("t.wallet")} <> ${wk("c.creator_address")} then ${wk("t.wallet")} end)::int as unique_buyers_non_creator
        from public.campaigns c
-       left join public.curve_trades t
+       left join ${g8.from}
          on t.chain_id = c.chain_id
         and t.campaign_address = c.campaign_address
         and t.block_time >= $2
-        and t.block_time < $3
+        and t.block_time < $3${g8.final}
        where c.chain_id = $1
          and c.creator_address is not null
        group by ${wk("c.creator_address")}, c.campaign_address
@@ -498,7 +519,7 @@ async function insertAutomaticExclusionFlag(
   );
 }
 
-async function syncAutomaticExclusionFlagsForEpoch(db: DbLike, epoch: RewardEpochRecord, thresholds: AirdropNativeThresholds): Promise<void> {
+export async function syncAutomaticExclusionFlagsForEpoch(db: DbLike, epoch: RewardEpochRecord, thresholds: AirdropNativeThresholds): Promise<void> {
   const wk = walletSqlKey(epoch.chainId);
   await clearAutomaticExclusionFlagsForEpoch(db, epoch.id);
 
@@ -614,6 +635,7 @@ async function syncAutomaticExclusionFlagsForEpoch(db: DbLike, epoch: RewardEpoc
     });
   }
 
+  const g8 = await gen8MoneyTrades(db);
   const walletSplitting = await db.query(
     `with per_wallet as (
        select
@@ -621,11 +643,11 @@ async function syncAutomaticExclusionFlagsForEpoch(db: DbLike, epoch: RewardEpoc
          l.wallet_address,
          coalesce(sum(t.bnb_amount_raw::numeric), 0)::numeric(78,0) as trade_volume_raw
        from public.wallet_recruiter_links l
-       join public.curve_trades t
+       join ${g8.from}
          on ${wk("t.wallet")} = l.wallet_address
         and t.chain_id = $1
         and t.block_time >= $2
-        and t.block_time < $3
+        and t.block_time < $3${g8.final}
        where l.linked_at < $3
          and (l.detached_at is null or l.detached_at >= $2)
        group by l.recruiter_id, l.wallet_address

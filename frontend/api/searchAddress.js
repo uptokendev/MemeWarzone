@@ -13,6 +13,8 @@
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, json } from "../server/http.js";
 import { publicHiddenWhere } from "./lib/publicHiddenSql.js";
+import { gen8Tables } from "./lib/evmGen8Schema.js";
+import { gen8PlatformGraduatedColumn } from "./lib/evmGen8PlatformSql.js";
 
 const EVM_RE = /^0x[0-9a-fA-F]{40}$/;
 const SOLANA_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -24,16 +26,20 @@ export function parseSearchAddress(raw) {
   return null;
 }
 
-export const SEARCH_ADDRESS_SQL = {
-  campaigns: `
-    select c.chain_id, c.campaign_address, c.token_address, c.name, c.symbol, c.logo_uri, c.graduated_at_chain, c.launch_type
+export function searchAddressCampaignsSql(gen8On) {
+  return `
+    select c.chain_id, c.campaign_address, c.token_address, c.name, c.symbol, c.logo_uri, c.graduated_at_chain, c.launch_type${gen8PlatformGraduatedColumn("c.", gen8On)}
       from public.campaigns c
      where (case when $2::boolean
                  then (lower(c.token_address) = $1 or lower(c.campaign_address) = $1) and c.chain_id not in (101, 102)
                  else (c.token_address = $1 or c.campaign_address = $1) and c.chain_id in (101, 102) end)
        and not (${publicHiddenWhere("c")})
      order by c.created_at desc nulls last
-     limit 10`,
+     limit 10`;
+}
+
+export const SEARCH_ADDRESS_SQL = {
+  campaigns: searchAddressCampaignsSql(false),
   imports: `
     select i.chain_id, i.token_address, i.name, i.symbol, i.image_url, i.status
       from public.arena_token_imports i
@@ -57,7 +63,7 @@ export function mapAddressMatches({ campaigns, imports }) {
       name: row.name || null,
       symbol: row.symbol || null,
       logoURI: row.logo_uri || null,
-      graduated: Boolean(row.graduated_at_chain),
+      graduated: row.gen8_platform_graduated != null ? Boolean(row.gen8_platform_graduated) : Boolean(row.graduated_at_chain),
     });
   }
   for (const row of imports) {
@@ -84,8 +90,14 @@ export default async function searchAddress(req, res, db = pool) {
   if (!db) return json(res, 503, { ok: false, error: "Database unavailable" });
   try {
     const params = [parsed.address, parsed.evm];
+    let gen8On = false;
+    try {
+      gen8On = Boolean((await gen8Tables(db)).phase);
+    } catch {
+      gen8On = false;
+    }
     const [campaigns, imports] = await Promise.all([
-      db.query(SEARCH_ADDRESS_SQL.campaigns, params),
+      db.query(searchAddressCampaignsSql(gen8On), params),
       db.query(SEARCH_ADDRESS_SQL.imports, params).catch((error) => (error?.code === "42P01" ? { rows: [] } : Promise.reject(error))),
     ]);
     res.setHeader("Cache-Control", "public, max-age=30");

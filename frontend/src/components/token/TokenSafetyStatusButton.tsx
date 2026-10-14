@@ -10,6 +10,7 @@ import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import type { LaunchpadAdapterStatus, LaunchpadTradePreflight, TradeSide } from "@/features/launchpad/adapters";
 import { useLaunchpadAdapter } from "@/features/launchpad/useLaunchpadAdapter";
 import { isRobinhoodChainId, isSolanaChainId } from "@/lib/chainConfig";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 
 const DBC_ADAPTER = createDbcLaunchpadAdapter();
@@ -174,11 +175,9 @@ export function TokenSafetyStatusButton({ campaignAddress, chainId }: TokenSafet
 
   useEffect(() => {
     if (!campaign) return;
-    const timer = window.setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+    return setVisibleInterval(() => {
       void refresh({ silent: true });
     }, SAFETY_WARM_REFRESH_MS);
-    return () => window.clearInterval(timer);
   }, [campaign, refresh]);
 
   useEffect(() => {

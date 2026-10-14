@@ -114,7 +114,9 @@ async function handleCommentsGet(res, battleId) {
 }
 
 async function handleCommentCreate(req, res, battleId) {
-  const body = await readJson(req);
+  // A session comment is exactly { body: "text" }; readJson takes that shape for a wrapped JSON string
+  // and drops it, so the parsed body comes first (same as the feed reply route).
+  const body = req.body && typeof req.body === "object" && Object.keys(req.body).length ? req.body : await readJson(req);
   const checked = normalizeBattleComment(body.body);
   if (!checked.ok) return json(res, 400, { error: checked.error, code: checked.code });
   // With a feed session (one signature per 30 days) the wallet comes from the session.

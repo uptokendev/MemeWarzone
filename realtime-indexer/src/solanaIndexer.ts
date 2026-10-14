@@ -26,6 +26,7 @@ import {
   persistDecodedAnchorEvents,
   shouldMarkPdaSignatureProcessed,
 } from "./solanaIngestResult.js";
+import { sharedHeadSlotCache } from "./headSlotCache.js";
 import { headCatchUpPlan, repairStateFromBackfill } from "./solanaHistoryStatus.js";
 import { checkMilestones } from "./milestones.js";
 import { notifyCampaignCreated } from "./campaignLifecycleNotifications.js";
@@ -45,6 +46,7 @@ import {
   recoverFutureCursor,
   selectUnknownPdaTipSignatures,
   sortSignaturesAscending,
+  tipKnownSignatures,
   type IndexedSignature,
   type ProcessedSignature,
 } from "./solanaIndexerCheckpoint.js";
@@ -58,7 +60,17 @@ const TOKEN_DECIMALS = 6;
 const TOKEN_UNITS = 10 ** TOKEN_DECIMALS;
 const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const CAMPAIGN_BACKFILL_COOLDOWN_MS = 60_000;
-const CAMPAIGN_TIP_COOLDOWN_MS = 8_000;
+function envNumber(name: string, fallback: number, min: number, max = Number.MAX_SAFE_INTEGER): number {
+  const raw = process.env[name];
+  const value = raw === undefined || raw.trim() === "" ? fallback : Number(raw);
+  return Math.max(min, Math.min(max, Number.isFinite(value) ? value : fallback));
+}
+// The program-wide tip lane (runTipLane) already ingests every trade each tip tick; the per-campaign lane is a backup.
+const CAMPAIGN_TIP_COOLDOWN_MS = envNumber("SOLANA_CAMPAIGN_TIP_COOLDOWN_MS", 30_000, 5_000);
+// A signature marked scanned without a trade row is retried by the campaign tip lane only inside this window.
+const TIP_RESCAN_GRACE_MS = envNumber("SOLANA_TIP_RESCAN_GRACE_MS", 600_000, 0);
+// Full repair pass over the known campaigns (the first run stays 5 s after start).
+const SOLANA_REPAIR_INTERVAL_MS = envNumber("SOLANA_REPAIR_INTERVAL_MS", 600_000, 60_000);
 const CAMPAIGN_TIP_SIG_LIMIT = 40;
 const CAMPAIGN_TIP_INGEST_MAX = 15;
 const SOLANA_RPC_TIMEOUT_MS = 20_000;
@@ -478,6 +490,15 @@ async function resetState(nextSlot: number) {
 
 async function getHeadSlot(signal?: AbortSignal): Promise<number> {
   return rpc<number>("getSlot", [{ commitment: "confirmed" }], signal);
+}
+
+/**
+ * Head slot up to SOLANA_HEAD_SLOT_CACHE_MS old. Only for lag/health numbers and the head + 64
+ * clamps. The campaign head catch-up and repair pass the head to fetchSignaturesForAccount, which
+ * drops signatures newer than it, so they keep the exact getHeadSlot.
+ */
+function getCachedHeadSlot(): Promise<number> {
+  return sharedHeadSlotCache.get(() => getHeadSlot());
 }
 
 let genesisChecked = false;
@@ -1652,15 +1673,34 @@ async function existingCampaignTradeSignatures(campaign: string, signatures: str
   return new Set(result.rows.map((row: { tx_hash?: string }) => String(row.tx_hash || "")).filter(Boolean));
 }
 
-/** Tip ingest must retry signatures that were marked scanned without a trade row. */
+/**
+ * Tip ingest retries signatures that were marked scanned without a trade row,
+ * but only inside TIP_RESCAN_GRACE_MS after they were marked. Later they count
+ * as known, so non-trade transactions are not re-fetched on every pass.
+ */
 async function existingCurveTradeSignatures(campaign: string, signatures: string[]): Promise<Set<string>> {
   if (!signatures.length) return new Set();
-  const result = await sql(
+  await ensurePdaScanTable();
+  const trades = await sql(
     `select tx_hash from public.curve_trades
       where chain_id=$1 and campaign_address=$2 and tx_hash = any($3::text[])`,
     [SOLANA_CHAIN_ID, campaign, signatures],
   );
-  return new Set(result.rows.map((row: { tx_hash?: string }) => String(row.tx_hash || "")).filter(Boolean));
+  const scanned = await sql(
+    `select tx_hash, (extract(epoch from processed_at) * 1000)::float8 as marked_at_ms
+       from public.solana_pda_scan_sigs
+      where chain_id=$1 and campaign_address=$2 and tx_hash = any($3::text[])`,
+    [SOLANA_CHAIN_ID, campaign, signatures],
+  );
+  return tipKnownSignatures({
+    tradeSignatures: trades.rows.map((row: { tx_hash?: string }) => String(row.tx_hash || "")),
+    scanned: scanned.rows.map((row: { tx_hash?: string; marked_at_ms?: number | string }) => ({
+      signature: String(row.tx_hash || ""),
+      markedAtMs: Number(row.marked_at_ms),
+    })),
+    nowMs: Date.now(),
+    graceMs: TIP_RESCAN_GRACE_MS,
+  });
 }
 
 async function markPdaSignaturesProcessed(campaign: string, signatures: string[]) {
@@ -2325,7 +2365,7 @@ async function runBackfillLane(head: number): Promise<void> {
 
 export async function runSolanaIndexerOnce() {
   await assertMainnetGenesis();
-  const head = await getHeadSlot();
+  const head = await getCachedHeadSlot();
   await runTipLane(head);
   await runBackfillLane(head);
   const historical = await getState();
@@ -2354,8 +2394,12 @@ let started = false;
 export function startSolanaIndexerLoop() {
   if (started) return;
   started = true;
-  const tipMs = Math.max(2_000, Math.min(5_000, ENV.SOLANA_INDEXER_INTERVAL_MS || 10_000));
-  const backfillMs = Math.max(tipMs, ENV.SOLANA_INDEXER_INTERVAL_MS || 10_000);
+  const defaultTipMs = Math.max(2_000, Math.min(5_000, ENV.SOLANA_INDEXER_INTERVAL_MS || 10_000));
+  // SOLANA_TIP_INTERVAL_MS overrides the 2-5 s default; the backfill cadence stays as it was.
+  const tipMs = ENV.SOLANA_TIP_INTERVAL_MS > 0
+    ? Math.max(2_000, Math.min(60_000, ENV.SOLANA_TIP_INTERVAL_MS))
+    : defaultTipMs;
+  const backfillMs = Math.max(defaultTipMs, ENV.SOLANA_INDEXER_INTERVAL_MS || 10_000);
 
   console.log("[solana-indexer] enabled", {
     chainId: SOLANA_CHAIN_ID,
@@ -2371,7 +2415,7 @@ export function startSolanaIndexerLoop() {
     try {
       expireStaleCampaignLeases();
       await assertMainnetGenesis();
-      await runTipLane(await getHeadSlot());
+      await runTipLane(await getCachedHeadSlot());
     } catch (error) {
       console.error("[solana-indexer] tip loop error", error);
     } finally {
@@ -2384,7 +2428,7 @@ export function startSolanaIndexerLoop() {
     try {
       expireStaleCampaignLeases();
       await assertMainnetGenesis();
-      const head = await getHeadSlot();
+      const head = await getCachedHeadSlot();
       await runBackfillLane(head);
       const historical = await getState();
       console.log("[solana-indexer] health", {
@@ -2415,5 +2459,5 @@ export function startSolanaIndexerLoop() {
   setTimeout(() => { void repairKnownSolanaCampaignHistory(); }, 5_000);
   setInterval(() => { void tipTick(); }, tipMs);
   setInterval(() => { void backfillTick(); }, backfillMs);
-  setInterval(() => { void repairKnownSolanaCampaignHistory(); }, 120_000);
+  setInterval(() => { void repairKnownSolanaCampaignHistory(); }, SOLANA_REPAIR_INTERVAL_MS);
 }

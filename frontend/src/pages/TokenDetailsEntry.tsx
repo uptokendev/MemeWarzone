@@ -5,6 +5,7 @@ import ProjectXClaimDialog from "@/components/imports/ProjectXClaimDialog";
 import { projectImportsEnabled, projectImportRobinhoodEnabled } from "@/features/projectImports/config";
 import { BNB_CHAIN_ID, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
 import { lookupProjectImport, type ProjectImportItem } from "@/lib/projectImports";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 import ImportedTokenPage from "./ImportedTokenPage";
 import TokenDetailsLiveEntry from "./TokenDetailsLiveEntry";
@@ -50,9 +51,9 @@ export default function TokenDetailsEntry() {
     };
     const onFocus = () => { void refresh(); };
     const onVisibility = () => { if (document.visibilityState === "visible") void refresh(); };
-    const timer = window.setInterval(() => { void refresh(); }, 10_000);
+    const stopPolling = setVisibleInterval(() => { void refresh(); }, 10_000);
     window.addEventListener("focus", onFocus); document.addEventListener("visibilitychange", onVisibility);
-    return () => { cancelled = true; window.clearInterval(timer); window.removeEventListener("focus", onFocus); document.removeEventListener("visibilitychange", onVisibility); };
+    return () => { cancelled = true; stopPolling(); window.removeEventListener("focus", onFocus); document.removeEventListener("visibilitychange", onVisibility); };
   }, [importChainId, project?.id, project?.ownershipStatus, routeId]);
 
   if (!projectImportsEnabled) return <TokenDetailsLiveEntry />;

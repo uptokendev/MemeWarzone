@@ -58,7 +58,7 @@ test("Tournament Details consumes normalized profiles and canonical Battle metri
   const registration = readFrontend("src/components/arena/TournamentRegistrationModal.tsx");
 
   assert.match(details, /fetchArenaBattleMetrics/);
-  assert.match(details, /setInterval\(\(\) => void load\(\), 15_000\)/);
+  assert.match(details, /setVisibleInterval\(\(\) => void load\(\), 15_000\)/);
   assert.match(registration, /TournamentTokenIdentity/);
   assert.match(matchCard, /metrics\?\.sides\.left/);
   assert.match(matchCard, /Latest Battle Points/);

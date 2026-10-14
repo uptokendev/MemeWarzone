@@ -7,10 +7,10 @@ import { countSolanaHolders } from "./lib/arenaImportMarketFeed.js";
  * Exact holder count for a Solana launchpad token: owners with a non-zero balance, excluding the
  * campaign PDA (it owns the bonding-curve vault). The token page used to derive holders from a trade
  * replay while bonding (misses transfers) and from getTokenLargestAccounts after graduation (capped
- * at 20 accounts), so neither matched the chain. Cached 60 s per mint; concurrent requests share one
+ * at 20 accounts), so neither matched the chain. Cached 5 min per mint (SOLANA_HOLDERS_CACHE_MS); concurrent requests share one
  * RPC scan.
  */
-const CACHE_MS = 60_000;
+const CACHE_MS = Math.max(30_000, Number(process.env.SOLANA_HOLDERS_CACHE_MS) || 300_000);
 // PDA ["pool_authority"] of the DBC program dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN (pinned in the test).
 export const DBC_POOL_AUTHORITY = "FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM";
 const cache = new Map();

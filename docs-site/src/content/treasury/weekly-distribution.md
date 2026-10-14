@@ -1,58 +1,39 @@
 ---
 title: Weekly Distribution
-description: The weekly treasury policy for operations, retention, and founder payouts.
+description: How MemeWarzone's protocol revenue moves from the operating wallet to the multisig, and how the weekly payout to the owners is set and signed.
 ---
 
-MemeWarzone treasury movement should follow a fixed weekly order.
+MemeWarzone's protocol revenue follows the same order every week. Reward vaults are not part of this: League prizes, creator earnings, recruiter and squad rewards and airdrops stay in their own vaults and are paid to the people who earned them. Read **[Where Fees Go](/fees/where-fees-go)**.
 
-The point is to remove emotional decision-making from money flow.
+## Where protocol revenue lands
 
-## Weekly cadence
+| Wallet | What it holds |
+| --- | --- |
+| Operating wallet | at most $10,000, used to pay for gas, servers and day-to-day costs |
+| Multisig (Squads on Solana, Safe on BNB Chain and Robinhood Chain) | everything above that |
 
-Choose a fixed weekly moment, such as Monday.
+On Solana the protocol vault is paid out once an hour: the operating wallet is topped up to $10,000 and the rest goes to the multisig. On BNB Chain and Robinhood Chain the protocol revenue vault forwards each payment as it arrives.
 
-Every week, execute the same order.
+The operating wallet is a buffer. It is never paid out to the owners.
 
-## Step 1: Ops normalization
+## The weekly payout
 
-Bring the Ops Safe back to its target balance.
+Once a week the amount that can be paid out is worked out from the multisig balance:
 
-Target: **50 BNB**.
+1. start with what the multisig holds
+2. set aside the reserve for taxes
+3. set aside costs that are due but not yet paid
+4. what is left is split between the owners by their share in the company
 
-- If Ops Safe is below 50 BNB, top it up.
-- If Ops Safe is above 50 BNB, sweep excess back to Owners Safe.
+## Who signs
 
-## Step 2: Treasury retention
-
-A fixed percentage stays in the Owners Safe.
-
-This funds:
-
-- audits
-- emergencies
-- legal
-- growth
-- partnerships
-- infrastructure buffers
-
-## Step 3: Founder payouts
-
-The remaining configured percentage is paid to predefined founder payout wallets according to the agreed split.
-
-This happens on schedule without renegotiating every week.
+The payout is prepared as a proposal on the multisig. It moves nothing until enough of the multisig's signers approve it. No single person can move multisig funds alone, and no software pays out on its own.
 
 ## What this prevents
 
-The weekly policy helps prevent:
+- protocol revenue landing directly in a personal wallet
+- one person taking fees without the others signing
+- a large balance sitting in a wallet that one key controls
+- reward money being mixed with company money
 
-- one person secretly taking fees
-- one person blocking normal payout flow indefinitely
-- operational funds becoming too large
-- protocol revenue landing in developer wallets
-- weekly financial arguments
-
-## Non-goal
-
-MemeWarzone should not auto-split protocol fees on-chain directly to personal wallets.
-
-Policy-driven treasury distribution is more flexible and safer long term.
+Read: **[Treasury Structure](/treasury)** and **[Where Fees Go](/fees/where-fees-go)**.

@@ -15,9 +15,10 @@ import {
 } from "../../src/lib/solanaArenaLayout.mjs";
 import { battlePoolId, tournamentPoolId } from "./arenaWarPoolEscrow.js";
 import { arenaEnvironmentIdentity } from "./arenaChainEnvironment.js";
+import { getGenesisHashCached } from "./solanaGenesisHashCache.js";
 
 const liveCache = new Map();
-const LIVE_TTL_MS = 15_000;
+const LIVE_TTL_MS = Math.max(5_000, Number(process.env.SOLANA_ARENA_LIVE_TTL_MS) || 60_000);
 
 function env(...names) {
   for (const name of names) {
@@ -118,7 +119,7 @@ export async function probeCanonicalArenaLive(chainId) {
     const configPda = deriveArenaConfigPda();
     const [account, genesisHash] = await Promise.all([
       connection.getAccountInfo(configPda, "confirmed"),
-      connection.getGenesisHash(),
+      getGenesisHashCached(connection),
     ]);
     const value = validateCanonicalArenaConfig({
       account,

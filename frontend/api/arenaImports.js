@@ -1,6 +1,9 @@
 import { pool } from "../server/db.js";
 import { createSolanaImportTrades, solanaRpcUrl } from "./lib/solanaImportTrades.js";
 import { resolveSolUsdPrice } from "./lib/solUsdPrice.js";
+import { resolveEthUsdPrice } from "./lib/ethUsdPrice.js";
+import { resolveBnbUsdPrice } from "./lib/bnbUsdPrice.js";
+import { createEvmImportTrades, createEvmProviderFactory, isEvmImportTradeChain } from "./lib/evmImportTrades.js";
 import {
   badMethod,
   getQuery,
@@ -220,6 +223,11 @@ const candleSource = sharedCandleSource();
 const solanaTrades = solanaRpcUrl()
   ? createSolanaImportTrades({ solUsdPrice: async () => (await resolveSolUsdPrice().catch(() => null))?.price || 0 })
   : null;
+// Robinhood and BNB imports read their pool's Swap logs the same way (founder, 2026-10-11).
+const evmTrades = createEvmImportTrades({
+  providerFor: createEvmProviderFactory(),
+  nativeUsdPrice: async (chainId) => ((Number(chainId) === 4663 ? await resolveEthUsdPrice() : await resolveBnbUsdPrice())?.price || 0),
+});
 const PAIR_LOOKUP_TTL_MS = 10 * 60_000;
 const pairLookups = new Map();
 
@@ -292,6 +300,21 @@ async function handleTrades(req, res) {
     try {
       const items = await solanaTrades.trades({ pairAddress: found.pairAddress, tokenAddress: found.tokenAddress });
       return json(res, 200, { ...base, source: "onchain", window: "recent", items, stale: false, rateLimited: false });
+    } catch (error) {
+      console.warn("[arena/imports/trades] on-chain read failed, using GeckoTerminal", error?.message || error);
+    }
+  }
+  // The chain read only reaches back hours, so GeckoTerminal's older trades are appended below it.
+  if (isEvmImportTradeChain(chainId)) {
+    try {
+      const items = await evmTrades.trades({ chainId, pairAddress: found.pairAddress, tokenAddress: found.tokenAddress });
+      const older = await Promise.race([
+        candleSource.trades({ network, pairAddress: found.pairAddress, tokenAddress: found.tokenAddress, chainId }).then((r) => r.trades, () => []),
+        new Promise((resolve) => setTimeout(() => resolve([]), 2_000)),
+      ]);
+      const seen = new Set(items.map((t) => String(t.txHash).toLowerCase()));
+      const merged = [...items, ...older.filter((t) => !seen.has(String(t.txHash).toLowerCase()))].sort((a, b) => b.blockTime - a.blockTime);
+      return json(res, 200, { ...base, source: "onchain", window: "recent", items: merged, stale: false, rateLimited: false });
     } catch (error) {
       console.warn("[arena/imports/trades] on-chain read failed, using GeckoTerminal", error?.message || error);
     }

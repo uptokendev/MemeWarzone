@@ -12,6 +12,9 @@
  * (or the wrong scan version). Idempotent. A failed scan stores needs_review
  * and never deletes the import. Founder runs the hourly Coolify task with
  * --rescan-stale so IMPORT_SCAN_STALE never silently drops a coin from battles.
+ * --rescan-stale also rescans imports declined only because their chain was not
+ * scanned yet (unsupported_chain, no admin decision) once the scanner supports
+ * that chain -- Robinhood since 2026-10-11.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -39,23 +42,30 @@ await import("../api/load-local-env.mjs");
 const { pool } = await import("../server/db.js");
 const { runAdmissionScanForProject } = await import("../api/lib/arenaImportAdmission.js");
 const { importScanFreshness } = await import("../api/lib/arenaImportEligibility.js");
+const { importScannerChainFamily } = await import("../api/lib/arenaImportScan.js");
 
 const limit = Math.max(1, Math.min(500, Number(arg("--limit", "100")) || 100));
 const rescanStale = argv.includes("--rescan-stale");
+// Declined rows on a chain the scanner still cannot read would otherwise sit at the front of the
+// oldest-first queue every hour and crowd out real rescans.
+const SCANNABLE_CHAINS = [56, 97, 101, 102, 4663, 46630].filter((id) => importScannerChainFamily(id) !== null);
 const listed = await pool.query(
   rescanStale
     ? `select * from public.arena_token_imports
         where status in ('scanning', 'passed', 'needs_review')
+           or (status = 'declined' and reviewed_at is null and scan_json -> 'reasons' ? 'unsupported_chain'
+               and chain_id = any($2::int[]))
         order by scanned_at asc nulls first, created_at asc
         limit $1`
     : `select * from public.arena_token_imports
         where status = 'scanning'
         order by created_at asc
         limit $1`,
-  [limit],
+  rescanStale ? [limit, SCANNABLE_CHAINS] : [limit],
 );
+// A declined row is only listed when its chain became scannable (query above): rescan it now.
 const rows = rescanStale
-  ? listed.rows.filter((row) => importScanFreshness(row).stale)
+  ? listed.rows.filter((row) => String(row.status) === "declined" || importScanFreshness(row).stale)
   : listed.rows;
 
 console.log(

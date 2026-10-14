@@ -47,7 +47,7 @@ import {
   presentImportChart,
 } from "@/lib/arena/importChartPresentation.mjs";
 import { SOLANA_CHAIN_ID, getNativeSymbol, isSolanaChainId } from "@/lib/chainConfig";
-import { followCampaign, isFollowingCampaign, unfollowCampaign } from "@/lib/followApi";
+import { followCampaign, isFollowingCampaign, pickFollowWallet, unfollowCampaign } from "@/lib/followApi";
 import { fetchUserProfile, type UserProfile } from "@/lib/profileApi";
 import { getExplorerBase } from "@/lib/profile/profileFormatters";
 import { updateProjectImportProfile, uploadProjectImportImage, type ProjectImportItem } from "@/lib/projectImports";
@@ -88,6 +88,8 @@ function safeExternalUrl(value: string | null | undefined) {
 }
 
 function formatUsd(value: number | null | undefined) {
+  // Number(null) is 0: a missing figure must read as missing, not as a $0.00 coin.
+  if (value == null) return "—";
   const n = Number(value);
   if (!Number.isFinite(n)) return "—";
   if (Math.abs(n) >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
@@ -97,6 +99,7 @@ function formatUsd(value: number | null | undefined) {
 
 /** A token price keeps its significant digits ($0.0000196, not $0.00). */
 function formatUsdPrice(value: number | null | undefined) {
+  if (value == null) return "—";
   const n = Number(value);
   if (!Number.isFinite(n)) return "—";
   if (n === 0 || Math.abs(n) >= 1) return formatUsd(n);
@@ -225,7 +228,8 @@ export default function ImportedTokenPage({
   // asks again a few times so your trade shows in the chart within seconds.
   const [liveTrades, setLiveTrades] = useState<ArenaImportTrade[]>([]);
   useEffect(() => {
-    if (item.chainId !== SOLANA_CHAIN_ID) return;
+    // Solana, Robinhood (4663) and BNB (56) imports read their pool from the chain.
+    if (item.chainId !== SOLANA_CHAIN_ID && item.chainId !== 4663 && item.chainId !== 56) return;
     const controller = new AbortController();
     let timer: number | undefined;
     const bursts: number[] = [];
@@ -265,11 +269,12 @@ export default function ImportedTokenPage({
     void fetchUserProfile(item.chainId, ownerWallet).then((next) => setOwnerProfile(next)).catch(() => setOwnerProfile(null));
   }, [item.chainId, ownerWallet]);
 
+  // Follow with any connected wallet, the coin's own chain wallet first (follows are chainless, 2026-10-14).
+  const followWallet = pickFollowWallet(solana, solanaWallet.solanaAccount, wallet.account);
   useEffect(() => {
-    const follower = solana ? solanaWallet.solanaAccount : wallet.account;
-    if (!follower || !item.tokenAddress) { setFollowing(false); return; }
-    void isFollowingCampaign(follower, item.tokenAddress, item.chainId).then(setFollowing).catch(() => setFollowing(false));
-  }, [item.chainId, item.tokenAddress, solana, solanaWallet.solanaAccount, wallet.account]);
+    if (!followWallet || !item.tokenAddress) { setFollowing(false); return; }
+    void isFollowingCampaign(followWallet, item.tokenAddress, item.chainId).then(setFollowing).catch(() => setFollowing(false));
+  }, [item.chainId, item.tokenAddress, followWallet]);
   const connectedWallet = solana ? solanaWallet.solanaAccount : wallet.account;
   // CrypticPump listing (public badge). Imports list under their token address; the API only
   // lets the verified project owner create the listing (crypticpump-listings.js resolveCreator).
@@ -392,7 +397,7 @@ export default function ImportedTokenPage({
   };
 
   const toggleFollow = async () => {
-    const follower = connectedWallet;
+    const follower = followWallet;
     if (!follower || followBusy) return;
     setFollowBusy(true);
     try {
@@ -478,7 +483,7 @@ export default function ImportedTokenPage({
           <div className="flex flex-wrap items-center gap-2 md:justify-end md:pb-2">
             {canClaim ? <Button type="button" className={`${cp.btn} border-mw-accent bg-mw-accent text-[#140A02] hover:bg-[#FF8F3D] hover:text-[#140A02]`} onClick={onClaimMemecoin} data-project-claim-action="true">CLAIM MEMECOIN</Button> : null}
             {canEdit ? <Button type="button" variant="outline" className={cp.btn} onClick={() => setEditing((v) => !v)} data-owner-edit-controls="true"><Edit3 className="h-4 w-4" />EDIT</Button> : null}
-            <button type="button" className={cp.btn} onClick={() => void toggleFollow()} disabled={followBusy || !connectedWallet} aria-label={following ? "Unfollow" : "Follow"} aria-pressed={following}>
+            <button type="button" className={cp.btn} onClick={() => void toggleFollow()} disabled={followBusy || !followWallet} aria-label={following ? "Unfollow" : "Follow"} aria-pressed={following}>
               <Star className={following ? "h-[18px] w-[18px] text-mw-accent fill-mw-accent" : "h-[18px] w-[18px] text-mw-muted"} />
               {following ? "Following" : "Follow"}
             </button>

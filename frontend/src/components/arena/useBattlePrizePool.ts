@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { fetchArenaStakeStatus } from "@/features/postgrad/apiClient";
 import { fetchBattleBoostState } from "@/lib/arena/battleBoostClient";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 // Competition V2 (arena_competition_v2): 75% of entries and 90% of Boosts go to the prize pool; the
 // Boost share is already split server-side (summary.total.poolNativeRaw).
@@ -50,10 +51,10 @@ export function useBattlePrizePool(battleId: string, chainId: number, enabled: b
       }
     };
     void load();
-    const timer = window.setInterval(() => void load(), 20_000);
+    const stopPolling = setVisibleInterval(() => void load(), 20_000);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [battleId, chainId, enabled]);
   return pool;

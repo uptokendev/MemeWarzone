@@ -18,6 +18,7 @@ import {
 } from "@/lib/arena/tournamentBoostClient";
 import { fetchTournamentVoteState, type TournamentVotePayload } from "@/lib/arena/tournamentVoteClient";
 import { presentTournamentVoteSummary, tournamentVoteMatchRef } from "@/lib/arena/tournamentVotePresentation.mjs";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 type Match = {
   id?: string | null;
@@ -87,8 +88,8 @@ export function TournamentBoostControls({ tournamentId, chainId, match }: {
     const controller = new AbortController();
     setLoading(true);
     void refresh(controller.signal);
-    const timer = window.setInterval(() => void refresh(), 10_000);
-    return () => { controller.abort(); window.clearInterval(timer); };
+    const stopPolling = setVisibleInterval(() => void refresh(), 10_000);
+    return () => { controller.abort(); stopPolling(); };
   }, [refresh]);
 
   const voteModel = useMemo(() => presentTournamentVoteSummary(voteState || {}), [voteState]);

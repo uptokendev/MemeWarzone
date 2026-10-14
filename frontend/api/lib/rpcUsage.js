@@ -29,6 +29,65 @@ function bump(chain, method, n = 1) {
   byMethod.set(name, (byMethod.get(name) || 0) + n);
 }
 
+// Which of our functions sent each request, as "file:function" (first stack frame in this package
+// outside the RPC plumbing). /health shows the cost per caller instead of only per method.
+const bySource = new Map();
+const PACKAGE_DIR = (() => {
+  try {
+    return new URL("../..", import.meta.url).pathname; // frontend/
+  } catch {
+    return "";
+  }
+})();
+const PLUMBING_FILE = /\/(?:rpcUsage|rpcUsageInstall)\.[cm]?js$/;
+const STACK_FRAME = /^\s*at (?:async )?(?:(.+?) \()?(?:file:\/\/)?([^()\s]+?):\d+:\d+\)?$/;
+
+/** "solanaImportTrades.js:rpc" for the first frame of ours below the counter. */
+export function rpcCallSource(stack, packageDir = PACKAGE_DIR) {
+  // The first frame of ours, plus the nearest different caller above it: shared helpers (an
+  // rpc() wrapper) would otherwise lump every caller into one key.
+  const frames = [];
+  for (const line of String(stack || "").split("\n").slice(1)) {
+    const match = STACK_FRAME.exec(line);
+    if (!match) continue;
+    const file = match[2];
+    if (!packageDir || !file.includes(packageDir) || file.includes("/node_modules/") || PLUMBING_FILE.test(file)) continue;
+    const name = file.slice(file.lastIndexOf("/") + 1);
+    const fn = String(match[1] || "").replace(/^(?:Object|Timeout|process)\./, "").replace(/^async /, "") || "<top>";
+    if (!frames.length) {
+      frames.push({ name, fn });
+      continue;
+    }
+    if (fn === frames[0].fn && name === frames[0].name) continue;
+    frames.push({ name, fn });
+    break;
+  }
+  if (!frames.length) return "unattributed";
+  const [first, parent] = frames;
+  const head = `${first.name}:${first.fn}`;
+  if (!parent) return head.slice(0, 120);
+  return `${head}<${parent.name === first.name ? parent.fn : `${parent.name}:${parent.fn}`}`.slice(0, 120);
+}
+
+/** Attribute requests to their caller. Never throws. */
+export function attributeRpcRequest(chain, payload) {
+  try {
+    const limit = Error.stackTraceLimit;
+    Error.stackTraceLimit = 60;
+    let stack;
+    try {
+      stack = new Error().stack;
+    } finally {
+      Error.stackTraceLimit = limit;
+    }
+    const n = Array.isArray(payload) ? payload.length : 1;
+    const key = `${String(chain ?? "unknown")} ${rpcCallSource(stack)}`;
+    bySource.set(key, (bySource.get(key) || 0) + n);
+  } catch {
+    // attribution must never break a request
+  }
+}
+
 /** Count one JSON-RPC request (or each entry of a batch). */
 export function countRpcRequest(chain, payload) {
   for (const item of Array.isArray(payload) ? payload : [payload]) {
@@ -59,7 +118,11 @@ export function rpcUsageSnapshot() {
   const { total, byChain } = plain();
   const perDay = {};
   for (const [chain, value] of Object.entries(byChain)) perDay[chain] = Math.round((value.total / uptimeSec) * 86_400);
-  return { since: new Date(startedAt).toISOString(), uptimeSec, total, byChain, estimatedPerDay: perDay };
+  const bySourcePerDay = {};
+  for (const [key, n] of [...bySource].sort((a, b) => b[1] - a[1]).slice(0, 60)) {
+    bySourcePerDay[key] = Math.round((n / uptimeSec) * 86_400);
+  }
+  return { since: new Date(startedAt).toISOString(), uptimeSec, total, byChain, estimatedPerDay: perDay, bySourcePerDay };
 }
 
 function clone() {
@@ -88,6 +151,7 @@ export function rpcUsageDelta() {
 /** For tests. */
 export function resetRpcUsage() {
   counts.clear();
+  bySource.clear();
   lastLogged = null;
 }
 
@@ -115,6 +179,21 @@ export function hookEthersRpcCounter(JsonRpcProviderClass = ethers.JsonRpcProvid
     countRpcRequest(chain, payload);
     return original.call(this, payload);
   };
+  // Attribution happens in send: it runs in the caller's async chain, while ethers calls _send
+  // from its batch drain timer, whose stack names no caller.
+  const originalSend = proto.send;
+  if (typeof originalSend === "function") {
+    proto.send = function attributedSend(method, params) {
+      let chain = "unknown";
+      try {
+        chain = String(this._network?.chainId ?? "unknown");
+      } catch {
+        // network not pinned yet
+      }
+      attributeRpcRequest(chain, method);
+      return originalSend.call(this, method, params);
+    };
+  }
   ethersHooked = true;
 }
 
@@ -137,6 +216,7 @@ export function countingFetch(fetchImpl, chainOfUrl = () => null) {
           const url = typeof input === "string" ? input : input?.url || String(input || "");
           const chain = chainOfUrl(url) ?? (SOLANA_METHOD.test(first.method) ? "solana" : "unknown");
           countRpcRequest(chain, parsed);
+          attributeRpcRequest(chain, parsed);
         }
       }
     } catch {
@@ -164,7 +244,11 @@ export function startRpcUsageLog({ env = process.env, log = console.log, label =
   if (!Number.isFinite(minutes) || minutes <= 0) return;
   timer = setInterval(() => {
     const delta = rpcUsageDelta();
-    if (delta.total > 0) log(`[${label}]`, JSON.stringify({ windowMin: minutes, ...delta }));
+    if (delta.total > 0) {
+      // Callers since start, per day; the worker has no /health, so its log line carries them.
+      const topSourcesPerDay = Object.fromEntries(Object.entries(rpcUsageSnapshot().bySourcePerDay).slice(0, 15));
+      log(`[${label}]`, JSON.stringify({ windowMin: minutes, ...delta, topSourcesPerDay }));
+    }
   }, minutes * 60_000);
   timer.unref?.();
 }

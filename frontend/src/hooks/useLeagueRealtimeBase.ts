@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { liveCampaignKey } from "@/lib/liveMarketMerge";
 import { useAblyLeagueChannel } from "./useAblyLeagueChannel";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 export type LeaguePatch = {
   campaignAddress: string; // EVM lowercase, Solana preserved
@@ -169,7 +170,7 @@ export function useLeagueRealtime(opts: Opts) {
 
   useEffect(() => {
     if (timerRef.current) {
-      clearInterval(timerRef.current);
+      timerRef.current();
       timerRef.current = null;
     }
 
@@ -197,11 +198,11 @@ export function useLeagueRealtime(opts: Opts) {
       }
     };
 
-    timerRef.current = setInterval(fire, intervalMs);
+    timerRef.current = setVisibleInterval(fire, intervalMs);
 
     return () => {
       if (timerRef.current) {
-        clearInterval(timerRef.current);
+        timerRef.current();
         timerRef.current = null;
       }
     };

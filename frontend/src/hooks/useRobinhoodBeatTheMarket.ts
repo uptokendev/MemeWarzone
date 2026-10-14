@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiUrl } from "@/lib/apiBase";
 import { ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 export type RobinhoodBeatWindow = "1h" | "24h" | "7d" | "30d";
 
@@ -85,8 +86,7 @@ export function useRobinhoodBeatTheMarket(input: {
   useEffect(() => {
     if (!enabled) return;
     void refresh();
-    const timer = window.setInterval(() => { void refresh(); }, refreshMs);
-    return () => window.clearInterval(timer);
+    return setVisibleInterval(() => { void refresh(); }, refreshMs);
   }, [enabled, refresh, refreshMs]);
 
   return { data, loading, error, updatedAt, refresh };

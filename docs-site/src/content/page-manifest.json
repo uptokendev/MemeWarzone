@@ -557,6 +557,16 @@
       ]
     },
     {
+      "route": "/fees/after-graduation",
+      "title": "After Graduation",
+      "group": "Fees & treasury",
+      "groupOrder": 80,
+      "pageOrder": 45,
+      "status": "live",
+      "source": "fees/after-graduation.md",
+      "aliases": []
+    },
+    {
       "route": "/fees/examples",
       "title": "Fee Examples",
       "group": "Fees & treasury",

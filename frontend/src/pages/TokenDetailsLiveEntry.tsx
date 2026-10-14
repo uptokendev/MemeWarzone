@@ -13,7 +13,7 @@ import {
   isDogeosChainId,
 } from "@/lib/chainConfig";
 import { apiFetch } from "@/lib/apiBase";
-import { useLaunchpad, type CampaignInfo } from "@/lib/launchpadClient";
+import type { CampaignInfo } from "@/lib/launchpadClient";
 import {
   fetchSolanaCampaignCurveState,
   type SolanaCampaignCurveState,
@@ -26,6 +26,7 @@ import { setActiveWalletKind } from "@/lib/activeWalletChain";
 
 import TokenDetails from "./TokenDetails";
 import { fetchDbcToken } from "@/lib/dbcCreate";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 const SOLANA_ROUTE_CACHE_PREFIX = "mwz:solana-token-route:v2:";
 const SOLANA_ROUTE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -34,6 +35,24 @@ type SolanaRouteCache = {
   campaignAddress: string;
   updatedAt: number;
 };
+
+function campaignFromApiItem(item: any): CampaignInfo | null {
+  const campaign = String(item?.campaignAddress ?? item?.campaign_address ?? item?.campaign ?? "").trim();
+  const token = String(item?.tokenAddress ?? item?.token_address ?? item?.token ?? "").trim();
+  if (!campaign && !token) return null;
+  return {
+    id: 0,
+    campaign: campaign || token,
+    token: token || campaign,
+    creator: String(item?.creatorAddress ?? item?.creator_address ?? item?.creator ?? ""),
+    name: String(item?.name ?? "Unknown"),
+    symbol: String(item?.symbol ?? ""),
+    logoURI: String(item?.logoUri ?? item?.logoURI ?? item?.logo_uri ?? ""),
+    xAccount: "",
+    website: "",
+    extraLink: "",
+  };
+}
 
 function tokenIdMatches(candidate?: string | null, routeId?: string | null): boolean {
   const left = String(candidate || "").trim();
@@ -88,7 +107,6 @@ const TokenDetailsEntry = () => {
   const { campaignAddress } = useParams<{ campaignAddress: string }>();
   const [searchParams] = useSearchParams();
   const [selectedFeedChainId] = useSelectedFeedChainId();
-  const { fetchCampaigns } = useLaunchpad();
   const wallet = useWallet();
 
   const routeId = String(campaignAddress || "").trim();
@@ -169,39 +187,23 @@ const TokenDetailsEntry = () => {
 
     (async () => {
       try {
-        const [campaigns, rawCampaignJson] = await Promise.all([
-          fetchCampaigns(),
-          (async () => {
-            try {
-              const res = await apiFetch(
-                `/api/campaigns?chainId=${encodeURIComponent(String(SOLANA_CHAIN_ID))}&limit=500&status=all`,
-                { cache: "no-store" as RequestCache },
-              );
-              return await res.json().catch(() => null);
-            } catch {
-              return null;
-            }
-          })(),
-        ]);
+        const res = await apiFetch(
+          `/api/campaigns?chainId=${encodeURIComponent(String(SOLANA_CHAIN_ID))}&search=${encodeURIComponent(routeId)}&limit=8&status=all`,
+          { cache: "no-store" as RequestCache },
+        );
+        const rawCampaignJson = await res.json().catch(() => null);
         if (cancelled) return;
-
-        const match =
-          campaigns.find((item) => tokenIdMatches(item.token, routeId) || tokenIdMatches(item.campaign, routeId)) ??
-          null;
-        if (match) {
-          setCampaign(match);
-          if (match.campaign) setCachedCampaignAddress(String(match.campaign).trim());
-        }
 
         const rawItems = Array.isArray(rawCampaignJson?.items) ? rawCampaignJson.items : [];
         const rawMatch = rawItems.find((item: any) =>
           tokenIdMatches(item?.tokenAddress ?? item?.token_address ?? item?.token, routeId) ||
           tokenIdMatches(item?.campaignAddress ?? item?.campaign_address ?? item?.campaign, routeId),
         );
-        const rawCampaignAddress = String(
-          rawMatch?.campaignAddress ?? rawMatch?.campaign_address ?? rawMatch?.campaign ?? "",
-        ).trim();
-        if (rawCampaignAddress) setCachedCampaignAddress(rawCampaignAddress);
+        const match = rawMatch ? campaignFromApiItem(rawMatch) : null;
+        if (match) {
+          setCampaign(match);
+          if (match.campaign) setCachedCampaignAddress(String(match.campaign).trim());
+        }
       } catch {
         // Keep any previously resolved identity instead of clearing it.
       } finally {
@@ -212,7 +214,7 @@ const TokenDetailsEntry = () => {
     return () => {
       cancelled = true;
     };
-  }, [cachedCampaignAddress, fetchCampaigns, isSolanaRoute, routeId]);
+  }, [cachedCampaignAddress, isSolanaRoute, routeId]);
 
   const curveLookupAddress = useMemo(
     () => String(campaign?.campaign || cachedCampaignAddress || routeId || "").trim(),
@@ -227,7 +229,14 @@ const TokenDetailsEntry = () => {
     let cancelled = false;
     void fetchDbcToken(routeId)
       .then((next) => {
-        if (!cancelled) setDbcCoin(next);
+        if (cancelled) return;
+        setDbcCoin(next);
+        if (!next) return;
+        void fetchDbcToken(routeId, { live: true })
+          .then((live) => {
+            if (!cancelled && live?.poolLive) setDbcCoin(live);
+          })
+          .catch(() => undefined);
       })
       .catch(() => {
         if (!cancelled) setDbcCoin(null);
@@ -269,11 +278,11 @@ const TokenDetailsEntry = () => {
 
     void loadCurve();
     const pollMs = curve?.curveClosed && !curve?.graduated ? 8_000 : 0;
-    const timer = pollMs ? window.setInterval(() => void loadCurve(), pollMs) : 0;
+    const stopPolling = pollMs ? setVisibleInterval(() => void loadCurve(), pollMs) : null;
 
     return () => {
       cancelled = true;
-      if (timer) window.clearInterval(timer);
+      stopPolling?.();
     };
   }, [cachedCampaignAddress, curve?.campaignAddress, curve?.curveClosed, curve?.graduated, curveLookupAddress, dbcCoin, isSolanaRoute]);
 

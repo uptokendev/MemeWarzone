@@ -49,6 +49,8 @@ import {
 
 const leagueFeed = createLeagueFeedPublisher({ pool, flushMs: 500 });
 leagueFeed.start();
+/** The same league feed publisher, for the gen-8 pool indexer (evm/evmGen8Pool.ts). */
+export const indexerLeagueFeed = leagueFeed;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -159,7 +161,7 @@ async function getCampaignInfo(chainId: number, campaign: string): Promise<Campa
   }
 }
 
-async function insertActivityEvent(row: {
+export async function insertActivityEvent(row: {
   chainId: number;
   eventType: string;
   txHash: string;
@@ -346,7 +348,7 @@ async function setStateMax(chainId: number, cursor: string, nextBlock: number) {
   );
 }
 
-async function upsertCampaign(
+export async function upsertCampaign(
   chainId: number,
   factoryAddress: string | null,
   campaign: string,
@@ -439,14 +441,15 @@ async function setCampaignGraduated(
   campaign: string,
   graduatedBlock: number,
   graduatedAt: Date,
-  txHash: string
+  txHash: string,
+  market?: { venue?: string | null; pair?: string | null; quoteAsset?: string | null } | null
 ) {
   await pool.query(
     `update public.campaigns
        set is_active=false,
            graduated_block=$3,
            graduated_at_chain=$4,
-           meta = coalesce(meta,'{}'::jsonb) || jsonb_build_object('graduatedTx', $5),
+           meta = coalesce(meta,'{}'::jsonb) || jsonb_build_object('graduatedTx', $5::text),
            updated_at=now()
      where chain_id=$1 and campaign_address=$2`,
     [chainId, campaign.toLowerCase(), graduatedBlock, graduatedAt, txHash.toLowerCase()]
@@ -455,7 +458,7 @@ async function setCampaignGraduated(
     chainId,
     campaignAddress: campaign,
     // Robinhood: v3/WETH; DogeOS: v3/WDOGE; BNB: topaz/WBNB.
-    market: graduatedMarketFor(chainId),
+    market: market ?? graduatedMarketFor(chainId),
     graduatedAt,
   });
 }
@@ -497,6 +500,8 @@ async function listActiveCampaigns(
      from public.campaigns c
      where c.chain_id=$1
        and (c.is_active=true or c.graduated_at_chain is not null)
+       -- Gen-8 coins (no campaign contract) are indexed by evm/evmGen8Pool.ts.
+       and coalesce(c.factory_generation, 0) <> 8
        and ($2::text = '' or lower(c.factory_address) = $2)
        and ($3::text = '' or lower(c.campaign_address) = $3)
      order by coalesce(c.created_at_chain, c.updated_at, now()) desc`,
@@ -919,9 +924,16 @@ export async function refreshBnbCanonicalMarketcaps() {
   if (bnbCanonicalMcapRefresh) return bnbCanonicalMcapRefresh;
   bnbCanonicalMcapRefresh = (async () => {
     const rows = await pool.query(
-      `select chain_id, campaign_address from public.token_stats where chain_id in (56, 97)
-       union
-       select distinct chain_id, campaign_address from public.curve_trades where chain_id in (56, 97)`,
+      `select x.chain_id, x.campaign_address from (
+         select chain_id, campaign_address from public.token_stats where chain_id in (56, 97)
+         union
+         select distinct chain_id, campaign_address from public.curve_trades where chain_id in (56, 97)
+       ) x
+       -- Gen-8 coins have no curve contract; evm/evmGen8Pool.ts writes their token_stats from the pool price.
+       where not exists (
+         select 1 from public.campaigns c
+          where c.chain_id = x.chain_id and c.campaign_address = x.campaign_address and c.factory_generation = 8
+       )`,
     );
     let ok = 0;
     let failed = 0;
@@ -1391,7 +1403,11 @@ async function syncFactoryCampaignsByCall(
  * market-state seed (so the V3 pool indexer picks the pool up) and the home feed. Old generation: from
  * CampaignFinalized. Generation 5: from Graduated (pool = the locked DEX pool).
  */
-async function markEvmCampaignGraduated(input: {
+/**
+ * `opts` is used by gen-8 only (evm/evmGen8Pool.ts): its own market label for the notification, and no
+ * Robinhood GRADUATING market-state seed (gen-8 writes its own DEX_ACTIVE state). Omitted: unchanged.
+ */
+export async function markEvmCampaignGraduated(input: {
   chainId: number;
   campaign: string;
   tokenAddr: string | null;
@@ -1402,7 +1418,7 @@ async function markEvmCampaignGraduated(input: {
   actor: string;
   pair: string;
   meta: Record<string, unknown>;
-}) {
+}, opts: { market?: { venue?: string | null; pair?: string | null; quoteAsset?: string | null } | null; seedRobinhoodCms?: boolean } = {}) {
   const { chainId, campaign, tokenAddr, txHash, logIndex, tsSec } = input;
   await insertActivityEvent({
     chainId,
@@ -1418,8 +1434,8 @@ async function markEvmCampaignGraduated(input: {
   });
 
   // Graduation marker for league categories
-  await setCampaignGraduated(chainId, campaign, input.blockNumber, new Date(tsSec * 1000), txHash);
-  if (isV3GraduationIndexerChainId(chainId) && tokenAddr) {
+  await setCampaignGraduated(chainId, campaign, input.blockNumber, new Date(tsSec * 1000), txHash, opts.market);
+  if (isV3GraduationIndexerChainId(chainId) && tokenAddr && opts.seedRobinhoodCms !== false) {
     const pair = input.pair;
     try {
       await pool.query(
@@ -1516,6 +1532,9 @@ async function scanCampaignRange(
   const startedAt = Date.now();
   const softFailsBefore = getLogsSoftFails;
   let cutShort = false;
+  // New campaign logs in this scan: the RH heal below re-checks launched() now instead of waiting
+  // for its idle-coin interval (the buy that fills the curve graduates in the same transaction).
+  let sawCampaignLogs = false;
 
   // Launch generation (campaign 5) is selected per factory; the old generation keeps the path below
   // unchanged (E14). A failed resolution indexes the trades the old way and retries next pass.
@@ -1811,13 +1830,14 @@ async function scanCampaignRange(
     if (advanceCursor) {
       await setStateMax(chainId, cursor, end + 1);
     }
+    if (logs.length > 0) sawCampaignLogs = true;
     if (logs.length > 0) await patchStats(chainId, campaign);
   }
 
   // Recover RH post-grad CMS when Finalize was indexed by an older build that
   // did not seed dex_pair_address (RH5661-class gaps). Cheap no-op once pair exists.
   try {
-    await healRobinhoodGraduatedCms(provider, chainId, campaign, tokenAddr);
+    await healRobinhoodGraduatedCms(provider, chainId, campaign, tokenAddr, { force: sawCampaignLogs });
   } catch (healErr) {
     console.warn("[indexer] RH CMS heal skipped", {
       chainId,
@@ -2096,7 +2116,7 @@ export async function runIndexerOnce() {
  */
 export async function runTipScanOnce() {
   // Cap tip-only at 20k so the concurrent loop stays under ~20s on publicnode.
-  const tipScanBlocks = Math.max(3_000, Math.min(ENV.INDEXER_TIP_SCAN_BLOCKS || 20_000, 20_000));
+  const tipScanBlocks = Math.max(500, Math.min(ENV.INDEXER_TIP_SCAN_BLOCKS || 2_500, 20_000));
   const deadlineMs = Date.now() + 25_000;
 
   for (const chain of CHAINS) {
@@ -2335,7 +2355,7 @@ async function runIndexerCore(opts: {
     try {
       if (chain.voteTreasuryAddress) {
         const state = await getState(chain.chainId, "votes");
-        const tipBlocks = Math.max(3_000, ENV.INDEXER_TIP_SCAN_BLOCKS || 20_000);
+        const tipBlocks = Math.max(500, ENV.INDEXER_TIP_SCAN_BLOCKS || 2_500);
         const histBlocks = Math.max(
           5_000,
           Math.min(opts.lookbackBlocks || 20_000, ENV.INDEXER_CAMPAIGN_BLOCKS_PER_PASS || 8_000),
@@ -2429,7 +2449,8 @@ async function runIndexerCore(opts: {
       const healRows = await pool.query(
         `select campaign_address, token_address
            from public.campaigns
-          where chain_id=$1`,
+          where chain_id=$1
+            and coalesce(factory_generation, 0) <> 8`,
         [chain.chainId],
       );
       for (const row of healRows.rows) {
@@ -2441,8 +2462,10 @@ async function runIndexerCore(opts: {
             camp,
             row.token_address ? String(row.token_address) : null,
           );
-          if (healed.healed) {
-            await setCampaignGraduated(chain.chainId, camp, target, new Date(), ethers.ZeroHash);
+          if (healed.healed && healed.anchor) {
+            // The real graduation, not this pass's head / now / a zero hash: the old call rewrote a
+            // graduated coin's block, time and tx on every pass.
+            await setCampaignGraduated(chain.chainId, camp, healed.anchor.block, healed.anchor.time, healed.anchor.txHash);
             console.log("[indexer] RH CMS heal pass seeded", {
               chainId: chain.chainId,
               campaign: camp.toLowerCase(),

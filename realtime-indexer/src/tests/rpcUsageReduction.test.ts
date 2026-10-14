@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import { ethers } from "ethers";
 import test from "node:test";
+import http from "node:http";
+import { fileURLToPath } from "node:url";
 
+import fs from "node:fs";
+import path from "node:path";
 import { recordTipScan, resetTipWindows, tipScanStart, tipWindowOptionsFromEnv } from "../tipScanWindow.js";
-import { countRpcRequest, hookEthersRpcCounter, resetRpcUsage, rpcUsageDelta, rpcUsageSnapshot } from "../rpcUsage.js";
+import { countRpcRequest, countSolanaFetchBody, countingSolanaFetch, hookEthersRpcCounter, resetRpcUsage, rpcUsageDelta, rpcUsageSnapshot } from "../rpcUsage.js";
 import { maskRpcUrl } from "../rpcProvider.js";
 
 const OPTS = { windowBlocks: 20_000, overlapBlocks: 200, fullSweepMs: 600_000 };
@@ -41,10 +45,18 @@ test("tip window: the full window comes back every fullSweepMs, after a cut-shor
   assert.equal(tipScanStart(56, "d", 130_000, OPTS, t0 + 1).from, 110_000, "a gap larger than the window never reads more than the window");
 });
 
-test("tip window env: defaults 200 blocks overlap, 10 minute sweep; bad values fall back", () => {
-  assert.deepEqual(tipWindowOptionsFromEnv(20_000, {}), { windowBlocks: 20_000, overlapBlocks: 200, fullSweepMs: 600_000 });
+test("Topaz lists stored pools before opening an RPC provider", () => {
+  const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../topazPoolIndexer.ts"), "utf8");
+  const listAt = src.indexOf("const indexedPools = await listPools(config.chainId);");
+  const rpcAt = src.indexOf("await createWorkingProvider(config.rpcUrls, config.chainId");
+  assert.ok(listAt >= 0 && rpcAt > listAt, "listPools must run before createWorkingProvider");
+  assert.match(src, /if \(!indexedPools\.length\) continue;/);
+});
+
+test("tip window env: defaults 80 blocks overlap, 30 minute sweep; bad values fall back", () => {
+  assert.deepEqual(tipWindowOptionsFromEnv(2_500, {}), { windowBlocks: 2_500, overlapBlocks: 80, fullSweepMs: 1_800_000 });
   assert.deepEqual(tipWindowOptionsFromEnv(5_000, { INDEXER_TIP_OVERLAP_BLOCKS: "50", INDEXER_TIP_FULL_SWEEP_MS: "0" }), { windowBlocks: 5_000, overlapBlocks: 50, fullSweepMs: 0 });
-  assert.deepEqual(tipWindowOptionsFromEnv(5_000, { INDEXER_TIP_OVERLAP_BLOCKS: "x", INDEXER_TIP_FULL_SWEEP_MS: "-1" }), { windowBlocks: 5_000, overlapBlocks: 200, fullSweepMs: 600_000 });
+  assert.deepEqual(tipWindowOptionsFromEnv(5_000, { INDEXER_TIP_OVERLAP_BLOCKS: "x", INDEXER_TIP_FULL_SWEEP_MS: "-1" }), { windowBlocks: 5_000, overlapBlocks: 80, fullSweepMs: 1_800_000 });
 });
 
 test("rpc usage: counted by chain and method, batches per entry, windows by delta", () => {
@@ -75,4 +87,63 @@ test("maskRpcUrl: scheme and host only, for every provider's key layout", () => 
   assert.equal(maskRpcUrl("https://mainnet.helius-rpc.com/?api-key=secret"), "https://mainnet.helius-rpc.com/…");
   assert.equal(maskRpcUrl("https://rpc.mainnet.chain.robinhood.com"), "https://rpc.mainnet.chain.robinhood.com");
   assert.equal(maskRpcUrl("not a url with a key 0123456789"), "rpc");
+});
+
+test("solana fetch counter: Solana methods by name under chain solana, batches per entry, EVM methods left to the ethers hook", () => {
+  resetRpcUsage();
+  assert.equal(countSolanaFetchBody(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getSlot", params: [] })), 1);
+  assert.equal(countSolanaFetchBody(JSON.stringify([{ jsonrpc: "2.0", method: "getTransaction" }, { jsonrpc: "2.0", method: "getTransaction" }, { jsonrpc: "2.0", method: "sendTransaction" }])), 3);
+  assert.equal(countSolanaFetchBody(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getLogs", params: [] })), 0, "rawRpcCall counts EVM probes itself");
+  assert.equal(countSolanaFetchBody(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_blockNumber" })), 0);
+  assert.equal(countSolanaFetchBody("not json but has \"jsonrpc\""), 0);
+  assert.equal(countSolanaFetchBody('{"query":"getSlot"}'), 0, "not a JSON-RPC body");
+  assert.equal(countSolanaFetchBody(undefined), 0);
+  assert.deepEqual(rpcUsageSnapshot().byChain.solana, { total: 4, methods: { getTransaction: 2, getSlot: 1, sendTransaction: 1 } });
+  assert.equal(rpcUsageSnapshot().byChain["56"], undefined);
+});
+
+test("solana fetch counter: a wrapped fetch counts one request once and passes the call through untouched", async () => {
+  resetRpcUsage();
+  const seen: unknown[][] = [];
+  const wrapped = countingSolanaFetch((async (...args: unknown[]) => { seen.push(args); return new Response("{}"); }) as any);
+  const init = { method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getSlot", params: [] }) };
+  await wrapped("https://rpc.invalid/?api-key=secret", init);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0][1], init);
+  assert.deepEqual(rpcUsageSnapshot().byChain.solana, { total: 1, methods: { getSlot: 1 } });
+  assert.ok(!JSON.stringify(rpcUsageSnapshot()).includes("secret"), "URLs and keys are never recorded");
+});
+
+test("solana fetch counter: with the preload first, @solana/web3.js Connection traffic is counted once and the rest is untouched", async () => {
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      const msg = JSON.parse(body);
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: msg.method === "getSlot" ? 123 : null }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as any).port;
+  const script = `
+    import "./rpcUsagePreload.js";
+    import { rpcUsageSnapshot } from "./rpcUsage.js";
+    const { Connection } = await import("@solana/web3.js");
+    const slot = await new Connection("http://127.0.0.1:${port}/").getSlot();
+    console.log(JSON.stringify({ slot, usage: rpcUsageSnapshot().byChain }));
+  `;
+  try {
+    const srcDir = fileURLToPath(new URL("..", import.meta.url));
+    const out = await new Promise<string>((resolve, reject) => {
+      import("node:child_process").then(({ execFile }) =>
+        execFile(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], { cwd: srcDir, timeout: 60_000 }, (err, stdout, stderr) => (err ? reject(new Error(String(stderr || err))) : resolve(stdout))),
+      );
+    });
+    const parsed = JSON.parse(out.trim().split("\n").pop()!);
+    assert.equal(parsed.slot, 123);
+    assert.deepEqual(parsed.usage, { solana: { total: 1, methods: { getSlot: 1 } } });
+  } finally {
+    server.close();
+  }
 });

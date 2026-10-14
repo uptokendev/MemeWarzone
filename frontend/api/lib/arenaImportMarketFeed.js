@@ -1,5 +1,7 @@
 /**
- * Market data for imported tokens (arena_token_imports, status 'passed').
+ * Market data for imported tokens (arena_token_imports, every status: the coin page shows these
+ * numbers whether or not the import is cleared for battles; battle eligibility gates on status
+ * elsewhere, never on this table).
  *
  * The indexer only follows MemeWarzone's own pools, so an imported token had no market_stats row
  * and every metrics Battle involving one was unscorable. This feed fills
@@ -168,8 +170,9 @@ function solanaRpc(env = process.env) {
 }
 
 /**
- * One pass: every passed import on a chain DexScreener covers. A token the source does not list is
+ * One pass: every import on a chain DexScreener covers. A token the source does not list is
  * skipped, not zeroed -- a missing row reads as "no market data", a zero row would read as a crash.
+ * Passed (battle) imports go first, so they get the GeckoTerminal budget before page-only ones.
  */
 export async function refreshImportMarketStats({ pool, env = process.env, fetchImpl = fetch, nowMs = Date.now() } = {}) {
   const imports = await pool.query(
@@ -177,8 +180,7 @@ export async function refreshImportMarketStats({ pool, env = process.env, fetchI
             to_jsonb(s) ->> 'ath_seeded_at' as ath_seeded_at
        from public.arena_token_imports i
        left join public.arena_import_market_stats s on s.chain_id = i.chain_id and s.token_address = i.token_address
-      where i.status = 'passed'
-      order by s.holders_updated_at asc nulls first`,
+      order by (i.status = 'passed') desc, s.holders_updated_at asc nulls first`,
   );
   const gecko = geckoClient(env, fetchImpl);
   const byChain = new Map();

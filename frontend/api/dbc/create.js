@@ -919,6 +919,56 @@ export function createDbcCreateHandler(deps = {}) {
       // The token page's "Deployed" tile; without it a DBC coin showed "—".
       createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
     };
+    async function storedDbcPoolLive() {
+      const configAddress = String(row.meta?.dbc?.config || row.meta?.config || "");
+      const [stats, cfg, raised] = await Promise.all([
+        database
+          .query(
+            `select bonding_reserve_bnb from public.market_stats where chain_id = 101 and campaign_address = $1 limit 1`,
+            [row.campaign_address],
+          )
+          .catch(() => ({ rows: [] })),
+        configAddress
+          ? database
+              .query(
+                `select threshold_lamports from public.dbc_launch_configs where config_address = $1 limit 1`,
+                [configAddress],
+              )
+              .catch(() => ({ rows: [] }))
+          : { rows: [] },
+        database
+          .query(
+            `select coalesce(sum(case when side = 'buy' then bnb_amount else -bnb_amount end), 0) as raised
+               from public.curve_trades
+              where chain_id = 101 and campaign_address = $1`,
+            [row.campaign_address],
+          )
+          .catch(() => ({ rows: [] })),
+      ]);
+      const reserveSol = Number(stats.rows[0]?.bonding_reserve_bnb);
+      const raisedSol = Number(raised.rows[0]?.raised);
+      const sol = Number.isFinite(reserveSol) && reserveSol > 0
+        ? reserveSol
+        : Number.isFinite(raisedSol) && raisedSol > 0
+          ? raisedSol
+          : 0;
+      const threshold = BigInt(String(cfg.rows?.[0]?.threshold_lamports || "0"));
+      if (!(sol > 0) && threshold === 0n) return null;
+      const quoteReserveLamports = BigInt(Math.max(0, Math.round(sol * 1e9)));
+      return {
+        quoteReserveLamports: quoteReserveLamports.toString(),
+        baseReserveRaw: null,
+        curveTokensRaw: null,
+        curveSoldTokensRaw: null,
+        migrationQuoteThresholdLamports: threshold.toString(),
+        progressBps: threshold > 0n ? Number((quoteReserveLamports * 10_000n) / threshold) : 0,
+        sqrtPrice: "",
+        activationPoint: "",
+        isMigrated: Boolean(row.meta?.solanaGraduation?.pool || row.meta?.dbc?.migration?.pool),
+        baseVault: "",
+        stored: true,
+      };
+    }
     if (url.searchParams.get("live") === "1") {
       try {
         const conn = connection();
@@ -980,8 +1030,12 @@ export function createDbcCreateHandler(deps = {}) {
           payload.migratedPool = row.meta?.solanaGraduation?.pool || row.meta?.dbc?.migration?.pool || null;
         }
       } catch {
-        payload.poolLive = null;
+        // Live RPC is optional; stored snapshot still paints the curve.
       }
+    }
+    if (!payload.poolLive) {
+      const stored = await storedDbcPoolLive();
+      if (stored) payload.poolLive = stored;
     }
     return json(res, 200, payload);
   }

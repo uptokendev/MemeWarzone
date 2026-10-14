@@ -143,7 +143,9 @@ test("16 scanner binds supported chains explicitly and hard-blocks unknown netwo
   assert.equal(importScannerChainFamily(97), "evm");
   assert.equal(importScannerChainFamily(101), "solana");
   assert.equal(importScannerChainFamily(102), "solana");
-  assert.equal(importScannerChainFamily(4663), null);
+  assert.equal(importScannerChainFamily(4663), "evm");
+  assert.equal(importScannerChainFamily(46630), "evm");
+  assert.equal(importScannerChainFamily(1), null);
   assert.equal(classifyFinding("unsupported_chain").authority, FINDING_AUTHORITY.NON_OVERRIDABLE);
 });
 

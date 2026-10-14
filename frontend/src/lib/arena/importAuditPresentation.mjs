@@ -1,7 +1,7 @@
 const KNOWN_SCAN_REASONS = Object.freeze({
   not_a_contract: "No token contract was found at this address.",
   not_a_mint: "No valid Solana token mint was found at this address.",
-  honeypot_sell_failed: "The automatic Topaz check could quote a buy but could not quote a sell.",
+  honeypot_sell_failed: "The automatic pool check could quote a buy but could not quote a sell.",
   non_transferable: "The token reports transfer restrictions that prevent normal transfers.",
   paused: "The token contract reports that transfers are paused.",
   owner_present: "The token contract still reports an owner address.",
@@ -24,6 +24,19 @@ const KNOWN_SCAN_REASONS = Object.freeze({
   supply_unreadable: "The token supply could not be read.",
   zero_supply: "The token currently reports a zero total supply.",
   getPool_failed: "The automatic Topaz pool lookup could not be completed.",
+  no_uniswap_pool: "No Uniswap V3 WETH pool was found by the automatic check.",
+  uniswap_env_missing: "The automatic Uniswap quote check is not available in the current environment.",
+  uniswap_getPool_failed: "The automatic Uniswap pool lookup could not be completed.",
+  uniswap_buy_quote_failed: "The automatic Uniswap buy quote could not be completed.",
+  no_pancake_pool: "No PancakeSwap WBNB pool was found by the automatic check.",
+  pancake_getPool_failed: "The automatic PancakeSwap pool lookup could not be completed.",
+  pancakeswap_buy_quote_failed: "The automatic PancakeSwap buy quote could not be completed.",
+  sell_simulation_failed: "A simulated buy worked, but selling it back through the public router failed.",
+  buy_simulation_failed: "A simulated buy on the pool failed, so selling could not be checked.",
+  swap_tax_high: "The simulated buy and sell lost more than the review threshold to token taxes.",
+  swap_simulation_unavailable: "The simulated buy and sell could not run on this network.",
+  sell_quote_unavailable: "The automatic sell quote could not be read because the network check failed.",
+  v4_pool_key_unknown: "A Uniswap V4 pool is listed for this token, but its pool key could not be verified on chain.",
 });
 
 const AUTHORITY_OUTCOMES = new Set([

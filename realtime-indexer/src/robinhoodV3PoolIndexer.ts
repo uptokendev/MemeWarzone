@@ -281,8 +281,13 @@ function buildDescriptor(indexedPool: IndexedPool): RobinhoodPairDescriptor {
   });
 }
 
-async function discoverPools(provider: ethers.JsonRpcProvider, config: ChainConfig): Promise<void> {
-  const candidates = await pool.query(
+/** True when this pass must open an RPC provider. Empty RH mainnet currently has zero V3 pools. */
+export function v3RpcNeeded(candidateCount: number, storedPoolCount: number) {
+  return candidateCount > 0 || storedPoolCount > 0;
+}
+
+async function loadV3Candidates(chainId: number) {
+  return pool.query(
     `select cms.chain_id,cms.campaign_address,cms.token_address,cms.dex_pair_address,cms.graduation_block,
             cms.wrapped_native_address,
             mp.base_token_address as registered_base_token_address,
@@ -301,8 +306,12 @@ async function discoverPools(provider: ethers.JsonRpcProvider, config: ChainConf
         and cms.dex_pair_address<>''
         and cms.market_stage in ('GRADUATING','DEX_PENDING','DEX_ACTIVE','DEX_DEGRADED')
       order by cms.graduation_block asc nulls last`,
-    [config.chainId],
+    [chainId],
   );
+}
+
+async function discoverPools(provider: ethers.JsonRpcProvider, config: ChainConfig): Promise<void> {
+  const candidates = await loadV3Candidates(config.chainId);
   passHealth.lastCandidateCount = candidates.rowCount ?? candidates.rows.length;
 
   for (const row of candidates.rows) {
@@ -1658,7 +1667,18 @@ async function rebuildPostGradCandles(chainId: number): Promise<void> {
   }
 }
 
-async function runChain(config: ChainConfig): Promise<void> {
+async function runChain(config: ChainConfig): Promise<boolean> {
+  const candidates = await loadV3Candidates(config.chainId);
+  const storedPools = await listPools(config.chainId);
+  const candidateCount = candidates.rowCount ?? candidates.rows.length;
+  passHealth.lastCandidateCount = candidateCount;
+  if (!v3RpcNeeded(candidateCount, storedPools.length)) {
+    passHealth.lastPassAt = new Date().toISOString();
+    passHealth.lastPassChainId = config.chainId;
+    passHealth.lastPoolCount = 0;
+    passHealth.lastError = null;
+    return false;
+  }
   const selected = await createWorkingProvider(config.rpcUrls, config.chainId, {
     timeoutMs: ENV.RPC_REQUEST_TIMEOUT_MS,
     label: `robinhood-v3-${config.chainId}`,
@@ -1681,6 +1701,7 @@ async function runChain(config: ChainConfig): Promise<void> {
     passHealth.lastPoolCount = pools.length;
     passHealth.lastError = discoveryError;
     if (pools.length || swaps) console.log("[robinhood-v3] pass", { chainId: config.chainId, head, pools: pools.length, swaps, rpc: maskRpcUrl(selected.url) });
+    return true;
   } finally {
     provider.destroy();
   }
@@ -1698,8 +1719,9 @@ async function loop(): Promise<void> {
         catch (error: any) { console.error("[robinhood-v3] rebuild pass failed", { chainId: config.chainId, error: error?.message || String(error) }); }
       }
     }
+    let usedRpc = false;
     for (const config of configs) {
-      try { await runChain(config); }
+      try { usedRpc = (await runChain(config)) || usedRpc; }
       catch (error: any) {
         passHealth.lastPassAt = new Date().toISOString();
         passHealth.lastPassChainId = config.chainId;
@@ -1707,7 +1729,8 @@ async function loop(): Promise<void> {
         console.error("[robinhood-v3] pass failed", { chainId: config.chainId, rpcs: config.rpcUrls.map(maskRpcUrl), error: passHealth.lastError });
       }
     }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    const waitMs = usedRpc ? intervalMs : Math.max(intervalMs, ENV.ROBINHOOD_V3_EMPTY_INTERVAL_MS);
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
 }
 
@@ -1721,6 +1744,7 @@ export function startRobinhoodV3PoolIndexerLoop(): void {
 }
 
 export const robinhoodV3Internals = {
+  v3RpcNeeded,
   normalizeMockSwap,
   normalizeCanonicalSwap,
   MOCK_SWAP_TOPIC,

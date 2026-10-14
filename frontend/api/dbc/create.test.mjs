@@ -615,6 +615,41 @@ test("existing-job guards skip DBC rows", () => {
   assert.match(details, /if \(!isSolanaPage \|\| isDbcPage \|\| !campaign\?\.campaign\) \{\n\s+setSolanaCurve\(null\)/);
   assert.match(details, /if \(!isSolanaPage \|\| isDbcPage \|\| !solanaCurveClosed\) return;/);
   assert.match(live, /fetchDbcToken/);
+  assert.doesNotMatch(live, /limit=500/);
+  assert.match(live, /search=\$\{encodeURIComponent\(routeId\)\}/);
+  assert.match(live, /fetchDbcToken\(routeId, \{ live: true \}\)/);
+  const dbcCreateClient = readFileSync(path.join(root, "frontend/src/lib/dbcCreate.ts"), "utf8");
+  assert.match(dbcCreateClient, /opts\?\.live \? "&live=1" : ""/);
+});
+
+test("DBC lookup paints stored poolLive without live=1", async () => {
+  const db = memoryDb();
+  db.campaigns.push({
+    campaign_address: "CAfqxMHTZc4YHdApxgxbMbUpV6U8CTKo8uoixa92DcaS",
+    token_address: "6VJnmXSHkC7awLNqb684Metaxmj662noqH83CWCn8zih",
+    name: "Dazilla",
+    symbol: "DAZILLA",
+    logo_uri: null,
+    creator_address: "creator",
+    meta: { dbc: { config: "6GdLrNUhNWe2vqp3Hr75pcfMzzc65qruPjRoCERDeHAy" } },
+    launch_type: "dbc",
+    created_at: new Date("2026-10-01T00:00:00.000Z"),
+  });
+  const orig = db.query;
+  db.query = async (text, params) => {
+    const sql = String(text).replace(/\s+/g, " ").trim().toLowerCase();
+    if (sql.includes("from public.market_stats")) return { rows: [{ bonding_reserve_bnb: 28.530175447 }] };
+    if (sql.includes("from public.dbc_launch_configs")) return { rows: [{ threshold_lamports: "124408396605" }] };
+    if (sql.includes("from public.curve_trades")) return { rows: [{ raised: 0 }] };
+    return orig(text, params);
+  };
+  const handle = handlerFor(db);
+  const res = fakeRes();
+  await handle(getReq({ token: "6VJnmXSHkC7awLNqb684Metaxmj662noqH83CWCn8zih" }), res);
+  assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+  assert.equal(res.body.ok, true);
+  assert.equal(res.body.poolLive.stored, true);
+  assert.equal(res.body.poolLive.progressBps, 2293);
 });
 
 const MAINNET_ENV = {

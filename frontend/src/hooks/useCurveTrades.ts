@@ -16,6 +16,7 @@ import { fetchSolanaOnChainTrades } from "@/lib/solanaOnChainTrades";
 import {
   parseIndexerTradeBody,
   shouldRunSolanaHistoryFallback,
+  shouldRunSolanaOnChainCheck,
   shouldRunSolanaTipReconcile,
 } from "@/lib/indexerTradeSnapshot";
 import {
@@ -26,6 +27,7 @@ import {
   tradeDedupeKey,
   unionIndexedAndLive,
 } from "@/lib/tradeDedupe";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 const ENABLE_TOKEN_POLLING = String(import.meta.env.VITE_ENABLE_TOKEN_POLLING || "").trim() === "1";
 const ENABLE_TRADE_POLL = String(import.meta.env.VITE_DISABLE_TRADE_POLL || "").trim() !== "1";
@@ -466,7 +468,7 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
         !indexerBackoffActive &&
         isSolanaChainId(chainId) &&
         Boolean(campaignAddress) &&
-        (mode === "full" || !indexerOk) &&
+        shouldRunSolanaOnChainCheck({ fullRefresh: mode === "full", indexerOk, indexerRows }) &&
         (fullHistoryFallback || tipReconcile || indexerOk);
       const verifySolana = async () => {
         if (!runSolanaCheck || !campaignAddress) return 0;
@@ -614,9 +616,9 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
 
     void pullSnapshot(ac.signal, "full");
     if (!canLoadTrades || (!ENABLE_TRADE_POLL && !ENABLE_TOKEN_POLLING)) return () => ac.abort();
-    const timer = setInterval(() => void pullSnapshot(ac.signal, "tip"), reconcileMs);
+    const stopPolling = setVisibleInterval(() => void pullSnapshot(ac.signal, "tip"), reconcileMs);
     return () => {
-      clearInterval(timer);
+      stopPolling();
       ac.abort();
     };
   }, [canLoadTrades, campaignAddress, chainId, pullSnapshot, reconcileMs]);

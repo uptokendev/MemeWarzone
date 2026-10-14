@@ -10,7 +10,7 @@ type Props = {
 
 export default function Sidebar({ onNavigate }: Props) {
   const loc = useLocation()
-  const [q, setQ] = useState('')
+  const [q, setQ] = useState(() => new URLSearchParams(loc.search).get('q') ?? '')
 
   const currentPath = useMemo(() => normalizePath(loc.pathname), [loc.pathname])
   const activeSectionTitle = useMemo(() => {

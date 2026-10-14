@@ -2,7 +2,7 @@ import { isAddress } from "ethers";
 import { apiFetch } from "@/lib/apiBase";
 import { findStoredFeedSession } from "@/lib/feedSession";
 import { isSolanaAddress } from "@/lib/address";
-import { isEvmChainId, isSolanaChainId, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
+import { isSolanaChainId, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
 
 /**
  * Social follows: connected wallet address only — no signature popup.
@@ -29,8 +29,6 @@ type FollowCampaignPayload = {
   campaignAddress: string;
 };
 
-type AddressKind = "evm" | "solana" | "invalid";
-
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await apiFetch(url, {
     headers: { "content-type": "application/json", ...(init?.headers || {}) },
@@ -41,13 +39,6 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error(`Follow API error (${res.status}): ${body || res.statusText}`);
   }
   return (await res.json()) as T;
-}
-
-function addressKind(a: string): AddressKind {
-  const raw = String(a ?? "").trim();
-  if (isSolanaAddress(raw)) return "solana";
-  if (isAddress(raw)) return "evm";
-  return "invalid";
 }
 
 function normAddr(a: string) {
@@ -62,24 +53,15 @@ function assertAddr(a: string, label: string) {
   return v;
 }
 
-export function isChainAddressCompatible(chainId: number, ...addresses: string[]): boolean {
-  const kinds = addresses.map(addressKind);
-  if (kinds.some((kind) => kind === "invalid")) return false;
-  if (isSolanaChainId(chainId)) return kinds.every((kind) => kind === "solana");
-  if (isEvmChainId(chainId)) return kinds.every((kind) => kind === "evm");
-  return true;
-}
-
-export function chainAddressCompatibilityMessage(chainId: number): string {
-  if (isSolanaChainId(chainId)) return "This action needs Solana campaign and wallet addresses.";
-  if (isEvmChainId(chainId)) return "This action needs EVM campaign and wallet addresses.";
-  return "This campaign cannot be followed from the selected chain.";
-}
-
-function assertChainAddressCompatible(chainId: number, ...addresses: string[]) {
-  if (!isChainAddressCompatible(chainId, ...addresses)) {
-    throw new Error(chainAddressCompatibilityMessage(chainId));
-  }
+/**
+ * Following is chainless (founder, 2026-10-14): any connected wallet follows any coin on any chain; only
+ * buying and selling need the coin's own wallet. The coin's own wallet is used when it is connected,
+ * otherwise whichever wallet is.
+ */
+export function pickFollowWallet(coinOnSolana: boolean, solanaAccount?: string | null, evmAccount?: string | null): string {
+  const sol = String(solanaAccount || "").trim();
+  const evm = String(evmAccount || "").trim();
+  return coinOnSolana ? sol || evm : evm || sol;
 }
 
 function resolveChainId(chainId: number, ...addresses: string[]) {
@@ -179,7 +161,6 @@ export async function followCampaign(
 ): Promise<void> {
   const user = assertAddr(userAddress, "user");
   const campaign = assertAddr(campaignAddress, "campaign");
-  assertChainAddressCompatible(chainId, user, campaign);
   const payload: FollowCampaignPayload = {
     chainId: resolveChainId(chainId, user, campaign),
     userAddress: user,
@@ -199,7 +180,6 @@ export async function unfollowCampaign(
 ): Promise<void> {
   const user = assertAddr(userAddress, "user");
   const campaign = assertAddr(campaignAddress, "campaign");
-  assertChainAddressCompatible(chainId, user, campaign);
   const payload: FollowCampaignPayload = {
     chainId: resolveChainId(chainId, user, campaign),
     userAddress: user,
@@ -214,7 +194,6 @@ export async function unfollowCampaign(
 export async function isFollowingCampaign(userAddress: string, campaignAddress: string, chainId = 0): Promise<boolean> {
   const user = assertAddr(userAddress, "user");
   const campaign = assertAddr(campaignAddress, "campaign");
-  if (!isChainAddressCompatible(chainId, user, campaign)) return false;
   const q = new URLSearchParams({ chainId: String(resolveChainId(chainId, user, campaign)), user, campaign });
   const out = await api<{ isFollowing: boolean }>(`/api/follows/campaign?${q.toString()}`);
   return !!out.isFollowing;

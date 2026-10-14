@@ -20,7 +20,8 @@
  */
 import { PublicKey } from "@solana/web3.js";
 import { ethers } from "ethers";
-import { leagueExcludedFilter } from "../evm/curveTradeGen5Columns.js";
+import { curveTradeGen5Columns, leagueExcludedFilter } from "../evm/curveTradeGen5Columns.js";
+import { gen8MoneySafeSql, gen8NettedCurveTradesSql } from "./leagueLeaderboard.js";
 import { notPublicHiddenCampaignSql, publicHiddenWhere } from "./publicHiddenSql.js";
 
 type Db = { query: (text: string, params?: unknown[]) => Promise<{ rows: any[] }> };
@@ -57,6 +58,16 @@ export async function recruiterLeagueStandings(db: Db, startIso: string, endIso:
   // D13: a creator's own buys (gen-5 first buy and escrow buys, flagged by the indexer) are not
   // referred volume. Empty until the gen-5 migration has added the column.
   const creatorBuys = await leagueExcludedFilter(db, "t");
+  // Gen-8 rows (founder, 2026-10-12): referred volume reads the netted trades (leagueLeaderboard.ts
+  // gen8NettedCurveTradesSql: one row per coin, wallet and transaction with the trader-side amount, so
+  // a buy and a sell inside one transaction count as their net) and only rows below the chain's money
+  // cursor (gen8MoneySafeSql: this league pays money). Every other row passes through unchanged; the
+  // plain table until the gen-5 columns exist. The board (frontend/api/leagueRecruiter.js) nets the
+  // same way and shows the chain head.
+  const cols = await curveTradeGen5Columns(db);
+  const gen8 = cols.leagueExcluded && cols.feeRaw;
+  const trades = gen8 ? gen8NettedCurveTradesSql("t") : "public.curve_trades t";
+  const final = gen8 ? ` AND ${gen8MoneySafeSql("t")}` : "";
   const { rows } = await db.query(
     `WITH active_links AS (
        SELECT l.recruiter_id, l.wallet_address FROM public.wallet_recruiter_links l
@@ -68,10 +79,10 @@ export async function recruiterLeagueStandings(db: Db, startIso: string, endIso:
        SELECT recruiter_id, wallet_address FROM active_links UNION SELECT recruiter_id, wallet_address FROM active_squad
      ), wallet_volume AS (
        SELECT w.recruiter_id, w.wallet_address, t.chain_id, sum(t.bnb_amount_raw::numeric) AS raw
-         FROM public.curve_trades t
+         FROM ${trades}
          JOIN volume_wallets w
            ON (t.chain_id = $3 AND w.wallet_address = t.wallet) OR (t.chain_id <> $3 AND lower(w.wallet_address) = lower(t.wallet))
-        WHERE t.chain_id = ANY($4::int[]) AND t.block_time >= $1::timestamptz AND t.block_time < $2::timestamptz${creatorBuys}
+        WHERE t.chain_id = ANY($4::int[]) AND t.block_time >= $1::timestamptz AND t.block_time < $2::timestamptz${creatorBuys}${final}
           AND ${notPublicHiddenCampaignSql("t")}
         GROUP BY 1, 2, 3
      ), volume AS (

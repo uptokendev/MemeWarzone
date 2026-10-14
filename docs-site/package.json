@@ -10,7 +10,7 @@
     "check:copy": "node scripts/check-stale-copy.mjs",
     "check:facts": "node scripts/validate-fact-matrix.mjs",
     "build:app": "tsc -b && vite build",
-    "build:artifacts": "node scripts/generate-static-docs.mjs && node scripts/generate-doc-coverage.mjs && node scripts/generate-plan-status.mjs",
+    "build:artifacts": "node scripts/generate-static-docs.mjs && node scripts/prerender-docs.mjs && node scripts/generate-doc-coverage.mjs && node scripts/generate-plan-status.mjs",
     "check:dist": "node scripts/assert-dist-shell.mjs",
     "test:deeplinks": "node scripts/smoke-deep-links.mjs",
     "test:deeplinks:prod": "node scripts/smoke-deep-links.mjs --base-url=https://docs.memewar.zone",

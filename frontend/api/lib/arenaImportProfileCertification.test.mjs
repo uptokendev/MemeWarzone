@@ -72,7 +72,7 @@ test("normalized Arena token profile enriches UI without inventing price parity"
   assert.match(profile, /getArenaMarketSnapshot/);
   assert.match(profile, /origin:\s*["']import["']/);
   assert.match(profile, /origin:\s*["']native["']/);
-  assert.match(profile, /priceUsd:\s*null/);
+  assert.match(profile, /priceUsd:\s*market\?\.priceUsd/);
   assert.match(profile, /safeImage/);
   assert.doesNotMatch(profile, /data:image/i);
 });

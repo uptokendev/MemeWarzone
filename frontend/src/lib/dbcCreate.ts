@@ -120,8 +120,9 @@ export async function fetchDbcDueDrafts(wallet: string) {
   return payload;
 }
 
-export async function fetchDbcToken(token: string) {
-  const response = await apiFetch(`/api/dbc/create?token=${encodeURIComponent(token)}&live=1`, { cache: "no-store" });
+export async function fetchDbcToken(token: string, opts?: { live?: boolean }) {
+  const live = opts?.live ? "&live=1" : "";
+  const response = await apiFetch(`/api/dbc/create?token=${encodeURIComponent(token)}${live}`, { cache: "no-store" });
   const payload = await response.json().catch(() => ({}));
   if (response.status === 404 || payload?.code === "DBC_NOT_FOUND") return null;
   if (!response.ok || payload?.ok === false) return null;

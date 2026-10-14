@@ -5,6 +5,7 @@ import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { fetchDbcDueDrafts } from "@/lib/dbcCreate";
 import { isDbcLaunchEnabled } from "@/lib/dbcLaunchEnabled";
 import { DBC_DUE_POPUP_COPY, shouldShowDbcDuePopup } from "../../../shared/dbcSchedule.mjs";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 const POLL_MS = 30_000;
 
@@ -52,14 +53,14 @@ export function DbcScheduledLaunchListener() {
     setQueue([]);
     if (!enabled) return;
     void pull();
-    const timer = window.setInterval(() => void pull(), POLL_MS);
+    const stopPolling = setVisibleInterval(() => void pull(), POLL_MS);
     const onVisible = () => {
       if (document.visibilityState === "visible") void pull();
     };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onVisible);
     return () => {
-      window.clearInterval(timer);
+      stopPolling();
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onVisible);
     };

@@ -10,6 +10,7 @@ import { PublicKey } from "@solana/web3.js";
 import { isSolanaChainId, type SupportedChainId } from "@/lib/chainConfig";
 import { getReadProvider } from "@/lib/readProvider";
 import { getSolanaReadConnection } from "@/lib/solanaReadConnection";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 export type ImportWalletBalances = { nativeRaw: bigint; tokenRaw: bigint };
 
@@ -56,10 +57,10 @@ export function useImportWalletBalances({ chainId, tokenAddress, account }: { ch
       }
     };
     void load();
-    const timer = window.setInterval(() => void load(), 15_000);
+    const stopPolling = setVisibleInterval(() => void load(), 15_000);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [account, chainId, tokenAddress]);
   return balances;

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/apiBase";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 async function readJsonPrice(fetcher: () => Promise<Response>, pick: (body: any) => unknown): Promise<number> {
   const res = await fetcher();
@@ -85,7 +86,6 @@ export function useBnbUsdPrice(enabled: boolean = true, refreshMs: number = 60_0
     if (!enabled) return;
 
     let cancelled = false;
-    let intervalId: number | undefined;
 
     const fetchPrice = async (showLoading: boolean) => {
       try {
@@ -129,14 +129,13 @@ export function useBnbUsdPrice(enabled: boolean = true, refreshMs: number = 60_0
     };
 
     fetchPrice(!cacheIsFresh);
-
-    if (ENABLE_BNB_USD_POLLING) {
-      intervalId = window.setInterval(() => fetchPrice(false), refreshMs);
-    }
+    const stopPolling = ENABLE_BNB_USD_POLLING
+      ? setVisibleInterval(() => { void fetchPrice(false); }, refreshMs)
+      : null;
 
     return () => {
       cancelled = true;
-      if (intervalId) window.clearInterval(intervalId);
+      stopPolling?.();
     };
   }, [enabled, refreshMs, cacheIsFresh]);
 

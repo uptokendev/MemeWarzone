@@ -3,6 +3,7 @@ import { scoreUnits } from "./usdRules.mjs";
 import { ownerWalletIndex } from "../../shared/ownerWallets.mjs";
 import { heldWalletKeys } from "../../shared/moderationHolds.mjs";
 import { MAIN_POT, POT_SQL, isMainPot, potMetadata, winnerSourceId } from "./pots.mjs";
+import { gen8MoneySafeSql, gen8NettedCurveTradesSql } from "../../api/lib/evmGen8LeagueSql.js";
 
 function isSolanaAirdropChain(chainId) {
   return Number(chainId) === 101 || Number(chainId) === 102;
@@ -167,6 +168,26 @@ export async function exclusionSets(client, { chainId, start, end, env = process
   return { all, securityCount: risk.rows.length, ownerCount: owners.size, moderationHeldCount: held.size, totalCount: all.size };
 }
 
+// Gen-8 rows (founder, 2026-10-12): the candidates read the netted trades (api/lib/evmGen8LeagueSql.js:
+// one row per coin, wallet and transaction with the trader-side amount, so a wash pair inside one
+// transaction is its net) and only rows below the chain's gen-8 money cursor (the draw pays money;
+// realtime-indexer/src/rewards/leagueLeaderboard.ts gen8MoneySafeSql). Every other row passes through
+// unchanged; the plain table until curve_trades has fee_raw and league_excluded, which the netted SQL reads.
+async function gen8CandidateTrades(client, alias = "t") {
+  let on = false;
+  try {
+    const { rows } = await client.query(
+      `select column_name from information_schema.columns
+        where table_schema = 'public' and table_name = 'curve_trades' and column_name in ('league_excluded', 'fee_raw')`,
+    );
+    const names = new Set((rows || []).map((row) => String(row.column_name)));
+    on = names.has("league_excluded") && names.has("fee_raw");
+  } catch {
+    on = false;
+  }
+  return { from: on ? gen8NettedCurveTradesSql(alias) : `public.curve_trades ${alias}`, final: on ? ` and ${gen8MoneySafeSql(alias)}` : "" };
+}
+
 // Volume thresholds come from one USD rule set for every chain (usdRules.mjs), converted at this
 // run's spot price -- no per-chain wei defaults.
 export async function traderCandidates(client, { chainId, start, end, exclusions, thresholds }) {
@@ -176,16 +197,17 @@ export async function traderCandidates(client, { chainId, start, end, exclusions
   const capScore = thresholds.traderCapScore;
   const minTrades = envInt("AIRDROP_TRADER_MIN_TRADES", 3, { min: 1, max: 1000 });
   const minDays = envInt("AIRDROP_TRADER_MIN_ACTIVE_DAYS", 2, { min: 1, max: 7 });
+  const g8 = await gen8CandidateTrades(client);
   const { rows } = await client.query(
     `select ${walletExpr("t.wallet", chainId)} wallet_address,sum(t.bnb_amount_raw::numeric)::text total_volume_raw,
             count(*)::int trade_count,count(distinct (t.block_time at time zone 'utc')::date)::int active_days,
             count(distinct t.campaign_address)::int campaign_count
-       from public.curve_trades t join public.campaigns c
+       from ${g8.from} join public.campaigns c
          on c.chain_id=t.chain_id and c.campaign_address=t.campaign_address
        left join public.campaign_security_states s on s.campaign_address=t.campaign_address
        left join public.wallet_risk_profiles bw on ${walletExpr("bw.wallet_address", chainId)}=${walletExpr("t.wallet", chainId)}
        left join public.wallet_risk_profiles cw on ${walletExpr("cw.wallet_address", chainId)}=${walletExpr("c.creator_address", chainId)}
-      where t.chain_id=$1 and t.block_time >= $2 and t.block_time < $3 and t.side in ('buy','sell')
+      where t.chain_id=$1 and t.block_time >= $2 and t.block_time < $3 and t.side in ('buy','sell')${g8.final}
         and ${walletsDiffer("t.wallet", "c.creator_address", chainId)} and not coalesce(s.paused,false)
         and not coalesce(bw.restricted,false)
         and not (bw.cluster_id is not null and cw.cluster_id is not null and bw.cluster_id=cw.cluster_id)
@@ -219,15 +241,16 @@ export async function creatorCandidates(client, { chainId, start, end, exclusion
   const capScore = thresholds.creatorCapScore;
   const minBuyers = thresholds.creatorMinUniqueBuyers;
   const maxCampaigns = envInt("AIRDROP_CREATOR_MAX_CAMPAIGNS", 2, { min: 1, max: 20 });
+  const g8 = await gen8CandidateTrades(client);
   const { rows } = await client.query(
     `select ${walletExpr("c.creator_address", chainId)} wallet_address,t.campaign_address,
             sum(t.bnb_amount_raw::numeric)::text qualified_buy_volume_raw,count(distinct ${walletExpr("t.wallet", chainId)})::int unique_buyers
-       from public.curve_trades t join public.campaigns c
+       from ${g8.from} join public.campaigns c
          on c.chain_id=t.chain_id and c.campaign_address=t.campaign_address
        left join public.campaign_security_states s on s.campaign_address=t.campaign_address
        left join public.wallet_risk_profiles bw on ${walletExpr("bw.wallet_address", chainId)}=${walletExpr("t.wallet", chainId)}
        left join public.wallet_risk_profiles cw on ${walletExpr("cw.wallet_address", chainId)}=${walletExpr("c.creator_address", chainId)}
-      where t.chain_id=$1 and t.block_time >= $2 and t.block_time < $3 and t.side='buy'
+      where t.chain_id=$1 and t.block_time >= $2 and t.block_time < $3 and t.side='buy'${g8.final}
         and ${walletsDiffer("t.wallet", "c.creator_address", chainId)} and not coalesce(s.paused,false) and not coalesce(s.buy_paused,false)
         and not coalesce(bw.restricted,false)
         and not (bw.cluster_id is not null and cw.cluster_id is not null and bw.cluster_id=cw.cluster_id)

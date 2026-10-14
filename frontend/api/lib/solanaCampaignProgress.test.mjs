@@ -3,7 +3,7 @@ import test from "node:test";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { dbcProgressPct, readAccounts, solanaProgressRpcUrls, withSolanaLaunchpadMarketCap } from "./solanaCampaignProgress.js";
+import { applyStoredSolanaProgress, dbcProgressPct, readAccounts, solanaProgressRpcUrls, withSolanaLaunchpadMarketCap } from "./solanaCampaignProgress.js";
 
 test("RPC list: SOLANA_RPC_URL entries first, then the other mainnet names, http only, no duplicates", () => {
   const urls = solanaProgressRpcUrls({
@@ -94,4 +94,20 @@ test("no SOL price leaves launchpad market caps as they were", async () => {
   await withSolanaLaunchpadMarketCap(items, null);
   assert.equal(items[0].marketcapBnb, "59.18");
   assert.equal(items[0].fullyDilutedSupply, undefined);
+});
+
+test("stored DBC reserve vs config threshold fills progress when RPC is missing", async () => {
+  const items = [
+    { chainId: 101, campaignAddress: DAZILLA_POOL, progressPct: null },
+    { chainId: 101, campaignAddress: KAIJU, progressPct: 21.47 },
+  ];
+  await applyStoredSolanaProgress(items, {
+    query: async () => ({
+      rows: [
+        { campaign_address: DAZILLA_POOL, launch_type: "dbc", bonding_reserve_bnb: 28.530175447, threshold_lamports: "124408396605" },
+      ],
+    }),
+  });
+  assert.equal(items[0].progressPct, 22.9326);
+  assert.equal(items[1].progressPct, 21.47, "already-known launchpad progress is left alone");
 });

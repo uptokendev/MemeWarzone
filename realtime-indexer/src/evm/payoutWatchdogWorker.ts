@@ -8,7 +8,10 @@
  *      through the module. Different: never approved, critical alert (the Safe signers verify and decide by hand).
  *   3. Authorizations: each listed distributor (holder gen-6 / gen-7, airdrop main / gen-7) keeps PAYOUT_WATCHDOG_WEEKS
  *      (12) weeks of its deterministic batch ids authorized at its cap; Roles' own allowance bounds how much per week.
- *   4. Heartbeat: public.payout_watchdog_state (the Finance alerts and the airdrop runner read it; a stale heartbeat is
+ *   4. Gen-8 choice vault, when EVM_GEN8_CHOICE_VAULT_<id> is set: balance against totalLiabilities, hook.treasuryRouter
+ *      against the splitter, and foreign claimRouter senders. Alerts use gen8_* kinds. This step sends nothing and
+ *      does not call the 3-arg approveHolderBatch. The Safe Roles file for selector 0xc62732bb is not applied here.
+ *   5. Heartbeat: public.payout_watchdog_state (the Finance alerts and the airdrop runner read it; a stale heartbeat is
  *      their "watchdog down" alert), alerts in public.reward_alerts (reward_type 'payout_watchdog').
  *
  * Dry run unless PAYOUT_WATCHDOG_SEND=true: every decision is logged and alerted, nothing is signed.
@@ -43,8 +46,9 @@ import {
   type AuthTarget,
   type VerifyConfig,
 } from "./payoutWatchdog.js";
-import { DISTRIBUTOR_IFACE, WATCHDOG_VAULT_IFACE, type WatchdogChain, type WatchdogSender } from "./payoutWatchdogChain.js";
-import { assertWatchdogKeyAllowed, type WatchdogConfig } from "./payoutWatchdogConfig.js";
+import { DISTRIBUTOR_IFACE, WATCHDOG_VAULT_IFACE, gen8WatchClaimers, readGen8VaultFacts, type WatchdogChain, type WatchdogSender } from "./payoutWatchdogChain.js";
+import { assertWatchdogKeyAllowed, type Gen8WatchdogVault, type WatchdogConfig } from "./payoutWatchdogConfig.js";
+import { evaluateGen8VaultWatch, type Gen8VaultWatchFacts } from "./evmGen8VaultWatch.js";
 
 export const ALERT_REWARD_TYPE = "payout_watchdog";
 
@@ -84,30 +88,34 @@ async function safeQuery(db: Queryable | null, sql: string, params: unknown[] = 
   }
 }
 
-/** One open alert per (kind, chain, subject): a repeat while it is open writes nothing. */
-export async function raiseAlert(db: Queryable | null, a: { severity: "critical" | "warning" | "info"; kind: string; chainId: number; subject?: string; title: string; message: string; extra?: Record<string, unknown> }) {
+/**
+ * One open alert per (kind, chain, subject): a repeat while it is open writes nothing. `rewardType` defaults to
+ * 'payout_watchdog'; other workers (gen-8 hook / splitter / side pools) pass their own.
+ */
+export async function raiseAlert(db: Queryable | null, a: { severity: "critical" | "warning" | "info"; kind: string; chainId: number; subject?: string; title: string; message: string; extra?: Record<string, unknown>; rewardType?: string }) {
   if (!db) return false;
   const subject = a.subject ?? "";
+  const rewardType = a.rewardType ?? ALERT_REWARD_TYPE;
   const open = await safeQuery(
     db,
     `select id from public.reward_alerts where status = 'open' and reward_type = $1 and metadata->>'kind' = $2 and metadata->>'chainId' = $3 and coalesce(metadata->>'subject','') = $4 limit 1`,
-    [ALERT_REWARD_TYPE, a.kind, String(a.chainId), subject],
+    [rewardType, a.kind, String(a.chainId), subject],
   );
   if (open.rows.length) return false;
   await safeQuery(
     db,
     `insert into public.reward_alerts (severity, reward_type, title, message, status, metadata) values ($1, $2, $3, $4, 'open', $5::jsonb)`,
-    [a.severity, ALERT_REWARD_TYPE, a.title, a.message, JSON.stringify({ kind: a.kind, chainId: a.chainId, subject, ...(a.extra || {}) })],
+    [a.severity, rewardType, a.title, a.message, JSON.stringify({ kind: a.kind, chainId: a.chainId, subject, ...(a.extra || {}) })],
   );
   return true;
 }
 
-export async function resolveAlerts(db: Queryable | null, kind: string, chainId: number, subject?: string) {
+export async function resolveAlerts(db: Queryable | null, kind: string, chainId: number, subject?: string, rewardType: string = ALERT_REWARD_TYPE) {
   await safeQuery(
     db,
-    `update public.reward_alerts set status = 'resolved', resolved_at = now(), resolved_by = 'payout_watchdog'
+    `update public.reward_alerts set status = 'resolved', resolved_at = now(), resolved_by = $${subject == null ? 4 : 5}
       where status = 'open' and reward_type = $1 and metadata->>'kind' = $2 and metadata->>'chainId' = $3 ${subject == null ? "" : "and coalesce(metadata->>'subject','') = $4"}`,
-    subject == null ? [ALERT_REWARD_TYPE, kind, String(chainId)] : [ALERT_REWARD_TYPE, kind, String(chainId), subject],
+    subject == null ? [rewardType, kind, String(chainId), rewardType] : [rewardType, kind, String(chainId), subject, rewardType],
   );
 }
 
@@ -145,6 +153,63 @@ export async function leafFileFor(db: Queryable | null, chainId: number, vault: 
   return (rows[0]?.leaf_file as LeafFile) ?? null;
 }
 
+const GEN8_BALANCE_KINDS = ["gen8_vault_short", "gen8_vault_excess"] as const;
+
+/** Reads the gen-8 vault and alerts. Does not encode approveHolderBatch and does not send. */
+async function watchGen8Vaults(
+  deps: TickDeps,
+  alert: (a: Parameters<typeof raiseAlert>[1]) => Promise<unknown>,
+): Promise<void> {
+  const lanes = deps.cfg.gen8Vaults ?? [];
+  if (!lanes.length) return;
+  const id = deps.cfg.chainId;
+  if (!deps.readGen8Vault) {
+    await alert({
+      severity: "warning",
+      kind: "gen8_vault_watch_unavailable",
+      rewardType: "gen8_choice_vault",
+      chainId: id,
+      subject: "reader",
+      title: `Payout watchdog on chain ${id}: gen-8 vault watch has no chain reader`,
+      message: "EVM_GEN8_CHOICE_VAULT is set and this tick has no chain reader. Balance and router checks were not run.",
+    });
+    return;
+  }
+  for (const lane of lanes) {
+    const subject = lane.vault.toLowerCase();
+    let facts: Gen8VaultWatchFacts;
+    try {
+      facts = await deps.readGen8Vault(lane);
+    } catch (error) {
+      await alert({
+        severity: "warning",
+        kind: "gen8_vault_watch_unavailable",
+        rewardType: "gen8_choice_vault",
+        chainId: id,
+        subject,
+        title: `Payout watchdog on chain ${id}: gen-8 vault watch could not read ${lane.vault}`,
+        message: error instanceof Error ? error.message.slice(0, 300) : String(error),
+      });
+      continue;
+    }
+    const found = evaluateGen8VaultWatch({ ...facts, chainId: id, vault: subject });
+    for (const kind of GEN8_BALANCE_KINDS) {
+      if (!found.some((item) => item.kind === kind)) await resolveAlerts(deps.db, kind, id, subject, "gen8_choice_vault");
+    }
+    for (const item of found) {
+      await alert({
+        severity: item.severity,
+        kind: item.kind,
+        rewardType: item.rewardType,
+        chainId: id,
+        subject: item.subject,
+        title: item.title,
+        message: item.message,
+      });
+    }
+  }
+}
+
 // ------------------------------------------------------------------------------------ one tick
 
 export type TickDeps = {
@@ -155,6 +220,8 @@ export type TickDeps = {
   memory: WatchdogMemory;
   riskExcluded?: () => Promise<Set<string>>;
   leafFile?: (vault: string, batchId: string) => Promise<LeafFile | null>;
+  /** Chain read for the gen-8 vault. Absent: the lane is reported and not guessed. */
+  readGen8Vault?: (lane: Gen8WatchdogVault) => Promise<Gen8VaultWatchFacts>;
   log?: (line: string, extra?: unknown) => void;
 };
 
@@ -184,6 +251,7 @@ export async function runWatchdogTick(deps: TickDeps): Promise<TickReport> {
     await raiseAlert(db, a);
   };
   const id = cfg.chainId;
+  await watchGen8Vaults(deps, alert);
   if (!cfg.roles) {
     await alert({ severity: "critical", kind: "payout_watchdog_config", chainId: id, title: `Payout watchdog on chain ${id}: no Roles module configured`, message: `Set PAYOUT_WATCHDOG_ROLES_${id} (deployments/<chain>/mainnet.payout-roles.json). Until then holder approvals and authorizations need the Safe signers.` });
     return report;
@@ -415,6 +483,12 @@ export async function startPayoutWatchdogWorker() {
     }
     const provider = createStaticJsonRpcProvider(url, chainId, { timeoutMs: ENV.RPC_REQUEST_TIMEOUT_MS });
     const chain = createEthersWatchdogChain(provider, { logChunk: cfg.logChunk });
+    const readGen8Vault = async (lane: Gen8WatchdogVault) => {
+      const latest = await provider.getBlockNumber();
+      const fromBlock = Math.max(lane.startBlock || 0, latest - Math.min(cfg.lookbackBlocks, 5_000));
+      const knownClaimers = await gen8WatchClaimers(provider, chainId, lane.expectedRouter, process.env);
+      return readGen8VaultFacts(provider, { ...lane, chainId }, { fromBlock, toBlock: latest, knownClaimers });
+    };
     try {
       assertWatchdogKeyAllowed(wallet.address, process.env, await onChainRefusals(chain, cfg));
     } catch (error) {
@@ -424,7 +498,7 @@ export async function startPayoutWatchdogWorker() {
     }
     const sender = createEthersWatchdogSender(provider, wallet);
     const memory = await loadMemory(pool, chainId).catch(() => emptyMemory());
-    console.log("[payout-watchdog] enabled", { chainId, send: cfg.send, roles: cfg.roles, safe: cfg.safe, watchdog: wallet.address, vaults: cfg.vaults.map((v) => `${v.label} ${v.vault}`), airdrops: cfg.airdrops.map((a) => `${a.label} ${a.address}`) });
+    console.log("[payout-watchdog] enabled", { chainId, send: cfg.send, roles: cfg.roles, safe: cfg.safe, watchdog: wallet.address, vaults: cfg.vaults.map((v) => `${v.label} ${v.vault}`), gen8Vaults: (cfg.gen8Vaults ?? []).map((v) => v.vault), airdrops: cfg.airdrops.map((a) => `${a.label} ${a.address}`) });
     let running = false;
     const tick = async () => {
       if (running) return;
@@ -432,7 +506,7 @@ export async function startPayoutWatchdogWorker() {
       let report: TickReport | null = null;
       let error: string | null = null;
       try {
-        report = await runWatchdogTick({ db: pool, cfg, chain, sender, memory });
+        report = await runWatchdogTick({ db: pool, cfg, chain, sender, memory, readGen8Vault });
         const acted = report.actions.filter((a) => a.decision !== "skip");
         if (acted.length || report.alerts.length) console.log("[payout-watchdog] tick", JSON.stringify({ chainId, send: cfg.send, actions: acted, alerts: report.alerts, coverage: report.coverage }));
       } catch (e) {

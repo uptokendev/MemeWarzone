@@ -13,6 +13,7 @@ import { useFeedSession } from "@/hooks/useFeedSession";
 import { isSolanaAddress } from "@/lib/address";
 import { apiFetch } from "@/lib/apiBase";
 import { isSolanaChainId } from "@/lib/chainConfig";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 import { signSolanaMessage } from "@/lib/solanaWallet";
 import { toast } from "sonner";
 
@@ -171,10 +172,9 @@ export function TokenComments({
 
   useEffect(() => {
     if (!pollIntervalMs || pollIntervalMs < 3000) return;
-    const timer = window.setInterval(() => {
+    return setVisibleInterval(() => {
       void load();
     }, pollIntervalMs);
-    return () => window.clearInterval(timer);
   }, [load, pollIntervalMs]);
 
   const canPost = useMemo(() => body.trim().length > 0 && body.trim().length <= 500, [body]);

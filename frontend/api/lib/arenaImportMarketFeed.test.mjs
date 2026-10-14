@@ -144,11 +144,12 @@ function snapshotQuery(importRow) {
 const deps = (row, nowMs = NOW) => ({ query: snapshotQuery(row), nowMs, resolveNativeUsd: async () => ({ price: 150, source: "test" }) });
 
 test("an imported token with a fresh feed row is healthy market data for battles", async () => {
-  const snap = await getArenaMarketSnapshot(101, DAVE, deps({ market_cap_usd: 57770, liquidity_usd: 20129.38, volume_24h_usd: 4.75, holders: 159, updated_at: new Date(NOW - 30_000).toISOString() }));
+  const snap = await getArenaMarketSnapshot(101, DAVE, deps({ price_usd: 0.0095, market_cap_usd: 57770, liquidity_usd: 20129.38, volume_24h_usd: 4.75, holders: 159, updated_at: new Date(NOW - 30_000).toISOString() }));
   assert.equal(snap.healthy, true, JSON.stringify(snap.reasons));
   assert.equal(snap.origin, "import");
   assert.equal(snap.dataSource, "import_market_feed");
   assert.equal(snap.marketCapUsd, 57770);
+  assert.equal(snap.priceUsd, 0.0095);
   assert.equal(snap.holders, 159);
   assert.equal(snap.creatorAddress, "7ZkEpeo8zcawdj39wpDtB7MbzkbyhNoQyVXLsswazohv");
 });
@@ -185,4 +186,17 @@ test("GeckoTerminal fallback keeps the top pool and its DEX (Capybara on PumpSwa
   assert.equal(m.pairAddress, "7Zz7vbbV1MgTr5EEz6yy2j37XCKujjyLWMzaNpmv5tXU");
   assert.equal(m.dexId, "pumpswap");
   assert.equal(geckoMarket({ market_cap_usd: "1" }).pairAddress, null, "without pools: no pair, as before");
+});
+
+test("every import gets market data for its coin page, battle (passed) imports first", async () => {
+  let listQuery = "";
+  const pool = {
+    query: async (text) => {
+      if (/arena_token_imports i/.test(text)) listQuery = text;
+      return { rows: [] };
+    },
+  };
+  await refreshImportMarketStats({ pool, env: {}, fetchImpl: async () => ({ ok: true, json: async () => [] }), nowMs: NOW });
+  assert.doesNotMatch(listQuery, /where i\.status = 'passed'/);
+  assert.match(listQuery, /order by \(i\.status = 'passed'\) desc, s\.holders_updated_at asc nulls first/);
 });

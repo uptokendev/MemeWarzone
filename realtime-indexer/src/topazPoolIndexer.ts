@@ -914,13 +914,14 @@ export async function runTopazPoolIndexerOnce() {
   for (const config of chainConfigs()) {
     let provider: ethers.JsonRpcProvider | null = null;
     try {
+      const indexedPools = await listPools(config.chainId);
+      if (!indexedPools.length) continue;
       const working = await createWorkingProvider(config.rpcUrls, config.chainId, {
         label: `topaz-pool-indexer chain ${config.chainId}`,
         timeoutMs: ENV.RPC_REQUEST_TIMEOUT_MS,
       });
       provider = working.provider;
       const finalizedHead = Math.max(0, working.headBlock - Math.max(0, ENV.CONFIRMATIONS));
-      const indexedPools = await listPools(config.chainId);
       for (const indexedPool of indexedPools) {
         pools += 1;
         try {

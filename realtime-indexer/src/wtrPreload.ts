@@ -1,3 +1,4 @@
+import "./rpcUsagePreload.js";
 import express from "express";
 import { ENV } from "./env.js";
 import { registerCanonicalCandleRoutes } from "./canonicalCandleApi.js";

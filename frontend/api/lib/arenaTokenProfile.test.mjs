@@ -10,6 +10,7 @@ function queryStub(responses) {
 
 const market = {
   marketCapUsd: 250000,
+  priceUsd: 0.0095,
   volume24hUsd: 42000,
   holders: 1337,
   liquidityUsd: 75000,
@@ -47,7 +48,7 @@ test("normalizes imported profile metadata with the shared market snapshot", asy
   assert.equal(profile.marketCapUsd, 250000);
   assert.equal(profile.holders, 1337);
   assert.equal(profile.liquidityUsd, 75000);
-  assert.equal(profile.priceUsd, null);
+  assert.equal(profile.priceUsd, 0.0095);
   assert.equal(profile.marketDataHealthy, true);
 });
 
@@ -68,8 +69,28 @@ test("rejects data URLs from profile output even if legacy data contains one", a
     getMarketSnapshot: async () => ({ ...market, healthy: false, reasons: ["market_missing"] }),
   });
   assert.equal(profile.imageUrl, null);
+  assert.equal(profile.priceUsd, 0.0095);
   assert.equal(profile.marketDataHealthy, false);
   assert.deepEqual(profile.marketDataReasons, ["market_missing"]);
+});
+
+test("imported profile priceUsd stays null when the snapshot has none", async () => {
+  const query = queryStub([
+    { rows: [] },
+    { rows: [{
+      chain_id: 4663,
+      token_address: "0xe7dec18b0b29c8e02fb90a5dce413b3bc66e8251",
+      owner_wallet: "0x2222222222222222222222222222222222222222",
+      name: "Stash",
+      symbol: "STASH",
+    }] },
+  ]);
+  const profile = await getArenaTokenProfile(4663, "0xe7dec18b0b29c8e02fb90a5dce413b3bc66e8251", {
+    query,
+    getMarketSnapshot: async () => ({ ...market, priceUsd: null }),
+  });
+  assert.equal(profile.origin, "import");
+  assert.equal(profile.priceUsd, null);
 });
 
 test("uses exact Solana token identity in imported-profile SQL", async () => {

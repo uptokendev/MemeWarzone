@@ -23,19 +23,24 @@ import { getSquadAllocationPreview } from "./rewards/squads.js";
 import {
   createStaticJsonRpcProvider,
   maskRpcUrl,
+  redactRpcSecretsMiddleware,
   parseRpcList,
   probeRpcUrl,
   rawRpcCall,
 } from "./rpcProvider.js";
 import { resolveMarketIdentity, resolveMarketIdentityOrPassthrough } from "./marketIdentity.js";
+import { queryTokenTrades } from "./tokenTradeList.js";
 import { runGraduationReconcilerOnce } from "./graduationReconciler.js";
 import { ensureDexPoolForCampaign } from "./marketApi.js";
 import { registerLpFeesRoutes } from "./lpFeesRoutes.js";
+import { registerPartnerRoutes } from "./partnerApi.js";
 import { runTopazPoolIndexerOnce } from "./topazPoolIndexer.js";
 import { parseWalletAddressOrNull, walletEqualsSql } from "./walletAddress.js";
 import type { Request, Response, NextFunction, RequestHandler } from "express";
 
 const app = express();
+// Status and error JSON can carry ethers error text with the RPC URL (and its key); mask it on the way out.
+app.use(redactRpcSecretsMiddleware);
 const tokenResponseCache = createTokenResponseCache();
 app.use(express.json({ limit: "256kb" }));
 
@@ -355,6 +360,10 @@ const corsOptions: cors.CorsOptions = {
   origin: (origin, cb) => cb(null, isAllowedOrigin(origin)),
   credentials: false,
 };
+
+// Partner read-only stats (CrypticPump). Mounted before the global CORS so partner origins are
+// allowed on /api/partner only, not on every indexer route.
+registerPartnerRoutes(app);
 
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
@@ -2335,19 +2344,7 @@ async function handleTokenTrades(req: any, res: any) {
 
   // Fast path: never block the HTTP response on multi-minute getLogs backfills.
   // AWTT-style empty history used to hang /trades for 90s+ and starve the UI.
-  const r = await pool.query(
-    `select
-       tx_hash, log_index, block_number, block_time,
-       side, wallet,
-       token_amount_raw, bnb_amount_raw,
-       token_amount, bnb_amount, price_bnb,
-       sold_tokens_after_raw
-     from public.curve_trades
-     where chain_id=$1 and campaign_address=$2
-     order by block_number desc, log_index desc
-     limit $3`,
-    [chainId, campaign, limit],
-  );
+  const r = await queryTokenTrades(pool, chainId, campaign, limit);
 
   if ((r.rowCount ?? 0) > 0) {
     const items = r.rows.map((row: Record<string, unknown>) => serializeCurveTradeRow(row));
@@ -2411,19 +2408,7 @@ async function handleTokenTrades(req: any, res: any) {
     // keep campaign
   }
 
-  const r2 = await pool.query(
-    `select
-       tx_hash, log_index, block_number, block_time,
-       side, wallet,
-       token_amount_raw, bnb_amount_raw,
-       token_amount, bnb_amount, price_bnb,
-       sold_tokens_after_raw
-     from public.curve_trades
-     where chain_id=$1 and campaign_address=$2
-     order by block_number desc, log_index desc
-     limit $3`,
-    [chainId, campaign, limit],
-  );
+  const r2 = await queryTokenTrades(pool, chainId, campaign, limit);
 
   res.json(r2.rows.map((row: Record<string, unknown>) => serializeCurveTradeRow(row)));
 }

@@ -65,6 +65,9 @@ import {
 } from "@/lib/evmGen7.mjs";
 import { DBC_LAUNCH_FEE_NOTE } from "../../shared/dbcAntiSniper.mjs";
 import { readEvmLaunchGeneration, type EvmLaunchGeneration } from "@/lib/evmGen6Client";
+import { EvmGen8LaunchOptions, assertEvmGen8LaunchBalance, freshEvmGen8FirstBuyCheck } from "@/components/create/EvmGen8LaunchOptions";
+import { GEN8_DEFAULT_GRADUATION_TARGET_WEI, gen8GraduationTiers, gen8LauncherFor } from "@/lib/evmGen8Client.mjs";
+import { createGen8Campaign } from "@/lib/evmGen8Create";
 import { getReadProvider } from "@/lib/readProvider";
 import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
 import { apiFetch } from "@/lib/apiBase";
@@ -256,6 +259,9 @@ const Create = () => {
   // Generation 7 (EVM_GEN7_V2_PLAN.md) takes the same create fields; it adds market-cap tiers and balance checks.
   const [evmLaunchGeneration, setEvmLaunchGeneration] = useState<EvmLaunchGeneration | null>(null);
   const [evmGen7FirstBuyBlocked, setEvmGen7FirstBuyBlocked] = useState(false);
+  // Generation 8 (EVM_GEN8_V4_DESIGN.md 6.1): native launches go to the chain's gen-8 launcher once
+  // VITE_EVM_GEN8_LAUNCHER_<chainId> is set; quote-bound coins stay on the factory above (D12).
+  const [evmGen8FirstBuyBlocked, setEvmGen8FirstBuyBlocked] = useState(false);
   const [creatorEligibility, setCreatorEligibility] = useState<ScheduledCreatorLaunchEligibility | null>(null);
   const [creatorEligibilityError, setCreatorEligibilityError] = useState<string | null>(null);
   const armDialogShownForWallet = useRef<string | null>(null);
@@ -329,14 +335,18 @@ const Create = () => {
     }
   };
   const evmGen7 = Boolean(evmGen6FactoryAddress) && evmLaunchGeneration === 7 && !isSolanaCreator;
+  const evmGen8Launcher: string | null = !isSolanaCreator && isEvmChainId(chainId) ? gen8LauncherFor(Number(chainId)) : null;
+  const evmGen8 = Boolean(evmGen8Launcher);
   const graduationOptions: GraduationTier[] = useMemo(
     () =>
       dbcLaunch
         ? getDbcGraduationTiers(String(import.meta.env.VITE_SOLANA_CLUSTER || ""))
-        : evmGen7
-          ? evmGen7GraduationTiers(chainId, { testTierEnabled: isTestGraduationTierEnabled(chainId) })
-          : getGraduationTiers(chainId),
-    [chainId, dbcLaunch, evmGen7],
+        : evmGen8
+          ? gen8GraduationTiers(chainId, { testTierEnabled: isTestGraduationTierEnabled(chainId) })
+          : evmGen7
+            ? evmGen7GraduationTiers(chainId, { testTierEnabled: isTestGraduationTierEnabled(chainId) })
+            : getGraduationTiers(chainId),
+    [chainId, dbcLaunch, evmGen7, evmGen8],
   );
   const configuredEvmChainId = useMemo(
     () => (isEvmChainId(chainId) ? chainId : BNB_CHAIN_ID),
@@ -431,9 +441,11 @@ const Create = () => {
     // DBC and EVM gen-7 preselect their normal tier ($50K MC); the other launch types keep their own default.
     const defaultTarget = dbcLaunch
       ? DBC_DEFAULT_GRADUATION_TARGET_WEI
-      : evmGen7
-        ? EVM_GEN7_DEFAULT_GRADUATION_TARGET_WEI
-        : getDefaultGraduationTargetWei(chainId);
+      : evmGen8
+        ? GEN8_DEFAULT_GRADUATION_TARGET_WEI
+        : evmGen7
+          ? EVM_GEN7_DEFAULT_GRADUATION_TARGET_WEI
+          : getDefaultGraduationTargetWei(chainId);
     if (!selectedStillAvailable) {
       setGraduationTargetWei(defaultTarget);
       return;
@@ -444,7 +456,7 @@ const Create = () => {
         setGraduationTargetWei(preferred);
       }
     }
-  }, [graduationOptions, graduationTargetWei, chainId, dbcLaunch, evmGen7]);
+  }, [graduationOptions, graduationTargetWei, chainId, dbcLaunch, evmGen7, evmGen8]);
 
   useEffect(() => {
     if (!dbcLaunch) {
@@ -1091,9 +1103,11 @@ const Create = () => {
 
     let latestEligibility = creatorEligibility;
     try {
+      // Gen-8 native launch: the launcher has no on-chain creator limits; the API's create preflight keeps bans.
+      const gen8Native = Boolean(evmGen8Launcher) && directDeployBindPath(graduationQuoteAsset) === "native";
       const factoryAddress =
         getScheduledFactoryAddress(Number(chainId), launchpad.factoryAddress) || launchpad.factoryAddress || "";
-      if (factoryAddress) {
+      if (factoryAddress && !gen8Native) {
         const eligibility = await readScheduledCreatorLaunchEligibility({
           signer: wallet.signer,
           chainId: Number(chainId),
@@ -1114,7 +1128,13 @@ const Create = () => {
         }
       }
 
-      const gen6Fields = await buildEvmGen6Fields();
+      const gen6Fields = gen8Native ? undefined : await buildEvmGen6Fields();
+      const gen8FirstBuyWei = gen8Native ? parseNativeInput(evmFirstBuyInput) : 0n;
+      if (gen8Native && evmGen8Launcher) {
+        // Before the wallet opens: the first buy priced on the launcher's plan now, and the balance with gas.
+        await freshEvmGen8FirstBuyCheck({ chainId: Number(chainId), launcher: evmGen8Launcher, targetUsd: graduationTargetWei, valueWei: gen8FirstBuyWei });
+        await assertEvmGen8LaunchBalance({ chainId: Number(chainId), account: wallet.account || "", valueWei: gen8FirstBuyWei });
+      }
       const logoUrl = await uploadLogo();
       let campaignAddress = "";
       let tokenAddress = "";
@@ -1150,6 +1170,27 @@ const Create = () => {
         toast.success(`Campaign deployed on ${evmChainLabel} · permanent market $${normalizedTicker}/${stockToken.symbol}.`);
       } else if (bindPath !== "native") {
         throw new Error("Direct Deploy for this Graduation Market is not available until server quote binding is integrated.");
+      } else if (gen8Native && evmGen8Launcher) {
+        const created = await createGen8Campaign({
+          signer: wallet.signer as any,
+          account: wallet.account,
+          chainId: Number(chainId),
+          launcher: evmGen8Launcher,
+          name: formData.name,
+          symbol: normalizedTicker,
+          logoURI: logoUrl,
+          xAccount: normalizeSocialUrl(formData.twitter, "x"),
+          website: normalizeSocialUrl(formData.website, "website"),
+          extraLink: normalizeSocialUrl(formData.otherLink, "other"),
+          description: formData.description,
+          targetUsd: graduationTargetWei,
+          feeChoice: evmFeeChoice,
+          feeCreatorPct: evmFeeChoice === "split" ? Number(evmCreatorSharePct) : 0,
+          firstBuyValueWei: gen8FirstBuyWei,
+        });
+        campaignAddress = created.campaignAddress;
+        tokenAddress = created.tokenAddress;
+        toast.success(`Campaign deployed on ${evmChainLabel}.`);
       } else {
         const receipt: any = await launchpad.createCampaign({
           name: formData.name,
@@ -1227,6 +1268,8 @@ const Create = () => {
     if (fromStep === 2) return identityReady;
     if (fromStep === 3) return storyReady;
     // EVM gen-7: a first buy over the 70% cap or above what the wallet can pay blocks Next.
+    // EVM gen-8: the same block as gen-7, from the gen-8 options.
+    if (fromStep === 4 && evmGen8) return !evmGen8FirstBuyBlocked;
     if (fromStep === 4) return !(evmGen7 && evmGen7FirstBuyBlocked);
     // A DBC coin graduates into its own Meteora pool: no Graduation Market catalog choice.
     if (fromStep === 5) return dbcLaunch ? !dbcFirstBuyBlocked : graduationMarketReady;
@@ -1244,7 +1287,7 @@ const Create = () => {
         else if (checkingTicker) toast.error("Wait for ticker availability check to finish.");
         else toast.error(tickerAvailability?.reason || "Ticker must be available before continuing.");
       } else if (step === 3) toast.error("Add a short description before continuing.");
-      else if (step === 4 && evmGen7 && evmGen7FirstBuyBlocked) toast.error("Lower your first buy or press MAX.");
+      else if (step === 4 && (evmGen8 ? evmGen8FirstBuyBlocked : evmGen7 && evmGen7FirstBuyBlocked)) toast.error("Lower your first buy or press MAX.");
       else if (step === 5 && dbcLaunch && dbcFirstBuyQuote?.exceedsCap) toast.error(`The first buy cannot be more than ${dbcFirstBuyQuote.capBps / 100}% of supply. Lower it or press MAX.`);
       else if (step === 5 && dbcLaunch && dbcFirstBuyOverBalance && dbcSolBalance != null) toast.error(dbcLaunchBalanceMessage(dbcLaunchMaxFirstBuyLamports(dbcSolBalance)));
       else if (step === 5) toast.error("Choose a Graduation Market first.");
@@ -1449,7 +1492,7 @@ const Create = () => {
                 left={<div className="flex w-full flex-col items-center gap-2">{preview}{selectedGraduation ? <p className="text-center text-xs text-mw-muted">Graduation: <span className="text-accent">{selectedGraduation.label}</span> · {selectedGraduation.title}</p> : null}</div>}
                 right={
                   <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto pr-1">
-                    <div><div className="text-sm font-semibold text-mw-text">{dbcLaunch || evmGen7 ? "Graduation market cap" : "Graduation threshold"}</div><p className="mt-0.5 text-xs text-mw-muted">{dbcLaunch ? "The market cap at which the coin moves to a Meteora pool." : evmGen7 ? `The market cap at which the coin moves to a ${evmGen7DexName(chainId)} pool.` : "Bonding volume before DEX graduation."}</p></div>
+                    <div><div className="text-sm font-semibold text-mw-text">{dbcLaunch || evmGen7 || evmGen8 ? "Graduation market cap" : "Graduation threshold"}</div><p className="mt-0.5 text-xs text-mw-muted">{dbcLaunch ? "The market cap at which the coin moves to a Meteora pool." : evmGen8 ? "The market cap at which the coin graduates. It keeps trading in the same Uniswap pool." : evmGen7 ? `The market cap at which the coin moves to a ${evmGen7DexName(chainId)} pool.` : "Bonding volume before DEX graduation."}</p></div>
                     <div className="grid grid-cols-2 gap-1.5">
                       {graduationOptions.map((option) => {
                         const selected = graduationTargetWei === option.targetWei;
@@ -1468,7 +1511,22 @@ const Create = () => {
                         <p className="text-xs text-mw-muted">{DBC_LAUNCH_FEE_NOTE}</p>
                       </div>
                     ) : null}
-                    {evmGen6 ? (
+                    {evmGen8 && evmGen8Launcher ? (
+                      <EvmGen8LaunchOptions
+                        chainId={Number(chainId)}
+                        launcher={evmGen8Launcher}
+                        graduationTarget={graduationTargetWei}
+                        feeChoice={evmFeeChoice}
+                        onFeeChoiceChange={setEvmFeeChoice}
+                        sharePct={evmCreatorSharePct}
+                        onSharePctChange={setEvmCreatorSharePct}
+                        firstBuyInput={evmFirstBuyInput}
+                        onFirstBuyInputChange={setEvmFirstBuyInput}
+                        account={wallet.account || ""}
+                        onBlockedChange={setEvmGen8FirstBuyBlocked}
+                      />
+                    ) : null}
+                    {evmGen6 && !evmGen8 ? (
                       <EvmGen6LaunchOptions
                         chainId={Number(chainId)}
                         factoryAddress={evmGen6FactoryAddress}
@@ -1608,7 +1666,13 @@ const Create = () => {
                           <div className="flex justify-between gap-3"><span className="text-mw-muted">First buy</span><span className="text-mw-text">{dbcFirstBuySol ? `${dbcFirstBuySol} ${dbcQuote?.symbol || "SOL"}` : "None"}</span></div>
                         </>
                       ) : null}
-                      {evmGen6 ? (
+                      {evmGen8 ? (
+                        <>
+                          <div className="flex justify-between gap-3"><span className="text-mw-muted">Creator fee</span><span className="text-mw-text">{DBC_FEE_CHOICE_LABEL[evmFeeChoice] || evmFeeChoice}{evmFeeChoice === "split" ? ` (${evmCreatorSharePct}% to you)` : ""}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-mw-muted">First buy</span><span className="text-mw-text">{parseNativeInput(evmFirstBuyInput) > 0n ? `${evmFirstBuyInput} ${getNativeSymbol(chainId)}` : "None"}</span></div>
+                        </>
+                      ) : null}
+                      {evmGen6 && !evmGen8 ? (
                         <>
                           <div className="flex justify-between gap-3"><span className="text-mw-muted">Creator fee</span><span className="text-mw-text">{DBC_FEE_CHOICE_LABEL[evmFeeChoice] || evmFeeChoice}{evmFeeChoice === "split" ? ` (${evmCreatorSharePct}% to you)` : ""}</span></div>
                           <div className="flex justify-between gap-3"><span className="text-mw-muted">First buy</span><span className="text-mw-text">{evmFirstBuyPlan && evmFirstBuyPlan.tokens > 0n ? `${evmFirstBuyInput} ${getNativeSymbol(chainId)} (${(evmFirstBuyPlan.supplyBps / 100).toFixed(2)}% of supply)` : "None"}</span></div>

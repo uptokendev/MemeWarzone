@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { ChainFeedSwitch } from "@/components/common/ChainFeedSwitch";
 import { CampaignGrid, HomeQuery } from "@/components/home/CampaignGrid";
 import { DiscoveryControls } from "@/components/home/DiscoveryControls";
@@ -10,7 +11,13 @@ import { ImportedProjectsOverlay } from "@/components/home/ImportedProjectsOverl
 import { ContentContainer } from "@/components/layout/ContentContainer";
 
 const Showcase = () => {
-  const [query, setQuery] = useState<HomeQuery>({ tab: "trending", timeFilter: "24h", search: "", status: "all" });
+  const location = useLocation();
+  const [query, setQuery] = useState<HomeQuery>(() => ({
+    tab: "trending",
+    timeFilter: "24h",
+    search: location.pathname === "/coins" ? new URLSearchParams(location.search).get("q") ?? "" : "",
+    status: "all",
+  }));
 
   useEffect(() => {
     const onSearch = (e: Event) => {

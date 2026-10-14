@@ -1,3 +1,5 @@
+// Must stay the first import: installs the RPC counters before any module captures fetch.
+import "./lib/rpcUsageInstall.js";
 import express from "express";
 import { installRpcUsageCounters, rpcUsageSnapshot } from "./lib/rpcUsage.js";
 
@@ -76,6 +78,7 @@ import tokenShareCard from "./token-share-card.js";
 import { importSwapBuild, importSwapQuote } from "./importSwap.js";
 import importCreatorFees, { importCreatorFeesOwner } from "./importCreatorFees.js";
 import { widgetBalances, widgetBuild, widgetCors, widgetQuote, widgetStatus, widgetToken } from "./importSwapWidget.js";
+import { gen8SwapBalances, gen8SwapBuild, gen8SwapQuote, gen8SwapStatus, gen8SwapToken } from "./gen8Swap.js";
 import airdropPool from "./airdropPool.js";
 import battleShareCard from "./battle-share-card.js";
 import status from "./status.js";
@@ -148,7 +151,7 @@ import {
   recruiterMePayouts,
   recruiterMeWalletLink,
 } from "./dev-fix/recruiter-payouts.js";
-import { routingCreateAuthorization, routingStatus, routingTradeAuthorization } from "./dev-fix/route-auth.js";
+import { routingCreateAuthorization, routingGen8CreateAuthorization, routingStatus, routingTradeAuthorization } from "./dev-fix/route-auth.js";
 import {
   launchpadPreflightBuy,
   launchpadPreflightCreate,
@@ -213,6 +216,8 @@ import dashboardLpFees from "./dashboard/lp-fees.js";
 import analyticsIngest from "./analytics/ingest.js";
 import analyticsAdmin from "./analytics/admin.js";
 import prepareOg from "./prepare-og.js";
+import { sitemapChild, sitemapIndex } from "./sitemap.js";
+import seoRender from "./seoRender.js";
 import story, { handleSharePage as storySharePage } from "./story.js";
 import battleOg from "./battle-og.js";
 import adminAbuseMe from "./admin/abuse/me.js";
@@ -543,6 +548,12 @@ router.get("/widget/swap/balances", wrap(widgetBalances));
 router.post("/widget/swap/quote", wrap(widgetQuote));
 router.post("/widget/swap/build", wrap(widgetBuild));
 router.get("/widget/swap/status", wrap(widgetStatus));
+// Generation 8 coins in the widget (api/gen8Swap.js): the API builds the UniversalRouter call and records the partner fingerprint.
+router.get("/widget/swap/gen8/token", wrap(gen8SwapToken));
+router.get("/widget/swap/gen8/balances", wrap(gen8SwapBalances));
+router.post("/widget/swap/gen8/quote", wrap(gen8SwapQuote));
+router.post("/widget/swap/gen8/build", wrap(gen8SwapBuild));
+router.get("/widget/swap/gen8/status", wrap(gen8SwapStatus));
 // Bonding coins in the widget: the same handlers as the app's /solana/* routes, reached through the
 // widget's open CORS (no credentials, rate limited). The app's own routes and their CORS are unchanged.
 router.all("/widget/solana/campaign-account", wrap(solanaCampaignAccount));
@@ -644,6 +655,7 @@ router.all("/attribution/wallet-connect", wrap(attributionWalletConnect));
 router.all("/attribution/wallet/:wallet", wrap(attributionWallet));
 router.all("/routing/status", wrap(routingStatus));
 router.all("/routing/create-authorization", wrap(routingCreateAuthorization));
+router.all("/routing/gen8/create-authorization", wrap(routingGen8CreateAuthorization));
 router.all("/routing/trade-authorization", wrap(routingTradeAuthorization));
 router.all("/recruiter-routing/status", wrap(routingStatus));
 router.all("/recruiter-routing/create-authorization", wrap(routingCreateAuthorization));
@@ -700,6 +712,9 @@ router.all("/internal/rewards/airdrops/epochs/:epochId/draws/run", wrap(withInte
 
 // Story share links live outside /api so the URL people post stays short.
 app.get("/s/:chainId/:token", wrap(storySharePage));
+app.get("/sitemap.xml", wrap(sitemapIndex));
+app.get("/sitemaps/:file", wrap(sitemapChild));
+app.get(/^\/__render(\/.*)?$/, wrap(seoRender));
 app.use("/api", router);
 app.use((req, res) => res.status(404).json({ error: `Unknown route: ${req.path}` }));
 app.use((err, _req, res, _next) => {

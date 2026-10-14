@@ -1,142 +1,100 @@
 ---
 title: Fee Examples
-description: Simple BNB examples for trading fees, creator trade earnings, fee routing, UpVotes, finalize routing, and graduation walkthroughs.
+description: Worked fee examples on BNB Chain and Solana: a trade, a graduation, an imported coin swap, a battle and a creator's earnings.
 ---
 
-These examples use BNB amounts to keep the math easy.
+Round numbers, so the math is easy to follow. Real balances also move with gas, slippage and rounding.
 
-Examples are simplified for clarity. Actual wallet balances can also be affected by gas, slippage, rounding, and network conditions.
+## A 1 BNB trade on a new BNB Chain coin, linked wallet
 
-## Linked trade example
+The 2% fee is 0.02 BNB.
 
-If a linked standard user buys or sells with 1 BNB, the 2.00% fee is 0.0200 BNB.
+| Destination | Share of fee | Amount |
+| --- | ---: | ---: |
+| Weekly League | 11.25% | 0.00225 BNB |
+| Monthly League | 26.25% | 0.00525 BNB |
+| Creator | 5.6% | 0.00112 BNB |
+| Recruiter | 12.5% | 0.0025 BNB |
+| Squad Pool | 2.5% | 0.0005 BNB |
+| MemeWarzone | 41.9% | 0.00838 BNB |
+| Total | 100% | 0.02 BNB |
+
+The same trade on Robinhood Chain splits the same way, in ETH.
+
+## A 1 SOL trade on a new Solana coin, on memewar.zone, linked wallet
+
+The 2% fee is 0.02 SOL.
+
+| Destination | Share of fee | Amount |
+| --- | ---: | ---: |
+| Meteora | 16% | 0.0032 SOL |
+| MemeWarzone, referral back from Meteora | 4% | 0.0008 SOL |
+| Weekly League | 11.25% | 0.00225 SOL |
+| Monthly League | 26.25% | 0.00525 SOL |
+| Creator | 5.6% | 0.00112 SOL |
+| Recruiter | 12.5% | 0.0025 SOL |
+| Squad Pool | 2.5% | 0.0005 SOL |
+| MemeWarzone | 21.9% | 0.00438 SOL |
+| Total | 100% | 0.02 SOL |
+
+Bought in another app, such as Jupiter, the 0.0008 SOL referral does not come to MemeWarzone. Everything else is the same.
+
+## The same 1 SOL trade from an unlinked wallet
+
+Nobody earns the recruiter and squad slices, so they go to the weekly airdrop.
+
+| Destination | Share of fee | Amount |
+| --- | ---: | ---: |
+| Meteora, including the referral back | 20% | 0.004 SOL |
+| League, weekly and monthly | 37.5% | 0.0075 SOL |
+| Creator | 5.6% | 0.00112 SOL |
+| Warzone Airdrops | 15% | 0.003 SOL |
+| MemeWarzone | 21.9% | 0.00438 SOL |
+| Total | 100% | 0.02 SOL |
+
+## A creator's trade earnings
+
+A new coin trades 100 SOL of buys and sells on its bonding curve before it graduates.
+
+| Item | Amount |
+| --- | ---: |
+| Bonding-curve volume | 100 SOL |
+| Creator share, 0.112% of volume | 0.112 SOL |
+
+On top of that the creator gets the 2% reserve (20M tokens) at graduation, and 80% of the pool fees afterwards.
+
+## A graduation, linked creator
+
+A coin graduates with a raise of 50 SOL. The 2% graduation fee is 1 SOL.
+
+| Destination | Share of fee | Amount |
+| --- | ---: | ---: |
+| Recruiter | 15% | 0.15 SOL |
+| Squad Pool | 2.5% | 0.025 SOL |
+| MemeWarzone | 82.5% | 0.825 SOL |
+| Total | 100% | 1 SOL |
+
+The other 49 SOL goes into the coin's DEX pool and is locked for good. On Solana, Meteora keeps 0.2% of the liquidity it moves.
+
+## A 1 SOL swap of an imported Solana coin
+
+The 1% fee is 0.01 SOL.
 
 | Destination | Amount |
 | --- | ---: |
-| LeagueTreasury, 0.75% | 0.0075 BNB |
-| Creator wallet, 0.10% | 0.0010 BNB |
-| RecruiterRewardsVault, 0.25% | 0.0025 BNB |
-| Squad Pool, 0.05% | 0.0005 BNB |
-| ProtocolRevenueVault, 0.85% | 0.0085 BNB |
-| Total fee | 0.0200 BNB |
+| The coin's creator | 0.005 SOL |
+| MemeWarzone | 0.005 SOL |
 
-The creator wallet receives the 0.10% directly because the trade happened on that creator's own token bonding curve.
+## A battle
 
-## Unlinked trade example
-
-If an unlinked user buys or sells with 1 BNB, the 2.00% fee is still 0.0200 BNB.
+Two coins enter a battle with a buy-in of 1 SOL each. Fans add 0.5 SOL in boosts.
 
 | Destination | Amount |
 | --- | ---: |
-| LeagueTreasury, 0.75% | 0.0075 BNB |
-| Creator wallet, 0.10% | 0.0010 BNB |
-| Warzone Airdrops, 0.30% | 0.0030 BNB |
-| ProtocolRevenueVault, 0.85% | 0.0085 BNB |
-| Total fee | 0.0200 BNB |
+| Winning coin's owner: 75% of the buy-ins | 1.5 SOL |
+| Winning coin's owner: 90% of the boosts | 0.45 SOL |
+| Major War League: 20% of the buy-ins | 0.4 SOL |
+| MemeWarzone: 5% of the buy-ins and 10% of the boosts | 0.15 SOL |
+| Total | 2.5 SOL |
 
-Unlinked activity sends the unassigned recruiter and squad slices to Warzone Airdrops. The creator still receives the 0.10% direct trade share.
-
-## OG trade example
-
-If an OG linked user buys or sells with 1 BNB:
-
-| Destination | Amount |
-| --- | ---: |
-| LeagueTreasury, 0.75% | 0.0075 BNB |
-| Creator wallet, 0.10% | 0.0010 BNB |
-| OG recruiter, 0.30% | 0.0030 BNB |
-| Squad Pool, 0.05% | 0.0005 BNB |
-| ProtocolRevenueVault, 0.80% | 0.0080 BNB |
-| Total fee | 0.0200 BNB |
-
-The OG override comes from protocol revenue. It does not increase the user facing fee.
-
-## Creator trade earnings example
-
-If a creator's campaign receives 100 BNB of bonding curve buy and sell notional before graduation, the creator earns:
-
-| Item | Amount |
-| --- | ---: |
-| Bonding curve trade notional | 100 BNB |
-| Creator direct trade share | 0.10% |
-| Direct creator trade earnings | 0.100 BNB |
-
-This is separate from the creator payout. It is earned from trading activity on the creator's own campaign.
-
-## Creator trade earnings example
-
-If a creator's campaign receives 100 BNB of bonding-curve buy/sell notional before graduation, the creator earns:
-
-| Item | Amount |
-| --- | ---: |
-| Bonding-curve trade notional | 100 BNB |
-| Creator direct trade share | 0.10% |
-| Direct creator trade earnings | 0.100 BNB |
-
-This is separate from the graduation payout. It is earned from trading activity on the creator's own campaign.
-
-## UpVote example
-
-If a campaign receives 100 UpVotes:
-
-| Item | Amount |
-| --- | ---: |
-| UpVote price | $3, paid in the chain's native coin |
-| UpVotes | 100 |
-| Total UpVote spend | $300 |
-
-UpVotes are paid visibility actions. They are not a safety label and do not guarantee graduation or price performance.
-
-## Example graduation walkthrough
-
-This walkthrough uses a 50 BNB raise only as a round number for math.
-
-| Item | Amount |
-| --- | ---: |
-| Raised liquidity | 50 BNB |
-| Finalize fee, 2.00% | 1 BNB |
-| Remaining after fee | 49 BNB |
-| Launch liquidity | 39.2 BNB |
-| Creator payout | 9.8 BNB |
-
-The numbers above are illustrative. Use the live deployment policy for the current target and distribution rules.
-
-## Standard linked finalize example
-
-If a standard linked campaign finalizes with a 1 BNB finalize fee:
-
-| Destination | Share | Amount |
-| --- | ---: | ---: |
-| RecruiterRewardsVault | 0.30% | 0.150 BNB |
-| Squad Pool | 0.05% | 0.025 BNB |
-| ProtocolRevenueVault | 1.65% | 0.825 BNB |
-| Total finalize fee | 2.00% | 1.000 BNB |
-
-Finalize does not route to LeagueTreasury or the creator direct trade share path.
-
-## Unlinked finalize example
-
-If an unlinked campaign finalizes with a 1 BNB finalize fee:
-
-| Destination | Share | Amount |
-| --- | ---: | ---: |
-| Warzone Airdrops | 0.35% | 0.175 BNB |
-| ProtocolRevenueVault | 1.65% | 0.825 BNB |
-| Total finalize fee | 2.00% | 1.000 BNB |
-
-The unassigned recruiter and squad slices route to Warzone Airdrops.
-
-## OG linked finalize example
-
-If an OG linked campaign finalizes with a 1 BNB finalize fee:
-
-| Destination | Share | Amount |
-| --- | ---: | ---: |
-| RecruiterRewardsVault | 0.35% | 0.175 BNB |
-| Squad Pool | 0.05% | 0.025 BNB |
-| ProtocolRevenueVault | 1.60% | 0.800 BNB |
-| Total finalize fee | 2.00% | 1.000 BNB |
-
-The extra OG recruiter amount is carved out of protocol revenue, not added on top of the finalize fee.
-
-Read next: **[Fee Routing](/fees/fee-routing)** and **[Graduation](/platform/graduation)**.
+Read: **[Fee Routing](/fees/fee-routing)**, **[Where Fees Go](/fees/where-fees-go)** and **[War Pools](/arena/war-pools)**.

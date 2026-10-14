@@ -14,6 +14,7 @@ import {
   SOLANA_WALLET_STORAGE_KEY,
   type DetectedSolanaWallet,
 } from "@/lib/solanaWallet";
+import { IDLE_PARK_EVENT, IDLE_RESUME_EVENT } from "@/lib/idleSession.mjs";
 
 type SolanaConnectResult = {
   publicKey: string;
@@ -49,6 +50,7 @@ export function SolanaWalletProvider({ children }: { children: React.ReactNode }
   const [solanaWalletName, setSolanaWalletName] = useState(() => getStoredSolanaWalletName());
   const [connectingSolana, setConnectingSolana] = useState(false);
   const [availableSolanaWallets, setAvailableSolanaWallets] = useState<DetectedSolanaWallet[]>([]);
+  const [idleParked, setIdleParked] = useState(false);
   const connectGenerationRef = useRef(0);
 
   const refreshAvailableWallets = useCallback(() => {
@@ -58,6 +60,7 @@ export function SolanaWalletProvider({ children }: { children: React.ReactNode }
 
   const connectSolana = useCallback(async (walletId?: string) => {
     const generation = ++connectGenerationRef.current;
+    setIdleParked(false);
     setConnectingSolana(true);
     // Do not await analytics (or anything else) before connectSolanaFn.
     // Phantom only opens a popup when connect() runs in the click turn.
@@ -94,6 +97,7 @@ export function SolanaWalletProvider({ children }: { children: React.ReactNode }
   }, []);
 
   const disconnectSolana = useCallback(async () => {
+    setIdleParked(false);
     await disconnectSolanaFn();
     setSolanaAccount("");
     setSolanaWalletName("");
@@ -147,10 +151,28 @@ export function SolanaWalletProvider({ children }: { children: React.ReactNode }
 
     window.addEventListener(SOLANA_WALLET_EVENT, onEvent as EventListener);
 
+    const onPark = () => {
+      setIdleParked(true);
+      setSolanaAccount("");
+    };
+    const onResume = () => {
+      setIdleParked(false);
+      if (isSolanaWalletDisconnected() || connectGenerationRef.current > 0) return;
+      const restored = refreshSolanaWalletFromProvider() || getStoredSolanaWallet();
+      if (restored) {
+        setSolanaAccount(restored);
+        setSolanaWalletName(getStoredSolanaWalletName());
+      }
+    };
+    window.addEventListener(IDLE_PARK_EVENT, onPark);
+    window.addEventListener(IDLE_RESUME_EVENT, onResume);
+
     return () => {
       window.clearTimeout(restoreTrusted);
       timers.forEach((timer) => window.clearTimeout(timer));
       window.removeEventListener(SOLANA_WALLET_EVENT, onEvent as EventListener);
+      window.removeEventListener(IDLE_PARK_EVENT, onPark);
+      window.removeEventListener(IDLE_RESUME_EVENT, onResume);
     };
   }, [refreshAvailableWallets]);
 
@@ -215,7 +237,7 @@ export function SolanaWalletProvider({ children }: { children: React.ReactNode }
   // provider race so Prepare Mode does not incorrectly report "Not connected" and
   // block signed actions such as Arm Notification. Explicit disconnect clears the
   // persisted wallet, so this does not restore a session the user disconnected.
-  const activeSolanaAccount = solanaAccount || getStoredSolanaWallet();
+  const activeSolanaAccount = idleParked ? "" : (solanaAccount || getStoredSolanaWallet());
 
   return (
     <SolanaWalletContext.Provider

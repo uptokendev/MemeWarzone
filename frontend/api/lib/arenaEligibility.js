@@ -1,6 +1,7 @@
 import { normalizeWalletFlexible } from "../../server/http.js";
 import { evaluateImportedCompetitionEligibility } from "./arenaImportEligibility.js";
 import { arenaSqlIdentityEquals } from "./arenaSqlIdentity.js";
+import { gen8PhaseRuleOn, graduatedSqlFor } from "./evmGen8PlatformSql.js";
 
 function ident(value) {
   return normalizeWalletFlexible(value) || String(value || "").trim();
@@ -12,12 +13,14 @@ export async function resolveArenaVoteToken(pool, chainId, identity) {
 
   const nativeTokenMatch = arenaSqlIdentityEquals(chainId, "token_address::text", "$2");
   const nativeCampaignMatch = arenaSqlIdentityEquals(chainId, "campaign_address::text", "$2");
+  // Generation 8 (fix round 2026-10-12): graduated = latched AND post phase (evmGen8PlatformSql.js); else unchanged.
+  const graduated = graduatedSqlFor("", await gen8PhaseRuleOn(pool, chainId), "campaigns.");
   const native = await pool.query(
     `select token_address, campaign_address, name, symbol
        from public.campaigns
       where chain_id = $1
         and (${nativeTokenMatch} or ${nativeCampaignMatch})
-        and graduated_at_chain is not null
+        and ${graduated}
       order by created_block desc nulls last
       limit 1`,
     [chainId, address],

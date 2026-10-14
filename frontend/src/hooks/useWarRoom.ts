@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAblyWarRoomChannel } from "@/hooks/useAblyWarRoomChannel";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
@@ -16,6 +16,7 @@ import {
   type ChatSession,
   getNonce,
 } from "@/lib/chatApi";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 const FALLBACK_POLL_MS = 8000;
 const RECONCILE_POLL_MS = 30000;
@@ -87,7 +88,6 @@ export function useWarRoom(args: { chainId: number; campaignAddress: string; cre
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [session, setSession] = useState<ChatSession | null>(null);
-  const pollRef = useRef<number | null>(null);
 const ably = useAblyWarRoomChannel({
   enabled: Boolean(roomAddress),
   chainId: args.chainId,
@@ -145,25 +145,12 @@ useEffect(() => {
   }, [args.chainId, roomAddress, walletAddress]);
 
   useEffect(() => {
-  if (pollRef.current) {
-    window.clearInterval(pollRef.current);
-    pollRef.current = null;
-  }
-
   if (!roomAddress) return;
 
   const pollMs = ably.isConnected ? RECONCILE_POLL_MS : FALLBACK_POLL_MS;
-
-  pollRef.current = window.setInterval(() => {
+  return setVisibleInterval(() => {
     void refreshHistory();
   }, pollMs);
-
-  return () => {
-    if (pollRef.current) {
-      window.clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  };
 }, [refreshHistory, roomAddress, ably.isConnected]);
 
   const ensureSession = useCallback(async () => {

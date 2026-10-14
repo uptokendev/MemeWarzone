@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { isSolanaChainId, type SupportedChainId } from "@/lib/chainConfig";
+import { isSolanaChainId } from "@/lib/chainConfig";
+import { tokenStatsChainId } from "@/lib/tokenStatsChain";
 import { useAblyTokenChannel } from "@/hooks/useAblyTokenChannel";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 const API_BASE = String(import.meta.env.VITE_REALTIME_API_BASE || "").replace(/\/$/, "");
 const ENABLE_TOKEN_POLLING = String(import.meta.env.VITE_ENABLE_TOKEN_POLLING || "").trim() === "1";
@@ -151,13 +153,10 @@ export function useTokenStatsRealtime(campaignAddress?: string, chainId?: number
   const [error, setError] = useState<string | null>(null);
   const initialLoadedRef = useRef(false);
 
-  const cid = useMemo<SupportedChainId>(() => {
-    const n = Number(chainId ?? 56);
-    if (n === 56 || n === 97 || isSolanaChainId(n)) return n as SupportedChainId;
-    const addr = String(campaignAddress || "");
-    if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr) && !addr.startsWith("0x")) return 101;
-    return 56;
-  }, [campaignAddress, chainId]);
+  const cid = useMemo(
+    () => tokenStatsChainId(chainId, campaignAddress),
+    [campaignAddress, chainId],
+  );
 
   const url = useMemo(() => {
     if (!API_BASE || !campaignAddress) return "";
@@ -206,9 +205,9 @@ export function useTokenStatsRealtime(campaignAddress?: string, chainId?: number
     pull(ac.signal);
 
     if (!enabled || !campaignAddress || !ENABLE_TOKEN_POLLING) return () => ac.abort();
-    const t = setInterval(() => pull(ac.signal), 60_000);
+    const stopPolling = setVisibleInterval(() => pull(ac.signal), 60_000);
     return () => {
-      clearInterval(t);
+      stopPolling();
       ac.abort();
     };
   }, [enabled, campaignAddress, cid, pull]);

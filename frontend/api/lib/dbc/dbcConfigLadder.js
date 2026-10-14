@@ -8,6 +8,7 @@ import { TOKEN_2022_PROGRAM_ID, nativeQuote, requireEnabledQuote } from "../../.
 import { dbcTokenBadgeAddress } from "./dbcStockQuote.mjs";
 import { SOLANA_GENESIS } from "../../../src/lib/solanaArenaLayout.mjs";
 import { buildLaunchConfigParams } from "./dbcLaunchConfigParams.mjs";
+import { getGenesisHashCached } from "../solanaGenesisHashCache.js";
 
 const NATIVE_MINT = new PublicKey(DBC_QUOTE_MINT);
 
@@ -29,7 +30,7 @@ export function requiredCluster(env = process.env) {
 }
 
 export async function assertRpcCluster({ connection, cluster }) {
-  const genesis = await connection.getGenesisHash();
+  const genesis = await getGenesisHashCached(connection);
   const expected = SOLANA_GENESIS[cluster];
   if (genesis !== expected) {
     throw Object.assign(

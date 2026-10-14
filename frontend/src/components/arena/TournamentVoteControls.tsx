@@ -15,6 +15,7 @@ import {
   presentTournamentVoteSummary,
   tournamentVoteMatchRef,
 } from "@/lib/arena/tournamentVotePresentation.mjs";
+import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 type Match = {
   id?: string | null;
@@ -78,10 +79,10 @@ export function TournamentVoteControls({
     const controller = new AbortController();
     setLoading(true);
     void refresh(controller.signal);
-    const timer = window.setInterval(() => void refresh(), 15_000);
+    const stopPolling = setVisibleInterval(() => void refresh(), 15_000);
     return () => {
       controller.abort();
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [refresh]);
 
