@@ -2,6 +2,7 @@ import { ethers } from "ethers";
 import { LAUNCH_CAMPAIGN_ABI } from "./abis.js";
 import { pool } from "./db.js";
 import { GEN5_GRADUATED_TOPIC } from "./evm/evmGen5Handoff.js";
+import { skipBondingRecheck } from "./robinhoodCmsHealThrottle.js";
 
 const ZERO = ethers.ZeroAddress.toLowerCase();
 
@@ -10,7 +11,15 @@ function asPair(value: unknown): string {
 }
 
 /** Why a heal attempt did or did not write CMS. Surfaced by /health diagnostics. */
-export type RobinhoodCmsHealResult = { healed: boolean; reason: string; pair?: string };
+export type RobinhoodCmsHealResult = {
+  healed: boolean;
+  reason: string;
+  pair?: string;
+  /** The real graduation (CampaignFinalized / Graduated) the heal anchored on; set whenever healed. */
+  anchor?: { block: number; txHash: string; time: Date };
+};
+
+const notLaunchedCheckedAt = new Map<string, number>();
 
 /**
  * campaign_market_state_graduation_order rejects a graduated row whose
@@ -118,15 +127,89 @@ async function readGraduationVenue(
   }
 }
 
+/**
+ * True when every write of a successful heal would leave the row unchanged: the CMS row has the
+ * pair, graduation anchor, liquidity snapshot, venue and a post-graduation stage, indexing is on with
+ * no error, and the campaigns row is already marked graduated.
+ */
+export const CMS_ALREADY_HEALED_SQL = `select cms.graduation_block::text as graduation_block,
+            cms.graduation_tx_hash as graduation_tx_hash,
+            cms.graduation_time as graduation_time
+       from public.campaign_market_state cms
+       join public.campaigns c
+         on c.chain_id = cms.chain_id and lower(c.campaign_address) = lower(cms.campaign_address)
+      where cms.chain_id = $1
+        and lower(cms.campaign_address) = $2
+        and upper(coalesce(cms.market_stage, '')) in ('GRADUATING', 'DEX_PENDING', 'DEX_ACTIVE', 'DEX_DEGRADED')
+        and cms.dex_pair_address ~* '^0x[0-9a-f]{40}$'
+        and lower(cms.dex_pair_address) <> '${ZERO}'
+        and cms.token_address is not null
+        and ($3::text is null or lower(cms.token_address) = lower($3::text))
+        and cms.graduation_time is not null
+        and cms.graduation_block is not null
+        and cms.graduation_tx_hash is not null
+        and cms.graduated_liquidity_token_raw is not null
+        and cms.graduated_liquidity_bnb_raw is not null
+        and cms.graduated_lp_raw is not null
+        and cms.burned_unsold_token_raw is not null
+        and cms.burned_unused_lp_token_raw is not null
+        and cms.post_burn_total_supply_raw is not null
+        and cms.final_curve_price_bnb is not null
+        and cms.initial_dex_price_bnb is not null
+        and cms.wrapped_native_address is not null
+        and cms.dex_factory_address is not null
+        and cms.indexing_enabled = true
+        and cms.last_error is null
+        and c.is_active = false
+        and c.bonding_active = false
+        and c.graduated_at_chain is not null
+      limit 1`;
+
+async function cmsAlreadyHealed(
+  chainId: number,
+  camp: string,
+  tokenAddress: string | null,
+): Promise<RobinhoodCmsHealResult["anchor"] | null> {
+  try {
+    const result = await pool.query(CMS_ALREADY_HEALED_SQL, [chainId, camp, tokenAddress ? tokenAddress.toLowerCase() : null]);
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      block: Number(row.graduation_block),
+      txHash: String(row.graduation_tx_hash).toLowerCase(),
+      time: new Date(row.graduation_time),
+    };
+  } catch {
+    // Unknown: fall through to the full heal, as before.
+    return null;
+  }
+}
+
 export async function healRobinhoodGraduatedCms(
   provider: ethers.Provider,
   chainId: number,
   campaign: string,
   tokenAddress: string | null,
+  opts: { force?: boolean } = {},
 ): Promise<RobinhoodCmsHealResult> {
   if (chainId !== 46630 && chainId !== 4663) return { healed: false, reason: "not_robinhood_chain" };
   const camp = campaign.toLowerCase();
   if (!ethers.isAddress(camp)) return { healed: false, reason: "bad_campaign_address" };
+
+  // Runs for every Robinhood campaign on every indexer pass (~29k RPC calls/day measured on
+  // 2026-10-14). A graduated coin's on-chain state is final, so once the database already holds
+  // everything this heal would write, re-reading the chain can only rewrite the same values.
+  // Same result as a successful heal, so callers behave exactly as before.
+  const healedAnchor = await cmsAlreadyHealed(chainId, camp, tokenAddress);
+  if (healedAnchor) {
+    return { healed: true, reason: "already_healed", anchor: healedAnchor };
+  }
+
+  const throttleKey = `${chainId}:${camp}`;
+  const checkedAt = notLaunchedCheckedAt.get(throttleKey);
+  if (skipBondingRecheck(checkedAt, Date.now(), Boolean(opts.force))) {
+    return { healed: false, reason: "not_launched_recently_checked" };
+  }
 
   const c = new ethers.Contract(camp, LAUNCH_CAMPAIGN_ABI, provider) as any;
   let launched = false;
@@ -142,7 +225,11 @@ export async function healRobinhoodGraduatedCms(
   let initialDexPrice: string | null = null;
   try {
     launched = Boolean(await c.launched());
-    if (!launched) return { healed: false, reason: "not_launched_onchain" };
+    if (!launched) {
+      notLaunchedCheckedAt.set(throttleKey, Date.now());
+      return { healed: false, reason: "not_launched_onchain" };
+    }
+    notLaunchedCheckedAt.delete(throttleKey);
     const state = await c.getGraduationState();
     pair = asPair(state?.dexPair ?? state?.[0]);
     if (!token) token = String(await c.token()).toLowerCase();
@@ -331,5 +418,5 @@ export async function healRobinhoodGraduatedCms(
   }
 
   console.log("[indexer] RH CMS heal seeded GRADUATING", { chainId, campaign: camp, pair, venue });
-  return { healed: true, reason: "seeded_graduating", pair };
+  return { healed: true, reason: "seeded_graduating", pair, anchor };
 }

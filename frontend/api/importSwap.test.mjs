@@ -115,6 +115,26 @@ test("Kyber BNB venues: RFQ / PMM / order-book / lending / wrapper sources and l
   assert.ok(Object.isFrozen(KYBER_BSC_POOL_SOURCES));
 });
 
+test("Jupiter quotes ask for RouteV2: V1 Route refuses the WSOL fee account on Token-2022 coins (6014)", async () => {
+  const { importSwapQuote } = await import("./importSwap.js");
+  const realFetch = globalThis.fetch;
+  let quoteUrl = null;
+  globalThis.fetch = async (url) => {
+    quoteUrl = new URL(String(url));
+    return new Response(JSON.stringify({ inputMint: WSOL, outputMint: TOKEN, inAmount: "1000000", outAmount: "5", swapMode: "ExactIn", slippageBps: 100, platformFee: { amount: "0", feeBps: 50 } }));
+  };
+  try {
+    const res = { statusCode: 0, headers: {}, body: "", setHeader(k, v) { this.headers[k] = v; }, end(b) { this.body = b; } };
+    await importSwapQuote({ method: "POST", body: { chainId: 101, side: "buy", token: TOKEN, amountRaw: "1000000" } }, res);
+    assert.equal(res.statusCode, 200, res.body);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.equal(quoteUrl.pathname.endsWith("/quote"), true);
+  assert.equal(quoteUrl.searchParams.get("instructionVersion"), "V2");
+  assert.equal(quoteUrl.searchParams.get("swapMode"), "ExactIn");
+});
+
 test("1% switch (founder 2026-10-08): the Solana rate moves with the collector, never alone", async () => {
   const { importSwapFeeBps } = await import("./importSwap.js");
   assert.equal(importSwapFeeBps(101, {}), 50, "no collector: the old 0.5% to the protocol account");

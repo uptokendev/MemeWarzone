@@ -1568,6 +1568,9 @@ async function scanCampaignRange(
   const startedAt = Date.now();
   const softFailsBefore = getLogsSoftFails;
   let cutShort = false;
+  // New campaign logs in this scan: the RH heal below re-checks launched() now instead of waiting
+  // for its idle-coin interval (the buy that fills the curve graduates in the same transaction).
+  let sawCampaignLogs = false;
 
   // Launch generation (campaign 5) is selected per factory; the old generation keeps the path below
   // unchanged (E14). A failed resolution indexes the trades the old way and retries next pass.
@@ -1863,13 +1866,14 @@ async function scanCampaignRange(
     if (advanceCursor) {
       await setStateMax(chainId, cursor, end + 1);
     }
+    if (logs.length > 0) sawCampaignLogs = true;
     if (logs.length > 0) await patchStats(chainId, campaign);
   }
 
   // Recover RH post-grad CMS when Finalize was indexed by an older build that
   // did not seed dex_pair_address (RH5661-class gaps). Cheap no-op once pair exists.
   try {
-    await healRobinhoodGraduatedCms(provider, chainId, campaign, tokenAddr);
+    await healRobinhoodGraduatedCms(provider, chainId, campaign, tokenAddr, { force: sawCampaignLogs });
   } catch (healErr) {
     console.warn("[indexer] RH CMS heal skipped", {
       chainId,
@@ -2494,8 +2498,10 @@ async function runIndexerCore(opts: {
             camp,
             row.token_address ? String(row.token_address) : null,
           );
-          if (healed.healed) {
-            await setCampaignGraduated(chain.chainId, camp, target, new Date(), ethers.ZeroHash);
+          if (healed.healed && healed.anchor) {
+            // The real graduation, not this pass's head / now / a zero hash: the old call rewrote a
+            // graduated coin's block, time and tx on every pass.
+            await setCampaignGraduated(chain.chainId, camp, healed.anchor.block, healed.anchor.time, healed.anchor.txHash);
             console.log("[indexer] RH CMS heal pass seeded", {
               chainId: chain.chainId,
               campaign: camp.toLowerCase(),

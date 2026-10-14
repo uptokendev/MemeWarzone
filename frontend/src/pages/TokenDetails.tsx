@@ -93,7 +93,7 @@ import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { campaignWalletMatches } from "@/lib/activeWalletChain";
 import { useActiveWalletKind } from "@/hooks/useActiveWalletKind";
-import { followCampaign, unfollowCampaign, isFollowingCampaign } from "@/lib/followApi";
+import { followCampaign, unfollowCampaign, isFollowingCampaign, pickFollowWallet } from "@/lib/followApi";
 import { useCurveTrades, type CurveTradePoint } from "@/hooks/useCurveTrades";
 import { useTokenTransferHolders } from "@/hooks/useTokenTransferHolders";
 import { marketTradeToCurvePoint, parseRawOrHumanAmount } from "@/lib/chart/normalizeTrade";
@@ -134,6 +134,8 @@ import {
 const CAMPAIGN_ABI = LaunchCampaignArtifact.abi as ethers.InterfaceAbi;
 const TOKEN_ABI = LaunchTokenArtifact.abi as ethers.InterfaceAbi;
 const TOKEN_DECIMALS = 18;
+/** Fallback poll for chain reads that otherwise refresh on each new trade (latestTradeKey). */
+const TRADE_SAFETY_POLL_MS = 60_000;
 const SLIPPAGE_PCT = 5;
 const MAX_UINT256 = (1n << 256n) - 1n;
 
@@ -912,9 +914,9 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     gen5.state && wallet.account && gen5.state.creator.toLowerCase() === String(wallet.account).toLowerCase(),
   );
 
-  // Follow with the wallet of this coin's chain: Phantom on Solana pages, the EVM wallet elsewhere.
+  // Follow with any connected wallet, the coin's own chain wallet first (follows are chainless, 2026-10-14).
   // Using the EVM account alone sent a connected Phantom user to the connect modal (2026-09-28).
-  const followWallet = isSolanaPage ? (isSolanaConnected ? String(solanaAccount || "") : "") : String(wallet.account || "");
+  const followWallet = pickFollowWallet(isSolanaPage, isSolanaConnected ? solanaAccount : null, wallet.account);
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -1125,12 +1127,6 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
       ],
     });
   }, [campaign?.campaign, chainIdForStorage, gen8State]);
-  const transferHolders = useTokenTransferHolders({
-    tokenAddress: campaign?.token,
-    chainId: chainIdForStorage,
-    enabled: !isSolanaPage && Boolean(campaign?.token),
-    excludeAddresses: gen8HolderExcludes,
-  });
   const [marketResolution, setMarketResolution] = useState<MarketResolution>("1m");
   const [chartExpanded, setChartExpanded] = useState(false);
   const [topazSlippageBps, setTopazSlippageBps] = useState(100);
@@ -1880,6 +1876,35 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     () => mergeCurveTradePoints(liveCurvePointsSafe, confirmedCurvePoints),
     [confirmedCurvePoints, liveCurvePointsSafe],
   );
+  // Newest trade the indexer (or this wallet) has seen. Curve state only changes on a trade, so the
+  // chain reads below (reserve, metrics, holders, Solana curve) refresh when this key changes and
+  // otherwise poll slowly, instead of hitting RPC every 5 s per open tab.
+  const latestTradeKey = useMemo(() => {
+    let newest: CurveTradePoint | null = null;
+    for (const point of combinedCurvePointsSafe) {
+      if (
+        !newest ||
+        point.timestamp > newest.timestamp ||
+        (point.timestamp === newest.timestamp &&
+          (point.blockNumber > newest.blockNumber ||
+            (point.blockNumber === newest.blockNumber && point.logIndex > newest.logIndex)))
+      ) {
+        newest = point;
+      }
+    }
+    return newest ? `${newest.txHash}:${newest.logIndex}` : "";
+  }, [combinedCurvePointsSafe]);
+  // Scoped per page type so a trade never re-runs the other chain's effect (the EVM reserve effect
+  // clears the reserve on Solana pages).
+  const evmTradeKey = isSolanaPage ? "" : latestTradeKey;
+  const solanaTradeKey = isSolanaPage ? latestTradeKey : "";
+  const transferHolders = useTokenTransferHolders({
+    tokenAddress: campaign?.token,
+    chainId: chainIdForStorage,
+    enabled: !isSolanaPage && Boolean(campaign?.token),
+    excludeAddresses: gen8HolderExcludes,
+    refreshKey: latestTradeKey,
+  });
 
   useEffect(() => {
     setConfirmedCurvePoints([]);
@@ -3070,13 +3095,14 @@ const toSeconds = (ts: number): number => {
     };
 
     loadReserve();
+    // Re-read on every new trade (evmTradeKey); the slow poll covers a missed trade feed.
     // Paused while the tab is hidden; one catch-up read when it shows again.
-    const stopPolling = isSolanaPage ? null : setVisibleInterval(() => void loadReserve(), 5_000);
+    const stopPolling = isSolanaPage ? null : setVisibleInterval(() => void loadReserve(), TRADE_SAFETY_POLL_MS);
     return () => {
       cancelled = true;
       stopPolling?.();
     };
-  }, [readProvider, campaign?.campaign, isSolanaPage]);
+  }, [readProvider, campaign?.campaign, isSolanaPage, evmTradeKey]);
 
   // Bonding headline (price / sold / mcap) must move while the page is open.
   useEffect(() => {
@@ -3091,13 +3117,14 @@ const toSeconds = (ts: number): number => {
       }
     };
     void loadMetrics();
+    // Re-read on every new trade (evmTradeKey); the slow poll covers a missed trade feed.
     // Paused while the tab is hidden; one catch-up read when it shows again.
-    const stopPolling = setVisibleInterval(() => void loadMetrics(), 5_000);
+    const stopPolling = setVisibleInterval(() => void loadMetrics(), TRADE_SAFETY_POLL_MS);
     return () => {
       cancelled = true;
       stopPolling();
     };
-  }, [campaign?.campaign, fetchCampaignMetrics, isSolanaPage]);
+  }, [campaign?.campaign, fetchCampaignMetrics, isSolanaPage, evmTradeKey]);
 
   // Campaign activity counters (buy/sell volume, buyers). Used for Flywheel and related panels.
   useEffect(() => {
@@ -3213,12 +3240,13 @@ const toSeconds = (ts: number): number => {
       }
     };
     void loadCurve();
-    const stopPolling = setVisibleInterval(() => void loadCurve(), 5_000);
+    // Re-read on every new trade (solanaTradeKey); the slow poll covers a missed trade feed.
+    const stopPolling = setVisibleInterval(() => void loadCurve(), TRADE_SAFETY_POLL_MS);
     return () => {
       cancelled = true;
       stopPolling();
     };
-  }, [isSolanaPage, isDbcPage, campaign?.campaign, campaign?.token]);
+  }, [isSolanaPage, isDbcPage, campaign?.campaign, campaign?.token, solanaTradeKey]);
 
   useEffect(() => {
     if (!isSolanaPage || !solanaCurve) return;

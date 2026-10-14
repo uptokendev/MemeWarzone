@@ -1,3 +1,5 @@
+// Must stay the first import: installs the RPC counters before any module captures fetch.
+import "./lib/rpcUsageInstall.js";
 import express from "express";
 import { installRpcUsageCounters, rpcUsageSnapshot } from "./lib/rpcUsage.js";
 
