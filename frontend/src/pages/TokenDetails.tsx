@@ -84,7 +84,7 @@ import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { campaignWalletMatches } from "@/lib/activeWalletChain";
 import { useActiveWalletKind } from "@/hooks/useActiveWalletKind";
-import { followCampaign, unfollowCampaign, isFollowingCampaign } from "@/lib/followApi";
+import { followCampaign, unfollowCampaign, isFollowingCampaign, pickFollowWallet } from "@/lib/followApi";
 import { useCurveTrades, type CurveTradePoint } from "@/hooks/useCurveTrades";
 import { useTokenTransferHolders } from "@/hooks/useTokenTransferHolders";
 import { marketTradeToCurvePoint, parseRawOrHumanAmount } from "@/lib/chart/normalizeTrade";
@@ -865,9 +865,9 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     gen5.state && wallet.account && gen5.state.creator.toLowerCase() === String(wallet.account).toLowerCase(),
   );
 
-  // Follow with the wallet of this coin's chain: Phantom on Solana pages, the EVM wallet elsewhere.
+  // Follow with any connected wallet, the coin's own chain wallet first (follows are chainless, 2026-10-14).
   // Using the EVM account alone sent a connected Phantom user to the connect modal (2026-09-28).
-  const followWallet = isSolanaPage ? (isSolanaConnected ? String(solanaAccount || "") : "") : String(wallet.account || "");
+  const followWallet = pickFollowWallet(isSolanaPage, isSolanaConnected ? solanaAccount : null, wallet.account);
   useEffect(() => {
     let alive = true;
     (async () => {
