@@ -16,8 +16,7 @@ test("Robinhood TokenDetails keeps an already-connected EVM wallet on the EVM pa
 test("bonding RH buy switches the connected wallet and consumes the fresh session", () => {
   assert.match(
     launchpadSource,
-    // DogeOS 6281971 takes the same switch (dogeosLaunchPath.test.mjs); the Robinhood pair is unchanged.
-    /const isRobinhoodBuy = targetChainId === ROBINHOOD_CHAIN_ID \|\| targetChainId === ROBINHOOD_TESTNET_CHAIN_ID \|\| isDogeosChainId\(targetChainId\);/,
+    /const isRobinhoodBuy = targetChainId === ROBINHOOD_CHAIN_ID \|\| targetChainId === ROBINHOOD_TESTNET_CHAIN_ID;/,
   );
   assert.match(launchpadSource, /if \(isRobinhoodBuy && Number\(wallet\.chainId\) !== targetChainId\)/);
   assert.match(launchpadSource, /const switched = await wallet\.switchToChain\(targetChainId\);/);

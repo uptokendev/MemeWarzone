@@ -736,9 +736,7 @@ export function useLaunchpad(): LaunchpadAdapter {
       campaign.finalizedAt().catch(() => 0n),
     ]);
     const graduated = Boolean(launched) || BigInt(finalizedAt || 0n) > 0n;
-    const isRobinhoodRead =
-      evmReadChainId === ROBINHOOD_CHAIN_ID || evmReadChainId === ROBINHOOD_TESTNET_CHAIN_ID || isDogeosChainId(evmReadChainId);
-    // DogeOS runs the same gen-7 factory, so its graduationTarget is USD too.
+    const isRobinhoodRead = evmReadChainId === ROBINHOOD_CHAIN_ID || evmReadChainId === ROBINHOOD_TESTNET_CHAIN_ID;
     // RH graduationTarget is USD (18 decimals), not native wei, so it must never be used as the
     // native-target fallback (that made Remaining show ~$4.4K: 6 ETH × ETH/USD). The campaign's own
     // graduationNativeTarget() is native wei and drives the progress bar and "ETH raised".
@@ -1035,9 +1033,7 @@ export function useLaunchpad(): LaunchpadAdapter {
     let tradeSigner = signer;
     let tradeAccount = String(wallet.account || "");
     const targetChainId = Number(activeChainId);
-    // DogeOS bonding buys take the same in-place wallet switch (its own EVM product chain).
-    const isRobinhoodBuy = targetChainId === ROBINHOOD_CHAIN_ID || targetChainId === ROBINHOOD_TESTNET_CHAIN_ID || isDogeosChainId(targetChainId);
-    const buyChainName = isDogeosChainId(targetChainId) ? "DogeOS" : "Robinhood";
+    const isRobinhoodBuy = targetChainId === ROBINHOOD_CHAIN_ID || targetChainId === ROBINHOOD_TESTNET_CHAIN_ID;
 
     if (!tradeSigner || !tradeAccount) throw new Error("Wallet not connected");
 
@@ -1046,11 +1042,11 @@ export function useLaunchpad(): LaunchpadAdapter {
     // EvmWalletSession immediately so the same click never writes through a stale signer.
     if (isRobinhoodBuy && Number(wallet.chainId) !== targetChainId) {
       if (typeof wallet.switchToChain !== "function") {
-        throw new Error(`Switch your EVM wallet to ${buyChainName} chain ${targetChainId} and try again.`);
+        throw new Error(`Switch your EVM wallet to Robinhood chain ${targetChainId} and try again.`);
       }
       const switched = await wallet.switchToChain(targetChainId);
       if (Number(switched?.chainId) !== targetChainId || !switched?.signer || !switched?.account) {
-        throw new Error(`Wallet did not switch to ${buyChainName} chain ${targetChainId}.`);
+        throw new Error(`Wallet did not switch to Robinhood chain ${targetChainId}.`);
       }
       tradeSigner = switched.signer;
       tradeAccount = switched.account;

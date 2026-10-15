@@ -2,8 +2,8 @@ import { apiFetch } from "@/lib/apiBase";
 import {
   ROBINHOOD_CHAIN_ID,
   ROBINHOOD_TESTNET_CHAIN_ID,
-  isDogeosChainId,
 } from "@/lib/chainConfig";
+import { createDogeosBarkswapLaunchpadAdapter, isDogeosBarkswapChainId } from "@/features/launchpad/dogeosBarkswapAdapter";
 import type {
   LaunchpadAdapter,
   LaunchpadAdapterStatus,
@@ -57,8 +57,8 @@ function normalizePreflight(payload: any, side: TradeSide): LaunchpadTradePrefli
 export function resolveRobinhoodChainId(value?: number | string | null): number {
   const chainId = Number(value);
   if (chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID) return chainId;
-  // DogeOS shares this adapter family and keeps its own chain: never the 46630 default below.
-  if (isDogeosChainId(chainId)) return chainId;
+  // DogeOS is no Robinhood chain (gen-8 Barkswap, dogeosBarkswapAdapter.ts): refuse it, never the 46630 default below.
+  if (isDogeosBarkswapChainId(chainId)) throw new Error("DogeOS (6281971) is not checked on the Robinhood launchpad.");
   // Fail closed to the currently staged product chain; never borrow 56/97.
   return ROBINHOOD_TESTNET_CHAIN_ID;
 }
@@ -99,6 +99,10 @@ export function createRobinhoodLaunchpadAdapter(): LaunchpadAdapter {
     },
 
     async preflightTrade({ side, walletAddress, campaignAddress, chainId }): Promise<LaunchpadTradePreflight> {
+      // A DogeOS campaign handed to this adapter gets the DogeOS refusal, never a 46630 preflight.
+      if (isDogeosBarkswapChainId(chainId)) {
+        return createDogeosBarkswapLaunchpadAdapter().preflightTrade({ side, walletAddress, campaignAddress, chainId });
+      }
       const wallet = normalizeEvmAddress(walletAddress);
       const campaign = normalizeEvmAddress(campaignAddress);
       const tradeChainId = resolveRobinhoodChainId(chainId);

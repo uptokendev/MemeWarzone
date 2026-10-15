@@ -12,6 +12,7 @@ import { getWarRoomCampaignMetrics } from "@/features/postgrad/warRoomMetrics";
 import { isSolanaAddress } from "@/lib/address";
 import { DOGEOS_TESTNET_CHAIN_ID, getChainLabel, isDogeosChainId, ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
 import { DOGEOS_DEX_LABEL } from "@/lib/dogeosPresentation.mjs";
+import { DOGEOS_TRADE_UNAVAILABLE } from "@/features/launchpad/dogeosBarkswapAdapter";
 
 function shortenAddress(value?: string | null) {
   const input = String(value ?? "").trim();
@@ -130,9 +131,9 @@ export function WarRoomCampaignRow({
     : inferredChainId === 56 || inferredChainId === 97 || inferredChainId === ROBINHOOD_CHAIN_ID || inferredChainId === ROBINHOOD_TESTNET_CHAIN_ID || inferredChainId === DOGEOS_TESTNET_CHAIN_ID
       ? inferredChainId
       : 56;
-  // A DogeOS row takes the Robinhood V3-family surfaces (MuchFi trade panel, token-page bonding note).
+  // A DogeOS row keeps its own chain but is no Robinhood row (gen-8 Barkswap, B8): it gets a fail-closed trade card.
   const isDogeosRow = isDogeosChainId(rowChainId);
-  const isRobinhoodRow = rowChainId === ROBINHOOD_CHAIN_ID || rowChainId === ROBINHOOD_TESTNET_CHAIN_ID || isDogeosRow;
+  const isRobinhoodRow = rowChainId === ROBINHOOD_CHAIN_ID || rowChainId === ROBINHOOD_TESTNET_CHAIN_ID;
   const tokenRoute = tokenDetailsPath(
     { tokenAddress: campaign.token, campaignAddress: campaign.campaign, chainId: rowChainId },
     { chainId: rowChainId },
@@ -380,7 +381,14 @@ export function WarRoomCampaignRow({
             </div>
 
             <div className="min-w-0">
-              {isRobinhoodRow && metrics.status === "graduated" ? (
+              {isDogeosRow ? (
+                // Neither the Robinhood V3 panel nor the BNB curve panel: DogeOS trades on Barkswap (gen-8), which
+                // the app does not trade yet (plan t22).
+                <div className={`${card} p-3.5`} data-testid="war-room-dogeos-trade-unavailable">
+                  <span className={cardTitle}>Trade</span>
+                  <p className="m-0 mt-1.5 text-sm text-mw-muted">{DOGEOS_TRADE_UNAVAILABLE}</p>
+                </div>
+              ) : isRobinhoodRow && metrics.status === "graduated" ? (
                 <RobinhoodWarRoomTradePanel campaign={campaign} />
               ) : isRobinhoodRow ? (
                 // WarRoomTradePanel trades on BNB only: for a Robinhood coin it showed "Connect BNB wallet",
@@ -389,9 +397,7 @@ export function WarRoomCampaignRow({
                 <div className={`${card} p-3.5`} data-testid="war-room-robinhood-bonding-trade">
                   <span className={cardTitle}>Trade</span>
                   <p className="m-0 mt-1.5 text-sm text-mw-muted">
-                    {isDogeosRow
-                      ? "This coin trades in DOGE on DogeOS. Buy and sell it on its token page."
-                      : "This coin trades in ETH on Robinhood Chain. Buy and sell it on its token page."}
+                    This coin trades in ETH on Robinhood Chain. Buy and sell it on its token page.
                   </p>
                   {hasTokenRoute ? (
                     <Link

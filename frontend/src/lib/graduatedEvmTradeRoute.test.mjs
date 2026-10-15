@@ -181,7 +181,7 @@ const MERGE_REAPPLIED = {
   ],
 };
 /**
- * Reviewed DogeOS lines taken out again by plan t12 (spec section 4 "Removed (B8)": the gen-7/MuchFi trade path).
+ * Reviewed DogeOS lines taken out again by plan t12 and t33 (spec section 4 "Removed (B8)": the gen-7/MuchFi trade path).
  * TokenDetails: 79bdad1a6's and 0d2eb7938's isV3GraduatedTradePage gate; every site it replaced is back to
  * isRobinhoodPage, i.e. the pin's own line. Each entry must be a line a reviewed commit added (a stale entry fails)
  * and must be gone from the file (the gate cannot come back unreviewed). Only these lines leave the "lost" check;
@@ -203,6 +203,16 @@ const B8_REMOVED = {
     "isV3GraduatedTradePage,",
     "if (isV3GraduatedTradePage && unifiedNative) {",
     'if (isV3GraduatedTradePage && isDexStage) return "—";',
+  ],
+  // Plan t33: the Robinhood panel no longer trades DogeOS as a MuchFi V3 coin. It keeps 6281971's own id only to
+  // refuse it (an added line), so the direct panel's network and venue names are Robinhood's constants again and the
+  // MuchFi wording and DOGEOS_DEX_LABEL import are gone. The chain-aware native symbol and gas reserve stay checked.
+  "components/postgrad/RobinhoodWarRoomTradePanel.tsx": [
+    'import { DOGEOS_DEX_LABEL } from "@/lib/dogeosPresentation.mjs";',
+    "// DogeOS keeps its own chain (MuchFi market); only an unknown id falls back to Robinhood testnet.",
+    "// Robinhood: ETH on Robinhood V3. DogeOS: DOGE on MuchFi. Same V3 trade path underneath.",
+    'const networkName = isDogeosChainId(chainId) ? "DogeOS" : "Robinhood";',
+    'const venueLabel = isDogeosChainId(chainId) ? DOGEOS_DEX_LABEL : "Robinhood V3";',
   ],
 };
 const REPO_ROOT = path.resolve(here, "..", "..", "..");

@@ -8,15 +8,15 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { ethers } from "ethers";
 
-import { evmGen7DexName, evmGen7GraduationTiers } from "./evmGen7.mjs";
+import { evmGen7DexName } from "./evmGen7.mjs";
 import { DOGEOS_DEX_LABEL } from "./dogeosPresentation.mjs";
 
-// DogeOS Chikyu testnet (6281971) on the gen-7 launch path: it takes the Robinhood V3 family branches
-// (adapter, USD graduation target, $150 test tier) through isDogeosChainId, never through isRobinhoodChainId.
-// The gen-7/MuchFi post-graduation trade (Robinhood V3 trade library at fee 10000, token-page V3 gate) is
-// removed (plan t12, spec section 4 "Removed (B8)"): the V3 trade library refuses 6281971 and the token page's
-// graduated-trade gates are Robinhood-only again. Robinhood 46630 is asserted next to it so the existing
-// behaviour stays pinned.
+// DogeOS Chikyu testnet (6281971) launches on gen-8 only (Barkswap venue). Its gen-7 / Robinhood V3 family
+// branches are removed (plan t12 and t33, spec section 4 "Removed (B8)"): the V3 trade library refuses 6281971,
+// the token page's graduated-trade gates, the gen-7 buy switch, USD-target read, launch options and LP harvest are
+// Robinhood-only again, and the launchpad safety adapter for 6281971 is the gen-8 Barkswap one, which fails closed
+// until the Bark client is wired (t22). What stays is chain identity: 6281971 never falls back to 46630, 56 or 97.
+// Robinhood 46630 is asserted next to it so the existing behaviour stays pinned.
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const srcRoot = path.resolve(dir, "..");
@@ -91,8 +91,9 @@ import * as v3Trade from "./robinhoodV3Trade.ts";
 import * as lpFeeHarvest from "./lpFeeHarvest.ts";
 import * as launchpadAdapter from "../features/launchpad/useLaunchpadAdapter.ts";
 import * as robinhoodAdapter from "../features/launchpad/robinhoodAdapter.ts";
+import * as dogeosAdapter from "../features/launchpad/dogeosBarkswapAdapter.ts";
 import * as tradeBalanceReserve from "./tradeBalanceReserve.ts";
-export { graduationTiers, v3Trade, lpFeeHarvest, launchpadAdapter, robinhoodAdapter, tradeBalanceReserve };
+export { graduationTiers, v3Trade, lpFeeHarvest, launchpadAdapter, robinhoodAdapter, dogeosAdapter, tradeBalanceReserve };
 `;
 async function loadHarness(name, env, contents = LAUNCH_PATH_ENTRY) {
   if (harnessCache.has(name)) return harnessCache.get(name);
@@ -230,12 +231,85 @@ const robinhoodVenue = () =>
 
 // ---------------------------------------------------------------- adapter selection
 
-test("6281971 selects the V3-family launchpad adapter and keeps its own chain id", async () => {
-  const { launchpadAdapter, robinhoodAdapter } = await fullHarness();
-  assert.equal(launchpadAdapter.getLaunchpadAdapter({ chainId: DOGEOS }).chain, "robinhood");
-  assert.equal(launchpadAdapter.getLaunchpadAdapter({ chainId: String(DOGEOS) }).chain, "robinhood");
-  // never the 46630 default
-  assert.equal(robinhoodAdapter.resolveRobinhoodChainId(DOGEOS), DOGEOS);
+/** Records every fetch the adapters make; answers an allowed preflight. */
+async function withFetchRecorder(fn) {
+  const calls = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), body: init?.body ? JSON.parse(String(init.body)) : null });
+    return new Response(JSON.stringify({ preflight: { allowed: true, reasons: [], warnings: [] } }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  try {
+    await fn(calls);
+  } finally {
+    globalThis.fetch = original;
+  }
+}
+
+test("6281971 resolves to the gen-8 Barkswap adapter, never to 46630, 56 or 97", async () => {
+  const { launchpadAdapter, robinhoodAdapter, dogeosAdapter } = await fullHarness();
+  // The venue comes from the gen-8 config (GEN8_CHAIN_VENUE, t17): Barkswap on 6281971 only.
+  assert.equal(dogeosAdapter.isDogeosBarkswapChainId(DOGEOS), true);
+  assert.equal(dogeosAdapter.isDogeosBarkswapChainId(String(DOGEOS)), true);
+  for (const id of [56, 97, 101, 4663, 46630, 31337, 0, null, undefined, "x"]) {
+    assert.equal(dogeosAdapter.isDogeosBarkswapChainId(id), false, String(id));
+  }
+  // Whatever chain family a caller names, the chain id wins: never the Robinhood or BNB adapter for 6281971.
+  for (const chain of [undefined, null, "", "robinhood", "rh", "bnb", "bsc", "dogeos"]) {
+    for (const chainId of [DOGEOS, String(DOGEOS)]) {
+      assert.equal(launchpadAdapter.getLaunchpadAdapter({ chain, chainId }).chain, "dogeos", `${chain} ${chainId}`);
+    }
+  }
+  assert.equal(launchpadAdapter.getLaunchpadAdapter({ chain: "dogeos" }).chain, "dogeos");
+  // The Robinhood adapter's chain resolver refuses 6281971 instead of returning its 46630 default (or 56/97).
+  assert.throws(() => robinhoodAdapter.resolveRobinhoodChainId(DOGEOS), /DogeOS/);
+  assert.throws(() => robinhoodAdapter.resolveRobinhoodChainId(String(DOGEOS)), /DogeOS/);
+
+  // Fail closed until the Bark client is wired (t22): no route, no API call, a clear "not available yet".
+  await withFetchRecorder(async (calls) => {
+    const adapter = launchpadAdapter.getLaunchpadAdapter({ chainId: DOGEOS });
+    const status = await adapter.getStatus();
+    assert.equal(status.chain, "dogeos");
+    assert.equal(status.protocolLive, false);
+    assert.equal(status.routeAuthorizationReady, false);
+    assert.equal(status.message, dogeosAdapter.DOGEOS_TRADE_UNAVAILABLE);
+    assert.match(dogeosAdapter.DOGEOS_TRADE_UNAVAILABLE, /DogeOS/);
+    assert.match(dogeosAdapter.DOGEOS_TRADE_UNAVAILABLE, /Barkswap/);
+    assert.match(dogeosAdapter.DOGEOS_TRADE_UNAVAILABLE, /not available yet/);
+    for (const side of ["buy", "sell"]) {
+      for (const walletAddress of [USER, null]) {
+        const preflight = await adapter.preflightTrade({ side, walletAddress, campaignAddress: CAMPAIGN, chainId: DOGEOS });
+        assert.equal(preflight.allowed, false, `${side} ${walletAddress}`);
+        assert.equal(preflight.chain, "dogeos");
+        assert.equal(preflight.side, side);
+        assert.deepEqual(preflight.reasons, [dogeosAdapter.DOGEOS_TRADE_UNAVAILABLE]);
+      }
+      // The Robinhood adapter, handed 6281971, refuses the same way and never posts a 46630 preflight.
+      const viaRobinhood = await robinhoodAdapter
+        .createRobinhoodLaunchpadAdapter()
+        .preflightTrade({ side, walletAddress: USER, campaignAddress: CAMPAIGN, chainId: DOGEOS });
+      assert.equal(viaRobinhood.allowed, false);
+      assert.equal(viaRobinhood.chain, "dogeos");
+      assert.deepEqual(viaRobinhood.reasons, [dogeosAdapter.DOGEOS_TRADE_UNAVAILABLE]);
+    }
+    assert.deepEqual(calls, [], "no API call is made for 6281971");
+  });
+
+  // Robinhood still posts its own chain id (and its 46630 default for an unknown one).
+  await withFetchRecorder(async (calls) => {
+    const rh = robinhoodAdapter.createRobinhoodLaunchpadAdapter();
+    for (const [chainId, posted] of [[46630, 46630], [4663, 4663], [undefined, 46630]]) {
+      const preflight = await rh.preflightTrade({ side: "buy", walletAddress: USER, campaignAddress: CAMPAIGN, chainId });
+      assert.equal(preflight.allowed, true, String(chainId));
+      assert.equal(preflight.chain, "robinhood");
+      assert.match(calls.at(-1).url, /\/api\/launchpad\/preflight-buy$/);
+      assert.equal(calls.at(-1).body.chainId, posted, String(chainId));
+    }
+  });
+
   // unchanged for the existing chains
   assert.equal(launchpadAdapter.getLaunchpadAdapter({ chainId: 46630 }).chain, "robinhood");
   assert.equal(launchpadAdapter.getLaunchpadAdapter({ chainId: 4663 }).chain, "robinhood");
@@ -248,24 +322,23 @@ test("6281971 selects the V3-family launchpad adapter and keeps its own chain id
 
 // ---------------------------------------------------------------- graduation target and tiers
 
-test("the USD graduation-target read and the bonding buy switch treat 6281971 like Robinhood", () => {
+test("the gen-7 USD graduation-target read and bonding buy switch are Robinhood-only again; the read chain keeps 6281971", () => {
   const client = read("lib/launchpadClient.ts");
-  assert.match(
-    client,
-    /const isRobinhoodRead =\s*evmReadChainId === ROBINHOOD_CHAIN_ID \|\| evmReadChainId === ROBINHOOD_TESTNET_CHAIN_ID \|\| isDogeosChainId\(evmReadChainId\);/,
-  );
+  // B8 (t33): DogeOS has no gen-7 campaign, so these are the starting commit's Robinhood-only lines again.
+  assert.match(client, /const isRobinhoodRead = evmReadChainId === ROBINHOOD_CHAIN_ID \|\| evmReadChainId === ROBINHOOD_TESTNET_CHAIN_ID;/);
   assert.match(client, /readBig\("graduationNativeTarget", isRobinhoodRead \? 0n : graduationTarget\)/);
-  assert.match(
-    client,
-    /const isRobinhoodBuy = targetChainId === ROBINHOOD_CHAIN_ID \|\| targetChainId === ROBINHOOD_TESTNET_CHAIN_ID \|\| isDogeosChainId\(targetChainId\);/,
-  );
+  assert.match(client, /const isRobinhoodBuy = targetChainId === ROBINHOOD_CHAIN_ID \|\| targetChainId === ROBINHOOD_TESTNET_CHAIN_ID;/);
+  assert.match(client, /throw new Error\(`Switch your EVM wallet to Robinhood chain \$\{targetChainId\} and try again\.`\);/);
+  assert.match(client, /throw new Error\(`Wallet did not switch to Robinhood chain \$\{targetChainId\}\.`\);/);
+  assert.doesNotMatch(client, /buyChainName|isDogeosChainId\((evmReadChainId|targetChainId)\)/);
+  // Chain identity stays: a wallet on 6281971 reads its own chain, never BNB.
   assert.match(
     client,
     /if \(productChain === ROBINHOOD_CHAIN_ID \|\| productChain === ROBINHOOD_TESTNET_CHAIN_ID \|\| isDogeosChainId\(productChain\)\) \{\s*return productChain;/,
   );
 });
 
-test("the $150 gen-7 test tier is reachable on 6281971 and its pools carry the DogeOS DEX label (Barkswap)", async () => {
+test("the $150 test tier stays reachable on 6281971 and the DogeOS DEX label is Barkswap", async () => {
   const { graduationTiers } = await fullHarness();
   const staging = { environment: "staging", cluster: "devnet" };
   assert.equal(graduationTiers.isTestGraduationChain(DOGEOS, staging), true);
@@ -275,20 +348,19 @@ test("the $150 gen-7 test tier is reachable on 6281971 and its pools carry the D
   assert.equal(graduationTiers.isTestGraduationChain(4663, staging), false);
 
   assert.equal(DOGEOS_DEX_LABEL, "Barkswap");
-  assert.equal(evmGen7DexName(DOGEOS), "Barkswap");
   assert.equal(evmGen7DexName(46630), "Uniswap");
   assert.equal(evmGen7DexName(97), "Topaz");
-  const tiers = evmGen7GraduationTiers(DOGEOS, { testTierEnabled: true });
-  assert.deepEqual(tiers.map((tier) => tier.label), ["$150", "$30K MC", "$50K MC"]);
-  assert.match(tiers[1].description, /Moves to a Barkswap pool/);
 });
 
-test("create surfaces use the V3-family branch for 6281971, through isDogeosChainId only", () => {
+test("create surfaces: gen-7 launch options are Robinhood-only again; the create page keeps 6281971's own chain", () => {
   const create = read("pages/Create.tsx");
   const options = read("components/create/EvmGen6LaunchOptions.tsx");
   const chainConfig = read("lib/chainConfig.ts");
   assert.match(create, /const robinhoodSelected = isRobinhoodChain\(Number\(configuredEvmChainId\)\) \|\| isDogeosChainId\(Number\(configuredEvmChainId\)\);/);
-  assert.equal((options.match(/const isRobinhood = isRobinhoodChainId\((input\.)?chainId\) \|\| isDogeosChainId\((input\.)?chainId\);/g) || []).length, 2);
+  // B8 (t33): no gen-7 factory on DogeOS, so the gen-7 launch reserve is the starting commit's Robinhood/BNB choice.
+  assert.match(options, /const isRobinhood = isRobinhoodChainId\(input\.chainId\);/);
+  assert.match(options, /const isRobinhood = isRobinhoodChainId\(chainId\);/);
+  assert.doesNotMatch(options, /isDogeos/);
   // isRobinhoodChainId itself never learns 6281971 (it also drives ETH symbols and stock logic).
   assert.match(chainConfig, /export function isRobinhoodChainId\(chainId\?: number \| null\): boolean \{\s*return chainId === ROBINHOOD_CHAIN_ID \|\| chainId === ROBINHOOD_TESTNET_CHAIN_ID;\s*\}/);
 });
@@ -297,13 +369,18 @@ test("token page entry, war-room row and trade panel keep 6281971 instead of def
   const entry = read("pages/TokenDetailsLiveEntry.tsx");
   const row = read("components/postgrad/WarRoomCampaignRow.tsx");
   const panel = read("components/postgrad/RobinhoodWarRoomTradePanel.tsx");
-  assert.match(entry, /function isV3FamilyChainId\(chainId: number\): boolean \{\s*return isRobinhoodChainId\(chainId\) \|\| isDogeosChainId\(chainId\);/);
-  assert.match(entry, /const selectedEvmChainId = isV3FamilyChainId\(Number\(selectedFeedChainId\)\) \|\| isBnbChainId/);
-  assert.match(entry, /const effectiveEvmChainId = isV3FamilyChainId\(forcedChainId\) \|\| isBnbChainId\(forcedChainId\)/);
-  assert.match(entry, /const robinhoodRoute = isV3FamilyChainId\(effectiveEvmChainId\);/);
-  assert.match(entry, /: isV3FamilyChainId\(forcedChainId\) \|\| isBnbChainId\(forcedChainId\)\s*\? forcedChainId/);
+  // Chain identity only (t33 renamed the gen-7 "V3 family" helper): an EVM product chain of its own, never BNB.
+  assert.doesNotMatch(entry, /isV3FamilyChainId/);
+  assert.match(entry, /function isOwnEvmProductChainId\(chainId: number\): boolean \{\s*return isRobinhoodChainId\(chainId\) \|\| isDogeosChainId\(chainId\);/);
+  assert.match(entry, /const selectedEvmChainId = isOwnEvmProductChainId\(Number\(selectedFeedChainId\)\) \|\| isBnbChainId/);
+  assert.match(entry, /const effectiveEvmChainId = isOwnEvmProductChainId\(forcedChainId\) \|\| isBnbChainId\(forcedChainId\)/);
+  assert.match(entry, /const robinhoodRoute = isOwnEvmProductChainId\(effectiveEvmChainId\);/);
+  assert.match(entry, /: isOwnEvmProductChainId\(forcedChainId\) \|\| isBnbChainId\(forcedChainId\)\s*\? forcedChainId/);
   assert.match(row, /inferredChainId === ROBINHOOD_TESTNET_CHAIN_ID \|\| inferredChainId === DOGEOS_TESTNET_CHAIN_ID\s*\? inferredChainId/);
-  assert.match(row, /const isRobinhoodRow = rowChainId === ROBINHOOD_CHAIN_ID \|\| rowChainId === ROBINHOOD_TESTNET_CHAIN_ID \|\| isDogeosRow;/);
+  // B8 (t33): a DogeOS row is no Robinhood row; it gets its own fail-closed card (dogeosWarRoomRow.test.mjs renders it).
+  assert.match(row, /const isDogeosRow = isDogeosChainId\(rowChainId\);\s*const isRobinhoodRow = rowChainId === ROBINHOOD_CHAIN_ID \|\| rowChainId === ROBINHOOD_TESTNET_CHAIN_ID;/);
+  assert.match(row, /\{isDogeosRow \? \([^<]*<div[^>]*data-testid="war-room-dogeos-trade-unavailable"/);
+  assert.doesNotMatch(row, /This coin trades in DOGE on DogeOS/);
   assert.match(row, /rowChainId === ROBINHOOD_TESTNET_CHAIN_ID \|\|\s*rowChainId === DOGEOS_TESTNET_CHAIN_ID \|\|\s*rowChainId === 101\s*\) \{\s*setSelectedFeedChainId\(rowChainId\);/);
   // Token page: the gen-7/MuchFi V3 gate (isV3GraduatedTradePage) is removed (B8). Every graduated-trade site is
   // Robinhood-only again, exactly as on release/evm-gen8; DogeOS keeps its presentation flag and the DOGE reserve.
@@ -325,7 +402,12 @@ test("token page entry, war-room row and trade panel keep 6281971 instead of def
   assert.doesNotMatch(page, /evmBuyGasReserveWei\(/);
   // the Robinhood USD-raise line is untouched (evmGen7Wiring pin)
   assert.match(page, /isRobinhoodPage && !isDexStage && !evmGen7Coin && \(metrics\?\.graduationTarget \?\? 0n\) > 0n/);
+  // The Robinhood panel keeps 6281971's own id (never the 46630 default) only to refuse it; its texts are Robinhood's.
   assert.match(panel, /return id === ROBINHOOD_CHAIN_ID \|\| id === ROBINHOOD_TESTNET_CHAIN_ID \|\| isDogeosChainId\(id\) \? id : ROBINHOOD_TESTNET_CHAIN_ID;/);
+  assert.match(panel, /if \(isDogeosChainId\(chainId\)\) \{\s*return \(\s*<p[^>]*data-war-room-trade-unavailable="dogeos"/);
+  assert.match(panel, /const networkName = "Robinhood";/);
+  assert.match(panel, /const venueLabel = "Robinhood V3";/);
+  assert.doesNotMatch(panel, /DOGEOS_DEX_LABEL|MuchFi/);
   assert.match(panel, /const buyGasReserveWei = evmBuyGasReserveWeiForChain\(chainId\);/);
   assert.match(panel, /amountIn \+ buyGasReserveWei > nativeBalance/);
   assert.match(panel, /Keep about \$\{ethers\.formatEther\(buyGasReserveWei\)\} \$\{nativeSymbol\}/);
@@ -397,37 +479,44 @@ test("Robinhood 46630 trade is unchanged: fee 3000 from fee_bps 30 or none, unsu
   );
 });
 
-// ---------------------------------------------------------------- LP fee harvest (MuchFi position locker)
+// ---------------------------------------------------------------- LP fee harvest (no LP locker on DogeOS, B8)
 
-test("LP fee harvest on 6281971 uses the V3 position-locker path with MuchFi wording", async () => {
+test("LP fee harvest refuses 6281971 before any read or send; Robinhood keeps its V3 position-locker path", async () => {
   const { lpFeeHarvest } = await fullHarness();
   const LOCKER = addr(0x9001);
   const unregistered = V3_LOCKER_IFACE.encodeFunctionResult("poolInfo", [
     ethers.ZeroAddress, ethers.ZeroAddress, ethers.ZeroAddress, POOL, ethers.ZeroAddress, ethers.ZeroAddress, 0n, 0n, 10000, 0, 0, false,
   ]);
-  for (const [chainId, words] of [[DOGEOS, /MuchFi position is not registered/], [RH_TESTNET, /Robinhood V3 position is not registered/]]) {
+  const fakeSignerFor = (chainId, calls) => ({
+    provider: { async getNetwork() { calls.push("getNetwork"); return { chainId: BigInt(chainId) }; } },
+    async call(tx) { calls.push(tx); return unregistered; },
+    async sendTransaction() { throw new Error("harvest must not be sent"); },
+  });
+  // DogeOS: no gen-7 locker (the MuchFi V3 position locker is gone), so no locker of any shape is read or called,
+  // whatever locker address or pool the caller passes; the API's lp-fees answers null for 6281971 the same way.
+  for (const [pairAddress, lockerAddress] of [[POOL, LOCKER], [POOL, null], ["0x1234", LOCKER]]) {
     const calls = [];
-    const provider = { async getNetwork() { return { chainId: BigInt(chainId) }; } };
-    const signer = {
-      provider,
-      async call(tx) { calls.push(tx); return unregistered; },
-      async sendTransaction() { throw new Error("harvest must not be sent for an unregistered position"); },
-    };
     await assert.rejects(
-      lpFeeHarvest.harvestLpFeesWithWallet({ chainId, pairAddress: POOL, signer, lockerAddress: LOCKER }),
-      words,
+      lpFeeHarvest.harvestLpFeesWithWallet({ chainId: DOGEOS, pairAddress, signer: fakeSignerFor(DOGEOS, calls), lockerAddress }),
+      /no LP locker on DogeOS/,
     );
-    assert.equal(calls.length, 1);
-    assert.equal(String(calls[0].data).slice(0, 10), V3_LOCKER_IFACE.getFunction("poolInfo").selector);
+    assert.deepEqual(calls, [], `${pairAddress} ${lockerAddress}`);
   }
+  // Robinhood is unchanged: one poolInfo read, then the registration refusal.
+  const calls = [];
   await assert.rejects(
-    lpFeeHarvest.harvestLpFeesWithWallet({ chainId: DOGEOS, pairAddress: "0x1234", signer: {}, lockerAddress: LOCKER }),
-    /Invalid MuchFi pool address\./,
+    lpFeeHarvest.harvestLpFeesWithWallet({ chainId: RH_TESTNET, pairAddress: POOL, signer: fakeSignerFor(RH_TESTNET, calls), lockerAddress: LOCKER }),
+    /Robinhood V3 position is not registered with locked liquidity\./,
   );
+  const reads = calls.filter((c) => c !== "getNetwork");
+  assert.equal(reads.length, 1);
+  assert.equal(String(reads[0].data).slice(0, 10), V3_LOCKER_IFACE.getFunction("poolInfo").selector);
   await assert.rejects(
     lpFeeHarvest.harvestLpFeesWithWallet({ chainId: RH_TESTNET, pairAddress: "0x1234", signer: {}, lockerAddress: LOCKER }),
     /Invalid Robinhood V3 pool address\./,
   );
+  const lib = read("lib/lpFeeHarvest.ts");
+  assert.doesNotMatch(lib, /MuchFi|isV3PositionLockerChainId/);
 });
 
 // ---------------------------------------------------------------- create readiness (t37)

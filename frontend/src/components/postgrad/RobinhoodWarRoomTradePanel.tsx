@@ -17,7 +17,7 @@ import {
   type RobinhoodV3ResolvedRoute,
 } from "@/lib/robinhoodV3Trade";
 import { ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID, getNativeSymbol, isDogeosChainId } from "@/lib/chainConfig";
-import { DOGEOS_DEX_LABEL } from "@/lib/dogeosPresentation.mjs";
+import { DOGEOS_TRADE_UNAVAILABLE } from "@/features/launchpad/dogeosBarkswapAdapter";
 import type { SupportedChainId } from "@/lib/chainConfig";
 import { getReadProvider } from "@/lib/readProvider";
 import LaunchTokenArtifact from "@/abi/LaunchToken.json";
@@ -79,7 +79,8 @@ function shortAddress(value: string | null | undefined) {
 
 function campaignChainId(campaign: CampaignInfo): number {
   const id = Number((campaign as { chainId?: number }).chainId);
-  // DogeOS keeps its own chain (MuchFi market); only an unknown id falls back to Robinhood testnet.
+  // DogeOS keeps its own id so the panel refuses it (gen-8 Barkswap, B8), never traded as 46630; only an unknown id
+  // falls back to Robinhood testnet.
   return id === ROBINHOOD_CHAIN_ID || id === ROBINHOOD_TESTNET_CHAIN_ID || isDogeosChainId(id) ? id : ROBINHOOD_TESTNET_CHAIN_ID;
 }
 
@@ -114,6 +115,13 @@ export function RobinhoodWarRoomTradePanel({ campaign }: { campaign: CampaignInf
       if (timer) window.clearTimeout(timer);
     };
   }, [importOn, chainId, campaign.token, retry]);
+  if (isDogeosChainId(chainId)) {
+    return (
+      <p className="m-0 text-sm text-mw-muted" data-war-room-trade-unavailable="dogeos">
+        {DOGEOS_TRADE_UNAVAILABLE}
+      </p>
+    );
+  }
   if (route === "import") return <ImportedTradePanel item={graduatedCampaignTradeItem(campaign, chainId)} graduated />;
   if (route === "pending") return <p className="m-0 text-sm text-mw-muted" data-graduated-import-route="pending">Loading the trade route…</p>;
   return <RobinhoodWarRoomDirectTradePanel campaign={campaign} />;
@@ -123,10 +131,10 @@ function RobinhoodWarRoomDirectTradePanel({ campaign }: { campaign: CampaignInfo
   const { toast } = useToast();
   const wallet = useWallet();
   const chainId = useMemo(() => campaignChainId(campaign), [campaign]);
-  // Robinhood: ETH on Robinhood V3. DogeOS: DOGE on MuchFi. Same V3 trade path underneath.
+  // Robinhood only: ETH on Robinhood V3 (a DogeOS campaign is refused above, B8).
   const nativeSymbol = getNativeSymbol(chainId);
-  const networkName = isDogeosChainId(chainId) ? "DogeOS" : "Robinhood";
-  const venueLabel = isDogeosChainId(chainId) ? DOGEOS_DEX_LABEL : "Robinhood V3";
+  const networkName = "Robinhood";
+  const venueLabel = "Robinhood V3";
   // ETH 0.0002 on Robinhood (unchanged); 0.01 DOGE on DogeOS (L1 data fee included).
   const buyGasReserveWei = evmBuyGasReserveWeiForChain(chainId);
   const [tab, setTab] = useState<"buy" | "sell">("buy");

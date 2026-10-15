@@ -40,20 +40,17 @@ const EXCEPTIONS_PATH = "scripts/dogeos-chain-list-exceptions.json";
  * never gain 6281971 (global constraint), so each of these sites carries its own DogeOS branch.
  */
 const INDIRECT_LAUNCH_PATH_CHECKS = [
-  // t13 launch path: gen-7 + V3 graduation family
+  // t13 launch path. The gen-7 + V3 graduation branches (USD-target read, gen-7 buy switch, gen-7 launch options, V3
+  // locker harvest) were removed again by t33 (B8): DogeOS launches on gen-8 only. What stays is chain identity and
+  // the fail-closed DogeOS refusals next to the Robinhood checks below.
   { file: "frontend/src/lib/launchpadClient.ts", anchor: "productChain === ROBINHOOD_TESTNET_CHAIN_ID", window: 0, why: "EVM fallback read chain" },
-  { file: "frontend/src/lib/launchpadClient.ts", anchor: "evmReadChainId === ROBINHOOD_TESTNET_CHAIN_ID", window: 0, why: "USD graduation-target read" },
-  { file: "frontend/src/lib/launchpadClient.ts", anchor: "const isRobinhoodBuy =", window: 0, why: "V3-family buy path" },
-  { file: "frontend/src/features/launchpad/robinhoodAdapter.ts", anchor: "if (chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID) return chainId;", window: 2, why: "adapter chain id, never the 46630 default" },
-  { file: "frontend/src/features/launchpad/useLaunchpadAdapter.ts", anchor: "if (chainId === 4663 || chainId === 46630) return \"robinhood\";", window: 2, why: "adapter selection" },
+  { file: "frontend/src/features/launchpad/robinhoodAdapter.ts", anchor: "if (chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID) return chainId;", window: 2, why: "adapter chain id refuses DogeOS, never the 46630 default" },
   { file: "frontend/src/pages/Create.tsx", anchor: "const robinhoodSelected = isRobinhoodChain(", window: 0, why: "create page launch family" },
-  { file: "frontend/src/components/create/EvmGen6LaunchOptions.tsx", anchor: "const isRobinhood = isRobinhoodChainId(", window: 0, why: "launch options and gas reserve" },
-  { file: "frontend/src/lib/lpFeeHarvest.ts", anchor: "return isRobinhoodChainId(chainId)", window: 0, why: "V3 locker harvest" },
-  { file: "frontend/src/pages/TokenDetailsLiveEntry.tsx", anchor: "return isRobinhoodChainId(chainId) ||", window: 0, why: "V3-family token page entry" },
+  { file: "frontend/src/pages/TokenDetailsLiveEntry.tsx", anchor: "return isRobinhoodChainId(chainId) ||", window: 0, why: "token page entry keeps DogeOS's own EVM chain (identity)" },
   { file: "frontend/src/pages/TokenDetails.tsx", anchor: "const isRobinhoodPage = isRobinhoodChainId(chainIdForStorage);", window: 2, why: "DogeOS page flag beside the Robinhood one (labels, DOGE/USD); the V3 trade gate is Robinhood-only (B8)" },
   { file: "frontend/src/lib/tradeBalanceReserve.ts", anchor: "evmBuyGasReserveWei(isRobinhoodChainId(chainId))", window: 1, why: "buy gas reserve" },
-  { file: "frontend/src/components/postgrad/RobinhoodWarRoomTradePanel.tsx", anchor: "id === ROBINHOOD_TESTNET_CHAIN_ID ||", window: 0, why: "War Room panel never defaults DogeOS to 46630" },
-  { file: "frontend/src/components/postgrad/WarRoomCampaignRow.tsx", anchor: "const isRobinhoodRow =", window: 0, why: "War Room V3 row" },
+  { file: "frontend/src/components/postgrad/RobinhoodWarRoomTradePanel.tsx", anchor: "id === ROBINHOOD_TESTNET_CHAIN_ID ||", window: 0, why: "War Room panel keeps DogeOS's id to refuse it, never defaults it to 46630" },
+  { file: "frontend/src/components/postgrad/WarRoomCampaignRow.tsx", anchor: "const isRobinhoodRow =", window: 1, why: "War Room row: the DogeOS row flag (fail-closed trade card) sits beside the Robinhood one" },
   // t14 / t15 API symbol and price; the LP locker read (barkswap t14: no gen-7 locker on DogeOS, B8)
   { file: "frontend/api/lib/chainNative.js", anchor: "if (isRobinhoodChainId(id)) return \"ETH\";", window: 1, why: "nativeSymbolFor" },
   { file: "frontend/api/lib/arenaMarketSnapshot.js", anchor: "if (isRobinhoodChainId(chainId)) return resolveEthUsdPrice();", window: 1, why: "native USD price, no BNB fallthrough" },

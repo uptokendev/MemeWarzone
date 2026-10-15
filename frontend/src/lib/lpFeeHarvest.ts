@@ -21,11 +21,6 @@ function isRobinhoodChainId(chainId: number): boolean {
   return chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID;
 }
 
-/** LP held as a permanently locked V3 position: Robinhood (Uniswap V3) and DogeOS (MuchFi, same locker ABI). */
-function isV3PositionLockerChainId(chainId: number): boolean {
-  return isRobinhoodChainId(chainId) || isDogeosChainId(chainId);
-}
-
 function currentSolanaUiAuthority() {
   return resolveCurrentSolanaAuthority({
     chainId: 101,
@@ -212,23 +207,20 @@ export async function harvestLpFeesWithWallet(input: {
 }): Promise<{ txHash: string; lockerAddress: string; pairAddress: string }> {
   const chainId = Number(input.chainId);
   if (!isEvmChainId(chainId)) throw new Error("EVM LP fee harvest requires an EVM chain.");
+  // DogeOS launches on gen-8 only (Barkswap): its gen-7 V3 position locker is gone (B8) and no other locker
+  // shape (BNB below) may be called there. The API's lp-fees answers null for 6281971 the same way.
+  if (isDogeosChainId(chainId)) throw new Error("There is no LP locker on DogeOS, so there are no LP fees to harvest.");
 
   const pool = String(input.pairAddress || "").trim().toLowerCase();
   if (!/^0x[a-f0-9]{40}$/.test(pool)) {
-    throw new Error(isRobinhoodChainId(chainId)
-      ? "Invalid Robinhood V3 pool address."
-      : isDogeosChainId(chainId)
-        ? "Invalid MuchFi pool address."
-        : "Invalid Topaz pair address.");
+    throw new Error(isRobinhoodChainId(chainId) ? "Invalid Robinhood V3 pool address." : "Invalid Topaz pair address.");
   }
 
   const lockerAddress = String(input.lockerAddress || "").trim() || resolvePermanentLpLockerAddress(chainId);
   if (!/^0x[a-fA-F0-9]{40}$/.test(lockerAddress)) {
     throw new Error(isRobinhoodChainId(chainId)
       ? "Permanent V3 position locker address is not configured for Robinhood."
-      : isDogeosChainId(chainId)
-        ? "Permanent V3 position locker address is not configured for DogeOS."
-        : "Permanent LP locker address is not configured for this chain.");
+      : "Permanent LP locker address is not configured for this chain.");
   }
 
   const network = await input.signer.provider?.getNetwork();
@@ -236,18 +228,16 @@ export async function harvestLpFeesWithWallet(input: {
     throw new Error(`Wrong wallet network. Connect chain ${chainId} before harvesting fees.`);
   }
 
-  const abi = isV3PositionLockerChainId(chainId) ? V3_LOCKER_ABI : BNB_LOCKER_ABI;
+  const abi = isRobinhoodChainId(chainId) ? V3_LOCKER_ABI : BNB_LOCKER_ABI;
   const locker = new Contract(lockerAddress, abi, input.signer) as any;
 
-  // Robinhood and DogeOS get an extra registration/principal read before allowing the tx.
-  if (isV3PositionLockerChainId(chainId)) {
+  // Robinhood gets an extra registration/principal read before allowing the tx.
+  if (isRobinhoodChainId(chainId)) {
     const info = await locker.poolInfo(pool);
     const registered = Boolean(info?.registered ?? info?.[11]);
     const lockedLiquidity = BigInt(info?.lockedLiquidity ?? info?.[7] ?? 0);
     if (!registered || lockedLiquidity <= 0n) {
-      throw new Error(isDogeosChainId(chainId)
-        ? "MuchFi position is not registered with locked liquidity."
-        : "Robinhood V3 position is not registered with locked liquidity.");
+      throw new Error("Robinhood V3 position is not registered with locked liquidity.");
     }
   }
 
