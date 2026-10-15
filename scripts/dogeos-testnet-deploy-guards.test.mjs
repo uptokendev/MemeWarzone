@@ -116,13 +116,16 @@ test("the TS stack library and the guards share one set of names: manifest kind,
   const order = ts.match(/export const BARK_PREDICTED_ORDER = \[([\s\S]*?)\] as const;/);
   assert.ok(order, "BARK_PREDICTED_ORDER block found");
   const names = [...order[1].matchAll(/"(\w+)"/g)].map((m) => m[1]);
+  assert.equal(names.length, 10, "BARK_PREDICTED_ORDER parsed: 2 libraries, CommunityRewardsVault, 7 Bark contracts");
+  assert.equal(BARK_DEPLOYED_KEYS.length, 9);
   // CommunityRewardsVault is reused (root build) but sits at a planned nonce because it takes the splitter's address
   assert.deepEqual(names.filter((n) => n !== "CommunityRewardsVault"), [...BARK_DEPLOYED_KEYS]);
   const fqnBlock = ts.match(/const FQN = \{([\s\S]*?)\} as const;/);
   assert.ok(fqnBlock, "FQN block found");
   const fqns = Object.fromEntries([...fqnBlock[1].matchAll(/(\w+): sol\("([\w/]+)", "(\w+)"\)/g)].map((m) => [m[1], `contracts/${m[2]}.sol:${m[3]}`]));
   const entries = dogeosVerificationEntries(sampleRecord());
-  assert.equal(Object.keys(fqns).length, new Set(entries.map((e) => e.contract)).size, "one FQN per distinct verified contract");
+  assert.equal(Object.keys(fqns).length, 18, "FQN parsed: 9 reused root contracts + 2 libraries + 7 Bark contracts");
+  assert.equal(new Set(entries.map((e) => e.contract)).size, 18, "the guards verify the same 18 distinct contracts");
   for (const e of entries) {
     const key = e.contract.split(":")[1];
     assert.equal(fqns[key], e.contract, `${e.name}: the library deploys the contract the guards verify`);
@@ -384,6 +387,13 @@ test("deploy guards: a partial record from an earlier stopped run refuses with w
     );
     assert.throws(() => assertDeployGuards({ ...good, existingOutputs: ["deployments/dogeos/testnet.bark.json", partial] }), /partial deploy record/);
   }
+  // killed between the manifest write and the partial removal: the run may have completed, do not deploy again
+  for (const good of [goodDeploy(), goodForkDeploy()]) {
+    assert.throws(
+      () => assertDeployGuards({ ...good, existingOutputs: ["d/testnet.bark.partial.json", "d/testnet.bark.json"] }),
+      /AND the manifest d\/testnet\.bark\.json exists: the run may have completed.*Do not deploy again/,
+    );
+  }
   assert.equal(DOGEOS_PARTIAL_SUFFIX, ".partial.json");
   assert.equal(dogeosPartialPath("/x/testnet.bark.json"), "/x/testnet.bark.partial.json");
   assert.equal(dogeosPartialPath("/x/m"), "/x/m.partial.json");
@@ -630,6 +640,16 @@ test("verification entries: refuse a record from another chain, of another kind,
   assert.throws(() => dogeosVerificationEntries(r4), /initialAnswer/);
 });
 
+test("writeJsonFile is atomic: no .tmp file left, an existing file is replaced whole", () => {
+  const file = path.join(tmpDir(), "a", "x.json");
+  writeJsonFile(file, { a: 1n });
+  writeJsonFile(file, { b: 2 });
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { b: 2 });
+  assert.equal(fs.existsSync(`${file}.tmp`), false);
+  const src = fs.readFileSync(path.join(ROOT, "scripts", "lib", "dogeosTestnetDeployGuards.mjs"), "utf8");
+  assert.match(src, /fs\.writeFileSync\(`\$\{file\}\.tmp`[\s\S]*?fs\.renameSync\(`\$\{file\}\.tmp`, file\)/);
+});
+
 test("verification JSON: chains[\"6281971\"] on L2Scan, written to (and read back from) a temp path", () => {
   const r = sampleRecord();
   const manifest = dogeosVerificationManifest(r, dogeosVerificationEntries(r));
@@ -874,9 +894,22 @@ test("entrypoints run every guard before the first price fetch, deploy or send",
   assert.ok(/existingOutputs: \[out\.partial, out\.manifest, out\.verification\]/.test(deploy), "deploy refuses while a partial record exists");
   const rm = deploy.indexOf("fs.rmSync(out.partial");
   assert.ok(
-    rm > deploy.indexOf("writeDogeosManifest(out.manifest") && rm > deploy.indexOf("guards.writeJsonFile(out.verification"),
-    "the partial record goes only after both outputs are written",
+    rm > deploy.indexOf("writeDogeosManifest(out.manifest") && rm < deploy.indexOf("guards.writeJsonFile(out.verification"),
+    "the partial record goes right after the manifest (which marks completion), before the verification JSON",
   );
+  // the record is kept current BEFORE every send: recordedSend pushes 'sending' and reports it before calling sendTx,
+  // and both deploy() and send() go through it
+  const lib = fs.readFileSync(path.join(ROOT, "scripts", "lib", "dogeosBarkStack.ts"), "utf8");
+  const body = lib.slice(lib.indexOf("export async function recordedSend("));
+  const sending = body.indexOf('status: "sending"');
+  const push = body.indexOf("txs.push(entry);");
+  const pre = body.indexOf("progress();", push);
+  const sendCall = body.indexOf("await sendTx()");
+  assert.ok(sending > 0 && push > sending && pre > push && sendCall > pre, "recordedSend: entry 'sending' pushed and progress() before the send");
+  assert.match(lib, /await recordedSend\(txs, progress, \{ label, nonce, address: predicted \}, async \(\) => \{\s*contract = await factory\.deploy\(/);
+  assert.match(lib, /await recordedSend\(txs, progress, \{ label: `\$\{label\}\.\$\{fn\}`, nonce \}, \(\) => contract\[fn\]\(/);
+  assert.equal((lib.match(/factory\.deploy\(/g) || []).length, 1, "no deploy outside recordedSend");
+  assert.equal((lib.match(/contract\[fn\]\(/g) || []).length, 1, "no wiring send outside recordedSend");
   assert.ok(!/setCreatePaused/.test(deploy), "deploy never opens create");
   assert.ok(!/dogeosGen7Stack|LaunchFactoryGen7|MuchFi|Muchfi/.test(deploy), "deploy is not the gen-7 stack any more");
   const activate = fs.readFileSync(path.join(ROOT, "scripts", "activate-dogeos-testnet.ts"), "utf8");

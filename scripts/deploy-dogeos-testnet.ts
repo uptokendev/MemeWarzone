@@ -21,9 +21,9 @@
  * Then the initial DOGE/USD answer is Binance DOGEUSDT at run time (8 dp, refused if <= 0), and the choice-vault caps
  * are the gen-8 testnet caps (TESTNET_CAPS, in ETH) re-priced to DOGE at the run's Binance ETHUSDT / DOGEUSDT. The
  * launcher lands createPaused: opening it is activate-dogeos-testnet.ts only.
- * Partial runs: after every transaction sent or mined, the run rewrites `<manifest>.partial.json` with every transaction
- * and every contract so far (and the planned Bark addresses). It is removed only after the final manifest and the
- * verification JSON are written. If a run stops half-way the file stays, and every later run refuses until the founder
+ * Partial runs: before every send, after it returns and when it is mined, the run rewrites `<manifest>.partial.json`
+ * with every transaction and every contract so far (and the planned Bark addresses). It is removed right after the
+ * final manifest is written (the manifest alone marks a completed run; the verification JSON follows from it). If a run stops half-way the file stays, and every later run refuses until the founder
  * has checked what was deployed and removed it by hand: there is no resume, and no second stack goes out silently.
  * No key is read here: the signer comes from the hardhat network (dogeosTestnet signs only with the DogeOS deployer key
  * that hardhat.config.ts loads; there is no fallback key).
@@ -122,11 +122,12 @@ export async function runDogeosTestnetDeploy(opts: DogeosDeployOptions = {}): Pr
       capsSource: `TESTNET_CAPS (scripts/deploy-robinhood-testnet-gen6-fees.ts, the gen-8 testnet caps) re-priced ETH->DOGE at ETHUSDT ${ethUsd8} / DOGEUSDT ${dogeUsd8} (8 dp)`,
     },
   };
-  writeDogeosManifest(out.manifest, record);
   const entries = guards.dogeosVerificationEntries(record);
-  guards.writeJsonFile(out.verification, guards.dogeosVerificationManifest(record, entries));
-  // Only now is the run complete: the manifest and the verification JSON hold everything the partial record held.
+  writeDogeosManifest(out.manifest, record);
+  // The manifest now holds everything the partial record held and marks the run complete. A kill between these two
+  // lines leaves both files; the guards then say the run may have completed.
   fs.rmSync(out.partial, { force: true });
+  guards.writeJsonFile(out.verification, guards.dogeosVerificationManifest(record, entries));
   log(`manifest -> ${out.manifest}`);
   log(`verification (${entries.length} contracts) -> ${out.verification}`);
   log(`launcher ${stack.deployed.MwzBarkLauncher}: createPaused. STOP. Next: verify-dogeos-testnet.ts (both builds); activation only with the founder's go.`);

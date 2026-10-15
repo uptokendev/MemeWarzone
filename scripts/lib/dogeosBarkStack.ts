@@ -224,7 +224,82 @@ export type DogeosBarkStackParams = {
 };
 
 /** status: "sent" until its receipt is in, then "mined" (or "failed" if it reverted). */
-export type DogeosBarkTx = { label: string; hash: string; nonce: number; gasUsed: string; status: "sent" | "mined" | "failed"; address?: string };
+/**
+ * One transaction of a run, recorded BEFORE it is sent:
+ *   "sending"      recorded, send not returned yet (hash ""): the nonce may be used even if the run dies here
+ *   "send-failed"  the send threw (hash ""); on some nodes the nonce is still consumed (Hardhat mines a failing CREATE)
+ *   "sent"         broadcast, no receipt yet (or waiting failed without a receipt: see `error`)
+ *   "mined"        receipt status 1
+ *   "failed"       receipt status 0
+ */
+export type DogeosBarkTx = {
+  label: string;
+  hash: string;
+  nonce: number;
+  gasUsed: string;
+  status: "sending" | "send-failed" | "sent" | "mined" | "failed";
+  address?: string;
+  error?: string;
+};
+
+const errorText = (error: unknown) => String((error as any)?.shortMessage || (error as Error)?.message || error).slice(0, 500);
+
+/**
+ * Sends one transaction with its record kept current: the entry is pushed and reported (progress) before the send,
+ * again with its hash after the send returns, and once more when it is mined or fails. A throw from the send leaves
+ * the entry as "send-failed" with its nonce; a wait that throws without a status-0 receipt leaves it "sent" with the
+ * error. Exported for the ordering test (DogeosBarkStack.fork.spec.ts).
+ */
+export async function recordedSend(
+  txs: DogeosBarkTx[],
+  progress: () => void,
+  base: { label: string; nonce: number; address?: string },
+  sendTx: () => Promise<{ hash: string; wait: (confirms?: number) => Promise<any> }>,
+): Promise<{ tx: { hash: string }; receipt: any }> {
+  const entry: DogeosBarkTx = { ...base, hash: "", gasUsed: "", status: "sending" };
+  txs.push(entry);
+  progress();
+  let tx: { hash: string; wait: (confirms?: number) => Promise<any> };
+  try {
+    tx = await sendTx();
+  } catch (error) {
+    entry.status = "send-failed";
+    entry.error = errorText(error);
+    progress();
+    throw error;
+  }
+  entry.hash = tx.hash;
+  entry.status = "sent";
+  progress();
+  let receipt: any;
+  try {
+    receipt = await tx.wait(1);
+  } catch (error) {
+    const failed = (error as any)?.receipt;
+    if (failed && Number(failed.status) === 0) {
+      entry.status = "failed";
+      entry.gasUsed = String(failed.gasUsed ?? "");
+    }
+    entry.error = errorText(error);
+    progress();
+    throw error;
+  }
+  if (!receipt) {
+    entry.error = "no receipt";
+    progress();
+    throw new Error(`${base.label}: no receipt for ${tx.hash}`);
+  }
+  if (Number(receipt.status) !== 1) {
+    entry.status = "failed";
+    entry.gasUsed = String(receipt.gasUsed ?? "");
+    progress();
+    throw new Error(`${base.label} failed (${tx.hash})`);
+  }
+  entry.status = "mined";
+  entry.gasUsed = receipt.gasUsed.toString();
+  progress();
+  return { tx, receipt };
+}
 
 /**
  * What a run has sent so far, handed to onProgress after every transaction is sent and again once it is mined. The
@@ -344,27 +419,6 @@ export async function deployDogeosBarkStack(params: DogeosBarkStackParams): Prom
       wiringSent: [...wiringSent],
       txs: txs.map((t) => ({ ...t })),
     });
-  /** Records the sent transaction before waiting for it, so a run that stops on the receipt still lists it. */
-  async function confirm(entry: DogeosBarkTx, tx: any, label: string) {
-    txs.push(entry);
-    progress();
-    let receipt: any;
-    try {
-      receipt = await tx.wait(1);
-    } catch (error) {
-      entry.status = "failed";
-      progress();
-      throw error;
-    }
-    if (!receipt || receipt.status !== 1) {
-      entry.status = "failed";
-      progress();
-      throw new Error(`${label} failed (${tx.hash})`);
-    }
-    entry.status = "mined";
-    entry.gasUsed = receipt.gasUsed.toString();
-    return receipt;
-  }
   async function deploy(label: string, name: keyof typeof FQN, args: unknown[], opts: { expected?: string; libraries?: Record<string, string> } = {}) {
     const nonce = await provider.getTransactionCount(deployer, "pending");
     const predicted = ethers.getCreateAddress({ from: deployer, nonce });
@@ -375,10 +429,13 @@ export async function deployDogeosBarkStack(params: DogeosBarkStackParams): Prom
     // Only the constructor fragment: a library ABI names library-internal types ethers cannot parse.
     const ctor = artifact.abi.filter((f) => f.type === "constructor");
     const factory = new ethers.ContractFactory(ctor, linkBytecode(artifact, opts.libraries ?? {}), signer);
-    const contract: any = await factory.deploy(...args, { nonce });
-    const tx = contract.deploymentTransaction();
-    if (!tx) throw new Error(`${label}: no deployment transaction`);
-    await confirm({ label, hash: tx.hash, nonce, gasUsed: "", status: "sent", address: predicted }, tx, `${label} deploy`);
+    let contract: any;
+    await recordedSend(txs, progress, { label, nonce, address: predicted }, async () => {
+      contract = await factory.deploy(...args, { nonce });
+      const sent = contract.deploymentTransaction();
+      if (!sent) throw new Error(`${label}: no deployment transaction`);
+      return sent;
+    });
     const address = ethers.getAddress(await contract.getAddress());
     if (address !== predicted) throw new Error(`${label} landed at ${address}, not ${predicted}`);
     if ((await provider.getCode(address)) === "0x") throw new Error(`${label} ${address} has no code`);
@@ -390,8 +447,7 @@ export async function deployDogeosBarkStack(params: DogeosBarkStackParams): Prom
   async function send(label: string, address: string, name: keyof typeof FQN, fn: string, args: unknown[]) {
     const contract: any = new ethers.Contract(address, artifacts[name].abi, signer);
     const nonce = await provider.getTransactionCount(deployer, "pending");
-    const tx = await contract[fn](...args, { nonce });
-    await confirm({ label: `${label}.${fn}`, hash: tx.hash, nonce, gasUsed: "", status: "sent" }, tx, `${label}.${fn}`);
+    const { tx } = await recordedSend(txs, progress, { label: `${label}.${fn}`, nonce }, () => contract[fn](...args, { nonce }));
     wiringSent.push(`${label}.${fn}`);
     progress();
     log(`${label}.${fn}: ${tx.hash}`);
@@ -697,9 +753,11 @@ export function dogeosBarkManifestRecord(stack: DogeosBarkStack, meta: { network
   };
 }
 
+/** Atomic: written to `${file}.tmp`, then renamed over the target, so a kill never leaves a half-written manifest. */
 export function writeDogeosManifest(file: string, record: unknown): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const json = JSON.stringify(record, (_k, v) => (typeof v === "bigint" ? v.toString() : v), 2);
-  fs.writeFileSync(file, `${json}\n`);
+  fs.writeFileSync(`${file}.tmp`, `${json}\n`);
+  fs.renameSync(`${file}.tmp`, file);
 }
 

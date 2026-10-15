@@ -244,6 +244,14 @@ export function assertDeployGuards({ chainId, networkName, forkUrl, broadcastTok
   const op = resolveOperator(operator, { mode, signer: s, routeAuthority: ra });
   if (!Array.isArray(existingOutputs)) throw new Error("existingOutputs must list the output files that already exist");
   const partial = existingOutputs.find((f) => String(f).endsWith(DOGEOS_PARTIAL_SUFFIX));
+  const manifestToo = existingOutputs.find((f) => String(f) === dogeosManifestOfPartial(partial));
+  if (partial && manifestToo) {
+    throw new Error(
+      `refusing: a partial deploy record exists at ${partial} AND the manifest ${manifestToo} exists: the run may have completed ` +
+        "(it was stopped between writing the manifest and removing the partial record). Compare the two files and the explorer; " +
+        "if the manifest lists every contract, the deploy is complete: remove the partial record by hand. Do not deploy again",
+    );
+  }
   if (partial) {
     throw new Error(
       `refusing: a partial deploy record exists at ${partial}: an earlier run sent transactions and stopped before its manifest was written. ` +
@@ -350,6 +358,12 @@ export function dogeosPartialPath(manifest) {
   return `${String(manifest).replace(/\.json$/i, "")}${DOGEOS_PARTIAL_SUFFIX}`;
 }
 
+/** The manifest a partial record belongs to (inverse of dogeosPartialPath); undefined for no partial. */
+export function dogeosManifestOfPartial(partial) {
+  if (!partial) return undefined;
+  return `${String(partial).slice(0, -DOGEOS_PARTIAL_SUFFIX.length)}.json`;
+}
+
 export function dogeosOutputPaths({ mode, root, forkDir, manifestOverride }) {
   const override = String(manifestOverride || "").trim();
   if (mode === "chikyu") {
@@ -367,10 +381,12 @@ export function dogeosOutputPaths({ mode, root, forkDir, manifestOverride }) {
   throw new Error(`unknown deploy mode ${mode}`);
 }
 
+/** Atomic: written to `${file}.tmp`, then renamed over the target (a kill never leaves a half-written record). */
 export function writeJsonFile(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const json = JSON.stringify(value, (_k, v) => (typeof v === "bigint" ? v.toString() : v), 2);
-  fs.writeFileSync(file, `${json}\n`);
+  fs.writeFileSync(`${file}.tmp`, `${json}\n`);
+  fs.renameSync(`${file}.tmp`, file);
 }
 
 // ---------------------------------------------------------------------------------------------------- verification

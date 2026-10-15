@@ -27,6 +27,7 @@ import {
   linkBytecode,
   loadDogeosDeployGuards,
   loadStackArtifact,
+  recordedSend,
   planBarkAddresses,
   readBackDogeosBarkStack,
 } from "../../../scripts/lib/dogeosBarkStack";
@@ -65,6 +66,72 @@ async function rejects(promise: Promise<unknown>, re: RegExp): Promise<void> {
   expect(error, `expected a rejection matching ${re}`).to.be.instanceOf(Error);
   expect((error as Error).message).to.match(re);
 }
+
+describe("recordedSend: a transaction is on record before it is sent (t15, no chain)", function () {
+  type Snap = Array<{ label: string; nonce: number; status: string; hash: string; error?: string; gasUsed: string }>;
+  function recorder() {
+    const txs: any[] = [];
+    const snaps: Snap[] = [];
+    return { txs, snaps, progress: () => snaps.push(JSON.parse(JSON.stringify(txs))) };
+  }
+
+  it("records 'sending' with the nonce before the send, then 'sent' with the hash, then 'mined' with gas", async function () {
+    const r = recorder();
+    const out = await recordedSend(r.txs, r.progress, { label: "X", nonce: 7, address: "0x1" }, async () => {
+      expect(r.snaps.length, "progress ran before the send").to.equal(1);
+      expect(r.snaps[0]).to.deep.equal([{ label: "X", nonce: 7, address: "0x1", hash: "", gasUsed: "", status: "sending" }]);
+      return { hash: "0xaa", wait: async () => ({ status: 1, gasUsed: 21_000n }) };
+    });
+    expect(out.tx.hash).to.equal("0xaa");
+    expect(r.snaps.map((s) => s[0].status)).to.deep.equal(["sending", "sent", "mined"]);
+    expect(r.snaps[1][0].hash).to.equal("0xaa");
+    expect(r.snaps[2][0].gasUsed).to.equal("21000");
+  });
+
+  it("a send that throws leaves 'send-failed' with its nonce (no hash) on record before the error propagates", async function () {
+    const r = recorder();
+    await rejects(
+      recordedSend(r.txs, r.progress, { label: "X", nonce: 9 }, async () => {
+        throw new Error("Transaction reverted");
+      }),
+      /Transaction reverted/,
+    );
+    expect(r.snaps.map((s) => s[0].status)).to.deep.equal(["sending", "send-failed"]);
+    expect(r.snaps[1][0]).to.include({ nonce: 9, hash: "", status: "send-failed" });
+    expect(r.snaps[1][0].error).to.match(/Transaction reverted/);
+  });
+
+  it("a wait that throws without a receipt keeps 'sent' (with the error); a status-0 receipt marks 'failed'", async function () {
+    const r = recorder();
+    await rejects(
+      recordedSend(r.txs, r.progress, { label: "X", nonce: 1 }, async () => ({
+        hash: "0xbb",
+        wait: async () => {
+          throw new Error("timeout");
+        },
+      })),
+      /timeout/,
+    );
+    expect(r.snaps.at(-1)![0]).to.include({ status: "sent", hash: "0xbb", error: "timeout" });
+    const f = recorder();
+    await rejects(
+      recordedSend(f.txs, f.progress, { label: "X", nonce: 2 }, async () => ({
+        hash: "0xcc",
+        wait: async () => {
+          throw Object.assign(new Error("CALL_EXCEPTION"), { receipt: { status: 0, gasUsed: 5n } });
+        },
+      })),
+      /CALL_EXCEPTION/,
+    );
+    expect(f.snaps.at(-1)![0]).to.include({ status: "failed", hash: "0xcc", gasUsed: "5" });
+    const z = recorder();
+    await rejects(
+      recordedSend(z.txs, z.progress, { label: "X", nonce: 3 }, async () => ({ hash: "0xdd", wait: async () => ({ status: 0, gasUsed: 6n }) })),
+      /X failed \(0xdd\)/,
+    );
+    expect(z.snaps.at(-1)![0]).to.include({ status: "failed", gasUsed: "6" });
+  });
+});
 
 describe("DogeOS Bark deploy stack (t15) on the Chikyū fork", function () {
   const savedEnv: Record<string, string | undefined> = {};
@@ -155,13 +222,19 @@ describe("DogeOS Bark deploy stack (t15) on the Chikyū fork", function () {
       "CommunityRewardsVault",
       "MwzBarkCreatorEscrow",
     ];
-    const mined = (partial.txs as any[]).filter((t) => t.status === "mined");
+    // 14 nonces used on chain (Hardhat mines the failing CREATE and throws from the send), 14 entries recorded: the
+    // splitter was recorded before its send, so the record accounts for every nonce the run consumed.
+    expect(await ethers.provider.getTransactionCount(admin)).to.equal(nonce0 + 14);
+    expect((partial.txs as any[]).length).to.equal(14);
+    const mined = (partial.txs as any[]).slice(0, 13);
     expect(mined.map((t) => t.label)).to.deep.equal(expectedLabels);
-    // anything after the mined ones is the failed splitter attempt, never a success
-    for (const t of (partial.txs as any[]).slice(mined.length)) {
-      expect(t.label).to.equal("MwzBarkFeeSplitter");
-      expect(t.status).to.not.equal("mined");
-    }
+    for (const t of mined) expect(t.status, t.label).to.equal("mined");
+    const last = partial.txs[13];
+    expect(last.label).to.equal("MwzBarkFeeSplitter");
+    expect(last.nonce).to.equal(nonce0 + 13);
+    expect(same(last.address, blocked)).to.equal(true);
+    expect(last.status).to.not.equal("mined");
+    expect(["sending", "send-failed", "sent", "failed"]).to.include(last.status);
     expect(Object.keys(partial.deployed)).to.deep.equal(expectedLabels);
     for (const [i, t] of mined.entries()) {
       expect(t.nonce, t.label).to.equal(nonce0 + i);
