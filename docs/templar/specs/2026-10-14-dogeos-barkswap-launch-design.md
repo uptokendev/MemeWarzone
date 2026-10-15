@@ -35,6 +35,7 @@ on a Chikyū fork; README has every check and gas figure).
 | B8 | The 2026-10-10 gen-7/MuchFi DogeOS launch path (never deployed) is removed from the branch. |
 | B9 | Keys (2026-10-15): the create signer is the existing DogeOS route-authority key; a new fifth key, the **DogeOS operator**, holds the splitter, router-claim and choice-vault operator roles; the keeper key holds no contract role and only calls permissionless steps. |
 | B10 | Barkswap's community fee (2026-10-15) comes entirely out of MemeWarzone's share: the creator gets exactly gen-8's amounts, computed on the gross fee (560 bps of every bonding fee, 0.50% of volume after graduation). |
+| B11 | Splitter base (2026-10-15): gen-8's splitter percentages (league 37.5% of B, recruiter + squad + airdrop in their bands of B and G, protocol the rest) apply to the **net DOGE actually credited to the router bucket** (after Barkswap's cut, the creator's amount and coin conversion). League, recruiter, airdrop and protocol therefore share Barkswap's cut pro-rata; routing never stops because of the cut. Sub-project 2's pot readers use the same base. |
 
 ### Out of scope
 
@@ -83,7 +84,9 @@ sub-project 2; this sub-project exercises `keep` and `buyback`. Those sub-projec
 - **Fees are input-side**: buys pay in WDOGE, sells pay in the coin (B5). Buy fees are charged as r/(1+r) of
   the input so a buy costs the curve amount plus r, matching gen-7 within fee-unit rounding (1e6 units; worst
   case a few units in 1e6, measured 1.9999% for 2%).
-- **Graduation fee** is taken inline in the crossing swap (try/catch) with a permissionless fallback step.
+- **Graduation fee** is taken inline in the crossing swap (try/catch) with a permissionless fallback step. The
+  fallback runs only while the price is at or past the graduation price and the pool is not mid-swap, so the burn
+  only ever returns WDOGE; it is taken at most once and never while the price is inside A.
 
 ## 3. Contracts
 
@@ -109,8 +112,8 @@ that commit, so `MwzV4Token` keeps its bytecode and every diff audit has a fixed
 | Contract | Gen-8 counterpart | Responsibility |
 |---|---|---|
 | `MwzV4Token` | same | Plain 1B ERC-20. **Same bytecode**, reused as is. |
-| `MwzBarkLauncher` | `MwzV4Launcher` + the money side of `MwzLaunchHook` | Barkswap custom-pool deployer and plugin factory (`beforeCreatePoolHook` returns the shared plugin). One-tx launch: coin CREATE2 (salt from the create signer so the coin sorts below WDOGE; reverts otherwise), `createCustomPool` through Barkswap's entry point, initialize, tick spacing **10**, `EP.setFee(pool, 0)` before the dynamic-fee flag is enabled (so the pool's `lastFee` is 0 on every pool), mint A and B one-sided directly on the pool (owned by the launcher), 20M to the reserve lock, optional creator first buy. Signed create (gen-8 D3) with `openAt`; oracle band (F6). Fee books: per-coin creator owed, router bucket, parked router (gen-8 F3/F4). Fee collection and coin-fee conversion (B4, B5); the launcher itself sends the conversion swap. Graduation fee. Creator transfer (two-step). **Restore**: a permissionless `restore(coin)` re-applies our plugin and the fixed launch plugin config through the entry point if a Barkswap admin changed them; it takes no arguments beyond the coin, so it cannot set anything else. No other post-launch entry-point call exists (no fee, tick-spacing or config choice after launch). No path removes liquidity except the one graduation burn (I6). |
-| `MwzBarkPlugin` | swap side of `MwzLaunchHook` | One shared plugin for all our pools. `beforeInitialize`: only the launcher. `beforeModifyPosition`: only the launcher may add liquidity. `beforeSwap`: the gen-8 rate as `overrideFee` (phase by price at swap start, launch decay from `openAt`, no swap before `openAt` except the creator first buy); a swap sent by the launcher for coin conversion returns `overrideFee` 0, which with `lastFee` 0 is a true 0 fee. `afterSwap`: graduation latch + `graduatedAt`, inline graduation fee (try/catch), no sell may leave the price below the start price (gen-8 F2), and one swap event per swap (fields below). |
+| `MwzBarkLauncher` | `MwzV4Launcher` + the money side of `MwzLaunchHook` | Barkswap custom-pool deployer and plugin factory (`beforeCreatePoolHook` returns the shared plugin). One-tx launch: coin CREATE2 (salt from the create signer so the coin sorts below WDOGE; reverts otherwise), `createCustomPool` through Barkswap's entry point, initialize, tick spacing **10**, `EP.setFee(pool, 0)` before the dynamic-fee flag is enabled (so the pool's `lastFee` is 0 on every pool), mint A and B one-sided directly on the pool (owned by the launcher), 20M to the reserve lock, optional creator first buy. Signed create (gen-8 D3) with `openAt`; oracle band (F6). Fee books: per-coin creator owed, router bucket, parked router (gen-8 F3/F4). Fee collection and coin-fee conversion (B4, B5); the launcher itself sends the conversion swap. Graduation fee. Creator transfer (two-step). **Restore**: a permissionless `restore(coin)` re-applies our plugin, `setFee(0)` (while the dynamic-fee flag is off) and then the fixed launch plugin config through the entry point if a Barkswap admin changed them; it takes no arguments beyond the coin, so it cannot set anything else. No other post-launch entry-point call exists (no fee, tick-spacing or config choice after launch). No path removes liquidity except the one graduation burn (I6). |
+| `MwzBarkPlugin` | swap side of `MwzLaunchHook` | One shared plugin for all our pools. `beforeInitialize`: only the launcher. `beforeModifyPosition`: only the launcher may add liquidity. `beforeSwap`: the gen-8 rate as `overrideFee` (phase by price at swap start, launch decay from `openAt`, no swap before `openAt` except the creator first buy); a coin-conversion swap returns `overrideFee` 0, which with `lastFee` 0 is a true 0 fee; it is recognised by a transient flag the launcher sets only inside `convert`, so the launcher's other swap (the creator first buy inside `launch`, 2%) is charged normally. `afterSwap`: graduation latch + `graduatedAt`, inline graduation fee (try/catch), no sell may leave the price below the start price (gen-8 F2), and one swap event per swap (fields below). |
 | `MwzBarkFeeSplitter` | `MwzFeeSplitter` | Gen-8 claim-first fee routing to the vaults (`expectedPaid`), reading the launcher (`routerPaid`) instead of the hook. |
 | `MwzBarkCreatorChoiceVault` | `MwzCreatorChoiceVault` | Keep / holders / split / buyback; buybacks swap in our Barkswap pool (WDOGE wrap, `deployer` = launcher) instead of V4 native currency 0, keeping gen-8's buyback caps. |
 | `MwzBarkCreatorEscrow` | `MwzCreatorEscrow` | Escrow of creator buys after launch, through our pool (WDOGE wrap, `deployer` = launcher). |
@@ -120,7 +123,9 @@ that commit, so `MwzV4Token` keeps its bytecode and every diff audit has a fixed
 Reused unchanged (same bytecode, DogeOS constructor arguments): the DOGE/USD testnet oracle (foundation),
 `GraduationOracle`, and the vaults gen-8 routes into (weekly `TreasuryVaultV2`, `MonthlyLeagueTreasury`,
 `RecruiterRewardsVault`, `ProtocolRevenueVault`, `RewardDistributor` for holders and airdrop,
-`CommunityRewardsVault`). The DogeOS deploy stack keeps those and drops the gen-7 factory, campaign and MuchFi parts.
+`CommunityRewardsVault`). The DogeOS deploy stack keeps those and drops the gen-7 factory, campaign and MuchFi
+parts, and also gen-7's `TreasuryRouterV4` and its capped main vault: the splitter is the only depositor into the
+vaults, as on gen-8.
 
 ### Money flow (LP-fee mode)
 
@@ -136,43 +141,54 @@ Reused unchanged (same bytecode, DogeOS constructor arguments): the DOGE/USD tes
    the remainder to the router bucket's **bonding** book (bonding phase) or to the post-graduation creator/router
    split. The router bucket's **graduation** book receives only the one-time 2% graduation fee (creator 0%).
 4. **Coin fees** (from sells) stay booked in coins per coin and per phase until a permissionless
-   **convert(coin, maxCoins)** sells them in that coin's pool at 0 fee. Each call draws coins **pro-rata across
+   **convert(coin)** sells them in that coin's pool at 0 fee. It always converts `min(pending, cap amount)` (the
+   most the price-impact cap allows), whatever the caller, so a dust call cannot use up an interval. Each call draws coins **pro-rata across
    that coin's pending phase books** (the same fraction of every book), and the DOGE proceeds go back to those
    books in the same proportions, then are credited as in step 3. The launcher emits
    `CoinFeesConverted(coin, coinsIn, nativeOut, per-phase coins and DOGE)`.
    **Griefing bounds** (CLAUDE.md): the conversion sell is subject to F2 (it is cut short so the price never
    ends below the start price); a per-call price-impact cap and a minimum interval per coin between conversions
    (both deploy-time constants) bound the cumulative sell pressure an outside caller can force; no conversion
-   runs inside the 60 s launch window. Anyone may call it; our keeper calls it on a schedule.
+   runs inside the 60 s launch window. Anyone may call it; our keeper calls it on a schedule. State and
+   ordering: nonReentrant; books updated before the swap's external calls settle (checks-effects-interactions);
+   reachable in every phase after the launch window; a revert leaves the books unchanged.
 5. From there gen-8 unchanged: router bucket → fee splitter → vaults; creator claims from the launcher.
    `routerPaid`-style totals (amount, bonding, graduation) are the launcher's **post-conversion** books, so the
-   splitter's `expectedPaid` checks compare against realised DOGE, never swap-time estimates.
+   splitter's `expectedPaid` checks compare against realised DOGE, never swap-time estimates. The splitter's
+   B and G are those net books (B11), so its bands hold whatever Barkswap's cut is: a route run never reverts
+   `OutOfBand` because of the cut.
 
 **Attribution for D1** (off-chain, gen-8's pipeline): a buy's accrual row is final at the swap (its WDOGE fee is
 known). A sell's row is written at the swap with its coin fee and an expected value. Because every conversion
 draws the same fraction of every pending coin fee of that coin, each pending sell row converts by that same
 fraction at that conversion's average price: a row accrues DOGE per conversion and is routable for the part
-already converted. Route runs and league-pot readers use converted (final) amounts only; the keeper converts
-before each league epoch close so pots are complete (boundary with sub-project 2, which owns the pots).
+already converted. Route runs and league-pot readers use converted (final) amounts only: a pot at epoch close
+holds what was converted by the close, and an unconverted remainder counts in the epoch in which it converts
+(boundary with sub-project 2, which owns the pots and follows this rule). A route run's row set is the buy rows
+covered by collects up to the operator's plan plus the converted parts of sell rows, and it matches
+`expectedPaid` (the Barkswap form of gen-8's "rows up to the `RouterClaimed` that reaches the splitter", audit V13).
 
 **Per-swap event fields** (what gen-8's `HookFee` + PoolManager `Swap` give its indexer): pool and coin, swap
 sender (the router; gen-8's link policy counts distinct swap senders and whitelists Barkswap's SwapRouter for
 6281971), side, trader-side native and coin amounts, `curveAmount` (gen-7 volume, fee excluded; for a sell the
 WDOGE payout, gen-7's "payout"), gross fee, net fee and their token, community fee at swap time, rate, phase
-(bonding / post; plus a crossing flag), creator amount (in the fee token), price after the swap.
+(bonding / post; plus a crossing flag), creator amount (in the fee token), price after the swap, and a **swap
+kind**: trade, conversion (launcher), escrow buy, choice-vault buyback.
 
 ### Invariants (audit list, each with a fork test)
 
 The gen-8 invariant list (gen-8 design 2.9) translated to Barkswap, at least:
 A and B lose liquidity exactly once, `floor(liqA × 2%)` at graduation (I6), and `restore` can only re-apply our plugin and launch config; only the launcher initializes and adds liquidity; the rate
 per swap matches phase and decay; no swap before `openAt` except the creator first buy; no sell below the start
-price; graduation latches once and the 2% graduation fee is taken exactly once; after graduation the creator
+price; graduation latches once and the 2% graduation fee is taken at most once and never while the price is inside A; after graduation the creator
 amount is exactly 50% of the gross fee (buys: 0.50% of volume within the 1e6 fee-unit rounding; sells: 50% of
 the gross coin fee, valued at its conversion price) and the bonding creator amount is exactly D2's
 `creatorBondingBps` of the gross fee, whatever Barkswap's cut (B10); the launcher's collected books (per coin,
 per phase, in WDOGE, coin and DOGE) equal its balances exactly, and the plugin's per-phase totals equal what
 collect can still take from the positions within a stated rounding tolerance (Algebra's Q128 fee growth);
-a conversion never ends below the start price, never exceeds its impact cap and respects its interval; coin conversion never exceeds its impact cap; the reserve releases only under its
+a conversion never ends below the start price, never exceeds its impact cap, respects its interval and always
+converts the full capped amount; a conversion swap pays 0 fee and every other swap the phase rate; a route run
+never reverts `OutOfBand` whatever the community fee (B11); the reserve releases only under its
 four conditions; claims pay only the entitled party; parked-router rules (F3/F4) hold.
 Plus gen-8 audit regressions F1-F17 where they apply, and Barkswap-specific cases: the community fee cut,
 admin `setPlugin` / `setPluginConfig` / `setCommunityFee` on our pools (principal stays safe, books stay correct,
@@ -188,10 +204,12 @@ order, reachable states, over/underflow and griefing, as CLAUDE.md requires.
 ### Accepted testnet risks
 
 - Barkswap's admin (one EOA; POOLS_ADMINISTRATOR has 20 members: the entry point plus 19 configurator contracts) can change our pools' plugin, plugin config and
-  community fee. It cannot move A/B principal. Detected and alerted (section 4, admin-change watch); mitigated for mainnet by the letter. If the dynamic-fee flag or our plugin is removed, trades fall back to `lastFee` 0: they keep working but we earn nothing until the keeper calls `restore`, which an admin can undo again.
+  community fee. It cannot move A/B principal except through the one graduation burn, which a swapped-in plugin
+  could tax; clearing our config would also let outsiders add liquidity and share LP fees. Detected and alerted (section 4, admin-change watch); mitigated for mainnet by the letter. If the dynamic-fee flag or our plugin is removed, trades fall back to `lastFee` 0: they keep working but we earn nothing until the keeper calls `restore`, which an admin can undo again.
 - About 6.1M gas per launch (Barkswap deploys a 22.5 KB pool per coin): at most one launch per 10M block.
 - Side pools (B3).
-- Discovery: no DexScreener / GeckoTerminal indexing of DogeOS yet; Barkswap's router and UI route custom pools.
+- Discovery: no DexScreener / GeckoTerminal indexing of DogeOS yet. Barkswap says its router and UI route custom
+  pools (their message, unverified for pools with our `deployer`); our app routes through our pool directly.
 
 ### Amendments to the 2026-10-10 foundation spec
 
@@ -221,7 +239,10 @@ reserve lock and escrow are read as on gen-8 (finance, owner hand-over, holder a
 per-pool log scans for trades; the DogeOS 10k-block getLogs
 window stays. Trader = `tx.from` (gen-8). Writes as gen-8: `curve_trades` up to and including the crossing
 swap, `dex_trades` after (D14); `token_stats` / `market_stats` from the pool price; candles; D1 fee accrual
-rows and `reward_events`. Config follows gen-8's env pattern (`0xaddr@startBlock`) with the DogeOS launcher
+rows and `reward_events`. By swap kind: a **conversion** swap writes no trade row and no accrual row (it is fee
+movement, not trading; the pool price it leaves feeds stats and candles as any price change does, its volume
+counts nowhere); **escrow** buys and **choice-vault buybacks** are written as gen-8 writes them
+(`league_excluded`). Config follows gen-8's env pattern (`0xaddr@startBlock`) with the DogeOS launcher
 and plugin and a `barkswap` venue.
 
 **API.** Gen-8 endpoints serve 6281971 through the adapter: campaign state (lens), progress, coin page, and
@@ -233,11 +254,13 @@ an exception otherwise.
 **App.** Gen-8's create branch calls our launcher (first-buy preview, 70% cap). Gen-8's single trade panel
 executes through Barkswap's SwapRouter: buy = `exactInputSingle` with DOGE in and `deployer` = our launcher;
 sell = approve the router, then `multicall(exactInputSingle, unwrapWNativeToken)`; quotes from QuoterV2 with
-`deployer` (equal to execution, proven). Fee line and launch countdown from the lens. No trade authorization.
+`deployer` (equal to execution, proven). Sells set `limitSqrtPrice` at the start price (or are capped from the
+lens) so an oversized sell is cut rather than reverted by F2. Fee line and launch countdown from the lens. No trade authorization.
 DOGE gas reserve and the "DogeOS" / "Barkswap" labels come from the foundation.
 
-**Keepers** (in the indexer, existing DogeOS keeper key): fee collect + coin conversion; route worker
-(`claimRouter` → splitter → vaults, sent with the DogeOS operator key); graduation-fee fallback; reserve
+**Keepers** (in the indexer; permissionless steps with the DogeOS keeper key, role steps with the DogeOS
+operator key): fee collect + coin conversion; route worker (`claimRouter` → splitter → vaults, operator key);
+choice-vault buybacks (operator key); graduation-fee fallback; reserve
 release; **side-pool watch** (Barkswap factory `Pool` and `CustomPool` events whose pair contains one of our
 coins → alert, shown on the coin page); **admin-change watch** (batched reads of each of our pools'
 `plugin()`, plugin config, community fee and `lastFee` every few minutes → alert on any change from the
@@ -265,6 +288,7 @@ produces. Gen-8's V4 tests pass unchanged. The chain-list guard passes. Source p
 reviewed DogeOS changes.
 
 **Gates, in order:**
+0. Gate 0 (before any contract test): the audit (section 3) with verdict PASS for each of the seven contracts.
 1. Gate 1: full suites against the base (`release/evm-gen8`); no new failures.
 2. Gate 2: whole-branch review by a fresh branch reviewer.
 3. Gate 3: fork rehearsal of the full deploy plus lifecycle in one fork process (deploy the stack, launch, 5+

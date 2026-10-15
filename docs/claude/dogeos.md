@@ -14,6 +14,7 @@ Integration branch: `feat/dogeos-testnet` (worktree `C:\Users\sven\Projects\Meme
   MuchFi V3 graduation path built earlier on this branch was never deployed and is being removed.
 - **Economics:** gen-8 one-to-one. Testnet graduation target $150 (DOGE/USD testnet oracle, read once at launch).
 - **Barkswap cut (B10):** comes out of MemeWarzone's share; the creator gets exactly gen-8's amounts on the gross fee.
+- **Splitter base (B11):** gen-8 percentages over the net DOGE actually credited to the router bucket.
 - **Side pools:** the coin stays a plain ERC-20; we detect side pools and alert (like gen-8 design 6.8, audit point A5). No token guard.
 - **Fee mode:** LP-fee mode. The plugin sets the swap's pool fee; our positions are the only liquidity,
   so fees accrue to our positions and are collectable at any time. Barkswap keeps 3% of every fee
