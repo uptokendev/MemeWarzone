@@ -22,6 +22,15 @@
  * route_authorization_log (route_kind 'create', metadata.generation.factoryGeneration 8).
  *
  * Key: EVM_GEN8_CREATE_SIGNER_PRIVATE_KEY, else the route authority key the gen-7 path uses.
+ *
+ * Barkswap venue (DogeOS 6281971; barkswap plan t21, spec section 3 launcher row / section 4 API, B9): the same request,
+ * hash, payload and checks against MwzBarkLauncher (its hashRequest / authorizationDigest / CREATE_AUTH_TYPE are
+ * gen-8's; the digest binds the chain id and the Bark launcher, so neither authorization replays on the other venue).
+ * Differences: the preflight reads plugin() (not hook()) and wNative(), the plan carries liqA / liqB, the first buy is
+ * estimated on the Algebra pool (shared/evmGen8Bark.mjs), and the salt is not just random: the API searches one whose
+ * CREATE2 coin sorts below WDOGE (launch() reverts CoinNotBelowWNative otherwise; api/lib/evmGen8Bark.js). The
+ * response and the log add `venue: "barkswap"` and the predicted coin. The signer is the DogeOS route-authority key
+ * (B9): on a Barkswap chain gen8CreateSigner ignores EVM_GEN8_CREATE_SIGNER_PRIVATE_KEY.
  */
 import crypto from "node:crypto";
 import { ethers } from "ethers";
@@ -35,15 +44,19 @@ import {
   GEN8_TARGET_DEFAULT_USD,
   GEN8_TARGET_TEST_USD,
   GEN8_TRADE_PATH,
+  GEN8_VENUE_BARKSWAP,
   gen8AuthorizationPayload,
   gen8FirstBuyEstimate,
   gen8HashRequest,
   gen8LaunchRequestJson,
   gen8MetadataHash,
   gen8RevertReason,
+  gen8VenueFor,
   isGen8TargetAllowed,
 } from "../../shared/evmGen8.mjs";
-import { gen8V4ConfigFor } from "../lib/evmGen8Config.js";
+import { barkFirstBuyEstimate } from "../../shared/evmGen8Bark.mjs";
+import { gen8ConfigFor, isGen8BarkConfig } from "../lib/evmGen8Config.js";
+import { BARK_LAUNCHER_ABI, findBarkCoinSalt } from "../lib/evmGen8Bark.js";
 import { strictEvmWallet } from "../lib/evmGen8StrictWallet.js";
 import { createCanaryRefusalBody, isCreateAllowedForWallet } from "../lib/createCanary.js";
 
@@ -76,9 +89,13 @@ function isTruthy(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 }
 
-/** The gen-8 create signer: EVM_GEN8_CREATE_SIGNER_PRIVATE_KEY, else `fallbackKey` (the route authority key). */
-export function gen8CreateSigner(env = process.env, fallbackKey = "") {
-  const key = String(env.EVM_GEN8_CREATE_SIGNER_PRIVATE_KEY || "").trim() || String(fallbackKey || "").trim();
+/**
+ * The gen-8 create signer: EVM_GEN8_CREATE_SIGNER_PRIVATE_KEY, else `fallbackKey` (the route authority key). On a
+ * Barkswap chain (`chainId` on that venue) only `fallbackKey`: the DogeOS create signer is the route-authority key (B9).
+ */
+export function gen8CreateSigner(env = process.env, fallbackKey = "", chainId = null) {
+  const barkswap = chainId != null && gen8VenueFor(chainId) === GEN8_VENUE_BARKSWAP;
+  const key = (barkswap ? "" : String(env.EVM_GEN8_CREATE_SIGNER_PRIVATE_KEY || "").trim()) || String(fallbackKey || "").trim();
   if (!key) return null;
   try {
     return new ethers.Wallet(key);
@@ -87,10 +104,10 @@ export function gen8CreateSigner(env = process.env, fallbackKey = "") {
   }
 }
 
-/** True when the body asks for a gen-8 create on a chain where gen-8 is configured. */
+/** True when the body asks for a gen-8 create on a chain where gen-8 is configured (either venue). */
 export function isGen8CreateRequest(body, env = process.env) {
   const chainId = Number(body?.chainId);
-  const cfg = gen8V4ConfigFor(chainId, env);
+  const cfg = gen8ConfigFor(chainId, env);
   if (!cfg) return false;
   if (Number(body?.generation) === EVM_GEN8_FACTORY_GENERATION) return true;
   const target = String(body?.launcherAddress || body?.factoryAddress || "").trim().toLowerCase();
@@ -316,6 +333,93 @@ export function planGen8FirstBuy({ firstBuyValue, minFirstBuyOut, slippageBps, p
   };
 }
 
+/**
+ * MwzBarkLauncher's state the signature depends on (Barkswap venue). Same refusals as readGen8LauncherPreflight; the
+ * launcher must use the configured plugin (EVM_GEN8_PLUGIN), and its wNative() is the bound the coin must sort below.
+ * Throws Gen8CreateError (409 / 503 / 400).
+ */
+export async function readBarkLauncherPreflight({ provider, cfg, targetUsd, signerAddress }) {
+  let code;
+  try {
+    code = await provider.getCode(cfg.launcher);
+  } catch (error) {
+    throw new Gen8CreateError(503, "CREATE_PREFLIGHT_FAILED", String(error?.shortMessage || error?.message || error));
+  }
+  if (!code || code === "0x") throw new Gen8CreateError(409, "CREATE_FACTORY_CODE_MISSING", "The configured gen-8 launcher has no contract code.");
+  const launcher = new ethers.Contract(cfg.launcher, BARK_LAUNCHER_ABI, provider);
+  let createPaused;
+  let createSigner;
+  let plugin;
+  let wNative;
+  let allowed;
+  try {
+    [createPaused, createSigner, plugin, wNative, allowed] = await Promise.all([
+      launcher.createPaused(), launcher.createSigner(), launcher.plugin(), launcher.wNative(), launcher.isGraduationTargetAllowed(targetUsd),
+    ]);
+  } catch (error) {
+    throw new Gen8CreateError(503, "CREATE_PREFLIGHT_FAILED", String(error?.shortMessage || error?.message || error));
+  }
+  if (ethers.getAddress(plugin) !== ethers.getAddress(cfg.plugin)) {
+    throw new Gen8CreateError(409, "GEN8_PLUGIN_MISMATCH", "The gen-8 launcher on chain does not use the configured plugin (EVM_GEN8_PLUGIN).");
+  }
+  if (createPaused) throw new Gen8CreateError(503, "CREATE_FACTORY_NOT_READY", "New generation 8 launches are paused.");
+  if (ethers.getAddress(createSigner) !== ethers.getAddress(signerAddress)) {
+    throw new Gen8CreateError(503, "ROUTE_AUTHORITY_MISMATCH", "Configured create signer does not match the gen-8 launcher's createSigner().");
+  }
+  if (!allowed) throw new Gen8CreateError(400, "GEN8_TARGET_UNSUPPORTED", "The launcher does not accept this graduation target on this chain.");
+  let plan;
+  try {
+    const p = await launcher.plan(targetUsd);
+    plan = {
+      marketCapNative: BigInt(p.mc ?? p[0]),
+      virtualNative: BigInt(p.vN ?? p[1]),
+      virtualToken: BigInt(p.vT ?? p[2]),
+      tickStart: Number(p.tickStart ?? p[3]),
+      tickGrad: Number(p.tickGrad ?? p[4]),
+      liqA: BigInt(p.liqA ?? p[5]),
+      liqB: BigInt(p.liqB ?? p[6]),
+    };
+  } catch (error) {
+    // OraclePriceUnavailable / OraclePriceOutOfBand / TargetOutOfRangeAtPrice / BadTicks: the launch would revert now.
+    throw new Gen8CreateError(503, "GEN8_ORACLE_UNAVAILABLE", "The graduation oracle cannot size a launch right now. Try again shortly.", { reason: String(error?.shortMessage || error?.reason || error?.message || error), revert: gen8RevertReason(error)?.name ?? null });
+  }
+  return { createPaused: false, createSigner: ethers.getAddress(createSigner), plugin: ethers.getAddress(plugin), wNative: ethers.getAddress(wNative), plan };
+}
+
+/** Barkswap first buy: the Algebra estimate (shared/evmGen8Bark.mjs) and the slippage bound. Same refusals as V4. */
+export function planBarkFirstBuy({ firstBuyValue, minFirstBuyOut, slippageBps, plan }) {
+  const est = barkFirstBuyEstimate({ valueWei: firstBuyValue, tickStart: plan.tickStart, tickGrad: plan.tickGrad, liqA: plan.liqA });
+  if (firstBuyValue > 0n && est.overCap) {
+    throw new Gen8CreateError(400, "GEN8_FIRST_BUY_TOO_LARGE", "The first buy can take at most 70% of the supply (700,000,000 coins).", {
+      expectedCoinsOut: est.coinsOut.toString(), maxCoins: GEN8_FIRST_BUY_MAX.toString(),
+    });
+  }
+  let minOut = minFirstBuyOut;
+  if (minOut === null) minOut = firstBuyValue > 0n ? (est.coinsOut * BigInt(10_000 - slippageBps)) / 10_000n : 0n;
+  if (minOut > est.coinsOut) {
+    throw new Gen8CreateError(400, "GEN8_FIRST_BUY_MIN_OUT_TOO_HIGH", "minFirstBuyOut is above what the first buy returns at today's price.", { expectedCoinsOut: est.coinsOut.toString() });
+  }
+  return {
+    valueWei: firstBuyValue,
+    curveCostWei: est.costWei,
+    feeWei: est.feeWei,
+    expectedCoinsOut: est.coinsOut,
+    minCoinsOut: minOut,
+    slippageBps: minFirstBuyOut === null ? slippageBps : null,
+    algebraFeeUnits: est.feeUnits,
+  };
+}
+
+/** The Bark salt search; a Gen8CreateError (503) when no salt sorts the coin below wNative. */
+function barkSaltFor({ cfg, creator, fields, wNative, randomSalt }) {
+  try {
+    return findBarkCoinSalt({ launcher: cfg.launcher, creator, name: fields.name, symbol: fields.symbol, wNative, ...(randomSalt ? { randomSalt } : {}) });
+  } catch (error) {
+    if (error?.code === "GEN8_SALT_NOT_FOUND") throw new Gen8CreateError(503, "GEN8_SALT_NOT_FOUND", "No coin address below the launcher's wrapped native token was found. Try again.");
+    throw error;
+  }
+}
+
 /** Signs the launch request for `creator`. Returns { payload, signature } and checks the signature recovers. */
 export async function signGen8CreateAuthorization({ signer, chainId, launcher, creator, request, deadline }) {
   const payload = gen8AuthorizationPayload({ chainId, launcher, creator, request, deadline });
@@ -338,8 +442,9 @@ function authDeadline(env, nowSec) {
 export async function gen8CreateAuthorization(body, deps) {
   const env = deps.env || process.env;
   const chainId = Number(body?.chainId);
-  const cfg = gen8V4ConfigFor(chainId, env);
+  const cfg = gen8ConfigFor(chainId, env);
   if (!cfg) return { status: 400, body: { error: "Generation 8 launches are not configured on this chain.", code: "GEN8_NOT_CONFIGURED" } };
+  const bark = isGen8BarkConfig(cfg);
   const signer = deps.signer;
   if (!signer) {
     return { status: 503, body: { error: "Create authorization signer is not configured.", code: "ROUTE_AUTHORIZER_NOT_CONFIGURED", requiredEnv: ["EVM_GEN8_CREATE_SIGNER_PRIVATE_KEY", "or ROUTE_AUTHORITY_PRIVATE_KEY"] } };
@@ -371,9 +476,11 @@ export async function gen8CreateAuthorization(body, deps) {
     }
     const provider = await deps.getProvider(chainId);
     if (!provider) return { status: 503, body: { error: "RPC URL is missing for this chain.", code: "CREATE_RPC_NOT_CONFIGURED" } };
-    const onChain = await readGen8LauncherPreflight({ provider, cfg, targetUsd: parsed.fields.targetUsd, signerAddress: signer.address });
-    const firstBuy = planGen8FirstBuy({ firstBuyValue: parsed.fields.firstBuyValue, minFirstBuyOut: parsed.minFirstBuyOut, slippageBps: parsed.slippageBps, plan: onChain.plan });
-    const salt = deps.randomSalt ? BigInt(deps.randomSalt()) : BigInt(`0x${crypto.randomBytes(32).toString("hex")}`);
+    const onChain = await (bark ? readBarkLauncherPreflight : readGen8LauncherPreflight)({ provider, cfg, targetUsd: parsed.fields.targetUsd, signerAddress: signer.address });
+    const firstBuy = (bark ? planBarkFirstBuy : planGen8FirstBuy)({ firstBuyValue: parsed.fields.firstBuyValue, minFirstBuyOut: parsed.minFirstBuyOut, slippageBps: parsed.slippageBps, plan: onChain.plan });
+    // Barkswap: a salt whose CREATE2 coin sorts below the launcher's wNative (launch() refuses any other).
+    const barkCoin = bark ? barkSaltFor({ cfg, creator: walletAddress, fields: parsed.fields, wNative: onChain.wNative, randomSalt: deps.randomSalt }) : null;
+    const salt = bark ? barkCoin.salt : deps.randomSalt ? BigInt(deps.randomSalt()) : BigInt(`0x${crypto.randomBytes(32).toString("hex")}`);
     const request = { ...parsed.fields, minFirstBuyOut: firstBuy.minCoinsOut, salt };
     const deadline = authDeadline(env, nowSec);
     const signed = await signGen8CreateAuthorization({ signer, chainId, launcher: cfg.launcher, creator: walletAddress, request, deadline });
@@ -386,7 +493,7 @@ export async function gen8CreateAuthorization(body, deps) {
     const routeProfileId = selfRecruiter ? 1 : Number(route?.tradeRouteProfileId ?? 1);
     const finalizeRouteProfileId = selfRecruiter ? 1 : Number(route?.finalizeRouteProfileId ?? 1);
     const launchRequest = gen8LaunchRequestJson(request);
-    const generation = { factoryGeneration: EVM_GEN8_FACTORY_GENERATION, campaignGeneration: EVM_GEN8_CAMPAIGN_GENERATION, requestHashLayout: "gen8_14_field", kind: "gen8" };
+    const generation = { factoryGeneration: EVM_GEN8_FACTORY_GENERATION, campaignGeneration: EVM_GEN8_CAMPAIGN_GENERATION, requestHashLayout: "gen8_14_field", kind: "gen8", ...(bark ? { venue: cfg.venue } : {}) };
     // B: when trading opens (unix seconds; 0 = at launch, the launch block time). The launch request carries it last.
     const openAtJson = { openAt: Number(request.openAt), scheduled: request.openAt > 0n, maxOpenDelaySeconds: GEN8_MAX_OPEN_DELAY_SECONDS };
     const planJson = {
@@ -396,6 +503,7 @@ export async function gen8CreateAuthorization(body, deps) {
       virtualToken: onChain.plan.virtualToken.toString(),
       tickStart: onChain.plan.tickStart,
       tickGrad: onChain.plan.tickGrad,
+      ...(bark ? { liqA: onChain.plan.liqA.toString(), liqB: onChain.plan.liqB.toString() } : {}),
     };
     const firstBuyJson = {
       valueWei: firstBuy.valueWei.toString(),
@@ -405,8 +513,13 @@ export async function gen8CreateAuthorization(body, deps) {
       minCoinsOut: firstBuy.minCoinsOut.toString(),
       slippageBps: firstBuy.slippageBps,
       feeBps: 200,
+      ...(bark ? { algebraFeeUnits: firstBuy.algebraFeeUnits, estimate: "algebra_one_step" } : {}),
     };
-    const preflight = { ...createPreflight, launcher: cfg.launcher, createPaused: false, createSigner: onChain.createSigner, hook: onChain.hook };
+    const preflight = bark
+      ? { ...createPreflight, launcher: cfg.launcher, createPaused: false, createSigner: onChain.createSigner, plugin: onChain.plugin, wNative: onChain.wNative }
+      : { ...createPreflight, launcher: cfg.launcher, createPaused: false, createSigner: onChain.createSigner, hook: onChain.hook };
+    // Barkswap: the coin's address is fixed by the creator, the salt, the name and the symbol (MwzBarkLaunchLib.deployCoin).
+    const coinJson = bark ? { address: barkCoin.coin, wNative: onChain.wNative, sortsBelowWNative: true, saltTries: barkCoin.tries } : null;
     await deps.logRouteAuthorization({
       chainId,
       walletAddress,
@@ -430,9 +543,36 @@ export async function gen8CreateAuthorization(body, deps) {
         trading: openAtJson,
         description: parsed.description || null,
         preflight,
+        ...(bark ? { coin: coinJson } : {}),
       },
     });
 
+    if (bark) {
+      return {
+        status: 200,
+        body: {
+          // launcher.launch(launchRequest, { deadline, signature }, { value: launchRequest.firstBuyValue })
+          authorization: { deadline, signature: signed.signature, validUntil, digest: signed.digest },
+          launchRequest,
+          venue: cfg.venue,
+          launcher: cfg.launcher,
+          plugin: cfg.plugin,
+          hook: null,
+          chainId,
+          generation,
+          plan: planJson,
+          firstBuy: firstBuyJson,
+          feeChoice: { id: request.feeChoice, name: GEN8_FEE_CHOICE_NAMES[request.feeChoice], creatorPct: request.feeCreatorPct || null },
+          trading: openAtJson,
+          coin: coinJson,
+          graduationMarket: { kind: "NATIVE", quoteAsset: null, venue: "barkswap_algebra_plugin" },
+          tradePath: GEN8_TRADE_PATH,
+          routeAuthority: signer.address,
+          decision: route?.decision || null,
+          preflight,
+        },
+      };
+    }
     return {
       status: 200,
       body: {
@@ -467,8 +607,9 @@ export async function gen8CreateAuthorization(body, deps) {
  * authorization can be issued now. Same top-level fields as the gen-7 status where they apply.
  */
 export async function gen8RoutingStatus({ chainId, signer, getProvider, env = process.env }) {
-  const cfg = gen8V4ConfigFor(chainId, env);
+  const cfg = gen8ConfigFor(chainId, env);
   if (!cfg) return { ok: false, status: "gen8_not_configured", chainId };
+  if (isGen8BarkConfig(cfg)) return barkRoutingStatus({ cfg, chainId, signer, getProvider, env });
   const warnings = [];
   let onChain = null;
   const provider = await getProvider(chainId).catch(() => null);
@@ -500,6 +641,52 @@ export async function gen8RoutingStatus({ chainId, signer, getProvider, env = pr
     hook: cfg.hook,
     lens: cfg.lens,
     poolManager: cfg.poolManager,
+    signerConfigured: Boolean(signer),
+    routeAuthority: signer?.address || null,
+    onchainRouteAuthority: onChain?.createSigner || null,
+    matchesOnchain,
+    createPaused: onChain ? onChain.createPaused : null,
+    tradeAuthorization: "none",
+    tradePath: GEN8_TRADE_PATH,
+    ttlSeconds: gen8AuthTtlSeconds(env),
+  };
+}
+
+/** gen8RoutingStatus on the Barkswap venue: MwzBarkLauncher's createSigner, pause and plugin (it has no hook). */
+async function barkRoutingStatus({ cfg, chainId, signer, getProvider, env }) {
+  const warnings = [];
+  let onChain = null;
+  const provider = await getProvider(chainId).catch(() => null);
+  if (!signer) warnings.push("Create signer is not configured.");
+  if (!provider) warnings.push("RPC URL is not configured.");
+  if (provider) {
+    try {
+      const launcher = new ethers.Contract(cfg.launcher, BARK_LAUNCHER_ABI, provider);
+      const [createPaused, createSigner, plugin] = await Promise.all([launcher.createPaused(), launcher.createSigner(), launcher.plugin()]);
+      onChain = { createPaused: Boolean(createPaused), createSigner: ethers.getAddress(createSigner), plugin: ethers.getAddress(plugin) };
+      if (onChain.createPaused) warnings.push("Generation 8 launches are paused.");
+      if (signer && onChain.createSigner !== signer.address) warnings.push("Configured create signer does not match the launcher's createSigner().");
+      if (onChain.plugin !== cfg.plugin) warnings.push("The launcher does not use the configured plugin.");
+    } catch (error) {
+      warnings.push(String(error?.shortMessage || error?.message || error));
+    }
+  }
+  const matchesOnchain = Boolean(signer && onChain && onChain.createSigner === signer.address);
+  const ready = Boolean(matchesOnchain && onChain && !onChain.createPaused && onChain.plugin === cfg.plugin);
+  return {
+    ok: ready,
+    readyForCoreFlow: ready,
+    status: !signer ? "route_signer_missing" : !provider ? "rpc_missing" : !onChain ? "onchain_unreadable" : !matchesOnchain ? "route_authority_mismatch" : onChain.createPaused ? "create_paused" : ready ? "ready" : "plugin_mismatch",
+    warnings,
+    chainId,
+    venue: cfg.venue,
+    generation: { factoryGeneration: EVM_GEN8_FACTORY_GENERATION, kind: "gen8", venue: cfg.venue },
+    factoryAddress: cfg.launcher,
+    launcher: cfg.launcher,
+    plugin: cfg.plugin,
+    hook: null,
+    lens: cfg.lens,
+    poolManager: null,
     signerConfigured: Boolean(signer),
     routeAuthority: signer?.address || null,
     onchainRouteAuthority: onChain?.createSigner || null,

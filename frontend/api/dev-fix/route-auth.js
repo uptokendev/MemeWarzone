@@ -362,11 +362,12 @@ export async function routingStatus(req, res) {
   if (!methodAllowed(req, res, ["GET"])) return;
   const q = getQuery(req);
   const chainId = parsePositiveInt(q.chainId, defaultEvmChainId());
-  // Generation 8 launcher named (only where gen-8 is configured): its own readiness (createSigner, pause, hook).
+  // Generation 8 launcher named (only where gen-8 is configured): its own readiness (createSigner, pause, hook; plugin on Barkswap).
   if (isGen8CreateRequest({ chainId, factoryAddress: q.factoryAddress || q.launcherAddress, generation: q.generation })) {
     return json(res, 200, await gen8RoutingStatus({
       chainId,
-      signer: gen8CreateSigner(process.env, getRouteAuthorityPrivateKey()),
+      // DogeOS (Barkswap venue): the route-authority key only (B9); elsewhere EVM_GEN8_CREATE_SIGNER_PRIVATE_KEY first.
+      signer: gen8CreateSigner(process.env, getRouteAuthorityPrivateKey(), chainId),
       getProvider: async (id) => (getRpcUrls(id).length ? getServerReadProvider(id) : null),
     }));
   }
@@ -431,7 +432,7 @@ async function routingGen8CreateAuthorizationBody(res, body) {
   if (!wallet.ok) return json(res, 400, { error: "Invalid or missing walletAddress", code: "GEN8_WALLET_INVALID" });
   if (refuseCreateIfCanaryBlocked(res, wallet.address)) return;
   const { status, body: out } = await gen8CreateAuthorization({ ...body, walletAddress: wallet.address }, {
-    signer: gen8CreateSigner(process.env, getRouteAuthorityPrivateKey()),
+    signer: gen8CreateSigner(process.env, getRouteAuthorityPrivateKey(), Number(body?.chainId)),
     getProvider: async (id) => (getRpcUrls(id).length ? getServerReadProvider(id) : null),
     evaluateCreatePreflight,
     getRouteDecision,

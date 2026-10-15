@@ -3,7 +3,7 @@
 // (the swap widget, finance) never take a Barkswap config.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getAddress } from "ethers";
+import { Interface, ZeroAddress, getAddress } from "ethers";
 
 process.env.DATABASE_URL ||= "postgres://test:test@127.0.0.1:5432/test";
 
@@ -144,8 +144,10 @@ test("finance stays out for DogeOS: chainId=all lists only V4 chains, chainId=62
   }
 });
 
-// ------------------------------------------------------------------ V4-only readers (plan t17 review): until the
-// Barkswap branches exist (t21), a Barkswap config never reaches code that reads a hook, PoolManager or MwzV4Launcher.
+// ------------------------------------------------------------------ V4-only readers (plan t17 review): a Barkswap
+// config never reaches code that reads a hook, PoolManager or MwzV4Launcher. Since plan t21 the create authorization,
+// campaign state, coin lookup and list progress take their Barkswap branches for DogeOS (full cases in
+// evmGen8BarkCreate.test.mjs); the cases below pin that the V4 reads stay out of them.
 
 /** process.env with `vars` for the duration of `fn` (the readers below default to process.env). */
 async function withProcessEnv(vars, fn) {
@@ -174,26 +176,47 @@ test("gen8V4ConfigFor: the V4 config on V4 chains, null on the Barkswap venue", 
   assert.equal(isGen8V4Config(null), false);
 });
 
-test("create authorization: a DogeOS create is not a V4 gen-8 request and is never signed by the V4 path", async () => {
-  assert.equal(isGen8CreateRequest({ chainId: DOGE, generation: 8 }, BARK_ENV), false);
-  assert.equal(isGen8CreateRequest({ chainId: DOGE, launcherAddress: L }, BARK_ENV), false);
+/** An ethers runner that answers MwzBarkLauncher.launches(coin) with "not launched" and fails on anything else. */
+const BARK_LAUNCHES = new Interface(["function launches(address coin) view returns (address pool, uint40 openAt, int24 tickStart, int24 tickGrad, bool gradFeeTaken, address feeCreator, uint40 lastConvertAt, uint128 liqA, uint128 liqB, uint256 graduationFee)"]);
+function barkLauncherOnly(seen) {
+  return {
+    async call(tx) {
+      seen.push([String(tx.to).toLowerCase(), String(tx.data).slice(0, 10)]);
+      if (String(tx.to).toLowerCase() !== L.toLowerCase() || !String(tx.data).startsWith(BARK_LAUNCHES.getFunction("launches").selector)) {
+        throw new Error(`unexpected read ${tx.to} ${String(tx.data).slice(0, 10)}`);
+      }
+      return BARK_LAUNCHES.encodeFunctionResult("launches", [ZeroAddress, 0, 0, 0, false, ZeroAddress, 0, 0, 0, 0]);
+    },
+  };
+}
+
+test("create authorization: a DogeOS create takes the Barkswap path, never the V4 one", async () => {
+  assert.equal(isGen8CreateRequest({ chainId: DOGE, generation: 8 }, BARK_ENV), true);
+  assert.equal(isGen8CreateRequest({ chainId: DOGE, launcherAddress: L }, BARK_ENV), true);
+  assert.equal(isGen8CreateRequest({ chainId: DOGE, launcherAddress: H }, BARK_ENV), false, "a hook address is not the Bark launcher");
   assert.equal(isGen8CreateRequest({ chainId: 56, generation: 8 }, { EVM_GEN8_LAUNCHER_56: L, EVM_GEN8_HOOK_56: H }), true);
+  // configured (no GEN8_NOT_CONFIGURED), and refused on the wallet before any signer or chain use
   const auth = await gen8CreateAuthorization({ chainId: DOGE, generation: 8 }, { env: BARK_ENV, signer: untouchable("signer"), getProvider: untouchable("getProvider") });
-  assert.equal(auth.status, 400);
-  assert.equal(auth.body.code, "GEN8_NOT_CONFIGURED");
-  const status = await gen8RoutingStatus({ chainId: DOGE, signer: null, getProvider: () => { throw new Error("no RPC expected"); }, env: BARK_ENV });
-  assert.deepEqual(status, { ok: false, status: "gen8_not_configured", chainId: DOGE });
+  assert.deepEqual([auth.status, auth.body.code], [400, "GEN8_WALLET_INVALID"]);
+  const status = await gen8RoutingStatus({ chainId: DOGE, signer: null, getProvider: async () => null, env: BARK_ENV });
+  assert.deepEqual(
+    [status.status, status.venue, status.launcher, status.plugin, status.hook, status.poolManager],
+    ["route_signer_missing", "barkswap", getAddress(L), getAddress(P), null, null],
+  );
 });
 
-test("campaign state: the V4 readers refuse a Barkswap config without touching the chain", async () => {
+test("campaign state: a Barkswap config reads the Bark launcher, never the hook or the PoolManager", async () => {
   const cfg = gen8ConfigFor(DOGE, BARK_ENV);
   const token = "0x7777777777777777777777777777777777777777";
-  assert.equal(await readGen8Pool({ provider: untouchable("provider"), cfg, token }), null);
-  assert.equal(await readGen8CampaignState({ provider: untouchable("provider"), cfg, token, pool: { poolId: "0x01" } }), null);
-  assert.equal(gen8IndexedCampaignState({ cfg, indexed: { token, openAt: 1, lastPhase: "bonding" } }), null);
+  const seen = [];
+  assert.equal(await readGen8Pool({ provider: barkLauncherOnly(seen), cfg, token }), null);
+  assert.equal(await readGen8CampaignState({ provider: barkLauncherOnly(seen), cfg, token }), null);
+  assert.equal(seen.length, 2, "one launches(coin) read each");
+  const indexed = gen8IndexedCampaignState({ cfg, indexed: { token, openAt: 1, lastPhase: "bonding", graduatedBlock: null } });
+  assert.deepEqual([indexed.gen8.venue, indexed.gen8.poolKey, indexed.gen8.hook, indexed.gen8.poolManager], ["barkswap", null, null, null]);
 });
 
-test("campaign-state endpoint: DogeOS with Barkswap env falls through to the campaign reader, no gen-8 V4 read", async () => {
+test("campaign-state endpoint: DogeOS with Barkswap env hands the Bark config to the venue-aware reader", async () => {
   clearEvmCampaignStateCache();
   const campaign = "0x00000000000000000000000000000000000000c9";
   const res = {
@@ -201,23 +224,31 @@ test("campaign-state endpoint: DogeOS with Barkswap env falls through to the cam
     setHeader(k, v) { this.headers[k] = v; },
     end(payload) { this.body = payload ? JSON.parse(payload) : null; },
   };
+  const handed = [];
   await withProcessEnv(BARK_ENV, () => evmCampaignStateHandler({ method: "GET", url: `/api/evm/campaign-state?chainId=${DOGE}&campaign=${campaign}` }, res, {
     getProvider: async () => ({}),
-    readGen8Pool: () => { throw new Error("the V4 hook read must not run for DogeOS"); },
-    readGen8State: () => { throw new Error("the V4 state read must not run for DogeOS"); },
-    loadGen8Indexed: () => { throw new Error("the V4 indexed fallback must not run for DogeOS"); },
+    readGen8Pool: async ({ cfg }) => { handed.push(cfg); return null; },
+    readGen8State: () => { throw new Error("no gen-8 state read without a pool"); },
+    loadGen8Indexed: () => { throw new Error("no indexed fallback when the read did not fail"); },
     readState: async () => ({ campaignAddress: campaign, supported: false }),
     db: null,
   }));
   assert.equal(res.statusCode, 200);
-  assert.equal(res.body.supported, false);
+  assert.equal(res.body.supported, false, "not a Bark coin: the campaign reader answers");
+  assert.equal(handed.length, 1);
+  assert.deepEqual([handed[0].venue, handed[0].hook, handed[0].poolManager], ["barkswap", null, null]);
   clearEvmCampaignStateCache();
 });
 
-test("coins, finance and progress: DogeOS answers 'not configured' / null, never reads a null hook or lens", async () => {
+test("coins, finance and progress: DogeOS coins are Barkswap answers; finance stays V4-only; progress reads the Bark lens by coin", async () => {
   const token = "0x7777777777777777777777777777777777777777";
-  assert.equal(await findGen8Coin({ chainId: DOGE, address: token, db: untouchable("db"), getProvider: untouchable("getProvider"), env: BARK_ENV }), null);
+  const db = { query: async () => ({ rows: [{ factory_generation: 8, graduated_at_chain: null }] }) };
+  const coin = await findGen8Coin({ chainId: DOGE, address: token, db, getProvider: untouchable("getProvider"), env: BARK_ENV });
+  assert.deepEqual([coin.venue, coin.poolId, coin.poolKey, coin.source], ["barkswap", null, null, "campaigns"]);
   assert.deepEqual(await buildGen8Finance({ db: untouchable("db"), chainId: DOGE, env: BARK_ENV }), { chainId: DOGE, configured: false });
-  const item = { chainId: DOGE, gen8: { poolId: "0x01", pool: null, phase: "bonding" } };
-  assert.equal(await gen8ItemProgress(item, { readLens: () => { throw new Error("no V4 lens read for DogeOS"); }, env: BARK_ENV }), null);
+  const item = { chainId: DOGE, campaignAddress: token, gen8: { poolId: "0x01", pool: null, phase: "bonding" } };
+  const keys = [];
+  const pct = await gen8ItemProgress(item, { readLens: async (_c, lens, key) => { keys.push([lens, key]); return { postPhase: false, coinsSoldFromA: 1n, coinsInA: 4n }; }, env: BARK_ENV });
+  assert.equal(pct, 25);
+  assert.deepEqual(keys, [[getAddress(LENS), token]], "keyed by the coin, not a V4 pool id");
 });

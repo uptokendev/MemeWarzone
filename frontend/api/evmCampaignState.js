@@ -2,7 +2,7 @@ import { ethers } from "ethers";
 import { badMethod, getQuery, json } from "../server/http.js";
 import { getRpcUrls, getServerReadProvider } from "./lib/getServerReadProvider.js";
 import { parseGen5QuoteParams, readGen5CampaignState } from "./lib/evmGen5CampaignState.js";
-import { gen8V4ConfigFor } from "./lib/evmGen8Config.js";
+import { gen8ConfigFor } from "./lib/evmGen8Config.js";
 import { gen8IndexedCampaignState, readGen8CampaignState, readGen8IndexedPool, readGen8Pool } from "./lib/evmGen8CampaignState.js";
 
 /**
@@ -105,11 +105,11 @@ export async function evmCampaignStateHandler(req, res, deps = {}) {
   try {
     const provider = await getProvider(chainId);
     if (!provider) return json(res, 503, { error: `No RPC is configured for chain ${chainId}.`, code: "EVM_RPC_NOT_CONFIGURED" });
-    // Generation 8 on the V4 venue (only where EVM_GEN8_LAUNCHER_<id> / EVM_GEN8_HOOK_<id> are set): the address is
-    // the coin's token and its state lives in the hook's pool, not in a campaign contract. One hook read decides;
-    // anything else falls through to the generation 5/6/7 reader unchanged. A Barkswap chain (DogeOS) has no V4 config
-    // here, so it falls through too until its lens branch exists (plan t21).
-    const gen8Cfg = (deps.gen8Config || gen8V4ConfigFor)(chainId);
+    // Generation 8 (only where EVM_GEN8_LAUNCHER_<id> and EVM_GEN8_HOOK_<id>, or on Barkswap EVM_GEN8_PLUGIN_<id>, are
+    // set): the address is the coin's token and its state lives in its pool, not in a campaign contract. One read
+    // decides (the hook's pools(id) on V4, the Bark launcher's launches(coin) on Barkswap, plan t21; the readers in
+    // lib/evmGen8CampaignState.js branch on cfg.venue); anything else falls through to the generation 5/6/7 reader.
+    const gen8Cfg = (deps.gen8Config || gen8ConfigFor)(chainId);
     let state = null;
     let gen8Served = false;
     if (gen8Cfg) {

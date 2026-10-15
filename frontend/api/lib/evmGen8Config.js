@@ -25,9 +25,10 @@
  *
  * Which accessor to use: gen8ConfigFor (any venue) for code that only needs "is gen-8 configured here" or the shared
  * gen-8 rows (SQL; Bark rows keep the gen-8 identity). gen8V4ConfigFor (null unless venue "v4") for code that reads the
- * hook, the PoolManager or the MwzV4Launcher: evmGen8CreateAuthorization.js, evmCampaignState.js (and the readers in
- * evmGen8CampaignState.js, which also refuse a non-V4 cfg via isGen8V4Config), evmGen8Coins.js, financeGen8.js,
- * evmCampaignProgress.js (lens fallback) and gen8Swap.js. The Barkswap branches of those come with plan t21 / t22.
+ * hook, the PoolManager or the MwzV4Launcher and has no Barkswap branch: financeGen8.js and gen8Swap.js (the app's
+ * trade path is plan t22). evmGen8CreateAuthorization.js, evmCampaignState.js with the readers in
+ * evmGen8CampaignState.js, evmGen8Coins.js and evmCampaignProgress.js take gen8ConfigFor and branch on the venue
+ * (isGen8BarkConfig / isGen8V4Config; their Barkswap branches came with plan t21).
  */
 import { ethers } from "ethers";
 import { GEN8_VENUE_BARKSWAP, GEN8_VENUE_V4, gen8VenueFor } from "../../shared/evmGen8.mjs";
@@ -148,6 +149,11 @@ export function gen8V4ConfigFor(chainId, env = process.env) {
 /** True for a V4-venue config. A config object without `venue` (the pre-seam shape, e.g. test fixtures) counts as V4. */
 export function isGen8V4Config(cfg) {
   return Boolean(cfg) && (cfg.venue ?? GEN8_VENUE_V4) === GEN8_VENUE_V4;
+}
+
+/** True for a Barkswap-venue config (launcher + plugin; no hook, no PoolManager). */
+export function isGen8BarkConfig(cfg) {
+  return Boolean(cfg) && cfg.venue === GEN8_VENUE_BARKSWAP;
 }
 
 /** True when `address` is the chain's gen-8 launcher. */

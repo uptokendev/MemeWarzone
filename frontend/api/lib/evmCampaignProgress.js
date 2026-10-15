@@ -1,8 +1,9 @@
 import { ethers } from "ethers";
 import { DOGEOS_TESTNET_CHAIN_ID } from "./chainNative.js";
 import { DOGEOS_TESTNET_PUBLIC_RPC, dogeosConfiguredRpcUrls } from "./getServerReadProvider.js";
-import { gen8Progress } from "../../shared/evmGen8.mjs";
-import { gen8V4ConfigFor } from "./evmGen8Config.js";
+import { GEN8_VENUE_BARKSWAP, gen8Progress, gen8VenueFor } from "../../shared/evmGen8.mjs";
+import { barkProgress } from "../../shared/evmGen8Bark.mjs";
+import { gen8ConfigFor, gen8V4ConfigFor } from "./evmGen8Config.js";
 
 /**
  * BNB / Robinhood / DogeOS bonding progress for the campaign list, exactly as Token Details computes it
@@ -65,33 +66,42 @@ const LENS_PROGRESS_ABI = [
   "function progress(bytes32 id) view returns (tuple(bool graduated, bool postPhase, uint40 graduatedAt, uint160 sqrtPriceX96, uint256 coinsSoldFromA, uint256 coinsInA, uint256 nativeInA, uint256 nativeTargetA))",
 ];
 
+const BARK_LENS_PROGRESS_ABI = [
+  // MwzBarkLaunchLens (DogeOS, Barkswap venue): keyed by the coin address, same Progress struct.
+  "function progress(address coin) view returns (tuple(bool graduated, bool postPhase, uint40 graduatedAt, uint160 sqrtPriceX96, uint256 coinsSoldFromA, uint256 coinsInA, uint256 nativeInA, uint256 nativeTargetA))",
+];
+
 /**
  * Generation 8 progress (design 6.4: coins sold from position A / A's coins, exact from the pool price). From the
  * indexer's evm_gen8_pools row when the item carries it (no RPC); otherwise MwzLaunchLens.progress(poolId) when
  * EVM_GEN8_LENS_<id> is set; otherwise null (never the 50 BNB fallback). Returns undefined when the RPC read failed.
+ * Barkswap venue (DogeOS): the row's price in Barkswap orientation (barkProgress) and MwzBarkLaunchLens.progress(coin).
  */
 export async function gen8ItemProgress(item, { readLens = null, env = process.env } = {}) {
   const g = item?.gen8;
   if (!g) return undefined;
   if (item.isDexTrading || g.phase === "graduated") return 100;
+  const bark = gen8VenueFor(item.chainId) === GEN8_VENUE_BARKSWAP;
   const p = g.pool;
   if (p && p.liqA != null && p.tickStart != null && p.tickGrad != null) {
     if (p.sqrtPriceX96 == null) return 0; // launched, no swap yet (a launch without a first buy)
     try {
-      return gen8Progress({ liqA: p.liqA, tickStart: p.tickStart, tickGrad: p.tickGrad, sqrtPriceX96: p.sqrtPriceX96 }).pct;
+      return (bark ? barkProgress : gen8Progress)({ liqA: p.liqA, tickStart: p.tickStart, tickGrad: p.tickGrad, sqrtPriceX96: p.sqrtPriceX96 }).pct;
     } catch {
       return null;
     }
   }
-  const cfg = gen8V4ConfigFor(item.chainId, env);
+  const cfg = bark ? gen8ConfigFor(item.chainId, env) : gen8V4ConfigFor(item.chainId, env);
   if (!cfg?.lens) return null;
-  const read = readLens || (async (chainId, lens, poolId) => {
+  const abi = bark ? BARK_LENS_PROGRESS_ABI : LENS_PROGRESS_ABI;
+  const read = readLens || (async (chainId, lens, key) => {
     if (!rpcUrl(Number(chainId))) return null;
-    const c = new ethers.Contract(lens, LENS_PROGRESS_ABI, providerFor(Number(chainId)));
-    return c.progress(poolId);
+    const c = new ethers.Contract(lens, abi, providerFor(Number(chainId)));
+    return c.progress(key);
   });
   try {
-    const r = await read(item.chainId, cfg.lens, g.poolId);
+    // V4 lens: keyed by the pool id; Bark lens: keyed by the coin (a gen-8 coin's campaign address is its token)
+    const r = await read(item.chainId, cfg.lens, bark ? item.campaignAddress : g.poolId);
     if (!r) return null;
     // F1: complete while the price is at or past the graduation price (postPhase), not because of the latch alone; a
     // latched coin back inside range A shows its progress from the price, as the lens computes it.
