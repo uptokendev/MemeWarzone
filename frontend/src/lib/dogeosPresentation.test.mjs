@@ -120,7 +120,7 @@ test("the DogeOS display constants match chainConfig", async () => {
   assert.equal(DOGEOS_SHORT_LABEL, "DogeOS");
   assert.equal(DOGEOS_EXPLORER_BASE, "https://dogeos-testnet.l2scan.co");
   assert.equal(h.getExplorerTxBase(DOGE), `${DOGEOS_EXPLORER_BASE}/tx/`);
-  assert.equal(DOGEOS_DEX_LABEL, "MuchFi");
+  assert.equal(DOGEOS_DEX_LABEL, "Barkswap");
   assert.equal(isDogeosTestnetChain(DOGE), true);
   assert.equal(isDogeosTestnetChain("6281971"), true);
   for (const id of EXISTING) assert.equal(isDogeosTestnetChain(id), false, String(id));
@@ -175,7 +175,7 @@ test("EVM launchpad safety presentation has a DogeOS block that never says BNB o
   assert.equal(p.chainLabel, "DogeOS Chikyū Testnet");
   assert.equal(p.nativeSymbol, "DOGE");
   assert.equal(p.walletLabel, "EVM wallet");
-  assert.equal(p.graduationLabel, "MuchFi graduation");
+  assert.equal(p.graduationLabel, "Barkswap graduation");
   assert.equal(p.isBnb, false);
   assert.equal(p.isRobinhood, false);
   assert.equal(p.isDogeos, true);
@@ -211,11 +211,11 @@ test("EVM launchpad safety presentation: existing chains unchanged", () => {
   assert.equal(rh.checks.find((c) => c.id === "network").detail, "Wallet connected to Robinhood Chain Testnet (chain 46630). Gas is paid in ETH.");
 });
 
-test("home feed: DOGE, DogeOS label and MuchFi; existing chains unchanged", async () => {
+test("home feed: DOGE, DogeOS label and Barkswap; existing chains unchanged", async () => {
   const h = await loadHarness();
   assert.equal(h.nativeSymbolFor(DOGE), "DOGE");
   assert.equal(h.chainNameFor(DOGE), "DogeOS");
-  assert.equal(h.dexNameFor(DOGE), "MuchFi");
+  assert.equal(h.dexNameFor(DOGE), "Barkswap");
   assert.equal(h.formatNative(2.5, DOGE), "2.5 DOGE");
   const all = [...EXISTING, 102];
   assert.deepEqual(all.map(h.nativeSymbolFor), ["BNB", "BNB", "SOL", "ETH", "ETH", "SOL"]);
@@ -322,10 +322,10 @@ test("pages and components import the chain helpers instead of exporting their o
   );
 });
 
-test("token page: DOGE native unit and MuchFi venue for DogeOS; existing chains unchanged", async () => {
+test("token page: DOGE native unit and Barkswap venue for DogeOS; existing chains unchanged", async () => {
   const h = await loadHarness();
   assert.equal(h.evmPageNativeUnit(DOGE), "DOGE");
-  assert.equal(h.evmPageDexVenueLabel(DOGE), "MuchFi");
+  assert.equal(h.evmPageDexVenueLabel(DOGE), "Barkswap");
   assert.deepEqual([56, 97, 4663, 46630].map(h.evmPageNativeUnit), ["BNB", "BNB", "ETH", "ETH"]);
   assert.deepEqual([56, 97, 4663, 46630].map(h.evmPageDexVenueLabel), ["Topaz", "Topaz", "Uniswap", "Uniswap"]);
 });

@@ -12,13 +12,33 @@
  *   EVM_GEN8_RESERVE_LOCK_<id>   "0xaddr"             MwzReserveLock: holder exclusion
  *   EVM_GEN8_ESCROW_<id>         "0xaddr"             MwzCreatorEscrow: holder exclusion, league exclusion (swap sender)
  * The start block of the scan is the smaller of the launcher's and the hook's (both are deployed together).
+ *
+ * Venue (barkswap spec section 4, B7): each gen-8 chain is on one pool venue, GEN8_CHAIN_VENUE. `v4` (Uniswap V4 +
+ * MwzLaunchHook) is everything above; evmGen8Config / configuredGen8Chains serve only `v4` chains. `barkswap`
+ * (Barkswap / Algebra Integral custom pools; DogeOS 6281971) has its own reader, evmGen8BarkConfig, inert until both
+ *   EVM_GEN8_LAUNCHER_<id>       "0xaddr@startBlock"  MwzBarkLauncher: Launched, claims, router events, CoinFeesConverted
+ *   EVM_GEN8_PLUGIN_<id>         "0xaddr@startBlock"  MwzBarkPlugin: one event per swap, Graduated
+ * are set, with the same SPLITTER / CHOICE_VAULT / RESERVE_LOCK / ESCROW names. EVM_GEN8_HOOK_<id> or
+ * EVM_GEN8_POOL_MANAGER_<id> on a Barkswap chain disables it. Rows keep the gen-8 identity on both venues.
  */
 import { ethers } from "ethers";
 
 export type Gen8Entry = { address: string; startBlock: number };
 
+export type Gen8Venue = "v4" | "barkswap";
+
+/** Pool venue per gen-8 chain. Same map as frontend/shared/evmGen8.mjs GEN8_CHAIN_VENUE (plus the local chain there). */
+export const GEN8_CHAIN_VENUE: Readonly<Record<number, Gen8Venue>> = Object.freeze({ 56: "v4", 97: "v4", 4663: "v4", 46630: "v4", 6281971: "barkswap" });
+
+/** The chain's gen-8 venue, or null for a chain without gen-8. */
+export function gen8Venue(chainId: number): Gen8Venue | null {
+  return Number.isInteger(chainId) && Object.hasOwn(GEN8_CHAIN_VENUE, chainId) ? GEN8_CHAIN_VENUE[chainId]! : null;
+}
+
+/** A `v4` chain's config (the original gen-8 shape). */
 export type Gen8ChainConfig = {
   chainId: number;
+  venue: "v4";
   launcher: Gen8Entry;
   hook: Gen8Entry;
   poolManager: string;
@@ -40,13 +60,15 @@ export const CANONICAL_V4_POOL_MANAGER: Record<number, string> = {
 /**
  * Wrapped native the rest of the market stack already uses. dex_trades inserts must name this quote:
  * set_dex_trade_quote_identity rejects a row whose pair is not in dex_pools, and a gen-8 pair is the hook.
- * WRAPPED_NATIVE_ADDRESS_<id> (or the VITE_ form) overrides. 97 is the public BSC testnet WBNB.
+ * WRAPPED_NATIVE_ADDRESS_<id> (or the VITE_ form) overrides. 97 is the public BSC testnet WBNB. 6281971 is WDOGE,
+ * the WNativeToken() of Barkswap's router and quoters (docs/dogeos/barkswap-facts.md).
  */
 export const GEN8_WRAPPED_NATIVE: Record<number, string> = {
   56: "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c",
   97: "0xae13d989dac2f0debff460ac112a837c89baa7cd",
   4663: "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
   46630: "0x52a47a33930b8a90a2000b1ba3cb96e879569670",
+  6281971: "0xf6bdb158a5ddf77f1b83bc9074f6a472c58d78ae",
 };
 
 export function gen8WrappedNative(chainId: number, env: NodeJS.ProcessEnv = process.env): string {
@@ -57,7 +79,7 @@ export function gen8WrappedNative(chainId: number, env: NodeJS.ProcessEnv = proc
   return known;
 }
 
-export const GEN8_EVM_CHAIN_IDS = [56, 97, 4663, 46630] as const;
+export const GEN8_EVM_CHAIN_IDS = [56, 97, 4663, 46630, 6281971] as const;
 
 function parseEntry(name: string, raw: string | undefined, invalid: string[]): Gen8Entry | null {
   const text = String(raw || "").trim();
@@ -75,7 +97,9 @@ function parseAddress(name: string, raw: string | undefined, invalid: string[]):
   return entry ? entry.address : null;
 }
 
+/** A `v4` chain's config. A Barkswap chain never gets one (its reader is evmGen8BarkConfig). */
 export function evmGen8Config(chainId: number, env: NodeJS.ProcessEnv = process.env): Gen8ConfigResult {
+  if (gen8Venue(chainId) === "barkswap") return { config: null, invalid: [], reason: `chain ${chainId} is on the barkswap venue (evmGen8BarkConfig)` };
   const invalid: string[] = [];
   const v = (base: string) => `${base}_${chainId}`;
   const launcher = parseEntry(v("EVM_GEN8_LAUNCHER"), env[v("EVM_GEN8_LAUNCHER")], invalid);
@@ -93,6 +117,7 @@ export function evmGen8Config(chainId: number, env: NodeJS.ProcessEnv = process.
   return {
     config: {
       chainId,
+      venue: "v4",
       launcher,
       hook,
       poolManager,
@@ -107,11 +132,71 @@ export function evmGen8Config(chainId: number, env: NodeJS.ProcessEnv = process.
   };
 }
 
-/** Every chain with a complete gen-8 config. Empty (and nothing runs) when no gen-8 env is set. */
+/** Every `v4` chain with a complete gen-8 config. Empty (and nothing runs) when no gen-8 env is set. */
 export function configuredGen8Chains(env: NodeJS.ProcessEnv = process.env): Gen8ChainConfig[] {
   const out: Gen8ChainConfig[] = [];
   for (const chainId of GEN8_EVM_CHAIN_IDS) {
+    if (gen8Venue(chainId) !== "v4") continue;
     const { config, invalid, reason } = evmGen8Config(chainId, env);
+    if (config) out.push(config);
+    else if (reason && reason !== "unset") console.warn(`[gen8] chain ${chainId} disabled: ${reason}`, invalid);
+  }
+  return out;
+}
+
+/** A `barkswap` chain's config: launcher + plugin instead of hook + PoolManager; the gen-8 periphery is the same. */
+export type Gen8BarkChainConfig = {
+  chainId: number;
+  venue: "barkswap";
+  launcher: Gen8Entry;
+  plugin: Gen8Entry;
+  splitter: Gen8Entry | null;
+  choiceVault: string | null;
+  reserveLock: string | null;
+  escrow: string | null;
+  startBlock: number;
+};
+
+export type Gen8BarkConfigResult = { config: Gen8BarkChainConfig | null; invalid: string[]; reason: string | null };
+
+export function evmGen8BarkConfig(chainId: number, env: NodeJS.ProcessEnv = process.env): Gen8BarkConfigResult {
+  if (gen8Venue(chainId) !== "barkswap") return { config: null, invalid: [], reason: `chain ${chainId} is not on the barkswap venue` };
+  const invalid: string[] = [];
+  const v = (base: string) => `${base}_${chainId}`;
+  const launcher = parseEntry(v("EVM_GEN8_LAUNCHER"), env[v("EVM_GEN8_LAUNCHER")], invalid);
+  const plugin = parseEntry(v("EVM_GEN8_PLUGIN"), env[v("EVM_GEN8_PLUGIN")], invalid);
+  const splitter = parseEntry(v("EVM_GEN8_SPLITTER"), env[v("EVM_GEN8_SPLITTER")], invalid);
+  const choiceVault = parseAddress(v("EVM_GEN8_CHOICE_VAULT"), env[v("EVM_GEN8_CHOICE_VAULT")], invalid);
+  const reserveLock = parseAddress(v("EVM_GEN8_RESERVE_LOCK"), env[v("EVM_GEN8_RESERVE_LOCK")], invalid);
+  const escrow = parseAddress(v("EVM_GEN8_ESCROW"), env[v("EVM_GEN8_ESCROW")], invalid);
+  if (!launcher && !plugin && !invalid.length) return { config: null, invalid, reason: "unset" };
+  const v4Only = ["EVM_GEN8_HOOK", "EVM_GEN8_POOL_MANAGER"].map(v).filter((key) => String(env[key] || "").trim());
+  if (v4Only.length) return { config: null, invalid, reason: `${v4Only.join(", ")}: Uniswap V4 settings on chain ${chainId}, which is on the barkswap venue` };
+  if (invalid.length) return { config: null, invalid, reason: "invalid gen-8 env" };
+  if (!launcher || !plugin) return { config: null, invalid, reason: "launcher and plugin must both be set" };
+  return {
+    config: {
+      chainId,
+      venue: "barkswap",
+      launcher,
+      plugin,
+      splitter,
+      choiceVault,
+      reserveLock,
+      escrow,
+      startBlock: Math.min(launcher.startBlock || plugin.startBlock, plugin.startBlock || launcher.startBlock),
+    },
+    invalid,
+    reason: null,
+  };
+}
+
+/** Every `barkswap` chain with a complete config. Empty when no Barkswap env is set. */
+export function configuredGen8BarkChains(env: NodeJS.ProcessEnv = process.env): Gen8BarkChainConfig[] {
+  const out: Gen8BarkChainConfig[] = [];
+  for (const chainId of GEN8_EVM_CHAIN_IDS) {
+    if (gen8Venue(chainId) !== "barkswap") continue;
+    const { config, invalid, reason } = evmGen8BarkConfig(chainId, env);
     if (config) out.push(config);
     else if (reason && reason !== "unset") console.warn(`[gen8] chain ${chainId} disabled: ${reason}`, invalid);
   }
@@ -151,12 +236,14 @@ export type Gen8HeadTag = "finalized" | "safe" | "latest";
 /**
  * Hybrid ingestion (founder 2026-10-12). Two cursors per chain:
  *   display  curve_trades / dex_trades, candles, token_stats / market_stats, activity, Ably, the side-pool watcher.
- *            Reads up to `latest` on Robinhood (4663, 46630) and `finalized` on BNB (56, 97; about 1 s behind the
- *            head). A reorg at the tip (block hash mismatch) rolls the display rows above the common ancestor back
- *            and re-ingests (evmGen8Pool.ts rollbackGen8Display).
+ *            Reads up to `latest` on the rollups (Robinhood 4663, 46630; DogeOS 6281971) and `finalized` on BNB (56,
+ *            97; about 1 s behind the head). A reorg at the tip (block hash mismatch) rolls the display rows above the
+ *            common ancestor back and re-ingests (evmGen8Pool.ts rollbackGen8Display).
  *   money    evm_gen8_fee_accruals, reward_events, route runs, recruiter credit, the holder census. Reads only up to
- *            `safe` on Robinhood (the batch posted to Ethereum, about 10 minutes behind on 2026-10-12) and `finalized`
- *            on BNB, and never past the display cursor. Money rows are written once and need no rollback.
+ *            `safe` on the rollups (Robinhood: the batch posted to Ethereum, about 10 minutes behind on 2026-10-12;
+ *            DogeOS: about 1,059 blocks behind, `finalized` about 1,217, max reorg 17 blocks, 2026-10-10 foundation
+ *            spec) and `finalized` on BNB, and never past the display cursor. Money rows are written once and need no
+ *            rollback.
  * EVM_GEN8_DISPLAY_HEAD_TAG(_<id>) and EVM_GEN8_MONEY_HEAD_TAG(_<id>) override (finalized | safe | latest); `latest`
  * is EVM_GEN8_CONFIRMATIONS blocks behind the head and, for the money tag, meant for local chains only.
  */
@@ -165,14 +252,14 @@ function headTagEnv(raw: unknown): Gen8HeadTag | null {
   return v === "finalized" || v === "safe" || v === "latest" ? v : null;
 }
 
-const isRobinhood = (chainId: number) => chainId === 4663 || chainId === 46630;
+const isRollup = (chainId: number) => chainId === 4663 || chainId === 46630 || chainId === 6281971;
 
 export function gen8DisplayHeadTag(chainId: number, env: NodeJS.ProcessEnv = process.env): Gen8HeadTag {
-  return headTagEnv(env[`EVM_GEN8_DISPLAY_HEAD_TAG_${chainId}`]) ?? headTagEnv(env.EVM_GEN8_DISPLAY_HEAD_TAG) ?? (isRobinhood(chainId) ? "latest" : "finalized");
+  return headTagEnv(env[`EVM_GEN8_DISPLAY_HEAD_TAG_${chainId}`]) ?? headTagEnv(env.EVM_GEN8_DISPLAY_HEAD_TAG) ?? (isRollup(chainId) ? "latest" : "finalized");
 }
 
 export function gen8MoneyHeadTag(chainId: number, env: NodeJS.ProcessEnv = process.env): Gen8HeadTag {
-  return headTagEnv(env[`EVM_GEN8_MONEY_HEAD_TAG_${chainId}`]) ?? headTagEnv(env.EVM_GEN8_MONEY_HEAD_TAG) ?? (isRobinhood(chainId) ? "safe" : "finalized");
+  return headTagEnv(env[`EVM_GEN8_MONEY_HEAD_TAG_${chainId}`]) ?? headTagEnv(env.EVM_GEN8_MONEY_HEAD_TAG) ?? (isRollup(chainId) ? "safe" : "finalized");
 }
 
 export type Gen8HeadProvider = {
@@ -205,13 +292,15 @@ export function gen8DisplayHead(provider: Gen8HeadProvider, chainId: number, env
 // ------------------------------------------------------------------ recruiter / squad link eligibility (audit C-M4, F9)
 
 /**
- * UniversalRouters a linked trade may come through, per mainnet: the routers the app and the swap widget build for
+ * Routers a linked trade may come through. V4 mainnets: the UniversalRouters the app and the swap widget build for
  * (frontend/shared/evmGen8Swap.mjs GEN8_KNOWN_ROUTERS, the first entry is the app's default) and Uniswap's canonical
- * ones on the chain. Testnets and local chains: env only.
+ * ones on the chain. DogeOS (barkswap venue): Barkswap's SwapRouter, the router the app trades through (barkswap spec
+ * section 3 per-swap event fields; address in docs/dogeos/barkswap-facts.md). Other testnets and local chains: env only.
  */
 export const GEN8_LINK_ROUTERS: Record<number, readonly string[]> = {
   56: ["0xdc264714f68d84cf29bc605589405e78bdbe7c9f", "0x1906c1d672b88cd1b9ac7593301ca990f94eae07", "0x8b844f885672f333bc0042cb669255f93a4c1e6b"],
   4663: ["0x8876789976decbfcbbbe364623c63652db8c0904", "0x204faca1764b154221e35c0d20abb3c525710498"],
+  6281971: ["0x911e5a1630fd1768e5a1710daafabb865cb79531"],
 };
 
 function addressList(raw: unknown): string[] {
@@ -237,7 +326,7 @@ export type Gen8LinkPolicy = { routers: Set<string>; deny: Set<string>; maxSwapS
  *     that submits through many contracts is a relayer, not a person).
  * Otherwise the trade is UNLINKED (airdrop share), as a wallet without a link.
  */
-export function gen8LinkPolicy(cfg: Gen8ChainConfig, env: NodeJS.ProcessEnv = process.env): Gen8LinkPolicy {
+export function gen8LinkPolicy(cfg: Pick<Gen8ChainConfig | Gen8BarkChainConfig, "chainId" | "launcher" | "escrow">, env: NodeJS.ProcessEnv = process.env): Gen8LinkPolicy {
   const routers = new Set<string>([
     ...(GEN8_LINK_ROUTERS[cfg.chainId] ?? []),
     ...addressList(env[`EVM_GEN8_UNIVERSAL_ROUTER_${cfg.chainId}`]),

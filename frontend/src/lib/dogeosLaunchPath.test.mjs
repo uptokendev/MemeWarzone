@@ -265,7 +265,7 @@ test("the USD graduation-target read and the bonding buy switch treat 6281971 li
   );
 });
 
-test("the $150 gen-7 test tier is reachable on 6281971 and its pools are named MuchFi", async () => {
+test("the $150 gen-7 test tier is reachable on 6281971 and its pools carry the DogeOS DEX label (Barkswap)", async () => {
   const { graduationTiers } = await fullHarness();
   const staging = { environment: "staging", cluster: "devnet" };
   assert.equal(graduationTiers.isTestGraduationChain(DOGEOS, staging), true);
@@ -274,13 +274,13 @@ test("the $150 gen-7 test tier is reachable on 6281971 and its pools are named M
   assert.equal(graduationTiers.isTestGraduationChain(56, staging), false);
   assert.equal(graduationTiers.isTestGraduationChain(4663, staging), false);
 
-  assert.equal(DOGEOS_DEX_LABEL, "MuchFi");
-  assert.equal(evmGen7DexName(DOGEOS), "MuchFi");
+  assert.equal(DOGEOS_DEX_LABEL, "Barkswap");
+  assert.equal(evmGen7DexName(DOGEOS), "Barkswap");
   assert.equal(evmGen7DexName(46630), "Uniswap");
   assert.equal(evmGen7DexName(97), "Topaz");
   const tiers = evmGen7GraduationTiers(DOGEOS, { testTierEnabled: true });
   assert.deepEqual(tiers.map((tier) => tier.label), ["$150", "$30K MC", "$50K MC"]);
-  assert.match(tiers[1].description, /Moves to a MuchFi pool/);
+  assert.match(tiers[1].description, /Moves to a Barkswap pool/);
 });
 
 test("create surfaces use the V3-family branch for 6281971, through isDogeosChainId only", () => {

@@ -83,10 +83,13 @@ async function defaultPartnerDeps() {
   return { readPartner: mod.readPartner, rememberPartnerSwap: mod.rememberPartnerSwap };
 }
 
-/** The chain's gen-8 swap setup for the API: hook, lens, router (+ layout), quoter. Throws when missing. */
+/**
+ * The chain's gen-8 swap setup for the API: hook, lens, router (+ layout), quoter. Throws when missing. V4 venue
+ * only: the widget builds UniversalRouter / Permit2 calls, which a Barkswap chain (DogeOS) has no use for.
+ */
 export function gen8SwapSetup(chainId, env = process.env) {
   const cfg = gen8ConfigFor(chainId, env);
-  if (!cfg) throw new Gen8SwapError(400, "GEN8_NOT_CONFIGURED", "Generation 8 coins are not set up on this chain.");
+  if (!cfg || cfg.venue !== "v4") throw new Gen8SwapError(400, "GEN8_NOT_CONFIGURED", "Generation 8 coins are not set up on this chain.");
   const router = gen8RouterFor(chainId, env);
   const quoter = gen8QuoterFor(chainId, env);
   if (!router || !quoter) throw new Gen8SwapError(503, "GEN8_ROUTER_NOT_CONFIGURED", "No Uniswap router or quoter is configured for this chain.");

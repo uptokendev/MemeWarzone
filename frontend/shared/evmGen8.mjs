@@ -55,7 +55,25 @@ export const GEN8_RATES = Object.freeze({
 export const GEN8_TARGET_FAST_USD = 30_000n * WAD;
 export const GEN8_TARGET_DEFAULT_USD = 50_000n * WAD;
 export const GEN8_TARGET_TEST_USD = 150n * WAD;
-export const GEN8_TEST_TARGET_CHAIN_IDS = Object.freeze([97, 46630, 31337]);
+/** Testnets and the local chain. DogeOS Chikyu (6281971) launches at the $150 target (barkswap spec section 2). */
+export const GEN8_TEST_TARGET_CHAIN_IDS = Object.freeze([97, 46630, 31337, 6281971]);
+
+/**
+ * The pool venue of each gen-8 chain (barkswap spec section 4, B7): `v4` = Uniswap V4 pools with MwzLaunchHook
+ * (BNB, Robinhood, the local chain), `barkswap` = Barkswap (Algebra Integral) custom pools with MwzBarkLauncher and
+ * MwzBarkPlugin (DogeOS). Rows keep the gen-8 identity on both venues (venue 'gen8', execution_source 'gen8_v4');
+ * the venue only selects which contracts the API, app and indexer talk to. The indexer keeps the same map in
+ * realtime-indexer/src/evm/evmGen8Config.ts (GEN8_CHAIN_VENUE, without the local chain).
+ */
+export const GEN8_VENUE_V4 = "v4";
+export const GEN8_VENUE_BARKSWAP = "barkswap";
+export const GEN8_CHAIN_VENUE = Object.freeze({ 56: GEN8_VENUE_V4, 97: GEN8_VENUE_V4, 4663: GEN8_VENUE_V4, 46630: GEN8_VENUE_V4, 31337: GEN8_VENUE_V4, 6281971: GEN8_VENUE_BARKSWAP });
+
+/** The chain's gen-8 venue ("v4" | "barkswap"), or null for a chain without gen-8. */
+export function gen8VenueFor(chainId) {
+  const id = Number(chainId);
+  return Number.isInteger(id) && Object.hasOwn(GEN8_CHAIN_VENUE, id) ? GEN8_CHAIN_VENUE[id] : null;
+}
 
 export const GEN8_FEE_CHOICES = Object.freeze({ keep: 1, holders: 2, split: 3, buyback: 4 });
 export const GEN8_FEE_CHOICE_NAMES = Object.freeze({ 1: "keep", 2: "holders", 3: "split", 4: "buyback" });

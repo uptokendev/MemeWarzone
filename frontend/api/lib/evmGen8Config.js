@@ -14,10 +14,19 @@
  *   EVM_GEN8_ESCROW_<id>         MwzCreatorEscrow (creator buy escrow)
  * Signer for create authorizations: EVM_GEN8_CREATE_SIGNER_PRIVATE_KEY, else the route authority key (route-auth.js);
  * the launcher's createSigner() must equal its address.
+ *
+ * Venue (shared/evmGen8.mjs GEN8_CHAIN_VENUE; barkswap spec section 4, B7): every config carries `venue`. The chains
+ * above are `v4`. DogeOS (6281971) is `barkswap` and is inert until both of these are set:
+ *   EVM_GEN8_LAUNCHER_<id>       MwzBarkLauncher (create authorization target, fee books, claims)
+ *   EVM_GEN8_PLUGIN_<id>         MwzBarkPlugin (the Barkswap pool plugin: per-swap fee, graduation)
+ * with the same optional LENS (MwzBarkLaunchLens) / SPLITTER / CHOICE_VAULT / RESERVE_LOCK / ESCROW names. A Barkswap
+ * config has `plugin` and `hook: null, poolManager: null`; EVM_GEN8_HOOK_ / EVM_GEN8_POOL_MANAGER_ on a Barkswap
+ * chain disable it (V4 settings never reach a Barkswap chain). Paths that only speak V4 check `cfg.venue === "v4"`.
  */
 import { ethers } from "ethers";
+import { GEN8_VENUE_BARKSWAP, GEN8_VENUE_V4, gen8VenueFor } from "../../shared/evmGen8.mjs";
 
-export const GEN8_API_CHAIN_IDS = Object.freeze([56, 97, 4663, 46630, 31337]);
+export const GEN8_API_CHAIN_IDS = Object.freeze([56, 97, 4663, 46630, 31337, 6281971]);
 
 /** Canonical Uniswap V4 PoolManager per mainnet (design 2.1). Testnets and local chains: env only. */
 export const CANONICAL_V4_POOL_MANAGER = Object.freeze({
@@ -42,6 +51,7 @@ function parseEntry(raw) {
 export function evmGen8ApiConfig(chainId, env = process.env) {
   const id = Number(chainId);
   if (!GEN8_API_CHAIN_IDS.includes(id)) return { config: null, reason: "unsupported_chain" };
+  if (gen8VenueFor(id) === GEN8_VENUE_BARKSWAP) return barkswapApiConfig(id, env);
   const name = (base) => `${base}_${id}`;
   const read = (base) => parseEntry(env[name(base)]);
   const launcher = read("EVM_GEN8_LAUNCHER");
@@ -66,10 +76,46 @@ export function evmGen8ApiConfig(chainId, env = process.env) {
   return {
     config: {
       chainId: id,
+      venue: GEN8_VENUE_V4,
       launcher: launcher.value.address,
       hook: hook.value.address,
       lens: parts.lens.value?.address || null,
       poolManager,
+      splitter: parts.splitter.value?.address || null,
+      choiceVault: parts.choiceVault.value?.address || null,
+      reserveLock: parts.reserveLock.value?.address || null,
+      escrow: parts.escrow.value?.address || null,
+    },
+    reason: null,
+  };
+}
+
+const BARK_OPTIONAL = { lens: "EVM_GEN8_LENS", splitter: "EVM_GEN8_SPLITTER", choiceVault: "EVM_GEN8_CHOICE_VAULT", reserveLock: "EVM_GEN8_RESERVE_LOCK", escrow: "EVM_GEN8_ESCROW" };
+
+/** A Barkswap chain's config (launcher + plugin), same inert / fail-closed rules as the V4 one above. */
+function barkswapApiConfig(id, env) {
+  const name = (base) => `${base}_${id}`;
+  const read = (base) => parseEntry(env[name(base)]);
+  const launcher = read("EVM_GEN8_LAUNCHER");
+  const plugin = read("EVM_GEN8_PLUGIN");
+  if (!launcher.value && !plugin.value && !launcher.invalid && !plugin.invalid) return { config: null, reason: "unset" };
+  const v4Only = ["EVM_GEN8_HOOK", "EVM_GEN8_POOL_MANAGER"].map(name).filter((key) => String(env[key] || "").trim());
+  if (v4Only.length) return { config: null, reason: `${v4Only.join(", ")}: Uniswap V4 settings on chain ${id}, which is on the barkswap venue` };
+  const parts = Object.fromEntries(Object.entries(BARK_OPTIONAL).map(([key, base]) => [key, read(base)]));
+  const invalid = [["EVM_GEN8_LAUNCHER", launcher], ["EVM_GEN8_PLUGIN", plugin], ...Object.entries(parts).map(([key, v]) => [BARK_OPTIONAL[key], v])]
+    .filter(([, v]) => v.invalid)
+    .map(([base]) => name(base));
+  if (invalid.length) return { config: null, reason: `invalid gen-8 env: ${invalid.join(", ")}` };
+  if (!launcher.value || !plugin.value) return { config: null, reason: "launcher and plugin must both be set" };
+  return {
+    config: {
+      chainId: id,
+      venue: GEN8_VENUE_BARKSWAP,
+      launcher: launcher.value.address,
+      plugin: plugin.value.address,
+      hook: null,
+      poolManager: null,
+      lens: parts.lens.value?.address || null,
       splitter: parts.splitter.value?.address || null,
       choiceVault: parts.choiceVault.value?.address || null,
       reserveLock: parts.reserveLock.value?.address || null,
