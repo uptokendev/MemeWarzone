@@ -147,7 +147,7 @@ File inventory for every task (paths, line ranges, REMOVE/KEEP/ADAPT calls): `do
 **Verify:** `npx hardhat --config hardhat.dogeos-bark-fork.config.ts test test/dogeos/barkswap/DogeosBarkStack.fork.spec.ts` → passing (deploy + activate in one fork, read-backs of every role and address); `node --test scripts/dogeos-testnet-deploy-guards.test.mjs` → pass; `git ls-files scripts/lib/dogeosGen7Stack.ts` → empty
 
 ### Task 16: Env generator, env examples and keeper guards            [id: t16]
-**Depends-on:** [t15, t14]
+**Depends-on:** [t15, t17]
 **TDD:** required
 **Files:** `scripts/dogeos-env-blocks.mjs` (+ its test), `.env.example`, `frontend/.env.example`, `config/coolify-qa-staging.env.example`, `realtime-indexer/src/evm/*` `FORBIDDEN_KEEPER_ADDRESSES` for 6281971 (operator from `DOGEOS_OPERATOR_ADDRESS`), `scripts/dogeos-chain-list-exceptions.json`
 - Spec §4 Indexer config, Keepers; B9. Placeholders only, never key values.
