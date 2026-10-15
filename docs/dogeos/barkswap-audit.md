@@ -41,6 +41,8 @@ linked library, exits non-zero above 24,576 bytes).
 | MwzBarkFeeSplitter | 3,486 (t5) |
 | MwzBarkReserveLock | 2,607 (t5) |
 | MwzBarkLaunchLens | 7,304 (t5; no linked library) |
+| MwzBarkCreatorChoiceVault | 12,594 (t6; gen-8 13,143) |
+| MwzBarkCreatorEscrow | 4,179 (t6; gen-8 5,030) |
 
 ## Method
 
@@ -1511,5 +1513,398 @@ Every function is `view` or `pure`; reentrancy guards, CEI and griefing do not a
 - t17 / t18 / t22: splitter getter `launcher()` instead of `hook()`; reserve lock keyed by coin, `reserves(coin) ->
   (token, amount)`, events `ReserveLocked(address,uint256)` and `ReserveReleased(address,address,uint256)`; lens keyed by
   coin, no `previewFill` / `grossForNet` (amounts from QuoterV2), new `poolState` and `owed`.
+
+Verdict: pending (t7)
+
+---
+
+## MwzBarkCreatorChoiceVault
+
+**File:** `contracts/dogeos/barkswap/MwzBarkCreatorChoiceVault.sol` (494 lines). **Counterpart:**
+`contracts/gen8/MwzCreatorChoiceVault.sol` (480 lines, vendored from `e129712b9`; gen-8 design 4.1, audit 4.6, 15.5 F5).
+**Diff:** `git diff --no-index contracts/gen8/MwzCreatorChoiceVault.sol
+contracts/dogeos/barkswap/MwzBarkCreatorChoiceVault.sol` (161 insertions, 147 deletions, 15 hunks). **Imports:** v4-core
+`TickMath`, `SqrtPriceMath`, `FullMath` and OZ `Math` (internal libraries, unchanged from gen-8); OZ `ReentrancyGuard`
+(unchanged), `SafeERC20`, `SafeCast`; the vendored Algebra `IAlgebraPool`, `IAlgebraSwapCallback`, `IWNativeToken`;
+`MwzBarkLauncher` and `MwzBarkPlugin` as types only (no library link, no code reuse). Written by t6.
+
+**What changed:** the key (coin instead of V4 `PoolId`), the depositor (the launcher's `claimCreator` instead of the
+hook's), the wiring (the launcher instead of hook + PoolManager), and the buyback swap (a direct `pool.swap` on the
+coin's Barkswap pool, paid in WDOGE in the Algebra swap callback, instead of a V4 unlock paid in native currency 0),
+with one new guard on it (`PoolNotRestored`). Unchanged apart from the key type: the choice numbering and the `_credit`
+arithmetic, the human-creator two-step, `claimCreatorFees`, the whole holder-batch process (operator propose / admin
+approve / admin veto / operator execute, 24 h minimum delay, weekly cap, F5 deadline bounds), the unclaimed re-credit,
+the buyback caps (per tx, per coin-week, interval, impact at most 50 bps, 95% curve progress, 60 s window), the
+liabilities accounting, the excess-only rescue, every error (one added) and every event (key type only).
+
+**Controller correction recorded:** gen-8 F5 (holder-batch claim deadline in `[executableAt + 7 days, now + 365 days]`,
+named in the admin approval, re-checked at execution) is a choice-vault rule and belongs to this task, not t4. It is
+carried over unchanged (hunks 11 to 13 touch only the key type around it); see "Holder batches" below.
+
+### Diff hunks
+
+1. `@@ -1,48 +1,49 @@` imports, NatSpec, contract header.
+   - The V4 imports (`IPoolManager`, `IUnlockCallback`, `StateLibrary`, `PoolKey`, `PoolId`, `BalanceDelta`,
+     `SwapParams`) and `IMwzLaunchHook` go, with their three `using` lines. New: `IAlgebraPool` (`swap`, `plugin()`,
+     `globalState()`), `IAlgebraSwapCallback` (implemented instead of `IUnlockCallback`), `IWNativeToken` (WDOGE
+     `deposit`), OZ `IERC20` + `SafeERC20` (the WDOGE payment to the pool, as the launcher pays it), `SafeCast`
+     (`amountIn.toInt256()`), and the launcher and plugin types (the compiler checks the 10-field `launches(coin)` and
+     9-field `pools(pool)` tuples, so a getter drift breaks the build; reserve lock precedent).
+   - `IMwzHolderDistributor` is kept verbatim (same distributor, same function). Its name equals gen-8's declaration;
+     the Bark build compiles both trees, so tests use the fully qualified name (as for the splitter's
+     `IMwzCommunityRewardsVault`, Informational there).
+   - NatSpec: launcher instead of hook; keyed by coin; the buyback is a direct pool swap (so the plugin labels it), paid
+     in WDOGE wrapped in the callback. The "where value can leave" list is gen-8's, with the buyback line restated for
+     WDOGE. No code.
+   - `contract MwzBarkCreatorChoiceVault is IAlgebraSwapCallback, ReentrancyGuard` (gen-8: `IUnlockCallback,
+     ReentrancyGuard`; the OZ storage guard is kept).
+2. `@@ -56,7 +57,7 @@` comment on `Cfg.token` only. The field is kept and always set to the coin: the public getter keeps
+   gen-8's shape `cfg(key) -> (creator, choice, creatorPct, token)`, which `frontend/api/lib/evmGen8CampaignState.js`
+   decodes (the Bark venue changes only the key type, as for the reserve lock's `reserves`). Cost: one more fresh slot at
+   registration (about 22k gas in `launch`, inside the launcher audit's ~60k registration estimate).
+3. `@@ -80,12 +81,13 @@` transient slot and immutables.
+   - `T_BUYBACK` (a 0/1 flag) becomes `T_ACTIVE_POOL` (the address of the pool being swapped on, 0 otherwise). Same
+     role: it gates the callback. V4 has one PoolManager, so a flag plus `msg.sender == poolManager` sufficed; Algebra
+     calls back from the pool itself, so the slot names that pool.
+   - `hook`, `poolManager` and the `address launcher` become one `MwzBarkLauncher public immutable launcher` (getter
+     `launcher()` returns `address`, which the launcher's constructor checks: `choiceVault_.launcher() ==
+     address(this)`). The plugin and WDOGE are read from the launcher's immutables when used (`launcher.plugin()`,
+     `launcher.wNative()`), not copied in at construction: nothing would check a copy, while the launcher's constructor
+     already checks `plugin.wNative() == wNative_` and `plugin.choiceVault() == choiceVault_` (reserve lock precedent).
+4. `@@ -98,29 +100,29 @@` every `mapping(PoolId => ...)` becomes `mapping(address coin => ...)`, `batchCoins` stores
+   `address[]`, and the five coin events take `address indexed coin` instead of `PoolId indexed id`. `CoinRegistered`
+   also drops its separate `address indexed token` topic (it equals the coin): `CoinRegistered(address indexed coin,
+   address indexed creator, uint8 choice, uint8 creatorPct)`. One pool per coin (`launches[coin].pool`, `coinOf[pool]`),
+   so the coin key is a bijection with gen-8's pool key. New topic0s for 6281971 (t18).
+5. `@@ -128,8 +130,8 @@` `HolderUnclaimedCredited` and `Buyback`: key type only.
+6. `@@ -156,6 +158,7 @@` new error `PoolNotRestored` (buyback guard, below).
+7. `@@ -167,20 +170,19 @@` constructor and `receive()`.
+   - Constructor `(admin_, IMwzLaunchHook hook_, address launcher_, holderBatchDelay_)` -> `(admin_, MwzBarkLauncher
+     launcher_, holderBatchDelay_)`: zero checks on admin and launcher, the 24 h minimum delay unchanged. **No call at
+     construction** (gen-8 called `hook_.poolManager()`): the vault is deployed before the launcher, against its
+     predicted address (t5 hand-off), and before the plugin, which takes this vault's address as its buyback label.
+   - `receive()`: native accepted only from the launcher (gen-8: only from the PoolManager, which paid the hook's
+     creator ledger). The launcher's `claimCreator` pays with a plain `call` carrying all gas (`MwzBarkLauncher._send`),
+     so this is the exact counterpart. Guard: none needed (no state, no call); it runs inside `pull`'s lock and the
+     launcher's `claimCreator` lock, after the launcher zeroed `creatorOwed`. WDOGE never sends native here: the vault
+     never unwraps (it wraps exactly what a buy owes, in the callback).
+8. `@@ -214,7 +216,7 @@` `rescueExcessNative` NatSpec: "launcher" for "PoolManager". No code change; see its entry.
+9. `@@ -226,35 +228,37 @@` `registerCoin`, `creatorOf` (plus NatSpec), `pull`, the `_credit` signature. See entries.
+10. `@@ -264,44 +268,44 @@` `_credit` body, `claimCreatorFees`, `proposeCreator`, `acceptCreator`: key type only
+    (`id` -> `coin`); NatSpec "mirrors the launcher rule".
+11. `@@ -309,15 +313,15 @@` `proposeHolderBatch` loop: key type only (`ids` -> `coins`).
+12. `@@ -333,7 +337,7 @@` `proposeHolderBatch` storage of the coin list: key type only.
+13. `@@ -353,7 +357,7 @@` `vetoHolderBatch`: `address[] storage` instead of `PoolId[] storage`.
+14. `@@ -374,19 +378,19 @@` `creditUnclaimedHolders`: key type only.
+15. `@@ -394,87 +398,97 @@` `buyback`, the callback (`unlockCallback` -> `algebraSwapCallback`), `_checkInterval`,
+    `_useWeekCap`, `batchContents`. The last three change the key type only. `buyback` and the callback: see entries.
+
+### registerCoin(coin, creator, choice, creatorPct)
+
+- Interface fixed by the launcher (t32): `IMwzBarkChoiceVaultForLauncher.registerCoin(address coin, address creator,
+  uint8 choice, uint8 creatorPct)`, called in `launch` for choices 2-4 after `launches[coin]` is written (`feeCreator` =
+  this vault) and before the pool exists. Gen-8's `(PoolId id, address token, ...)` loses the separate token argument:
+  the key is the token.
+- **Guard:** none (gen-8 same). Only the launcher, inside its own `nonReentrant` `launch`; no external call.
+- **CEI:** checks in gen-8's order (caller `OnlyLauncher`, `coin` / `creator` non-zero `ZeroAddress`, not registered
+  `AlreadySet`, choice 2..4 and `creatorPct` 1..99 iff split `BadChoice`); one struct write; the event.
+- **States:** once per coin, ever; the choice never changes. The launcher applies the same choice / pct rules before
+  the call (`InvalidFeeChoice`), so a valid launch never reverts here.
+- **Over/underflow:** none. **Griefing:** none (launcher only).
+
+### creatorOf(coin) (view)
+
+- `cfg[coin].creator`. **t5 obligation met:** non-zero for every registered coin: `registerCoin` refuses a zero
+  creator, and the only other writer, `acceptCreator`, sets `msg.sender` and refuses `msg.sender == address(0)`
+  (`proposeCreator(coin, address(0))` only cancels). `MwzBarkReserveLock.beneficiaryOf` pays the reserve to it when the
+  launcher's `feeCreator` is this vault, which it is for every registered coin, forever (see `pull`).
+
+### pull(coin)
+
+- **Guard:** `nonReentrant` (OZ storage guard), unchanged.
+- **CEI:** check the coin is registered (`WrongChoice`); read the balance; the only external call,
+  `launcher.claimCreator(coin, address(this))`; check the balance delta equals the returned amount (`PullMismatch`);
+  then the effects (`totalLiabilities`, the choice's balance) and the event. Gen-8's order: the effects follow the call
+  because they depend on the amount received, and the delta check makes them equal to native actually held.
+- **Why the launcher pays this vault and nobody else:** `claimCreator` requires `msg.sender == launches[coin].feeCreator`.
+  For a registered coin that is this vault from `launch` on, and it can only change through the launcher's
+  `proposeCreator` / `acceptCreator`, which only the current `feeCreator` (this vault) can start; this vault has no
+  function that calls them. So a choice coin's creator amount is claimable by this vault only, and lands here (the vault
+  passes itself as `to`).
+- **Reentrancy through the payout:** the launcher's `_send` gives all gas to this contract's `receive()`, which only
+  checks the sender. The launcher holds its own transient guard and zeroed `creatorOwed[coin]` before sending.
+- **States:** any time for a registered coin. The launcher reverts `NothingOwed` when nothing is owed (gen-8's hook
+  same), so a zero pull reverts. Keep coins are never registered (`WrongChoice`).
+- **Over/underflow:** `balance - before` cannot underflow (nothing leaves during the call); additions are checked uint256.
+- **Griefing:** permissionless and harmless: it moves the coin's own creator money into this vault and credits it by the
+  fixed choice; an early call only saves the operator one.
+
+### claimCreatorFees(coin, to), proposeCreator(coin, next), acceptCreator(coin)
+
+- Key type only; logic, order and errors are gen-8's. `claimCreatorFees`: `nonReentrant`; checks (caller is the human
+  creator, `to` non-zero, balance non-zero); effects (balance zeroed, `totalLiabilities` lowered); the payout as the last
+  call; a rejecting recipient reverts the whole claim and the balance stays. Only split coins ever hold a creator
+  balance (`_credit`).
+- **Invariant "claims pay only the entitled party":** the split creator part is paid only to an address the current
+  human creator names, by the human creator's own call; the creator right moves only by the two-step `proposeCreator` /
+  `acceptCreator`, started by the current creator. No admin, operator or launcher path writes `cfg[coin].creator` or
+  `creatorBalance`.
+
+### Holder batches: proposeHolderBatch, approveHolderBatch, vetoHolderBatch, executeHolderBatch (F5)
+
+- Logic, order, guards, caps and errors are gen-8's; only the coin list type changed (`address[]`). Restated because
+  this task owns F5:
+  - `proposeHolderBatch` (operator, `nonReentrant`, no external call): the distributor is pinned, batch id and root
+    non-zero, a fresh batch id, 1..200 coins, each a holders / split coin with `0 < a <= holderBalance`; the amounts move
+    out of the balances into the batch; the weekly cap (`maxHolderBatchPerWeek`) and `total < 2^128`; `executableAt = now
+    + delay` (delay >= 24 h, immutable); **F5:** `executableAt + 7 days <= claimDeadline <= now + 365 days`
+    (`BadClaimDeadline`), so a deadline of 0 ("never expires" in the distributor) is impossible.
+  - `approveHolderBatch` (admin: the DogeOS deployer key on testnet, B9; a Safe on mainnet): must name the stored root,
+    total **and claim deadline** (`BadBatch` otherwise), so the signer sees and signs the deadline (F5). No external
+    call.
+  - `vetoHolderBatch` (admin, `nonReentrant`): a proposed batch only; the amounts go back to their coins; the weekly
+    counter is lowered when the batch was proposed in the current week. No external call.
+  - `executeHolderBatch` (operator, `nonReentrant`): proposed, approved, `now >= executableAt`, **F5:** the deadline still
+    at least 7 days away (else the admin vetoes and the operator re-proposes); effects (`status = 2`, `totalLiabilities
+    -= total`), then the one external call, `createBatch{value: total}` on the pinned distributor (`RewardDistributor`,
+    reused unchanged).
+- **Over/underflow:** `holderBalance -= a` after `a <= holderBalance`; `totalLiabilities -= total` where `total` has been
+  inside the liabilities since `pull` (moving holder balance into a batch does not change liabilities);
+  `executableAt - holderBatchDelay` recovers the proposal time; `now + 365 days` cannot overflow.
+- **Griefing:** a compromised operator can propose roots that never execute without the admin's approval and use up the
+  weekly cap (the admin vetoes, which restores the balances and the current week's counter). Unchanged gen-8.
+- **Spec scope:** holders / split are wired and deployed here and exercised by sub-project 2 (spec "Out of scope").
+
+### creditUnclaimedHolders(coins, amounts) (payable) and rescueExcessNative(to, amount)
+
+- Key type only. Re-credit: admin, `nonReentrant`, holders / split coins only, `msg.value` must equal the sum
+  (`ValueMismatch`), liabilities raised by the same sum. Rescue: admin, `nonReentrant`, at most `balance -
+  totalLiabilities` (forced sends only, since `receive()` accepts the launcher only and every launcher payout is booked by
+  `pull`).
+- **Over/underflow:** `balance - totalLiabilities` cannot underflow while `balance >= totalLiabilities` holds: every
+  inflow is booked as liability (pull books exactly the delta, re-credit exactly `msg.value`), and every outflow lowers
+  liabilities by what leaves (claim, execute, buyback net of its refund, see below).
+
+### buyback(coin, amountIn)
+
+The choice vault's swap path of the spec's "Audit scope note", in full.
+
+- **Guard:** `nonReentrant` (OZ storage guard), unchanged; `onlyOperator` (the DogeOS operator key, B9; the admin can
+  pause it).
+- **Checks (gen-8's, then the venue's):**
+  1. A buyback coin (`WrongChoice`); `0 < amountIn <= buybackBalance` (`Insufficient`); `amountIn <= maxBuyPerTx`
+     (`CapExceeded`); the interval and the per-coin weekly cap (`_checkInterval`, `_useWeekCap` write their stamps here,
+     gen-8 same; any later revert undoes them).
+  2. `launcher.launches(coin)` gives the pool, `openAt` and `liqA` (gen-8: `hook.pools(id)`); not before `openAt + 60 s`
+     (`CurveState`), so never inside the launch window or before trading opens.
+  3. **New, `PoolNotRestored`:** the pool's `plugin()` is the launcher's plugin and its `pluginConfig` is exactly
+     `PLUGIN_CONFIG` (135). Why: in V4 the hook is part of the pool key and cannot change; on Barkswap an admin can swap
+     the plugin or the config of our pool (facts section 5, spec "Accepted testnet risks"). A foreign plugin could
+     return an override fee close to 100% or a plugin fee and take most of `amountIn`; the vault has no `minOut` (gen-8
+     bounds a buyback by its price impact only, which a fee does not move), and its operator is automated. With our
+     plugin and config 135 the fee is exactly the plugin's phase rate (its override is never 0 for a swap that is not
+     the launcher's conversion: the lowest rate, 100 bps, is 9,900 fee units on a buy), and the swap is booked and
+     labelled `KIND_BUYBACK`. `lastFee` need not be checked: the pool uses it only when the override is 0. While the
+     check fails the operator waits for the keeper's `restore(coin)` (spec section 4, admin-change watch). No loss.
+  4. The latch, `sqrtStart` and `sqrtGrad` from `plugin.pools(pool)` (gen-8: the hook's `graduated`, `tickStart`,
+     `sqrtGrad`; the plugin derives both prices from the same ticks the launcher stores).
+  5. **95% curve progress before graduation**, in Barkswap orientation (coin = token0, WDOGE = token1, A =
+     `[sqrtStart, sqrtGrad]`, the price rises on buys): `target = getAmount1Delta(sqrtStart, sqrtGrad, liqA)` (the WDOGE
+     A takes to reach graduation; gen-8 `getAmount0Delta`, native was currency 0), `raised = getAmount1Delta(sqrtStart,
+     min(sqrtP, sqrtGrad), liqA)` (0 at or below the start price), and `(raised + amountIn) * 10,000 <= target * 9,500`
+     (`CurveState`). `amountIn` includes the fee, so the check is conservative: after the buy A holds at most 95% of its
+     target, the price stays below `sqrtGrad` and **a buyback can never trigger graduation** (no latch and no inline
+     graduation fee inside a vault call). `liqA` is the launcher's minted figure, equal to A's liquidity until the
+     graduation burn, which only runs after the latch (when this check is skipped). If the price were at or past
+     `sqrtGrad` without the latch (only possible while a foreign plugin ran the pool, which step 3 already refuses),
+     `raised = target` and the check refuses too.
+  6. **Impact cap**, mirrored: gen-8 lowered `sqrtP` (coins per native) by `sqrt(B / (B + impact))`; here the price is
+     WDOGE per coin and rises on buys, so `limit = floor(sqrtP * floor(sqrt((B + impact) * 1e36)) / 1e20)` (`1e20 =
+     sqrt(B * 1e36)` exactly). Both roundings go down, so `(limit / sqrtP)^2 <= (B + impact) / B`: the coin's price
+     rises by at most `maxImpactBps` (at most 50, `setCaps`), the same economic bound as gen-8. Algebra requires `price <
+     limit < MAX_SQRT_RATIO` for a oneToZero swap (`invalidLimitSqrtPrice`; Algebra's MAX equals v4's
+     `TickMath.MAX_SQRT_PRICE`); `limit <= sqrtP` (impact 0) or `limit >= MAX_SQRT_PRICE` reverts `ImpactTooHigh` first.
+     The comparison is made in uint256 before the uint160 cast, so the cast cannot truncate.
+- **Effects before the swap (gen-8):** `buybackBalance -= amountIn`, `totalLiabilities -= amountIn`; then `T_ACTIVE_POOL
+  = pool`.
+- **Interaction:** `pool.swap(DEAD, false, amountIn, limit, abi.encode(WDOGE, amountIn))`, called by the vault itself, so
+  the plugin's `beforeSwap` sees `sender == choiceVault` (its immutable, checked against the launcher's choice vault by
+  the launcher's constructor) and labels the swap `KIND_BUYBACK`. The kind is a label only: the plugin charges the
+  buyback the normal phase rate (`MwzBarkPlugin._kind` / `beforeSwap`: only the launcher's conversion is fee-free).
+  Exact input (`amountRequired > 0`), oneToZero (WDOGE in, coins out), recipient 0xdEaD: the pool sends the coins
+  straight to 0xdEaD (our plain `MwzV4Token`, no hooks; the launcher burns its dust the same way), calls
+  `algebraSwapCallback` here, checks its own WDOGE balance (Algebra's `insufficientInputAmount`), unlocks, and runs
+  `afterSwap` (fee totals, the `BarkSwap` event). **F2** (no sell may end below the start price) does not apply: a
+  buyback is a buy; the plugin enforces F2 on sells only. The buy's fee accrues to the launcher's positions; its creator
+  part is booked to `creatorOwed[coin]` for this vault (the coin's `feeCreator`) and comes back through `pull` (gen-8
+  same).
+- **After the swap:** clear `T_ACTIVE_POOL`; `spent = amount1` (WDOGE paid), `burned = -amount0`; `spent <= amountIn`
+  (`Insufficient`, gen-8's check; Algebra's exact input never takes more, and the callback refuses to pay more); the
+  unfilled part (a partial fill at the price limit) is credited back to the balance and the liabilities; `burned > 0`
+  (`NothingSwapped`); the event.
+- **States:** a buyback coin after its launch window, our launch settings in place, operator set and not paused, within
+  the caps; before graduation only below 95% of A's target; after graduation any time (impact and spend caps only).
+  Before the first `pull` there is no balance (`Insufficient`).
+- **Over/underflow:** balance and liabilities are lowered by `amountIn <= buybackBalance <= totalLiabilities`; the refund
+  `amountIn - spent` follows the `spent <= amountIn` check; `(raised + amountIn) * 10,000` and `target * 9,500` are
+  uint256 products of WDOGE amounts far below 2^200; `toInt256` is checked; `-a0` negates a coin amount far below 2^255.
+- **Liabilities:** before, `balance = L + x` (x the rescuable excess); the callback wraps `spent`; after, liabilities are
+  `L - amountIn + (amountIn - spent) = L - spent`, the same change as the balance, so `x` is untouched by a buyback.
+- **Griefing / MEV:** gen-8's residuals, unchanged: the operator picks the moment within the caps; a searcher can
+  sandwich a buyback, bounded per call by the impact cap (at most a 0.5% price move) and per week by
+  `maxBuybackPerCoinWeek`; the sandwich's own legs pay the phase rate both ways into our books. New on Barkswap: an admin
+  plugin or config change blocks buybacks (`PoolNotRestored`) until `restore`, without loss.
+
+### algebraSwapCallback(amount0Delta, amount1Delta, data)
+
+- **Authentication:** `msg.sender` must equal `T_ACTIVE_POOL`, which is non-zero only between the vault's own
+  `pool.swap` call and its return, inside `buyback`'s lock; `msg.sender` is never address(0), so the cleared slot never
+  matches. Algebra calls the swap callback only on the address that called `swap`, so a callback to this vault from the
+  pool the slot names is that pool's callback for the vault's own swap. During that window the pool holds its own
+  reentrancy lock, and the only code running inside it is the pool, our plugin's `beforeSwap` (before the callback) and
+  two plain tokens; Algebra releases the lock before `afterSwap`, which runs after the callback has paid. So `data` is
+  the vault's own `abi.encode(WDOGE, amountIn)`, handed back unchanged; WDOGE comes from the launcher's immutable (the
+  launcher's constructor checked it equals the plugin's, and the plugin checked at `initialize` that it is the pool's
+  token1).
+- **Payment:** `amount0Delta > 0` (the vault owing coins) is impossible for a oneToZero swap and reverts
+  `UnexpectedCallback`. A positive `amount1Delta` is wrapped (`WDOGE.deposit{value}`) and paid to the pool
+  (`safeTransfer`) exactly, and only if it is at most `amountIn` (`UnexpectedCallback` otherwise): the callback never
+  spends native beyond the buyback's own amount, which `buyback` already took out of the coin's balance. Gen-8 settled
+  the owed native and took the coins to 0xdEaD inside its unlock callback; here the pool pays the coins to the recipient
+  itself and the callback only pays the input.
+- **Guard / CEI:** no guard of its own (it runs inside `buyback`'s lock, so any re-entry into a `nonReentrant` function
+  reverts). No state written. External calls: WDOGE only (WETH9-style, no hooks).
+- **Griefing:** a direct call from anyone, or a call from any other pool, reverts at the first check.
+
+### Invariants this contract upholds (spec "Invariants": claims pay only the entitled party; buyback caps)
+
+| Invariant | Where |
+|---|---|
+| Claims pay only the entitled party | the launcher pays a choice coin's creator amount only to this vault (`pull`); the split creator part goes only to the human creator's chosen address (`claimCreatorFees`); holder money only to the pinned distributor in an admin-approved batch; buyback money only into the coin's own pool, coins to 0xdEaD; rescue only above liabilities. |
+| Buyback caps (gen-8 / gen-7 E15) | per tx, per coin-week, interval, impact at most 50 bps, 95% of A's target before graduation, not in the 60 s window; plus `PoolNotRestored` (the fee is exactly the plugin's rate). |
+| `balance >= totalLiabilities` | every entry above. |
+| F5 | proposal bounds, the approval names the deadline, the execution re-check. |
+
+### Informational
+
+- Size: 12,594 runtime bytes (gen-8 in the same build: 13,143).
+- ABI changes for the Bark venue (t17 / t18 / t21 / t22): every `bytes32` pool-id argument is an `address` coin;
+  constructor `(admin, launcher, holderBatchDelay)`; getter `launcher()` (no `hook()` / `poolManager()`); `cfg(coin)`
+  keeps its four fields; events `CoinRegistered(address,address,uint8,uint8)`, and `Pulled`, `CreatorFeesClaimed`,
+  `CreatorProposed`, `CreatorTransferred`, `HolderUnclaimedCredited`, `Buyback` keyed by `address indexed coin`;
+  holder-batch events unchanged; new error `PoolNotRestored`; `batchContents` returns `address[]`.
+- Algebra behaviour used here that rests on upstream source not vendored (the price-limit rule for oneToZero, the order
+  "transfer out, callback, balance check, unlock, afterSwap", `data` handed back unchanged) is fork-checked in t10.
+
+Verdict: pending (t7)
+
+---
+
+## MwzBarkCreatorEscrow
+
+**File:** `contracts/dogeos/barkswap/MwzBarkCreatorEscrow.sol` (146 lines). **Counterpart:**
+`contracts/gen8/MwzCreatorEscrow.sol` (126 lines, vendored from `e129712b9`; gen-8 audit 4.4, D5 option E1). **Diff:**
+`git diff --no-index contracts/gen8/MwzCreatorEscrow.sol contracts/dogeos/barkswap/MwzBarkCreatorEscrow.sol` (62
+insertions, 42 deletions, 3 hunks). **Imports:** v4-core `TickMath` (only `MAX_SQRT_PRICE`), OZ `IERC20`, `SafeERC20`,
+`ReentrancyGuard`, `Checkpoints` (unchanged), `SafeCast`; the vendored Algebra `IAlgebraPool`, `IAlgebraSwapCallback`,
+`IWNativeToken`; `MwzBarkLauncher` as a type only. Written by t6.
+
+**What changed:** the pool lookup (the launcher's `launches(coin).pool` instead of the hook's pool key) and the swap (a
+direct `pool.swap` on the coin's Barkswap pool, paid in WDOGE in the Algebra swap callback, instead of a V4 unlock in
+native currency 0). Unchanged: the escrow schedule (30-day cliff, five weekly tranches, the gen-7 formula), the
+checkpoint record, `minOut`, the refund of an unfilled part as the last call, `vested` / `claimable` / `claim`, "no owner,
+no admin, no fee, no rescue", every error (one added for the constructor).
+
+### Diff hunks
+
+1. `@@ -1,30 +1,29 @@` imports, NatSpec, contract header. The V4 imports (`IPoolManager`, `IUnlockCallback`, `PoolKey`,
+   `PoolId`, `BalanceDelta`, `SwapParams`) and `IMwzLaunchHook` go with their `using` lines; `SafeCast`, the Algebra
+   interfaces, `IWNativeToken` and the launcher type come in. NatSpec: the buy swaps directly on the coin's Barkswap
+   pool so our plugin labels it an escrow buy (`KIND_ESCROW_BUY`, by `sender == creatorEscrow`, the plugin's
+   immutable); the rest of the description is gen-8's. `is IAlgebraSwapCallback, ReentrancyGuard`.
+2. `@@ -33,13 +32,17 @@` new error `ZeroAddress` (constructor), the transient `T_ACTIVE_POOL` slot (the pool being
+   swapped on), and the immutables: `poolManager` and `hook` become `MwzBarkLauncher public immutable launcher`.
+3. `@@ -48,46 +51,63 @@` the event, the constructor, `buy` and the callback.
+   - `EscrowBuy(PoolId indexed id, ...)` -> `EscrowBuy(address indexed pool, address indexed token, address indexed
+     beneficiary, uint256 nativeSpent, uint256 coinsEscrowed)`: the V4 pool id becomes the Algebra pool address (same
+     position, same meaning). New topic0 for 6281971 (t18). `EscrowClaimed` unchanged.
+   - Constructor `(IMwzLaunchHook hook_)` -> `(MwzBarkLauncher launcher_)`: a zero check (gen-8 had none; its
+     `hook_.poolManager()` call failed for a zero hook) and **no call at construction**: the escrow is deployed before
+     the plugin (which takes the escrow's address as a label) and before the launcher. Nothing on chain checks
+     `escrow.launcher()`: t15 asserts `escrow.launcher() == launcher` and `plugin.creatorEscrow() == escrow` after
+     deployment. A wrong launcher makes every `buy` revert (its `launches` call fails or returns no pool): fail-closed,
+     no funds can enter.
+   - `buy` and `algebraSwapCallback`: see entries.
+
+### buy(token, minOut) (payable)
+
+- **Guard:** `nonReentrant` (OZ storage guard), unchanged.
+- **Checks:** `msg.value > 0` (`ZeroAmount`); the pool from `launcher.launches(token)`, non-zero (`UnknownPool`; gen-8
+  checked the hook's creator for the pool key). One pool per coin, created and initialized by the launcher with the coin
+  as token0 and WDOGE as token1 (the plugin's `beforeInitialize` checks the order), so the pool is ours and its token0 is
+  `token`.
+- **Interaction:** `T_ACTIVE_POOL = pool`; `pool.swap(address(this), false, msg.value, MAX_SQRT_PRICE - 1,
+  abi.encode(WDOGE, msg.value))`: exact input of `msg.value` as WDOGE, oneToZero, no effective price limit (gen-8:
+  `MIN_SQRT_PRICE + 1` in the V4 orientation, the same "no limit"). The escrow is the caller, so the plugin labels it
+  `KIND_ESCROW_BUY` and charges the phase rate like any trade (launch decay inside the 60 s window, gen-8 same; the
+  plugin refuses it before `openAt`). The pool sends the coins to the escrow, calls the callback (which wraps and pays
+  exactly the WDOGE owed, at most `msg.value`), checks its balance, unlocks and runs `afterSwap` (fee totals, the
+  `BarkSwap` event and, if this buy crosses graduation, the latch and the inline graduation fee in the launcher; that
+  runs after the callback paid, under the launcher's own guard, and never calls the escrow). Then the slot is cleared.
+- **Effects after the swap (gen-8 order):** `coinsOut = -amount0`, `spent = amount1`; `coinsOut > 0` and `>= minOut`
+  (`Slippage`); the checkpoint (cumulative coins for `msg.sender` at this timestamp); the event; then the refund of
+  `msg.value - spent` to `msg.sender` as the last call (`RefundFailed` if it rejects). The swap's native never leaves as
+  native: the callback wraps exactly `spent`, so `msg.value - spent` is still held as native for the refund. An unfilled
+  part exists only if a buy exhausts B (all coins above graduation), i.e. never in practice.
+- **coinsOut from the return value:** the pool transfers exactly `-amount0` of token0 (our plain `MwzV4Token`: no
+  fee-on-transfer, no hooks) to the escrow before the callback; gen-8 took the V4 delta the same way.
+- **States:** any launched coin from `openAt` on; any buyer escrows only its own buy (the beneficiary is always
+  `msg.sender`). Barkswap admin changes: if an admin swapped our plugin, the buy is still escrowed but not labelled or
+  booked by our plugin, and a foreign plugin's fee comes out of the buyer's own `msg.value`, bounded by the buyer's
+  `minOut` (the app derives it from a QuoterV2 quote of the real pool). Unlike the choice vault (no `minOut`, protocol
+  money, automated operator), the escrow therefore needs no `PoolNotRestored` guard and keeps gen-8's behaviour.
+- **Over/underflow:** `toInt256(msg.value)` is checked; cumulative coins `<= 1e27 < 2^208` (gen-8 comment), timestamps
+  `uint48`; `msg.value - spent` only when `msg.value > spent`.
+- **Griefing:** none new. The buyer can be sandwiched like any trader, bounded by `minOut` (gen-8 same). Nobody can
+  escrow for someone else, so nobody can lock a third party's coins.
+
+### algebraSwapCallback(amount0Delta, amount1Delta, data)
+
+- The same construction as the choice vault's callback: only the pool named by `T_ACTIVE_POOL` (set only around `buy`'s
+  own `pool.swap`, inside `buy`'s lock); `amount0Delta > 0` is impossible for a buy (`UnexpectedCallback`); a positive
+  `amount1Delta` is wrapped and paid exactly, and only up to `msg.value` (`UnexpectedCallback` otherwise). Gen-8 checked
+  `msg.sender == poolManager` and `_reentrancyGuardEntered()`; the active-pool slot implies both (it is non-zero only
+  inside `buy`, under the lock) and also names the pool. No state written; external calls to WDOGE only.
+- The escrow holds no native at rest (gen-8 same: every buy refunds what it did not spend), and a callback spends at
+  most the current buy's own `msg.value`, so even forced native cannot be spent for someone else's buy.
+
+### vested / claimable / claim, escrowedTotal / claimed (views)
+
+- Unchanged from gen-8 (no hunk touches them). `claim`: `nonReentrant`; `claimable` (vested by time minus claimed);
+  `claimed` raised before the transfer of our plain ERC20 (CEI); only `msg.sender`'s own position. **Invariant "claims
+  pay only the entitled party":** a position is keyed by `msg.sender` of the buy and paid only to `msg.sender` of the
+  claim, at most what is released; there is no other way out (no owner, no rescue).
+
+### Informational
+
+- Size: 4,179 runtime bytes (gen-8 in the same build: 5,030).
+- ABI changes for the Bark venue (t17 / t18 / t22): constructor `(launcher)`; getter `launcher()` (no `hook()` /
+  `poolManager()`); `EscrowBuy` topic 1 is the pool address; new error `ZeroAddress`; `buy`, `claim` and the views keep
+  their signatures (`token` was already an address).
+
+### Hand-off from t6
+
+- t15: deploy `MwzBarkCreatorEscrow(launcher)` and `MwzBarkCreatorChoiceVault(admin, launcher, holderBatchDelay)`
+  against the launcher's predicted address, before the plugin (which takes both addresses); neither makes a call at
+  construction. The launcher checks `choiceVault.launcher()`; the script asserts `escrow.launcher() == launcher` and
+  `plugin.creatorEscrow() == escrow`. After deployment the admin calls `setOperator` (the DogeOS operator key, B9),
+  `setCaps` and `setHolderDistributorOnce`.
+- t10, choice vault: `pull` only through the launcher; `receive` refusing anyone but the launcher; split / holders /
+  buyback crediting; F5 bounds and the approval naming the deadline; veto; weekly caps; `PoolNotRestored` after an admin
+  `setPlugin` / `setPluginConfig` and fine again after `restore`; the 95% rule and the impact limit in Barkswap
+  orientation; the `KIND_BUYBACK` label and the phase rate; `totalLiabilities == balance` after every action; the
+  callback refusing outside callers and other pools. Escrow: the `KIND_ESCROW_BUY` label and the phase rate; the
+  callback refusing outside callers and other pools; `minOut`; the refund; the schedule (cliff, tranches).
+- t17 / t18 / t21 / t22: both contracts are keyed by coin address; event shapes above.
 
 Verdict: pending (t7)
