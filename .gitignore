@@ -128,3 +128,8 @@ cache-gen8
 artifacts-gen8
 typechain-types-gen8
 reports/gen8/local-*.json
+
+# DogeOS Barkswap hardhat build outputs (hardhat.dogeos-bark-fork.config.ts)
+cache-bark
+artifacts-bark
+typechain-types-bark
