@@ -38,6 +38,9 @@ linked library, exits non-zero above 24,576 bytes).
 | MwzBarkLauncher | 22,307 (t4, with the money side; 2,269 headroom; 21,588 at t32 before the split, see "Size and the library split") |
 | MwzBarkLaunchLib (linked library) | 10,255 (t4) |
 | MwzBarkFeeBooks (linked library) | 1,133 (t4) |
+| MwzBarkFeeSplitter | 3,486 (t5) |
+| MwzBarkReserveLock | 2,607 (t5) |
+| MwzBarkLaunchLens | 7,304 (t5; no linked library) |
 
 ## Method
 
@@ -1156,5 +1159,357 @@ the library's ABI, not the launcher's, so the t7 ABI export must merge them.
    Proposed: accept as written.
 6. **Conversion constants are compile-time.** The spec calls them deploy-time constants; they are code constants fixed
    at deployment (no setter). A different cap or interval is a new generation.
+
+Verdict: pending (t7)
+
+---
+
+## MwzBarkFeeSplitter
+
+**File:** `contracts/dogeos/barkswap/MwzBarkFeeSplitter.sol` (203 lines). **Counterpart:** `contracts/gen8/MwzFeeSplitter.sol`
+(197 lines, vendored from `e129712b9`; gen-8 audit 4.5, V13, 15.4). **Diff:** `git diff --no-index
+contracts/gen8/MwzFeeSplitter.sol contracts/dogeos/barkswap/MwzBarkFeeSplitter.sol` (36 insertions, 30 deletions, 10
+hunks). **Imports:** OZ `ReentrancyGuard` (unchanged); `MwzBarkLauncher` as a type only (no library link, no code
+reuse). Written by t5.
+
+**What changed, in one line:** the payer is the launcher instead of the hook. `route`, `bands`, the run sequencing, the
+operator / admin model, the effects order, the destinations, the errors and both events are byte-for-byte gen-8's; the
+band arithmetic is untouched on purpose (the t4 B11 proof depends on it).
+
+### Diff hunks
+
+1. `@@ -1,20 +1,21 @@` imports and title. The V4 `IPoolManager` and `IMwzLaunchHook` imports go; `MwzBarkLauncher` is
+   imported as a type. Typing the payer as the launcher contract (not a hand-written interface) makes the compiler check
+   `routerPaid`'s return shape against the launcher's `RouterPaid` struct, so a layout drift breaks the build instead of
+   mis-decoding. `IMwzCommunityRewardsVault` is kept verbatim (same vault, same two functions). NatSpec: the attribution
+   source is now the plugin's `BarkSwap` and the launcher's `FeesCollected` / `CoinFeesConverted` events (spec
+   "Attribution for D1") instead of `HookFee`. No code.
+2. `@@ -22,16 +23,20 @@` NatSpec only, plus the contract name. States B11 (B and G are the launcher's post-conversion
+   net books, see "B11" below) and replaces gen-8's "router-change flush" with `payParkedRouter` (the launcher's F3
+   form: a router change parks the bucket, and the parked bucket is paid by a separate permissionless call).
+3. `@@ -52,8 +57,9 @@` immutables. `hook` and `poolManager` become one immutable `launcher` (getter `launcher()`). ABI
+   change: `hook()` and `poolManager()` are gone. No off-chain caller reads either from the splitter (the indexer's
+   `GEN8_SPLITTER_ABI` lists `hook()` but never calls it; `financeGen8.js` reads `pending`, `runs`, `routedAmount`,
+   which are unchanged). The Bark venue's ABI (t17 / t18) lists `launcher()`.
+4. `@@ -61,6 +67,7 @@` a comment on `operator`: the launcher's `claimRouter` reads it (gen-8 F4, 30,000-gas
+   `staticcall`). The state variable was already public in gen-8, so `operator()` exists unchanged (controller note:
+   "expose `operator()`").
+5. `@@ -83,7 +90,7 @@` constructor parameter type `IMwzLaunchHook hook_` -> `MwzBarkLauncher launcher_` (same
+   position, first of eight; ABI type `address` either way).
+6. `@@ -93,11 +100,10 @@` constructor body. Zero check on `launcher_` (as on `hook_`). Gen-8 called
+   `hook_.poolManager()` here; the splitter now makes **no call at construction**, because it is deployed before the
+   launcher, against the launcher's predicted address, and handed to the launcher's constructor as `treasuryRouter_`
+   (12-argument constructor, 9th; the launcher does not call the splitter at construction either). Deploy risk: a
+   wrong predicted address makes every router payout revert in the launcher (below, hunk 7). t15 checks
+   `splitter.launcher() == launcher` after deployment.
+7. `@@ -108,9 +114,9 @@` `receive()`: native accepted only from the launcher (gen-8: only from the PoolManager, because
+   the hook paid through burn-claim + take). The launcher pays the router with a plain `call` carrying all gas
+   (`MwzBarkLauncher._send`, from `claimRouter` and `payParkedRouter`), so the check is the exact counterpart.
+   - **Guard:** none needed; `receive` writes no state and makes no call. It runs inside the launcher's `nonReentrant`
+     `claimRouter` / `payParkedRouter`, after the launcher's own effects (bucket zeroed, `routerPaid` raised). It
+     cannot reach `route` (no call), and `route` is itself `nonReentrant`.
+   - **States:** any other sender reverts `UnexpectedSender`, so neither the vaults (they are paid by `route`) nor
+     anyone else can push native through a call. Native forced in without a call (selfdestruct, block reward) is
+     unchanged gen-8 behaviour: it is above every `routerPaid` delta, so no run ever routes it; it stays here (no
+     withdraw by design, gen-8 4.5).
+   - **Griefing:** if this splitter's `launcher` is not the real launcher (deploy error), every launcher payout to it
+     reverts `SendFailed`; the money stays in the launcher's bucket and the owner re-points the router (48 h
+     timelock, F3). Nothing is lost.
+8. `@@ -120,11 +126,11 @@` `pending()`: reads `launcher.routerPaid(this)` instead of `hook.routerPaid(this)`; NatSpec.
+   Same tuple order `(amount, bondingFees, gradFees)` (launcher audit, "routerPaid ... views").
+9. `@@ -143,11 +149,11 @@` `route` NatSpec: "hook" -> "launcher", "flush" -> "parked payout". No code.
+10. `@@ -156,7 +162,7 @@` `route`: the one `routerPaid` read, now on the launcher. Everything after it is gen-8's.
+
+### route(runId, expectedPaid, recruiter, squad, airdrop, accrualRoot)
+
+- **Guard:** `nonReentrant` (OZ storage guard), unchanged.
+- **CEI (unchanged order):** checks: caller is `operator` or `admin` (`NotOperator`); `runId == runs + 1` (`BadRunId`);
+  `launcher.routerPaid(this).amount == expectedPaid` (`PaidMismatch`), the only external call before the effects, a
+  `view` (compiled to STATICCALL: the launcher cannot write or re-enter through it); `total > 0` (`NothingToRoute`); the
+  bands and `committed <= total` (`OutOfBand`); `balance >= total` (`Underfunded`). Effects: `runs`, `routedAmount`,
+  `routedBondingFees`, `routedGradFees`. Interactions: the six payouts (plain calls to the four vault addresses, the two
+  `CommunityRewardsVault` deposits); any failure reverts the whole run.
+- **Why `expectedPaid` still pins B, G and total (V13 argument, launcher form):** only `MwzBarkLauncher._payRouter`
+  writes `routerPaid[r]`, and it raises `amount`, `bondingFees` and `gradFees` together in one step, from either
+  `claimRouter` (the whole bucket with both counters) or `payParkedRouter` (the whole parked bucket with both
+  counters). All three only grow. So an equal cumulative `amount` means equal B, G and total.
+- **B11 (a run never reverts `OutOfBand` because of Barkswap's cut):** B and G are the launcher's net books: router
+  bonding DOGE after the cut, the creator's amount and coin conversion; graduation DOGE (launcher audit, "Fee books").
+  Every credit raises `routerOwed` by at least what it adds to `pendingBondingFees + pendingGradFees`
+  (`_creditNative` adds router bonding + router post to the bucket and router bonding to the bonding counter;
+  `takeGraduationFee` adds the burn to both), and payouts move all three together, so per run `total >= B + G`. The
+  most a run can commit is `floor(3750 B / 1e4) + floor(1750 B / 1e4) + floor(2000 G / 1e4) <= 0.55 B + 0.2 G <= B + G
+  <= total`, for any community fee (the cut shrinks B, G and total together; it never makes `total < B + G`). So
+  `OutOfBand` can only come from operator inputs outside `[rsaMin, rsaMax]` or `squad > squadMax`, exactly as in
+  gen-8. Fork test (t10): a route run at community fee 0, the live Barkswap value and 1000 (100%).
+- **Realised DOGE only (spec Money flow 5):** `routerPaid` counts native the launcher has actually paid; coin fees not
+  yet converted are in no router total, so `expectedPaid` never compares against a swap-time estimate.
+- **States:** any time the caller is operator or admin; a splitter that is no longer the launcher's router still
+  routes what it was paid (claims before the change, or the parked bucket). Fees still owed in the launcher wait for a
+  claim (the operator calls `launcher.claimRouter()` first; F4 admits it through `operator()`).
+- **Over/underflow:** `paid - routedAmount` (and the two counters) cannot underflow: `routedAmount` is only ever set
+  to an earlier `paid`, and `paid` only grows (launcher `_payRouter` only adds, uint256). Band products are uint256 of
+  router amounts far below 2^128.
+- **Griefing:** unchanged from gen-8 15.4. A third party cannot claim the router bucket (F4 in the launcher), so it
+  cannot move `routerPaid` between plan and route; `payParkedRouter` is permissionless but one-shot per router change
+  (a stale plan reverts `PaidMismatch` once and the operator re-plans). A vault that refuses native blocks runs until
+  fixed (funds wait here, gen-8 risk 4). Forced native stays here forever (no withdraw).
+
+### Informational
+
+- `IMwzCommunityRewardsVault` is declared in both `contracts/gen8/MwzFeeSplitter.sol` and this file (same body). The Bark
+  build compiles both trees, so Hardhat's artifact name is ambiguous: tests (t10) use the fully qualified name.
+- Size: 3,486 runtime bytes.
+
+Verdict: pending (t7)
+
+---
+
+## MwzBarkReserveLock
+
+**File:** `contracts/dogeos/barkswap/MwzBarkReserveLock.sol` (109 lines). **Counterpart:** `contracts/gen8/MwzReserveLock.sol`
+(110 lines; gen-8 audit 4.3, 15.1, 15.10). **Diff:** `git diff --no-index contracts/gen8/MwzReserveLock.sol
+contracts/dogeos/barkswap/MwzBarkReserveLock.sol` (53 insertions, 54 deletions, 2 hunks; the second hunk spans the
+whole body and is explained change by change). **Imports:** OZ `IERC20`, `SafeERC20`, `ReentrancyGuard` (unchanged);
+the vendored Algebra `IAlgebraPoolState`; `MwzBarkLauncher` and `MwzBarkPlugin` as types only. Written by t5.
+
+**What changed:** the key (coin instead of V4 `PoolId`), where the latch and price come from (plugin and Algebra pool
+instead of hook and PoolManager), the "not mid-transaction" check (the pool's own lock instead of the PoolManager's),
+the price direction (Barkswap orientation), and the wiring (one constructor argument). The four release conditions,
+their order, the 1 h constant, the one-step payout, the CEI order and the "no owner, no rescue" property are gen-8's.
+
+### Diff hunks
+
+1. `@@ -1,35 +1,33 @@` imports, choice-vault interface, NatSpec, contract name, `using` lines.
+   - The V4 imports (`PoolId`, `IPoolManager`, `StateLibrary`, `TransientStateLibrary`, `IMwzLaunchHook`) and the two
+     `using ... for IPoolManager` lines go. New: `IAlgebraPoolState` (for `globalState()`), `MwzBarkLauncher` and
+     `MwzBarkPlugin` as types (the compiler checks the 10-field `launches(coin)` and 9-field `pools(pool)` tuples, so a
+     getter drift breaks the build).
+   - `IMwzChoiceVaultCreator.creatorOf(PoolId)` becomes `IMwzBarkChoiceVaultCreator.creatorOf(address coin)`: the Bark
+     choice vault is keyed by coin (`registerCoin(coin, creator, choice, pct)`, launcher t32). **Obligation on t6:**
+     `MwzBarkCreatorChoiceVault` exposes `creatorOf(address coin) view returns (address)`, non-zero for every coin it
+     registered. Renamed so the two interfaces (different ABIs) do not share an artifact name.
+   - NatSpec: the four conditions restated for the venue (condition 2 rewritten, below). Gen-8's sentence "whoever
+     wants the reserve out must keep the coin at or past its graduation price for an hour, i.e. hold A's whole raise
+     in the market for that long" is dropped because it overstates what the delay enforces (see "Griefing", F1
+     residual); nothing else in the rule changed. Beneficiary wording: the launcher's `feeCreator` (current, after a
+     two-step transfer) instead of the hook creator.
+2. `@@ -39,72 +37,73 @@` body:
+   - **Error** `PoolManagerUnlocked` -> `PoolBusy` (the launcher's name for the same condition on an Algebra pool). Same
+     position in the check order.
+   - **Comment** "hook's graduation latch" -> "plugin's graduation latch".
+   - **`Reserve` struct** unchanged; `token` is now always the coin itself. It is kept (instead of a bare amount) for
+     two reasons: the public getter keeps gen-8's shape `reserves(key) -> (token, amount)` for the off-chain reader
+     (`evmGen8CampaignState.js` reads it; the Bark venue changes only the key type), and `token != 0` stays the
+     "locked once, ever" marker (`amount` goes to 0 at release, `token` never does), so `AlreadyLocked` keeps its gen-8
+     meaning. Still one storage slot (20 + 12 bytes).
+   - **Immutables:** `hook`, `launcher` (address), `choiceVault`, `poolManager` become one `MwzBarkLauncher public
+     immutable launcher` (getter `launcher()` returns `address`, which the launcher's constructor checks:
+     `reserveLock_.launcher() == address(this)`). The plugin and the choice vault are **read from the launcher at
+     release** (`launcher.plugin()`, `launcher.choiceVault()`, both launcher immutables) instead of being copied in at
+     construction. Reason: the launcher's constructor checks its plugin and choice vault against each other and checks
+     this lock's `launcher()`, but nothing would check copies held here, so a deploy with a stale plugin or vault
+     address would compile, deploy and then mis-read the latch or pay the vault instead of the human creator. Reading
+     the launcher's own immutables removes that failure mode; the cost is two view calls (about 5k gas) per release,
+     once per coin.
+   - **Mapping** `mapping(PoolId => Reserve)` -> `mapping(address coin => Reserve)`. One pool per coin
+     (`launches[coin].pool`, `coinOf[pool]`), so the coin key is a bijection with gen-8's pool key.
+   - **Events** `ReserveLocked(PoolId indexed id, address indexed token, uint256 amount)` -> `ReserveLocked(address
+     indexed coin, uint256 amount)`; `ReserveReleased(PoolId indexed id, address indexed token, address indexed to,
+     uint256 amount)` -> `ReserveReleased(address indexed coin, address indexed to, uint256 amount)`. Gen-8's id and token
+     collapse into the coin. New topic0s (t18 indexes them for 6281971).
+   - **Constructor** `(IMwzLaunchHook hook_, address launcher_, IMwzChoiceVaultCreator choiceVault_)` ->
+     `(MwzBarkLauncher launcher_)`: zero check, store. No call at construction (the lock is deployed before the
+     launcher, against its predicted address; gen-8 called `hook_.poolManager()`, the hook existing already).
+   - **`lock`**: see its entry below.
+   - **`beneficiaryOf`**, **`release`**: see their entries below.
+
+### lock(coin, amount)
+
+- Interface fixed by the launcher (t32): `IMwzBarkReserveLockForLauncher.lock(address coin, uint256 amount)`, called in
+  `MwzBarkLauncher._seed` right after `IERC20(coin).safeTransfer(address(reserveLock), CREATOR_RESERVE)`. Gen-8's
+  `lock(PoolId id, address token, uint256 amount)` lost the separate token argument: the key is the token.
+- **Guard:** none (gen-8 same). Only the launcher can call it, inside its own `nonReentrant` `launch`; the only external
+  call is `balanceOf` on the brand-new coin (our plain `MwzV4Token`, a view).
+- **CEI:** checks in gen-8's order: caller (`OnlyLauncher`), not locked before (`AlreadyLocked`), coin non-zero
+  (`ZeroAddress`), `0 < amount <= type(uint96).max` (`BadAmount`), `balanceOf(this) >= amount` (`NotFunded`); effect: one
+  slot; event.
+- **States:** once per coin, ever (`token` marker). The coin is deployed in the same transaction, so nobody else can have
+  sent it here; the balance is exactly the 20M the launcher just transferred.
+- **Over/underflow:** the `uint96` cast follows the bound check (2e25 < 2^96).
+- **Griefing:** none; launch gas cost is gen-8's (one fresh slot, one view call, one event with one topic less).
+
+### beneficiaryOf(coin) (view)
+
+- `launcher.launches(coin).feeCreator`; if that is the launcher's choice vault, `choiceVault.creatorOf(coin)`. So the
+  reserve follows the current fee creator: after `proposeCreator` / `acceptCreator` the new address gets it (controller
+  note: "pays the CURRENT creator"). For holders / split / buyback coins the human creator recorded in the vault gets
+  it, as gen-8. An unknown coin returns address(0).
+
+### release(coin)
+
+- **The four conditions (spec section 3 row and Invariants), in gen-8's order:**
+  1. **Latched:** `plugin.pools(pool).graduated`, the plugin's latch (I7: set once in `afterSwap` of the first swap
+     that leaves the price at or past `sqrtGrad`, never cleared). Gen-8 read the hook's latch. `NotGraduated`.
+  2. **Pool not mid-operation:** `IAlgebraPoolState(pool).globalState().unlocked`, the pool's own reentrancy lock,
+     instead of V4's `PoolManager.isUnlocked()` (spec "Audit scope note"). In Algebra every state-changing pool
+     operation (swap, mint, burn, flash; our launcher's collects and graduation burn included) holds this lock while
+     tokens are in flight, and the swap / mint / flash callbacks run while it is held; a price read there is not
+     settled (the swap writes the new price before the callback pays for it). With the lock free, `globalState().price`
+     is a settled price. Algebra releases the lock before `afterSwap` (plugin audit, facts), so a call from a plugin's
+     `afterSwap` sees the settled post-swap price, the same as a call right after the swap. Difference from V4: V4's
+     flag is global (no release inside any unlock of any pool); Algebra's is per pool, so a release can run inside a
+     callback of another pool (for example a flash loan from another Algebra pool). That adds no capability: in V4 the
+     same sequence was always possible from outside the PoolManager with outside capital. `PoolBusy`; fork-checked in
+     t10 (a release from inside our pool's swap callback reverts `PoolBusy`).
+  3. **Price at or past graduation now:** Barkswap orientation, coin = token0 and the price is WDOGE per coin, rising on
+     buys: `sqrtP >= sqrtGrad`, else `PriceBelowGraduation` (gen-8 V4 orientation was `sqrtP <= sqrtGrad`). Exactly the
+     comparison of the plugin's latch and phase (`price >= sqrtGrad`) and of the launcher's `takeGraduationFee`.
+     `sqrtGrad` is the plugin's stored `getSqrtPriceAtTick(tickGrad)`.
+  4. **At least 1 h since the latch:** `block.timestamp >= graduatedAt + RESERVE_RELEASE_DELAY`, `graduatedAt` the
+     plugin's (I17: written with the latch, never again). Unchanged. `ReserveTooEarly`.
+  Then the beneficiary must be non-zero (`ZeroAddress`).
+- **Guard:** `nonReentrant` (OZ storage guard), unchanged.
+- **CEI:** checks: `amount > 0` (`NothingLocked`), then the reads `launcher.launches`, `launcher.plugin`,
+  `plugin.pools`, `pool.globalState`, and inside `beneficiaryOf` `launcher.launches`, `launcher.choiceVault`,
+  `choiceVault.creatorOf`. All are `view` calls, compiled to STATICCALL: no callee can write state or re-enter with a
+  state change. Effect: `amount = 0`. Interaction: `safeTransfer` of our plain ERC20 (no hooks) as the last call, then
+  the event (gen-8 order).
+- **States:** a locked coin, once (afterwards `NothingLocked`). A coin that never graduates keeps its reserve forever
+  (gen-7 / gen-8 same; no owner, no rescue). Barkswap admin powers: a foreign plugin swapped in cannot set our latch or
+  `graduatedAt` (they live in our plugin's storage); while it is installed our plugin sees no swaps, so the latch can
+  only be set after `restore`. The price is the pool's own state whatever the plugin. The community fee and tick
+  spacing play no part. Launch pause: irrelevant (release reads only).
+- **Over/underflow:** `graduatedAt + 1 hours` in uint256 (`uint40` time); `amount` is uint96.
+- **Griefing:**
+  - Delaying a legitimate release: only by holding the price below graduation at the moment of the call (selling into
+    A at the post rate and holding the coins); the clock cannot be reset (gen-8 15.10, unchanged).
+  - `PoolBusy` can only be hit from inside a callback of our pool, i.e. inside the caller's own transaction.
+  - **F1 residual (gen-8 parity; Informational for t7):** the 1 h delay stops the same-block bundle "buy to the
+    graduation price, release, sell back" (the release runs in the latch block and reverts). It does not require the
+    price to stay at graduation for the hour: a forced latch at T (buy to graduation and sell back) followed at T + 1 h
+    by a second bundle (buy to graduation, release, sell back, both legs possibly funded by a flash loan from another
+    pool) releases the reserve. Who gains: only the creator (the reserve goes nowhere else), early. Cost: two round
+    trips through all of A at the bonding rate up and the post rate down, plus the 2% graduation burn out of A; all
+    fees go to our books. Gen-8 has the same residual (its bundle runs outside the PoolManager's unlock with outside
+    capital), which is why the NatSpec sentence was dropped rather than the rule changed. No code change proposed.
+  - A choice vault that returns address(0) for a coin it registered would block that release (`ZeroAddress`); the vault
+    is our own contract (t6 obligation above).
+
+### Informational
+
+- Size: 2,607 runtime bytes (gen-8: 2,640).
+- The reserve lock does not check that the pool still runs our plugin before reading the price: the latch and
+  `graduatedAt` come from our plugin's storage, and the price from the pool, neither of which a foreign plugin can
+  forge.
+
+Verdict: pending (t7)
+
+---
+
+## MwzBarkLaunchLens
+
+**File:** `contracts/dogeos/barkswap/MwzBarkLaunchLens.sol` (159 lines). **Counterpart:** `contracts/gen8/MwzLaunchLens.sol`
+(94 lines; gen-8 audit 4.7, V4, 15.10). **Diff:** `git diff --no-index contracts/gen8/MwzLaunchLens.sol
+contracts/dogeos/barkswap/MwzBarkLaunchLens.sol` (129 insertions, 64 deletions; git reports one hunk over the whole
+file, explained function by function). **Imports:** v4-core `TickMath` and `SqrtPriceMath` (internal libraries,
+unchanged), gen-8 `MwzFeeMath` (unchanged, the plugin's fee math); the vendored Algebra `IAlgebraPool`;
+`MwzBarkLauncher` and `MwzBarkPlugin` as types. No linked library (gen-8 linked `MwzSwapSim`). Written by t5.
+
+**Money-path status:** none. The lens is stateless, holds no funds, has no owner, and no contract of ours calls it.
+Every function is `view` or `pure`; reentrancy guards, CEI and griefing do not apply beyond the read-only notes below.
+
+### Diff, change by change
+
+- **Imports / using:** `IPoolManager`, `StateLibrary`, `PoolId`, `FeeConfig` / `IMwzLaunchHook` and `MwzSwapSim` go;
+  `IAlgebraPool`, `MwzBarkLauncher`, `MwzBarkPlugin` come in; `MwzFeeMath` is imported from its vendored gen-8 path.
+- **Title / NatSpec:** reads the launcher, the plugin and the pool; keyed by coin; quotes come from Barkswap's QuoterV2
+  (below); Barkswap orientation stated once.
+- **Error** `UnknownPool` -> `UnknownCoin` (the key is a coin; the launcher uses the same name). An unknown coin is
+  `launches(coin).pool == 0`.
+- **Immutables:** `hook`, `poolManager`, `launcher` -> `launcher` and `plugin`. The constructor takes the launcher and
+  reads `launcher.plugin()` (the lens is deployed after the launcher, as gen-8's after the hook; no wiring to get wrong).
+- **`Progress`:** same fields, same order; comments say WDOGE. The off-chain decoder's tuple is unchanged; only the key
+  type of `progress()` changes.
+- **`currentFeeBps(coin, sender)`:** key coin; `openAt` from `launches(coin)` (the launcher passes the same `openAt` to
+  `plugin.registerPool`, so it equals the plugin's); `sqrtGrad` from `plugin.pools(pool)`; the price from
+  `globalState()`; the phase test `sqrtP >= sqrtGrad` (Barkswap orientation; gen-8 `<=`); the rates from
+  `plugin.feeConfig()` (the plugin's fixed constants; gen-8 had per-pool `FeeConfig`). This is the plugin's own
+  `beforeSwap` computation (`MwzFeeMath.rate(feeConfig(), price >= sqrtGrad, isLauncher, openAt, now)`) with the same
+  inputs, so the quote equals what the plugin sets. Two documented exceptions: the launcher's conversion pays 0 (the
+  lens returns the launcher's first-buy rate for `sender == launcher`, gen-8 same), and if a Barkswap admin removed our
+  plugin or the dynamic-fee flag the pool charges `lastFee` (0) instead; `poolState(coin).launchSettings` shows that.
+  The rate is in gen-7 bps of the curve amount; `plugin.algebraFee(rate, buy)` converts it to the pool's input-side
+  fee units.
+- **`tradingOpen(coin)`:** key change only.
+- **`previewFill` and `grossForNet` removed.** `previewFill` replayed V4 swaps over the PoolManager's tick bitmap
+  (`MwzSwapSim`, V4 `StateLibrary` reads); there is no Algebra counterpart, and writing one would add a new swap
+  simulator to the audit that could only approximate the pool's per-step fee and rounding. Barkswap's QuoterV2
+  (bytecode-identical to upstream, facts section 1) runs the real pool and plugin code inside a reverted call and takes
+  a price limit, so its quotes are exact by construction (fork-checked for our custom pools, deployer = launcher, in
+  t10 / t22). `grossForNet` encoded gen-7's output-side sell fee (taken from the payout); the plugin charges sells on
+  the input (coin side), so it would misquote a Bark sell. The gen-8 V4 lens is untouched; the Bark venue (t17 / t22)
+  uses this lens's own ABI (address keys) and the quoter for amounts.
+- **`progress(coin)`:** the gen-8 formulas mirrored into Barkswap orientation (coin = token0, A = [sqrtStart, sqrtGrad]
+  with sqrtStart < sqrtGrad, coins at the start price, WDOGE at or past graduation):
+  - `coinsInA = getAmount0Delta(sqrtStart, sqrtGrad, liqA, roundUp)` (gen-8 `getAmount1Delta`, the coin was token1);
+    `nativeTargetA = getAmount1Delta(sqrtStart, sqrtGrad, liqA, down)`.
+  - Nothing sold while `sqrtP <= sqrtStart` (gen-8 `>=`); F2 keeps the price from going below.
+  - `hi = min(sqrtP, sqrtGrad)` (gen-8 `lo = max`); `coinsSoldFromA = coinsInA - getAmount0Delta(hi, sqrtGrad, liqA,
+    down)`; `nativeInA = getAmount1Delta(sqrtStart, hi, liqNow, down)`.
+  - `liqNow` is reduced by `floor(liqA x 200 / 10,000)` (the same expression as `MwzBarkLauncher.takeGraduationFee`,
+    `GRAD_FEE_BPS / BPS`) when the launcher's **`gradFeeTaken`** is set, where gen-8 used the hook's `graduated`. Gen-8
+    burned inside the latching swap, so the two were the same; here the burn runs in the launcher (inline from the
+    latching swap, or later through the permissionless fallback), and between a latch and a delayed fallback A still
+    holds `liqA`.
+  - Over/underflow: `coinsInA` (rounded up over the whole range) is at least `getAmount0Delta` over the sub-range
+    `[hi, sqrtGrad]` rounded down, so the subtraction cannot underflow; `liqA - floor(liqA x 2%)` is non-negative.
+    `SqrtPriceMath` (v4) and Algebra's `TokenDeltaMath` compute the same formulas; any difference is rounding of at
+    most 1 unit (informational value; t10 compares against the pool).
+- **New `poolState(coin)`** (controller note: "reads the Algebra pool (globalState price/tick, liquidity)"): the pool's
+  `globalState()` fields, `liquidity()`, and `launchSettings = plugin() == our plugin && lastFee == 0 && pluginConfig ==
+  135`, i.e. exactly what `MwzBarkLauncher.restore` re-applies. False means a Barkswap admin changed the pool and the
+  keeper calls `restore` (spec section 4, admin-change watch).
+- **New `owed(coin)`** (spec row: "owed amounts"): `feeCreator`, `pendingCreator`, `creatorOwed` (claimable native);
+  the four pending coin books (`coinFees`); the uncollected estimate per book, `plugin.feeTotals(pool)` minus
+  `launcher.collectedTotals(coin)`, in WDOGE and in coins; `lastConvertAt`; `nextConvertAt = max(openAt + 60 s,
+  lastConvertAt + CONVERT_INTERVAL)` (the two time checks of `convert`; the price and pending checks are not
+  predicted); `gradFeeTaken`, `graduationFee`. Book order is the launcher's (`MwzBarkFeeBooks`: creator bonding, router
+  bonding, creator post, router post), as in `FeesCollected` / `CoinFeesConverted`. Router amounts are pooled across
+  coins in the launcher (`routerOwed`, `routerPaid`) and are read there.
+  - Over/underflow: each uncollected difference is a uint128 subtraction of the launcher's snapshot from the plugin's
+    current total. The plugin's totals only grow (`_book` only adds) and `collect` sets the snapshot to the totals it
+    read, so the snapshot is never above the current total; checked arithmetic would revert rather than mis-report.
+  - The uncollected figure is the plugin's estimate (within its stated rounding tolerance) and excludes unbooked
+    surplus (flash fees, donations), which `collect` puts into router post.
+
+### Read-only notes
+
+- A lens read made from inside a callback of the pool sees an unsettled price (Algebra's own note on its state views);
+  `poolState().unlocked` exposes the pool's lock. No contract of ours reads the lens, so this matters only to
+  integrators, who must not base on-chain money decisions on it.
+- No loops; every function is a bounded number of view calls.
+
+### Informational
+
+- Size: 7,304 runtime bytes (gen-8: 4,114 plus the linked `MwzSwapSim`).
+
+### Hand-off from t5
+
+- t6: `MwzBarkCreatorChoiceVault.creatorOf(address coin) view returns (address)`, non-zero for every registered coin
+  (the reserve lock pays it).
+- t15: deploy order plugin, reserve lock (`MwzBarkReserveLock(launcher)`), choice vault, fee splitter
+  (`MwzBarkFeeSplitter(launcher, admin, weekly, monthly, recruiter, community, protocol, operator)`), all against the
+  launcher's predicted address and with no call to it at construction; then the launcher (it checks the plugin, the
+  reserve lock and the choice vault; it does not check the splitter, so the script asserts `splitter.launcher() ==
+  launcher`); then `MwzBarkLaunchLens(launcher)` (no library to link).
+- t10: the splitter's B11 run at community fee 0 / live / 1000; `receive` refusing any sender but the launcher; the
+  reserve lock's four conditions (incl. `PoolBusy` from inside our pool's swap callback, +59 / +60 min, price fallen
+  back, beneficiary after `acceptCreator` and for a choice-vault coin); the lens against the pool (progress within 1
+  unit, `currentFeeBps` equal to the rate in the `BarkSwap` event, `owed` equal to the books after collect / convert,
+  `launchSettings` false after an admin `setPluginConfig` and true after `restore`); QuoterV2 quoting our custom pool.
+- t17 / t18 / t22: splitter getter `launcher()` instead of `hook()`; reserve lock keyed by coin, `reserves(coin) ->
+  (token, amount)`, events `ReserveLocked(address,uint256)` and `ReserveReleased(address,address,uint256)`; lens keyed by
+  coin, no `previewFill` / `grossForNet` (amounts from QuoterV2), new `poolState` and `owed`.
 
 Verdict: pending (t7)

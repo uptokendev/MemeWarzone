@@ -1,0 +1,203 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.26;
+
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {MwzBarkLauncher} from "./MwzBarkLauncher.sol";
+
+interface IMwzCommunityRewardsVault {
+    function depositAirdrop() external payable;
+    function depositSquadPool() external payable;
+}
+
+/// @title MwzBarkFeeSplitter (EVM generation 8 on Barkswap, DogeOS; gen-8 MwzFeeSplitter, D1 option A, design 3.4)
+/// @notice The gen-8 TreasuryRouter on DogeOS: receives the launcher's router bucket (MwzBarkLauncher.claimRouter /
+/// payParkedRouter) and splits it, one run at a time, into the existing reward vaults. Per-trade attribution
+/// (recruiter / squad / airdrop by the trader's recruiter link) is computed off chain by the indexer from the plugin's
+/// BarkSwap events and the launcher's FeesCollected / CoinFeesConverted events (spec "Attribution for D1"); this
+/// contract bounds what the operator can do with it. Diff audit against gen-8's MwzFeeSplitter:
+/// docs/dogeos/barkswap-audit.md (MwzBarkFeeSplitter). The arithmetic below is gen-8's, unchanged:
+/// - every wei received since the last run is routed in the run (sum == received; nothing left, nothing invented);
+/// - league = floor(3750 * B / 10000) exactly, B = the full pre-graduation fees in the run, split 30 / 70 into the
+///   weekly league vault and the monthly league treasury;
+/// - recruiter + squad + airdrop between 1500 and 1750 bps of B plus between 1750 and 2000 bps of G (graduation
+///   fees in the run), squad at most 250 bps of (B + G);
+/// - protocol = the remainder (it includes the router part of post-graduation fees, 0.5% of volume, D9);
+/// - accrualRoot (Merkle root of the per-trade slice rows) is emitted so anyone can recompute the run.
+/// B and G are not operator inputs: the launcher records, per payee, the cumulative amount paid and the bonding and
+/// graduation fees inside it (MwzBarkLauncher.routerPaid), and this contract routes the difference since its last run.
+/// B11: those are the launcher's post-conversion NET books (realised DOGE after Barkswap's community cut, the creator's
+/// amount and coin conversion), so the bands always fit: committed <= 0.55 B + 0.2 G <= B + G <= total, whatever the
+/// community fee (a run never reverts OutOfBand because of the cut).
+/// The run is pinned to the operator's plan: route() never claims; the caller passes the cumulative amount the
+/// launcher has paid this contract (`expectedPaid`), and the run reverts unless the launcher's record equals it. The
+/// launcher moves its whole bucket with its bonding / graduation counters in one step (claimRouter or
+/// payParkedRouter), so an equal cumulative amount means equal B, G and total. Fees that land after the plan stay for
+/// the next run.
+/// Destinations are fixed at deploy. There is no withdraw, no rescue and no other way for value to leave.
+/// A stolen operator key can only move value between airdrop and recruiter / squad inside the band, and only to
+/// these vaults. If the operator never runs, the funds wait here; the admin (Safe) can run the same bounded route.
+contract MwzBarkFeeSplitter is ReentrancyGuard {
+    error ZeroAddress();
+    error NotOperator();
+    error NotAdmin();
+    error UnexpectedSender();
+    error BadRunId();
+    error NothingToRoute();
+    error OutOfBand();
+    error Underfunded();
+    error SendFailed();
+    error PaidMismatch(uint256 expected, uint256 actual);
+
+    uint256 public constant BPS = 10_000;
+    uint256 public constant LEAGUE_BPS = 3_750; // of bonding fees, profile-independent
+    uint256 public constant WEEKLY_LEAGUE_BPS = 3_000; // of the league share; the monthly treasury gets the rest
+    uint256 public constant TRADE_RSA_MIN_BPS = 1_500; // recruiter + squad + airdrop, of bonding fees
+    uint256 public constant TRADE_RSA_MAX_BPS = 1_750;
+    uint256 public constant GRAD_RSA_MIN_BPS = 1_750; // recruiter + squad + airdrop, of graduation fees
+    uint256 public constant GRAD_RSA_MAX_BPS = 2_000;
+    uint256 public constant SQUAD_MAX_BPS = 250; // of bonding + graduation fees
+
+    /// @notice The only payer (router bucket). Deployed before the launcher, against its predicted address, and passed
+    /// to it as `treasuryRouter_`; this contract makes no call to it at construction.
+    MwzBarkLauncher public immutable launcher;
+    address public immutable admin;
+    address public immutable weeklyLeagueVault;
+    address public immutable monthlyLeagueTreasury;
+    address public immutable recruiterRewardsVault;
+    IMwzCommunityRewardsVault public immutable communityRewardsVault;
+    address public immutable protocolRevenueVault;
+
+    /// @notice Also read by MwzBarkLauncher.claimRouter (gen-8 F4): this key may claim the router bucket.
+    address public operator;
+    uint256 public runs;
+    uint256 public routedAmount;
+    uint256 public routedBondingFees;
+    uint256 public routedGradFees;
+
+    struct Run {
+        uint256 total;
+        uint256 bondingFees;
+        uint256 gradFees;
+        uint256 weeklyLeague;
+        uint256 monthlyLeague;
+        uint256 recruiter;
+        uint256 squad;
+        uint256 airdrop;
+        uint256 protocol;
+    }
+
+    event OperatorUpdated(address indexed previous, address indexed next);
+    event Routed(uint256 indexed runId, bytes32 indexed accrualRoot, address indexed caller, Run run);
+
+    constructor(
+        MwzBarkLauncher launcher_,
+        address admin_,
+        address weeklyLeagueVault_,
+        address monthlyLeagueTreasury_,
+        address recruiterRewardsVault_,
+        IMwzCommunityRewardsVault communityRewardsVault_,
+        address protocolRevenueVault_,
+        address operator_
+    ) {
+        if (
+            address(launcher_) == address(0) || admin_ == address(0) || weeklyLeagueVault_ == address(0) || monthlyLeagueTreasury_ == address(0)
+                || recruiterRewardsVault_ == address(0) || address(communityRewardsVault_) == address(0) || protocolRevenueVault_ == address(0)
+        ) revert ZeroAddress();
+        launcher = launcher_;
+        admin = admin_;
+        weeklyLeagueVault = weeklyLeagueVault_;
+        monthlyLeagueTreasury = monthlyLeagueTreasury_;
+        recruiterRewardsVault = recruiterRewardsVault_;
+        communityRewardsVault = communityRewardsVault_;
+        protocolRevenueVault = protocolRevenueVault_;
+        operator = operator_;
+        emit OperatorUpdated(address(0), operator_);
+    }
+
+    /// @dev Native arrives only from the launcher (claimRouter / payParkedRouter send plain native, all gas).
+    receive() external payable {
+        if (msg.sender != address(launcher)) revert UnexpectedSender();
+    }
+
+    /// @notice The admin (Safe) sets or clears the operator key (a Zodiac Roles scoped key, as gen-7).
+    function setOperator(address next) external {
+        if (msg.sender != admin) revert NotAdmin();
+        emit OperatorUpdated(operator, next);
+        operator = next;
+    }
+
+    /// @notice What the next run must route: received from the launcher since the last run, and the bonding and
+    /// graduation fees inside it. Includes nothing still owed in the launcher: call launcher.claimRouter() first, then
+    /// plan the run against launcher.routerPaid(this).amount and pass that value to route() as `expectedPaid`.
+    function pending() public view returns (uint256 total, uint256 bondingFees, uint256 gradFees) {
+        (uint256 paid, uint256 paidBonding, uint256 paidGrad) = launcher.routerPaid(address(this));
+        return (paid - routedAmount, paidBonding - routedBondingFees, paidGrad - routedGradFees);
+    }
+
+    /// @notice The exact league amounts and the recruiter + squad + airdrop band for a run.
+    function bands(uint256 bondingFees, uint256 gradFees)
+        public
+        pure
+        returns (uint256 weekly, uint256 monthly, uint256 rsaMin, uint256 rsaMax, uint256 squadMax)
+    {
+        uint256 league = (bondingFees * LEAGUE_BPS) / BPS;
+        weekly = (league * WEEKLY_LEAGUE_BPS) / BPS;
+        monthly = league - weekly;
+        rsaMin = (bondingFees * TRADE_RSA_MIN_BPS) / BPS + (gradFees * GRAD_RSA_MIN_BPS) / BPS;
+        rsaMax = (bondingFees * TRADE_RSA_MAX_BPS) / BPS + (gradFees * GRAD_RSA_MAX_BPS) / BPS;
+        squadMax = ((bondingFees + gradFees) * SQUAD_MAX_BPS) / BPS;
+    }
+
+    /// @notice One bounded run. Operator or admin. `runId` must be the next number (a resubmitted run reverts).
+    /// `expectedPaid` is the cumulative launcher.routerPaid(this).amount the run was planned against; any other value
+    /// (a claim or parked payout landed after the plan) reverts PaidMismatch and the operator re-plans.
+    /// @dev nonReentrant. Checks (caller, run id, paid == plan, bands, funds), then effects (run counter and routed
+    /// totals), then the payouts; any failed payout reverts the whole run (nothing is half-routed). The only external
+    /// call before the effects is the view launcher.routerPaid.
+    function route(uint256 runId, uint256 expectedPaid, uint256 recruiter, uint256 squad, uint256 airdrop, bytes32 accrualRoot)
+        external
+        nonReentrant
+        returns (Run memory r)
+    {
+        if (msg.sender != operator && msg.sender != admin) revert NotOperator();
+        if (runId != runs + 1) revert BadRunId();
+
+        (uint256 paid, uint256 paidBonding, uint256 paidGrad) = launcher.routerPaid(address(this));
+        if (paid != expectedPaid) revert PaidMismatch(expectedPaid, paid);
+        r.total = paid - routedAmount;
+        r.bondingFees = paidBonding - routedBondingFees;
+        r.gradFees = paidGrad - routedGradFees;
+        if (r.total == 0) revert NothingToRoute();
+        (uint256 weekly, uint256 monthly, uint256 rsaMin, uint256 rsaMax, uint256 squadMax) = bands(r.bondingFees, r.gradFees);
+        uint256 rsa = recruiter + squad + airdrop;
+        if (rsa < rsaMin || rsa > rsaMax || squad > squadMax) revert OutOfBand();
+        uint256 committed = weekly + monthly + rsa;
+        if (committed > r.total) revert OutOfBand();
+        if (address(this).balance < r.total) revert Underfunded();
+        r.weeklyLeague = weekly;
+        r.monthlyLeague = monthly;
+        r.recruiter = recruiter;
+        r.squad = squad;
+        r.airdrop = airdrop;
+        r.protocol = r.total - committed;
+
+        runs = runId;
+        routedAmount = paid;
+        routedBondingFees = paidBonding;
+        routedGradFees = paidGrad;
+
+        _send(weeklyLeagueVault, weekly);
+        _send(monthlyLeagueTreasury, monthly);
+        _send(recruiterRewardsVault, recruiter);
+        if (airdrop != 0) communityRewardsVault.depositAirdrop{value: airdrop}();
+        if (squad != 0) communityRewardsVault.depositSquadPool{value: squad}();
+        _send(protocolRevenueVault, r.protocol);
+        emit Routed(runId, accrualRoot, msg.sender, r);
+    }
+
+    function _send(address to, uint256 amount) private {
+        if (amount == 0) return;
+        (bool ok,) = payable(to).call{value: amount}("");
+        if (!ok) revert SendFailed();
+    }
+}
