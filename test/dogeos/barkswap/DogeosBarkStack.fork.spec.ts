@@ -9,6 +9,9 @@
 // bytecode BNB and Robinhood run), the Bark contracts from artifacts-bark/. Hardhat's local accounts sign: #0 is the
 // deployer/admin, #1 the fork-local route authority (createSigner), #2 the fork-local DogeOS operator. Binance is
 // replaced by a fixed price (no outside call); the manifest goes to a temp directory. Nothing reaches Chikyū.
+//
+// The `it` blocks are ORDER-DEPENDENT and share one fork: the stopped run comes before the full deploy, every later
+// block reads the record the full deploy wrote, and activation runs last. Run the whole file; never `.only` one block.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -117,8 +120,68 @@ describe("DogeOS Bark deploy stack (t15) on the Chikyū fork", function () {
     expect(fs.existsSync(manifestPath)).to.equal(false);
   });
 
+  it("a run that stops half-way leaves a partial record of every transaction it sent, and the next run refuses until it is removed by hand", async function () {
+    const partialPath = path.join(tmp, "testnet.bark.partial.json");
+    // Occupy the splitter's planned address (the 5th planned contract) so its CREATE fails after 13 mined transactions:
+    // 9 reused contracts, the two libraries, CommunityRewardsVault and the escrow.
+    const nonce0 = await ethers.provider.getTransactionCount(admin);
+    const barkNonce0 = nonce0 + 9;
+    const blocked = planBarkAddresses(admin, barkNonce0).MwzBarkFeeSplitter;
+    await ethers.provider.send("hardhat_setCode", [blocked, "0x00"]);
+    try {
+      await rejects(runDogeosTestnetDeploy({ fetchImpl: fakeFetch, log: () => {} }), /partial record is .*testnet\.bark\.partial\.json/);
+    } finally {
+      await ethers.provider.send("hardhat_setCode", [blocked, "0x"]);
+    }
+    expect(fs.existsSync(manifestPath), "no manifest from a stopped run").to.equal(false);
+    expect(fs.existsSync(partialPath), "the partial record is kept").to.equal(true);
+    const partial = JSON.parse(fs.readFileSync(partialPath, "utf8"));
+    expect(partial.status).to.equal("partial");
+    expect(same(partial.deployer, admin)).to.equal(true);
+    expect(partial.barkNonce0).to.equal(barkNonce0);
+    expect(same(partial.planned.MwzBarkFeeSplitter, blocked)).to.equal(true);
+    const expectedLabels = [
+      "DogeosTestnetDogeUsdOracle",
+      "GraduationOracle",
+      "TreasuryVaultV2 (weekly)",
+      "CharityTreasury",
+      "MonthlyLeagueTreasury",
+      "RecruiterRewardsVault",
+      "ProtocolRevenueVault",
+      "RewardDistributor (holders)",
+      "RewardDistributor (airdrop)",
+      "MwzBarkLaunchLib",
+      "MwzBarkFeeBooks",
+      "CommunityRewardsVault",
+      "MwzBarkCreatorEscrow",
+    ];
+    const mined = (partial.txs as any[]).filter((t) => t.status === "mined");
+    expect(mined.map((t) => t.label)).to.deep.equal(expectedLabels);
+    // anything after the mined ones is the failed splitter attempt, never a success
+    for (const t of (partial.txs as any[]).slice(mined.length)) {
+      expect(t.label).to.equal("MwzBarkFeeSplitter");
+      expect(t.status).to.not.equal("mined");
+    }
+    expect(Object.keys(partial.deployed)).to.deep.equal(expectedLabels);
+    for (const [i, t] of mined.entries()) {
+      expect(t.nonce, t.label).to.equal(nonce0 + i);
+      const receipt = await ethers.provider.getTransactionReceipt(t.hash);
+      expect(receipt!.status, t.label).to.equal(1);
+      expect(same(receipt!.contractAddress!, t.address), t.label).to.equal(true);
+      expect(same(partial.deployed[t.label], t.address), t.label).to.equal(true);
+      expect(receipt!.gasUsed.toString(), t.label).to.equal(t.gasUsed);
+    }
+    // a second run refuses before sending anything while the partial record exists
+    const nonce = await ethers.provider.getTransactionCount(admin);
+    await rejects(runDogeosTestnetDeploy({ fetchImpl: fakeFetch, log: () => {} }), /partial deploy record exists at .*remove the file by hand/);
+    expect(await ethers.provider.getTransactionCount(admin)).to.equal(nonce);
+    // the founder checks it and removes it by hand (no resume)
+    fs.rmSync(partialPath);
+  });
+
   it("the deploy entrypoint deploys and wires the whole stack and writes the manifest and verification JSON outside the repo", async function () {
     const result = await runDogeosTestnetDeploy({ fetchImpl: fakeFetch, log: () => {} });
+    expect(fs.existsSync(path.join(tmp, "testnet.bark.partial.json")), "a completed run leaves no partial record").to.equal(false);
     expect(result.mode).to.equal("chikyu-fork");
     expect(path.resolve(result.manifestPath)).to.equal(path.resolve(manifestPath));
     expect(path.relative(ROOT, result.manifestPath).startsWith("..")).to.equal(true);

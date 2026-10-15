@@ -12,8 +12,8 @@
  *   Chikyū (network dogeosTestnet, chain 6281971): needs DOGEOS_TESTNET_DEPLOY_BROADCAST=I_HAVE_FOUNDER_GO, the signer
  *     must be the DogeOS deployer 0x6c5C…82f8, the public DOGEOS_TESTNET_ROUTE_AUTHORITY_ADDRESS must be the DogeOS
  *     route authority 0x4fcD…76FF (the launcher's createSigner), DOGEOS_OPERATOR_ADDRESS must be a key of its own
- *     (spec B9), and neither deployments/dogeos/testnet.bark.json nor config/verification/dogeos-testnet-contracts.json
- *     may exist yet.
+ *     (spec B9), and none of deployments/dogeos/testnet.bark.json, config/verification/dogeos-testnet-contracts.json
+ *     and deployments/dogeos/testnet.bark.partial.json may exist yet.
  *   Chikyū fork (`npx hardhat --config hardhat.dogeos-bark-fork.config.ts run scripts/deploy-dogeos-testnet.ts`, the
  *     in-process hardhat network, which cannot broadcast to Chikyū): still needs the broadcast token; the fork's own
  *     first signer is the deployer and admin; route authority and operator are fork-local addresses that collide with
@@ -21,6 +21,10 @@
  * Then the initial DOGE/USD answer is Binance DOGEUSDT at run time (8 dp, refused if <= 0), and the choice-vault caps
  * are the gen-8 testnet caps (TESTNET_CAPS, in ETH) re-priced to DOGE at the run's Binance ETHUSDT / DOGEUSDT. The
  * launcher lands createPaused: opening it is activate-dogeos-testnet.ts only.
+ * Partial runs: after every transaction sent or mined, the run rewrites `<manifest>.partial.json` with every transaction
+ * and every contract so far (and the planned Bark addresses). It is removed only after the final manifest and the
+ * verification JSON are written. If a run stops half-way the file stays, and every later run refuses until the founder
+ * has checked what was deployed and removed it by hand: there is no resume, and no second stack goes out silently.
  * No key is read here: the signer comes from the hardhat network (dogeosTestnet signs only with the DogeOS deployer key
  * that hardhat.config.ts loads; there is no fallback key).
  */
@@ -67,10 +71,10 @@ export async function runDogeosTestnetDeploy(opts: DogeosDeployOptions = {}): Pr
     signer: await signer.getAddress(),
     routeAuthority: process.env[guards.DOGEOS_ROUTE_AUTHORITY_ENV],
     operator: process.env[guards.DOGEOS_OPERATOR_ENV],
-    existingOutputs: [out.manifest, out.verification].filter((f: string) => fs.existsSync(f)),
+    existingOutputs: [out.partial, out.manifest, out.verification].filter((f: string) => fs.existsSync(f)),
   });
   log(`mode ${mode}, chain ${chainId}, network ${network.name}, deployer/admin ${deployer}, route authority ${routeAuthority}, operator ${operator}`);
-  log(`outputs: ${out.manifest}, ${out.verification}`);
+  log(`outputs: ${out.manifest}, ${out.verification} (partial record while running: ${out.partial})`);
 
   // ---------------------------------------------------------------- run-time prices (Binance spot, 8 dp)
   const dogeUsd8: bigint = await guards.fetchBinanceUsd8("DOGEUSDT", opts.fetchImpl);
@@ -80,15 +84,34 @@ export async function runDogeosTestnetDeploy(opts: DogeosDeployOptions = {}): Pr
   log(`choice-vault caps (DOGE wei): ${JSON.stringify(Object.fromEntries(Object.entries(caps).map(([k, v]) => [k, String(v)])))}`);
 
   // ---------------------------------------------------------------- deploy + wire (the launcher lands createPaused)
-  const stack = await deployDogeosBarkStack({
-    admin: deployer,
-    routeAuthority,
-    operator,
-    oracleUpdater: guards.DOGEOS_TESTNET_ROLES.oracleUpdater,
-    initialDogeUsdAnswer: dogeUsd8,
-    choiceVaultCaps: caps,
-    log: (line) => log(`[dogeos-bark] ${line}`),
-  });
+  const writePartial = (progress: object) =>
+    guards.writeJsonFile(out.partial, {
+      ...progress,
+      network: network.name,
+      manifest: out.manifest,
+      updatedAt: new Date().toISOString(),
+      howToClear:
+        "This run sent the transactions below and stopped before writing its manifest. Check each on the explorer, then remove this file by hand; the next deploy refuses while it exists (no resume).",
+    });
+  let stack;
+  try {
+    stack = await deployDogeosBarkStack({
+      admin: deployer,
+      routeAuthority,
+      operator,
+      oracleUpdater: guards.DOGEOS_TESTNET_ROLES.oracleUpdater,
+      initialDogeUsdAnswer: dogeUsd8,
+      choiceVaultCaps: caps,
+      log: (line) => log(`[dogeos-bark] ${line}`),
+      onProgress: writePartial,
+    });
+  } catch (error) {
+    if (fs.existsSync(out.partial)) {
+      const message = (error as Error)?.message ?? String(error);
+      throw new Error(`${message}; deploy stopped after sending transactions, the partial record is ${out.partial} (check it, then remove it by hand)`);
+    }
+    throw error;
+  }
 
   // ---------------------------------------------------------------- outputs
   const record = {
@@ -102,6 +125,8 @@ export async function runDogeosTestnetDeploy(opts: DogeosDeployOptions = {}): Pr
   writeDogeosManifest(out.manifest, record);
   const entries = guards.dogeosVerificationEntries(record);
   guards.writeJsonFile(out.verification, guards.dogeosVerificationManifest(record, entries));
+  // Only now is the run complete: the manifest and the verification JSON hold everything the partial record held.
+  fs.rmSync(out.partial, { force: true });
   log(`manifest -> ${out.manifest}`);
   log(`verification (${entries.length} contracts) -> ${out.verification}`);
   log(`launcher ${stack.deployed.MwzBarkLauncher}: createPaused. STOP. Next: verify-dogeos-testnet.ts (both builds); activation only with the founder's go.`);

@@ -61,9 +61,23 @@ function loadAirdropPlanner(): Promise<any> {
 // ---------------------------------------------------------------------------------------------------- artifacts
 
 export type StackBuild = "root" | "bark";
+/**
+ * Per build: directory, compiler and the settings the build-info input must carry (root: hardhat.config.ts, evmVersion
+ * hardhat's 0.8.24 default; bark: gen-8's GEN8_SOLC in hardhat.gen8.config.ts).
+ */
 const BUILD = {
-  root: { dir: "artifacts", solc: "0.8.24", compile: "npx hardhat compile" },
-  bark: { dir: "artifacts-bark", solc: "0.8.26", compile: "npx hardhat --config hardhat.dogeos-bark-fork.config.ts compile" },
+  root: {
+    dir: "artifacts",
+    solc: "0.8.24",
+    settings: { optimizer: { enabled: true, runs: 1 }, viaIR: true, evmVersion: "paris", bytecodeHash: "none" },
+    compile: "npx hardhat compile",
+  },
+  bark: {
+    dir: "artifacts-bark",
+    solc: "0.8.26",
+    settings: { optimizer: { enabled: true, runs: 200 }, viaIR: true, evmVersion: "cancun", bytecodeHash: "none" },
+    compile: "npx hardhat --config hardhat.dogeos-bark-fork.config.ts compile",
+  },
 } as const;
 
 export type StackArtifact = { contractName: string; sourceName: string; abi: any[]; bytecode: string; linkReferences: Record<string, Record<string, Array<{ start: number; length: number }>>> };
@@ -97,6 +111,16 @@ export function loadStackArtifact(build: StackBuild, fqn: string): StackArtifact
     buildInfoCache.set(buildInfoFile, info);
   }
   if (info.solcVersion !== b.solc) throw new Error(`${fqn}: ${b.dir} was built with solc ${info.solcVersion}, expected ${b.solc}`);
+  const st = info.input.settings ?? {};
+  const got = {
+    optimizer: { enabled: st.optimizer?.enabled, runs: st.optimizer?.runs },
+    viaIR: st.viaIR,
+    evmVersion: st.evmVersion,
+    bytecodeHash: st.metadata?.bytecodeHash,
+  };
+  if (JSON.stringify(got) !== JSON.stringify(b.settings)) {
+    throw new Error(`${fqn}: ${b.dir} was built with settings ${JSON.stringify(got)}, expected ${JSON.stringify(b.settings)}; run \`${b.compile}\``);
+  }
   if (!info.input.sources[sourceName]) throw new Error(`${fqn}: not part of its build-info input`);
   return artifact;
 }
@@ -195,9 +219,32 @@ export type DogeosBarkStackParams = {
   /** MonthlyLeagueTreasury monthlyCapUsd (18 decimals); default 1,500,000 USD. */
   monthlyCapUsd?: bigint;
   log?: (line: string) => void;
+  /** Called with a fresh snapshot after every send and every receipt (the deploy script persists it). */
+  onProgress?: (progress: DogeosBarkProgress) => void;
 };
 
-export type DogeosBarkTx = { label: string; hash: string; nonce: number; gasUsed: string; address?: string };
+/** status: "sent" until its receipt is in, then "mined" (or "failed" if it reverted). */
+export type DogeosBarkTx = { label: string; hash: string; nonce: number; gasUsed: string; status: "sent" | "mined" | "failed"; address?: string };
+
+/**
+ * What a run has sent so far, handed to onProgress after every transaction is sent and again once it is mined. The
+ * deploy script writes it to `<manifest>.partial.json`, so a run that stops half-way leaves a record of what it
+ * deployed; the deploy refuses while that file exists (no resume).
+ */
+export type DogeosBarkProgress = {
+  status: "partial";
+  chainId: number;
+  deployer: string;
+  routeAuthority: string;
+  operator: string;
+  /** Contracts mined so far, by label. */
+  deployed: Record<string, string>;
+  /** The Bark addresses planned from the deployer's nonce (null until the reused contracts are deployed). */
+  planned: Record<string, string> | null;
+  barkNonce0: number | null;
+  wiringSent: string[];
+  txs: DogeosBarkTx[];
+};
 
 export type DogeosBarkStack = {
   chainId: number;
@@ -280,6 +327,44 @@ export async function deployDogeosBarkStack(params: DogeosBarkStackParams): Prom
   ) as Record<keyof typeof FQN, StackArtifact>;
 
   const txs: DogeosBarkTx[] = [];
+  const deployedSoFar: Record<string, string> = {};
+  const wiringSent: string[] = [];
+  let planned: Record<string, string> | null = null;
+  let plannedNonce0: number | null = null;
+  const progress = () =>
+    params.onProgress?.({
+      status: "partial",
+      chainId: Number(chainId),
+      deployer,
+      routeAuthority,
+      operator,
+      deployed: { ...deployedSoFar },
+      planned: planned ? { ...planned } : null,
+      barkNonce0: plannedNonce0,
+      wiringSent: [...wiringSent],
+      txs: txs.map((t) => ({ ...t })),
+    });
+  /** Records the sent transaction before waiting for it, so a run that stops on the receipt still lists it. */
+  async function confirm(entry: DogeosBarkTx, tx: any, label: string) {
+    txs.push(entry);
+    progress();
+    let receipt: any;
+    try {
+      receipt = await tx.wait(1);
+    } catch (error) {
+      entry.status = "failed";
+      progress();
+      throw error;
+    }
+    if (!receipt || receipt.status !== 1) {
+      entry.status = "failed";
+      progress();
+      throw new Error(`${label} failed (${tx.hash})`);
+    }
+    entry.status = "mined";
+    entry.gasUsed = receipt.gasUsed.toString();
+    return receipt;
+  }
   async function deploy(label: string, name: keyof typeof FQN, args: unknown[], opts: { expected?: string; libraries?: Record<string, string> } = {}) {
     const nonce = await provider.getTransactionCount(deployer, "pending");
     const predicted = ethers.getCreateAddress({ from: deployer, nonce });
@@ -292,24 +377,23 @@ export async function deployDogeosBarkStack(params: DogeosBarkStackParams): Prom
     const factory = new ethers.ContractFactory(ctor, linkBytecode(artifact, opts.libraries ?? {}), signer);
     const contract: any = await factory.deploy(...args, { nonce });
     const tx = contract.deploymentTransaction();
-    const receipt = await tx?.wait(1);
-    if (!tx || !receipt || receipt.status !== 1) throw new Error(`${label} deploy failed`);
+    if (!tx) throw new Error(`${label}: no deployment transaction`);
+    await confirm({ label, hash: tx.hash, nonce, gasUsed: "", status: "sent", address: predicted }, tx, `${label} deploy`);
     const address = ethers.getAddress(await contract.getAddress());
     if (address !== predicted) throw new Error(`${label} landed at ${address}, not ${predicted}`);
     if ((await provider.getCode(address)) === "0x") throw new Error(`${label} ${address} has no code`);
-    txs.push({ label, hash: tx.hash, nonce, gasUsed: receipt.gasUsed.toString(), address });
+    deployedSoFar[label] = address;
+    progress();
     log(`${label} ${address}`);
     return address;
   }
-  const wiringSent: string[] = [];
   async function send(label: string, address: string, name: keyof typeof FQN, fn: string, args: unknown[]) {
     const contract: any = new ethers.Contract(address, artifacts[name].abi, signer);
     const nonce = await provider.getTransactionCount(deployer, "pending");
     const tx = await contract[fn](...args, { nonce });
-    const receipt = await tx.wait(1);
-    if (!receipt || receipt.status !== 1) throw new Error(`${label}.${fn} failed`);
-    txs.push({ label: `${label}.${fn}`, hash: tx.hash, nonce, gasUsed: receipt.gasUsed.toString() });
+    await confirm({ label: `${label}.${fn}`, hash: tx.hash, nonce, gasUsed: "", status: "sent" }, tx, `${label}.${fn}`);
     wiringSent.push(`${label}.${fn}`);
+    progress();
     log(`${label}.${fn}: ${tx.hash}`);
   }
 
@@ -327,6 +411,8 @@ export async function deployDogeosBarkStack(params: DogeosBarkStackParams): Prom
   // ---------------------------------------------------------------- Bark stack at planned addresses
   const barkNonce0 = await provider.getTransactionCount(deployer, "pending");
   const P = planBarkAddresses(deployer, barkNonce0);
+  planned = { ...P };
+  plannedNonce0 = barkNonce0;
   log(`planned from nonce ${barkNonce0}: launcher ${P.MwzBarkLauncher}, splitter ${P.MwzBarkFeeSplitter}, plugin ${P.MwzBarkPlugin}`);
   const L = P.MwzBarkLauncher;
   const libs = await (async () => {

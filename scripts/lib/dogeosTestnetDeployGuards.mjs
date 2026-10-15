@@ -37,6 +37,12 @@ export const DOGEOS_TESTNET_ROUTE_AUTHORITY = "0x4fcD24d620f8eCd298bF4d43CB1cA2F
 export const DOGEOS_MANIFEST_OVERRIDE_ENV = "DOGEOS_TESTNET_MANIFEST";
 export const DOGEOS_MANIFEST_PATH = "deployments/dogeos/testnet.bark.json";
 export const DOGEOS_VERIFICATION_PATH = "config/verification/dogeos-testnet-contracts.json";
+/**
+ * Next to the manifest, `<manifest>.partial.json` (deployments/dogeos/testnet.bark.partial.json): written after every
+ * transaction of a deploy run and removed only once the final manifest and verification JSON are written. While it
+ * exists, a deploy refuses (no resume): an earlier run sent transactions and stopped.
+ */
+export const DOGEOS_PARTIAL_SUFFIX = ".partial.json";
 export const DOGEOS_L2SCAN_API_URL = "https://dogeos-testnet.l2scan.co/api";
 export const BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/price";
 /** The manifest kind the Bark stack writes (scripts/lib/dogeosBarkStack.ts dogeosBarkManifestRecord). */
@@ -201,6 +207,14 @@ export function resolveRouteAuthority(value, { mode, signer } = {}) {
  */
 export function resolveOperator(value, { mode, signer, routeAuthority } = {}) {
   requireMode(mode);
+  return validateOperator(value, { signer, routeAuthority });
+}
+
+/**
+ * The same operator rule without a deploy mode (the rule is identical in both modes): for a manifest record, whose
+ * signer is its admin and whose route authority is its own.
+ */
+export function validateOperator(value, { signer, routeAuthority } = {}) {
   const ra = checksum(routeAuthority);
   if (!ra || ra === ZERO) throw new Error("resolveOperator needs the resolved route authority to compare against");
   const a = requireEnvAddress(DOGEOS_OPERATOR_ENV, value);
@@ -229,6 +243,13 @@ export function assertDeployGuards({ chainId, networkName, forkUrl, broadcastTok
   const ra = resolveRouteAuthority(routeAuthority, { mode, signer: s });
   const op = resolveOperator(operator, { mode, signer: s, routeAuthority: ra });
   if (!Array.isArray(existingOutputs)) throw new Error("existingOutputs must list the output files that already exist");
+  const partial = existingOutputs.find((f) => String(f).endsWith(DOGEOS_PARTIAL_SUFFIX));
+  if (partial) {
+    throw new Error(
+      `refusing: a partial deploy record exists at ${partial}: an earlier run sent transactions and stopped before its manifest was written. ` +
+        "Every transaction it sent and every contract it deployed is listed in that file; check them on the explorer, then remove the file by hand before deploying again (there is no resume)",
+    );
+  }
   if (existingOutputs.length) {
     throw new Error(`refusing: output(s) already exist: ${existingOutputs.join(", ")}; refusing to deploy a second stack over them`);
   }
@@ -325,18 +346,23 @@ export function choiceVaultCapsInDoge(ethCaps, { ethUsd8, dogeUsd8 }) {
  * Chikyū writes the repo manifest and verification JSON. A fork run never writes into the repo: it writes to
  * forkDir (a temp directory), or to the DOGEOS_TESTNET_MANIFEST override, which only a fork may use.
  */
+export function dogeosPartialPath(manifest) {
+  return `${String(manifest).replace(/\.json$/i, "")}${DOGEOS_PARTIAL_SUFFIX}`;
+}
+
 export function dogeosOutputPaths({ mode, root, forkDir, manifestOverride }) {
   const override = String(manifestOverride || "").trim();
   if (mode === "chikyu") {
     if (override) throw new Error(`refusing: the ${DOGEOS_MANIFEST_OVERRIDE_ENV} manifest override is for a fork run only`);
-    return { manifest: path.join(root, ...DOGEOS_MANIFEST_PATH.split("/")), verification: path.join(root, ...DOGEOS_VERIFICATION_PATH.split("/")) };
+    const manifest = path.join(root, ...DOGEOS_MANIFEST_PATH.split("/"));
+    return { manifest, verification: path.join(root, ...DOGEOS_VERIFICATION_PATH.split("/")), partial: dogeosPartialPath(manifest) };
   }
   if (mode === "chikyu-fork") {
     if (!forkDir) throw new Error("a fork run needs a forkDir (temp directory) for its outputs");
     const rel = path.relative(path.resolve(root), path.resolve(forkDir));
     if (!rel.startsWith("..") && !path.isAbsolute(rel)) throw new Error(`refusing: fork output dir ${forkDir} is inside the repo`);
     const manifest = override ? path.resolve(override) : path.join(forkDir, path.basename(DOGEOS_MANIFEST_PATH));
-    return { manifest, verification: path.join(path.dirname(manifest), path.basename(DOGEOS_VERIFICATION_PATH)) };
+    return { manifest, verification: path.join(path.dirname(manifest), path.basename(DOGEOS_VERIFICATION_PATH)), partial: dogeosPartialPath(manifest) };
   }
   throw new Error(`unknown deploy mode ${mode}`);
 }
@@ -382,7 +408,7 @@ export function dogeosVerificationEntries(record) {
   const r = (label, v) => requireRecordAddress(label, v);
   const A = r("admin", record.admin);
   const RA = r("routeAuthority", record.routeAuthority);
-  const operator = resolveOperator(record.operator, { mode: "chikyu-fork", signer: A, routeAuthority: RA });
+  const operator = validateOperator(record.operator, { signer: A, routeAuthority: RA });
   const x = record.barkswap || {};
   for (const [key, pin] of Object.entries(BARKSWAP_EXTERNAL_ADDRESSES)) {
     if (checksum(x[key]) !== pin) throw new Error(`barkswap.${key} ${x[key]} is not the pinned Barkswap address ${pin}`);

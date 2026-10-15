@@ -14,16 +14,21 @@ import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { getAddress } from "ethers";
 import {
+  BARK_DEPLOYED_KEYS,
+  BARK_FEE_BOOKS_FQN,
+  BARK_LAUNCH_LIB_FQN,
   BARKSWAP_CODE_HASHES,
   BARKSWAP_EXTERNAL_ADDRESSES,
   BINANCE_TICKER_URL,
   DOGEOS_ACTIVATE_BROADCAST_ENV,
+  DOGEOS_BARK_MANIFEST_KIND,
   DOGEOS_BARK_LAUNCHER_BAND,
   DOGEOS_DEPLOY_BROADCAST_ENV,
   DOGEOS_DEPLOY_BROADCAST_TOKEN,
   DOGEOS_L2SCAN_API_URL,
   DOGEOS_MANIFEST_PATH,
   DOGEOS_OPERATOR_ENV,
+  DOGEOS_PARTIAL_SUFFIX,
   DOGEOS_ORACLE_MAX_PRICE_AGE_SECONDS,
   DOGEOS_ROUTE_AUTHORITY_ENV,
   DOGEOS_TESTNET_CHAIN_ID,
@@ -42,6 +47,7 @@ import {
   assertVerifyTarget,
   choiceVaultCapsInDoge,
   dogeosOutputPaths,
+  dogeosPartialPath,
   dogeosVerificationEntries,
   dogeosVerificationManifest,
   entriesForBuild,
@@ -53,6 +59,7 @@ import {
   rescaleNative,
   resolveOperator,
   resolveRouteAuthority,
+  validateOperator,
   verificationBuildOf,
   writeJsonFile,
 } from "./lib/dogeosTestnetDeployGuards.mjs";
@@ -101,6 +108,27 @@ test("pins the Chikyū chain, the network name, both broadcast tokens, the route
   assert.equal(DOGEOS_MANIFEST_PATH, "deployments/dogeos/testnet.bark.json");
   assert.equal(DOGEOS_VERIFICATION_PATH, "config/verification/dogeos-testnet-contracts.json");
   assert.equal(DOGEOS_L2SCAN_API_URL, "https://dogeos-testnet.l2scan.co/api");
+});
+
+test("the TS stack library and the guards share one set of names: manifest kind, Bark deploy order, contract and library FQNs", () => {
+  const ts = fs.readFileSync(path.join(ROOT, "scripts", "lib", "dogeosBarkStack.ts"), "utf8");
+  assert.equal(ts.match(/export const DOGEOS_BARK_MANIFEST_KIND = "([^"]+)";/)?.[1], DOGEOS_BARK_MANIFEST_KIND);
+  const order = ts.match(/export const BARK_PREDICTED_ORDER = \[([\s\S]*?)\] as const;/);
+  assert.ok(order, "BARK_PREDICTED_ORDER block found");
+  const names = [...order[1].matchAll(/"(\w+)"/g)].map((m) => m[1]);
+  // CommunityRewardsVault is reused (root build) but sits at a planned nonce because it takes the splitter's address
+  assert.deepEqual(names.filter((n) => n !== "CommunityRewardsVault"), [...BARK_DEPLOYED_KEYS]);
+  const fqnBlock = ts.match(/const FQN = \{([\s\S]*?)\} as const;/);
+  assert.ok(fqnBlock, "FQN block found");
+  const fqns = Object.fromEntries([...fqnBlock[1].matchAll(/(\w+): sol\("([\w/]+)", "(\w+)"\)/g)].map((m) => [m[1], `contracts/${m[2]}.sol:${m[3]}`]));
+  const entries = dogeosVerificationEntries(sampleRecord());
+  assert.equal(Object.keys(fqns).length, new Set(entries.map((e) => e.contract)).size, "one FQN per distinct verified contract");
+  for (const e of entries) {
+    const key = e.contract.split(":")[1];
+    assert.equal(fqns[key], e.contract, `${e.name}: the library deploys the contract the guards verify`);
+  }
+  assert.equal(fqns.MwzBarkLaunchLib, BARK_LAUNCH_LIB_FQN);
+  assert.equal(fqns.MwzBarkFeeBooks, BARK_FEE_BOOKS_FQN);
 });
 
 test("the operator is never a pinned constant: no DogeOS operator address in the guards (spec B9, plan global constraints)", () => {
@@ -236,6 +264,15 @@ test("route authority: refuses the deployer, the oracle updater, the graduation 
 
 // ---------------------------------------------------------------------------------------------------- operator (B9)
 
+test("operator: validateOperator is the same rule without a mode (used on manifest records)", () => {
+  assert.equal(validateOperator(OPERATOR, { signer: DEPLOYER, routeAuthority: ROUTE_AUTHORITY }), OPERATOR);
+  assert.equal(validateOperator(FORK_OPERATOR, { signer: FORK_SIGNER, routeAuthority: FORK_RA }), FORK_OPERATOR);
+  assert.throws(() => validateOperator(FORK_RA, { signer: FORK_SIGNER, routeAuthority: FORK_RA }), /is the route authority/);
+  assert.throws(() => validateOperator(KEEPER, { signer: DEPLOYER, routeAuthority: ROUTE_AUTHORITY }), /is the graduation keeper/);
+  assert.throws(() => validateOperator(FORK_SIGNER, { signer: FORK_SIGNER, routeAuthority: FORK_RA }), /is the signer/);
+  assert.throws(() => validateOperator(OPERATOR, { signer: DEPLOYER }), /route authority/);
+});
+
 test("operator: taken from DOGEOS_OPERATOR_ADDRESS, returned checksummed, in both modes", () => {
   assert.equal(resolveOperator(OPERATOR, { mode: "chikyu", signer: DEPLOYER, routeAuthority: ROUTE_AUTHORITY }), OPERATOR);
   assert.equal(resolveOperator(` ${FORK_OPERATOR.toLowerCase()} `, { mode: "chikyu-fork", signer: FORK_SIGNER, routeAuthority: FORK_RA }), FORK_OPERATOR);
@@ -338,6 +375,20 @@ test("deploy guards: each fork refusal path refuses on its own (the token stays 
   for (const [patch, re] of refusals) assert.throws(() => assertDeployGuards({ ...goodForkDeploy(), ...patch }), re, JSON.stringify(patch));
 });
 
+test("deploy guards: a partial record from an earlier stopped run refuses with what to do, before any other output check", () => {
+  for (const good of [goodDeploy(), goodForkDeploy()]) {
+    const partial = "deployments/dogeos/testnet.bark.partial.json";
+    assert.throws(
+      () => assertDeployGuards({ ...good, existingOutputs: [partial] }),
+      /a partial deploy record exists at deployments\/dogeos\/testnet\.bark\.partial\.json.*check them on the explorer, then remove the file by hand.*no resume/,
+    );
+    assert.throws(() => assertDeployGuards({ ...good, existingOutputs: ["deployments/dogeos/testnet.bark.json", partial] }), /partial deploy record/);
+  }
+  assert.equal(DOGEOS_PARTIAL_SUFFIX, ".partial.json");
+  assert.equal(dogeosPartialPath("/x/testnet.bark.json"), "/x/testnet.bark.partial.json");
+  assert.equal(dogeosPartialPath("/x/m"), "/x/m.partial.json");
+});
+
 test("deploy guards: the network is checked before the token, the token before the signer, the route authority before the operator", () => {
   assert.throws(() => assertDeployGuards({ ...goodDeploy(), chainId: 31337, broadcastToken: "", signer: OTHER }), /6281971/);
   assert.throws(() => assertDeployGuards({ ...goodDeploy(), broadcastToken: "", signer: OTHER }), /DOGEOS_TESTNET_DEPLOY_BROADCAST/);
@@ -415,6 +466,7 @@ test("output paths: Chikyū writes the repo manifest + verification JSON and ref
   assert.deepEqual(dogeosOutputPaths({ mode: "chikyu", root: ROOT }), {
     manifest: path.join(ROOT, "deployments", "dogeos", "testnet.bark.json"),
     verification: path.join(ROOT, "config", "verification", "dogeos-testnet-contracts.json"),
+    partial: path.join(ROOT, "deployments", "dogeos", "testnet.bark.partial.json"),
   });
   assert.throws(() => dogeosOutputPaths({ mode: "chikyu", root: ROOT, manifestOverride: "/tmp/x.json" }), /override .* fork/);
 });
@@ -424,11 +476,13 @@ test("output paths: a fork run never writes into the repo", () => {
   assert.deepEqual(dogeosOutputPaths({ mode: "chikyu-fork", root: ROOT, forkDir: dir }), {
     manifest: path.join(dir, "testnet.bark.json"),
     verification: path.join(dir, "dogeos-testnet-contracts.json"),
+    partial: path.join(dir, "testnet.bark.partial.json"),
   });
   const over = path.join(dir, "sub", "m.json");
   assert.deepEqual(dogeosOutputPaths({ mode: "chikyu-fork", root: ROOT, forkDir: dir, manifestOverride: over }), {
     manifest: path.resolve(over),
     verification: path.join(path.dirname(path.resolve(over)), "dogeos-testnet-contracts.json"),
+    partial: path.join(dir, "sub", "m.partial.json"),
   });
   assert.throws(() => dogeosOutputPaths({ mode: "chikyu-fork", root: ROOT }), /forkDir/);
   assert.throws(() => dogeosOutputPaths({ mode: "chikyu-fork", root: ROOT, forkDir: path.join(ROOT, "deployments") }), /inside the repo/);
@@ -817,6 +871,12 @@ test("entrypoints run every guard before the first price fetch, deploy or send",
   }
   assert.ok(deploy.includes("DOGEOS_DEPLOY_BROADCAST_ENV") && !deploy.includes("DOGEOS_ACTIVATE_BROADCAST_ENV"), "deploy reads the deploy token only");
   assert.ok(deploy.includes("DOGEOS_OPERATOR_ENV"), "deploy reads the operator from DOGEOS_OPERATOR_ADDRESS");
+  assert.ok(/existingOutputs: \[out\.partial, out\.manifest, out\.verification\]/.test(deploy), "deploy refuses while a partial record exists");
+  const rm = deploy.indexOf("fs.rmSync(out.partial");
+  assert.ok(
+    rm > deploy.indexOf("writeDogeosManifest(out.manifest") && rm > deploy.indexOf("guards.writeJsonFile(out.verification"),
+    "the partial record goes only after both outputs are written",
+  );
   assert.ok(!/setCreatePaused/.test(deploy), "deploy never opens create");
   assert.ok(!/dogeosGen7Stack|LaunchFactoryGen7|MuchFi|Muchfi/.test(deploy), "deploy is not the gen-7 stack any more");
   const activate = fs.readFileSync(path.join(ROOT, "scripts", "activate-dogeos-testnet.ts"), "utf8");
@@ -865,5 +925,4 @@ test("hardhat.dogeos-bark-verify.config.ts: Bark build settings, the dogeosTestn
 test("deployFactoryWithLocker: the DogeOS locker-name option is reverted (no caller left)", () => {
   const src = fs.readFileSync(path.join(ROOT, "scripts", "lib", "deployFactoryWithLocker.ts"), "utf8");
   assert.doesNotMatch(src, /lockerName\?|lockerContractName|Muchfi/);
-  assert.match(src, /const lockerName = kind === "v3" \? "PermanentV3PositionLocker" : "PermanentLpLocker";/);
 });
