@@ -14,13 +14,17 @@ import {
   assertGen8HookMatches,
   executeGen8EscrowBuy,
   executeGen8Trade,
+  GEN8_FIRST_SELL_NOTE,
+  GEN8_WAITING_CONFIRMATION,
   gen8AntiSniperCountdown,
   gen8AppConfig,
   gen8ErrorMessage,
   gen8FeeLine,
   gen8MaxSellable,
+  gen8StepLabel,
   gen8TradingOpensLine,
   quoteGen8Trade,
+  readGen8SellSetup,
 } from "@/lib/evmGen8Client.mjs";
 import { gen8FormatPriceImpact, gen8UsesSizedSlippage } from "../../../shared/evmGen8Swap.mjs";
 import {
@@ -110,6 +114,8 @@ export function Gen8TradePanel({
   const [quote, setQuote] = useState<Quote | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState<{ index: number; total: number; kind: string; phase: "sign" | "pending" } | null>(null);
+  const [twoApprovals, setTwoApprovals] = useState(false);
   const sizedSlippage = gen8UsesSizedSlippage(chainId);
   const [slippageChoice, setSlippageChoice] = useState<typeof GEN8_AUTO_SLIPPAGE | number>(sizedSlippage ? GEN8_AUTO_SLIPPAGE : GEN8_DEFAULT_SLIPPAGE_BPS);
   const slippageArg = sizedSlippage ? slippageChoice : GEN8_DEFAULT_SLIPPAGE_BPS;
@@ -175,6 +181,29 @@ export function Gen8TradePanel({
   const amountRaw = parseUnitsSafe(amount, 18);
   const overSellCap = Boolean(side === "sell" && amountRaw && maxSellable != null && amountRaw > maxSellable);
 
+  // Before the first prompt: a first sell of this coin still needs both one-time approvals.
+  // Read once per quoted amount. The sell itself does not read the allowance again between transactions.
+  useEffect(() => {
+    if (side !== "sell" || !account || !readProvider || !cfg?.router || !amountRaw || !tradingOpen) {
+      setTwoApprovals(false);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      readGen8SellSetup({ provider: readProvider, owner: account, token, amountIn: amountRaw, router: cfg.router.address })
+        .then((setup) => {
+          if (!cancelled) setTwoApprovals(Boolean(setup?.approval && setup?.permit2Approval));
+        })
+        .catch(() => {
+          if (!cancelled) setTwoApprovals(false);
+        });
+    }, 400);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [side, account, readProvider, cfg, amountRaw, token, tradingOpen, spotKey]);
+
   // Live quote (exact input): what you receive, the price impact, the minimum at the slippage (sized from the impact on
   // BNB Chain, 1% on Robinhood), the fee and the creator's part.
   useEffect(() => {
@@ -234,6 +263,7 @@ export function Gen8TradePanel({
       return;
     }
     setBusy(true);
+    setStep(null);
     try {
       if (!wallet.signer || !wallet.account) throw new Error(`Connect the ${native} wallet first.`);
       let signer = wallet.signer as any;
@@ -242,10 +272,11 @@ export function Gen8TradePanel({
         if (Number(switched?.chainId) !== Number(chainId) || !switched?.signer) throw new Error("The wallet did not switch chains.");
         signer = switched.signer;
       }
+      const onStep = (next: { index: number; total: number; kind: string; phase: "sign" | "pending" }) => setStep(next);
       const result =
         side === "buy" && escrowBuy
           ? await executeGen8EscrowBuy({ signer, chainId, cfg, token, amountIn: amountRaw, slippageBps: slippageArg, readProvider })
-          : await executeGen8Trade({ signer, chainId, cfg, token, side, amountIn: amountRaw, slippageBps: slippageArg, readProvider });
+          : await executeGen8Trade({ signer, chainId, cfg, token, side, amountIn: amountRaw, slippageBps: slippageArg, readProvider, onStep });
       const txHash = result.receipt?.hash ?? null;
       // The token is the gen-8 campaign. This post wakes the indexer; the approval transactions are not this hash.
       if (txHash) notifyIndexerFills({ chainId, campaignAddress: token, txHashes: [txHash] });
@@ -258,6 +289,7 @@ export function Gen8TradePanel({
       toast.error(gen8ErrorMessage(error) || String((error as Error)?.message || "Trade failed."));
     } finally {
       setBusy(false);
+      setStep(null);
     }
   }
 
@@ -419,6 +451,12 @@ export function Gen8TradePanel({
         {quoteError && !quote ? <p className="mt-2 text-center text-xs text-mw-down">{quoteError}</p> : null}
         {overSellCap ? <p className="mt-2 text-center text-xs text-mw-down">This sell is larger than the bonding range can take back. Sell a smaller amount.</p> : null}
         {overBalance ? <p className="mt-2 text-center text-xs text-mw-down">{side === "buy" ? `Not enough ${native} (about ${ethers.formatEther(gasReserve)} ${native} stays for gas).` : "Amount is above your balance."}</p> : null}
+        {twoApprovals ? (
+          <p className="mt-2 text-center text-xs text-mw-muted" data-gen8-first-sell="true">{GEN8_FIRST_SELL_NOTE}</p>
+        ) : null}
+        {busy && step ? (
+          <p className="mt-2 text-center text-xs text-mw-text" data-gen8-step={step.phase}>{gen8StepLabel(step)}</p>
+        ) : null}
       </div>
       <Button
         className={`min-h-12 w-full rounded-[10px] font-mw-body text-base font-bold disabled:opacity-50 ${side === "buy" ? "border border-mw-buy bg-mw-buy text-[#04140A] hover:bg-[#15913F]" : "border border-mw-sell bg-mw-sell text-[#FFF1F3] hover:bg-[#C81A40]"}`}
@@ -435,7 +473,7 @@ export function Gen8TradePanel({
           void trade();
         }}
       >
-        {!account ? `Connect ${robinhood ? "Robinhood" : "BNB"} wallet` : !tradingOpen ? "Trading not open yet" : busy ? "Confirm in your wallet..." : `${side === "buy" ? "Buy" : "Sell"} ${symbol ? `$${symbol}` : ""}`.trim()}
+        {!account ? `Connect ${robinhood ? "Robinhood" : "BNB"} wallet` : !tradingOpen ? "Trading not open yet" : busy ? (step?.phase === "pending" ? GEN8_WAITING_CONFIRMATION : step ? gen8StepLabel(step) : "Preparing the trade...") : `${side === "buy" ? "Buy" : "Sell"} ${symbol ? `$${symbol}` : ""}`.trim()}
       </Button>
     </div>
   );

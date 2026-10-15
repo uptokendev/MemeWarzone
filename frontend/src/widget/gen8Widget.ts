@@ -412,6 +412,7 @@ export class Gen8SwapWidget {
   private async send(wallet: Eip1193, tx: { to: string; data: string; value: string }): Promise<string> {
     const hash = String(await wallet.request({ method: "eth_sendTransaction", params: [{ from: this.account, to: tx.to, data: tx.data, value: hexValue(tx.value || "0") }] }));
     if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) throw new Error("The wallet returned no transaction hash.");
+    this.say("Waiting for confirmation");
     await this.waitFor(hash);
     return hash;
   }
@@ -439,21 +440,28 @@ export class Gen8SwapWidget {
       const body = { chainId: this.token.chainId, token: this.token.token, side: this.side, wallet: this.account, amountRaw: raw.toString(), ...slippageRequest(this.options), ...(this.options.partner ? { partner: this.options.partner } : {}) };
       this.say("Getting the latest price...");
       let built = await this.call<Built | NeedsAllowance>("/api/widget/swap/gen8/build", { method: "POST", body: JSON.stringify(body) });
+      let stepIndex = 1;
+      let stepTotal = 1;
       if ((built as NeedsAllowance).needsAllowance) {
         const step = built as NeedsAllowance;
+        const approvals = (step.approval ? 1 : 0) + (step.permit2Approval ? 1 : 0);
+        stepTotal = approvals + 1;
+        const note = step.approval && step.permit2Approval ? "The first sell of a coin needs two one-time approvals. " : "";
         if (step.approval) {
-          this.say("Approve this coin once in your wallet...");
+          this.say(`${note}Step ${stepIndex} of ${stepTotal}: approve the coin (one time)`);
           await this.send(wallet, step.approval);
+          stepIndex += 1;
         }
         if (step.permit2Approval) {
-          this.say("Allow the router once in your wallet...");
+          this.say(`Step ${stepIndex} of ${stepTotal}: allow the Uniswap router (one time)`);
           await this.send(wallet, step.permit2Approval);
+          stepIndex += 1;
         }
         built = await this.call<Built | NeedsAllowance>("/api/widget/swap/gen8/build", { method: "POST", body: JSON.stringify(body) });
         if ((built as NeedsAllowance).needsAllowance) throw new Error("The allowance is not visible yet. Try the sell again.");
       }
       const tx = built as Built;
-      this.say("Confirm the swap in your wallet...");
+      this.say(`Step ${stepIndex} of ${stepTotal}: ${this.side === "buy" ? "buy" : "sell"}`);
       const hash = await this.send(wallet, tx);
       this.say(`Swap confirmed (${hash.slice(0, 10)}...).`, "ok");
       (this.el.amount as HTMLInputElement).value = "";
@@ -477,7 +485,7 @@ export class Gen8SwapWidget {
       const status = await this.call<{ status: string }>(`/api/widget/swap/gen8/status?chainId=${this.token?.chainId}&txHash=${hash}`).catch(() => null);
       if (status?.status === "failed") throw new Error("The transaction failed on chain.");
       if (status?.status === "success") return;
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await new Promise((resolve) => setTimeout(resolve, 250));
     }
     throw new Error(`Not confirmed yet. Check ${hash.slice(0, 10)}... in your wallet.`);
   }

@@ -353,16 +353,62 @@ export async function sendGen8Call({ signer, chainId, contract, method, args = [
   return receipt;
 }
 
-/** Sends a raw { to, data, value } with the same gas rules. */
-export async function sendGen8Tx({ signer, chainId, tx, floor = null }) {
-  const provider = signer.provider;
-  const overrides = await gen8GasOverrides(provider, chainId);
+/**
+ * How often a gen-8 send asks the read provider for the receipt. The wallet's own wait() is not used:
+ * ethers waits for one confirmation by polling the signer's provider for new blocks every 4000 ms, and that
+ * call has no timeout. On the G8WAIT sell (46630, 2026-10-15) the public RPC returned receipts in about 170 ms,
+ * while the wallet provider left 148 s and 106 s between the three nonces with no prompt open.
+ */
+export const GEN8_RECEIPT_POLL_MS = 250;
+/** Shown on the button while a gen-8 transaction is in a block and the next prompt is not open yet. */
+export const GEN8_WAITING_CONFIRMATION = "Waiting for confirmation";
+/** Shown before the first of the two one-time approvals. */
+export const GEN8_FIRST_SELL_NOTE = "The first sell of a coin needs two one-time approvals.";
+
+const GEN8_STEP_ACTION = Object.freeze({
+  erc20: "approve the coin (one time)",
+  permit2: "allow the Uniswap router (one time)",
+  sell: "sell",
+  buy: "buy",
+});
+
+/** "Step 1 of 3: approve the coin (one time)" and the same shape for the router allowance and the swap. */
+export function gen8StepLabel({ index, total, kind }) {
+  const action = GEN8_STEP_ACTION[kind];
+  if (!action) throw new Error("Unknown trade step.");
+  return `Step ${index} of ${total}: ${action}`;
+}
+
+/** One confirmation from `provider` (the HTTP read provider, not the wallet). Resolves on the first successful receipt. */
+export async function waitGen8Receipt(provider, hash, { timeoutMs = 180_000, intervalMs = GEN8_RECEIPT_POLL_MS, sleep = null } = {}) {
+  const pause = sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const start = Date.now();
+  for (;;) {
+    const receipt = await provider.getTransactionReceipt(hash);
+    if (receipt) {
+      if (Number(receipt.status) !== 1) throw new Error("The transaction reverted.");
+      return receipt;
+    }
+    if (Date.now() - start >= timeoutMs) throw new Error("The transaction was not confirmed in time.");
+    await pause(intervalMs);
+  }
+}
+
+/**
+ * Sends a raw { to, data, value } with the same gas rules.
+ * Gas price and the estimate go to `readProvider` (the app's HTTP provider). The wallet is asked only to sign.
+ * The receipt is polled on that same read provider, so the next prompt is not waiting on the wallet's block poll.
+ */
+export async function sendGen8Tx({ signer, chainId, tx, floor = null, readProvider = null, onPhase = null, sleep = null }) {
+  const reads = readProvider || signer.provider;
+  const from = await signer.getAddress();
+  const overrides = await gen8GasOverrides(reads, chainId);
   const req = { to: tx.to, data: tx.data, value: BigInt(tx.value || 0n), ...overrides };
-  const gasLimit = await gasWithHeadroom(() => signer.estimateGas(req), floor);
+  const gasLimit = await gasWithHeadroom(() => reads.estimateGas({ ...req, from }), floor);
+  onPhase?.("sign");
   const sent = await signer.sendTransaction({ ...req, ...(gasLimit ? { gasLimit } : {}) });
-  const receipt = await sent.wait();
-  if (!receipt || Number(receipt.status) !== 1) throw new Error("The transaction reverted.");
-  return receipt;
+  onPhase?.("pending");
+  return waitGen8Receipt(reads, sent.hash, sleep ? { sleep } : {});
 }
 
 /** launcher.launch(...) exactly as authorized; returns { receipt, launched }. */
@@ -535,33 +581,66 @@ export function buildGen8TradeCall({ cfg, quote, deadline, permit = null, referr
  * does not cover this sell through the swap deadline. Later sells send nothing here. These are transactions. There
  * is no typed-data signature. Returns the setup that was sent, or null when the swap can go alone.
  */
-export async function ensureGen8SellAllowance({ signer, chainId, token, amountIn, router, nowSec = null }) {
-  const owner = await signer.getAddress();
-  const reads = signer.provider;
-  const now = nowSec ?? Number((await reads.getBlock("latest")).timestamp);
+/** The one-time sell setup, read from `provider`. Null when this sell needs no approval. Does not send anything. */
+export async function readGen8SellSetup({ provider, owner, token, amountIn, router, nowSec = null }) {
+  const now = nowSec ?? Number((await provider.getBlock("latest")).timestamp);
   const [erc20Allowance, permit2Allowance] = await Promise.all([
-    new Contract(token, ERC20_ABI, reads).allowance(owner, PERMIT2_ADDRESS),
-    new Contract(PERMIT2_ADDRESS, PERMIT2_ABI, reads).allowance(owner, token, router),
+    new Contract(token, ERC20_ABI, provider).allowance(owner, PERMIT2_ADDRESS),
+    new Contract(PERMIT2_ADDRESS, PERMIT2_ABI, provider).allowance(owner, token, router),
   ]);
-  const setup = gen8SellSetup({ token, router, erc20Allowance, permit2Allowance, amountIn, nowSec: now });
-  if (!setup) return null;
-  if (setup.approval) await sendGen8Tx({ signer, chainId, tx: setup.approval });
-  if (setup.permit2Approval) await sendGen8Tx({ signer, chainId, tx: setup.permit2Approval });
-  return setup;
+  return gen8SellSetup({ token, router, erc20Allowance, permit2Allowance, amountIn, nowSec: now });
+}
+
+export async function ensureGen8SellAllowance({ signer, chainId, token, amountIn, router, nowSec = null, readProvider = null, setup = undefined, total = null, onStep = null }) {
+  const reads = readProvider || signer.provider;
+  const resolved = setup !== undefined
+    ? setup
+    : await readGen8SellSetup({ provider: reads, owner: await signer.getAddress(), token, amountIn, router, nowSec });
+  if (!resolved) return null;
+  // Both approvals are decided once, here. Nothing re-reads the allowance or the quote between them.
+  const steps = [];
+  if (resolved.approval) steps.push(["erc20", resolved.approval]);
+  if (resolved.permit2Approval) steps.push(["permit2", resolved.permit2Approval]);
+  const totalSteps = total ?? steps.length;
+  for (let i = 0; i < steps.length; i += 1) {
+    const [kind, tx] = steps[i];
+    await sendGen8Tx({
+      signer,
+      chainId,
+      tx,
+      readProvider: reads,
+      onPhase: (phase) => onStep?.({ index: i + 1, total: totalSteps, kind, phase }),
+    });
+  }
+  return resolved;
 }
 
 /**
  * One trade in the coin's pool from the app: re-quotes, then (sell) the one-time Permit2 allowance, then the router
  * call with gas headroom and no permit. Returns { receipt, quote, call }.
  */
-export async function executeGen8Trade({ signer, chainId, cfg, token, side, amountIn, slippageBps = GEN8_DEFAULT_SLIPPAGE_BPS, readProvider = null, quote = null }) {
+export async function executeGen8Trade({ signer, chainId, cfg, token, side, amountIn, slippageBps = GEN8_DEFAULT_SLIPPAGE_BPS, readProvider = null, quote = null, onStep = null }) {
   const reads = readProvider || signer.provider;
   const q = quote || (await quoteGen8Trade({ provider: reads, cfg, token, side, amountIn, slippageBps }));
   const now = Number((await reads.getBlock("latest")).timestamp);
-  if (side === "sell") await ensureGen8SellAllowance({ signer, chainId, token, amountIn: q.amountIn, router: cfg.router.address, nowSec: now });
+  const setup = side === "sell"
+    ? await readGen8SellSetup({ provider: reads, owner: await signer.getAddress(), token, amountIn: q.amountIn, router: cfg.router.address, nowSec: now })
+    : null;
+  const prelude = (setup?.approval ? 1 : 0) + (setup?.permit2Approval ? 1 : 0);
+  const total = prelude + 1;
+  if (side === "sell" && setup) {
+    await ensureGen8SellAllowance({ signer, chainId, token, amountIn: q.amountIn, router: cfg.router.address, nowSec: now, readProvider: reads, setup, total, onStep });
+  }
   const swapNow = side === "sell" ? Number((await reads.getBlock("latest")).timestamp) : now;
   const call = buildGen8TradeCall({ cfg, quote: q, deadline: BigInt(swapNow + GEN8_SWAP_DEADLINE_SECONDS), permit: null });
-  const receipt = await sendGen8Tx({ signer, chainId, tx: call, floor: 400_000n });
+  const receipt = await sendGen8Tx({
+    signer,
+    chainId,
+    tx: call,
+    floor: 400_000n,
+    readProvider: reads,
+    onPhase: (phase) => onStep?.({ index: total, total, kind: side === "buy" ? "buy" : "sell", phase }),
+  });
   return { receipt, quote: q, call };
 }
 
