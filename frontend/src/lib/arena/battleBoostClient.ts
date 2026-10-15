@@ -216,6 +216,24 @@ export async function createSolanaBattleBoostQuote(input: { battleId: string; ch
   }), "Solana Battle Boost quote"));
 }
 
+/**
+ * Reports a confirmed EVM Boost transaction so its points are recorded now. The server reads the
+ * BattleBoosted event from chain; if this call is lost, the realtime worker records it within minutes.
+ * Returns true when the points are recorded.
+ */
+export async function reportBattleBoostPayment(input: { chainId: number; battleId: string; txHash: string }): Promise<boolean> {
+  try {
+    const res = await apiFetch("/api/arena/boosts/evm-payment", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ chainId: input.chainId, battleId: input.battleId, txHash: input.txHash }),
+    });
+    const json = await res.json().catch(() => ({}));
+    return res.ok && json?.ok !== false && json?.pending !== true;
+  } catch {
+    return false;
+  }
+}
+
 export async function submitBattleBoost(input: { signer: JsonRpcSigner; quote: BattleBoostQuote }) {
   const quote = parseQuote(input.quote);
   const signerChain = Number((await input.signer.provider.getNetwork()).chainId);

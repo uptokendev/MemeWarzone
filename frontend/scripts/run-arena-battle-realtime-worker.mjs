@@ -13,6 +13,7 @@ import { closeEndedChampionships, rolloverEndedMwlSeasons } from "../api/lib/are
 import { crankLeagueShares, leagueCrankMode, sweepMwlEpochs } from "../api/lib/arenaEvmLeagueCrank.js";
 import { harvestLpFees, lpHarvestMode } from "../api/lib/evmLpHarvestCrank.js";
 import { runMwlPayouts } from "../api/lib/arenaMwlPayouts.js";
+import { reconcileEnabled, reconcileEvmBoostPayments } from "../api/lib/arenaEvmBoostReconcile.js";
 
 // Vote Battles (challenge, queue and tournament) settle only through this runtime, so it defaults
 // on: with ARENA_VOTE_TOURNAMENT_RUNTIME unset no Vote Battle ever finished. Set it to false to stop it.
@@ -200,6 +201,23 @@ async function crankLeague() {
 }
 if (leagueCrank !== "off") console.log(`[arena-battle-realtime-worker] EVM league crank active mode=${leagueCrank} intervalMs=${leagueCrankMs}`);
 const leagueCrankTimer = setInterval(() => void crankLeague(), leagueCrankMs); leagueCrankTimer.unref?.(); void crankLeague();
+// BNB / Robinhood Boosts the browser paid but never reported: record their points from the quote
+// reservation and the chain log (arenaEvmBoostReconcile.js). On unless ARENA_EVM_BOOST_RECONCILE=off.
+const boostReconcileOn = reconcileEnabled();
+const boostReconcileMs = Math.max(30_000, Number(process.env.ARENA_EVM_BOOST_RECONCILE_SCAN_MS || 60_000));
+let boostReconcileRunning = false;
+async function reconcileBoosts() {
+  if (!boostReconcileOn || boostReconcileRunning) return;
+  boostReconcileRunning = true;
+  try {
+    const summary = await reconcileEvmBoostPayments({ db: pool });
+    if (summary.recorded || summary.voided || summary.refused) console.log(`[arena-battle-realtime-worker] EVM boost reconcile recorded=${summary.recorded} voided=${summary.voided} refused=${summary.refused} pending=${summary.pending}`);
+    if (summary.errors.length) console.warn("[arena-battle-realtime-worker] EVM boost reconcile partial", summary.errors.join("; "));
+  } catch (error) { console.warn("[arena-battle-realtime-worker] EVM boost reconcile failed", error?.message || error); }
+  finally { boostReconcileRunning = false; }
+}
+if (boostReconcileOn) console.log(`[arena-battle-realtime-worker] EVM boost reconcile active intervalMs=${boostReconcileMs}`);
+const boostReconcileTimer = setInterval(() => void reconcileBoosts(), boostReconcileMs); boostReconcileTimer.unref?.(); void reconcileBoosts();
 // BNB / Robinhood LP fees of graduated coins: locker.harvest(pool), 80% creator / 20% protocol
 // (evmLpHarvestCrank.js). Off unless EVM_LP_HARVEST=dry|send. One instance only.
 const lpHarvest = lpHarvestMode();

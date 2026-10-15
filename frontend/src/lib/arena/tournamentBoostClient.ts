@@ -33,6 +33,15 @@ export async function fetchSolanaTournamentBoostPaymentState(input: { tournament
   return json.payment;
 }
 
+/** Reports a confirmed EVM Tournament Boost transaction; see reportBattleBoostPayment. True when recorded. */
+export async function reportTournamentBoostPayment(input: { tournamentId: string; matchRef: string; chainId: number; txHash: string }): Promise<boolean> {
+  try {
+    const response = await apiFetch(route(input.tournamentId, input.matchRef, "/evm-payment"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chainId: input.chainId, txHash: input.txHash }) });
+    const json = await response.json().catch(() => ({}));
+    return response.ok && json?.ok !== false && json?.pending !== true;
+  } catch { return false; }
+}
+
 export async function createTournamentBoostQuote(input: { tournamentId: string; matchRef: string; chainId: number; wallet: string; targetToken: string; boostUnits: number; roundNumber: number; matchId: string; signer: JsonRpcSigner }) {
   const auth = await signWalletAction({ action: "arena_tournament_boost_quote", walletAddress: input.wallet, chainId: input.chainId, signer: input.signer, extraLines: [`Tournament: ${input.tournamentId}`, `Round: ${input.roundNumber}`, `Match: ${input.matchId}`, `Target: ${input.targetToken}`, `Boost Units: ${input.boostUnits}`] });
   const response = await apiFetch(route(input.tournamentId, input.matchRef, "/quote"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ wallet: input.wallet, targetToken: input.targetToken, boostUnits: input.boostUnits, auth }) });

@@ -178,7 +178,18 @@ Applies to metrics battles, Vote Battles and Vote Tournament rounds, EVM and Sol
   before the API deploys, or every Boost quote returns 503.
 - Read routes take `?wallet=` and return `boostRules` + `walletBoostUnits`; the panels show 1x/2x and
   lock at the close without a reload.
-- **Open (found 2026-10-15, not fixed):** because nothing calls the EVM confirm routes, EVM Boost
-  points (Vote Battle tally, V3 boost curve, tournament boost points) are never recorded. Verify on
-  production with `select chain_id, count(*) from arena_contest_actions where action_type='boost'
-  group by 1`.
+- **EVM Boost points (fixed 2026-10-15, second PR):** nothing called the internal EVM confirm routes,
+  so BNB/Robinhood Boosts were paid but never scored (production: only chain 101 had boost actions;
+  there had been no EVM battles yet). Now:
+  - the browser reports the confirmed tx: `POST /arena/boosts/evm-payment {chainId, battleId, txHash}`
+    and `POST /arena/tournaments/:id/matches/:ref/boosts/evm-payment {chainId, txHash}`. Public: every
+    field comes from the BattleBoosted / TournamentBoosted event, the pool id must match the battle,
+    the log must come from the configured treasury. 202 while the receipt is not there yet.
+  - backstop: `api/lib/arenaEvmBoostReconcile.js`, every minute in the realtime worker (on unless
+    `ARENA_EVM_BOOST_RECONCILE=off`): unrecorded reservations past their deadline -> usedBoostNonces
+    -> getLogs by indexed topics in the quote window -> same record function. Refused for good
+    (battle no longer live) -> `record_note`, not retried.
+  - `recordBattleBoostPayment` / `recordTournamentBoostPayment` are the shared record functions
+    (the internal confirm routes call them too). Migration
+    `db/migrations/20261015_000020_arena_boost_reservation_recorded.sql` adds tx_hash, log_index,
+    recorded_at, record_note.
