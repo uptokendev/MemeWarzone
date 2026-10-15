@@ -28,12 +28,13 @@ is (`MwzV4Token`, the `MwzFeeMath` library, both byte-identical to `e129712b9` a
 solc 0.8.26, EVM `cancun` (TSTORE/TLOAD; Chikyu supports PUSH0, MCOPY and TSTORE), via-IR, optimizer 200 runs,
 `bytecodeHash: none`: gen-8's exact settings, taken from `hardhat.gen8.config.ts` by
 `hardhat.dogeos-bark-fork.config.ts` (artifacts in `artifacts-bark/`). OpenZeppelin 5.4.0 (root lockfile; only
-`SafeCast` is used by the plugin). Sizes: `node scripts/dogeos-bark-sizes.mjs` (EIP-170, exits non-zero above 24,576
+`SafeCast` is used by the plugin); `@uniswap/v4-core` 1.0.2 `TickMath` (pinned exactly, the gen-8 dependency; an
+internal library, no external call). Sizes: `node scripts/dogeos-bark-sizes.mjs` (EIP-170, exits non-zero above 24,576
 bytes).
 
 | Contract | Runtime bytes (2026-10-15) |
 |---|---|
-| MwzBarkPlugin | 7,978 |
+| MwzBarkPlugin | 9,569 (fix round 1; 7,978 at first write) |
 
 ## Method
 
@@ -62,9 +63,16 @@ the changed function's entry here and the change is re-reviewed (plan, global co
 
 ## MwzBarkPlugin
 
-**Files:** `contracts/dogeos/barkswap/MwzBarkPlugin.sol` (525 lines), `contracts/dogeos/barkswap/interfaces/IMwzBarkLauncher.sol`
-(41 lines). **Imports:** the vendored Algebra 1.2.1 interfaces `IAlgebraPlugin`, `IAlgebraPoolState`,
-`IAlgebraPoolImmutables`; gen-8 `FeeConfig` and `MwzFeeMath` (unchanged); OZ `SafeCast`.
+**Files:** `contracts/dogeos/barkswap/MwzBarkPlugin.sol` (577 lines), `contracts/dogeos/barkswap/interfaces/IMwzBarkLauncher.sol`
+(45 lines). **Imports:** the vendored Algebra 1.2.1 interfaces `IAlgebraPlugin`, `IAlgebraPoolState`,
+`IAlgebraPoolImmutables`; gen-8 `FeeConfig` and `MwzFeeMath` (unchanged); OZ `SafeCast`; v4-core `TickMath`.
+
+**Fix round 1 (t3 review, 2026-10-15).** (a) Tick alignment: `registerPool` takes A's ticks and derives `sqrtStart`
+and `sqrtGrad` with `TickMath` (gen-8 `MwzLaunchHook.createPool` pattern), stated as obligation O1; `beforeModifyPosition`
+now checks the ranges of launcher mints and of the graduation burn. (b) `getCurrentFee()` added so `pool.fee()` works.
+(c) A conversion is refused inside the 60 s launch window. (d) The inline graduation-fee claim is narrowed (a revert
+cannot revert the trade, an out-of-gas can). (e) Open questions 1 and 8 rewritten against the upstream v1.2.1-integral
+source. Every changed entry below is updated.
 
 ### Role
 
@@ -77,7 +85,18 @@ it charges no plugin fee (pluginFee is always 0), has no token transfer, no with
 
 Pool orientation (checked at initialize): token0 = the coin, token1 = WDOGE. A buy is `zeroToOne == false` (WDOGE
 in), a sell `zeroToOne == true` (coin in). The pool price (WDOGE per coin, Q64.96) rises on buys; position A spans
-[start, graduation), B [graduation, max). "Inside A" means `price < sqrtGrad`; "at or past graduation" `price >= sqrtGrad`.
+ticks [tickStart, tickGrad], B [tickGrad, tickMax]. "Inside A" means `price < sqrtGrad`; "at or past graduation"
+`price >= sqrtGrad`.
+
+**Tick alignment** (underpins I6 and F2). The plugin stores A's two ticks and derives
+`sqrtStart = getSqrtPriceAtTick(tickStart)` and `sqrtGrad = getSqrtPriceAtTick(tickGrad)` itself, so `sqrtStart` is
+exactly A's lower bound (below it no liquidity exists: the F2 floor) and `sqrtGrad` exactly A's upper bound and B's
+lower bound (at or past it A holds WDOGE only: the graduation burn returns WDOGE only). The launcher cannot hand in
+prices that are off the ticks; O1 requires it to mint A at [tickStart, tickGrad] and B at [tickGrad, tickMax], and
+`beforeModifyPosition` refuses any launcher mint below tickStart or straddling tickGrad and any launcher burn outside
+[tickStart, tickGrad]. `getSqrtPriceAtTick` (v4-core 1.0.2) is the gas-optimised Uniswap V3 `getSqrtRatioAtTick`;
+Algebra Integral's TickMath is the same V3 function. Equality on the three ticks is fork-checked in t8 (the pool
+initialized at `sqrtStart` reports tick == tickStart; A's mint at [tickStart, tickGrad] takes coins only).
 
 ### Trust model and wiring
 
@@ -100,8 +119,10 @@ against the launcher's predicted address. Either way the launcher's constructor 
 deployed periphery (a wrong label address mislabels swaps; it cannot move money).
 
 **Launcher obligations** (declared in `IMwzBarkLauncher`, to be verified in the MwzBarkLauncher section):
-- O1: `registerPool(pool, coin, sqrtStart, sqrtGrad, openAt)` before the pool exists, coin below WDOGE, then
-  `pool.initialize(sqrtStart)` by the launcher.
+- O1: `registerPool(pool, coin, tickStart, tickGrad, openAt)` before the pool exists, coin below WDOGE, then
+  `pool.initialize(plugin.pools(pool).sqrtStart)` by the launcher; A minted at [tickStart, tickGrad] and B at
+  [tickGrad, tickMax], so `sqrtStart == getSqrtRatioAtTick(bottomTick of A)` and
+  `sqrtGrad == getSqrtRatioAtTick(topTick of A) == getSqrtRatioAtTick(bottomTick of B)`.
 - O2: the launcher swaps only for the creator first buy inside `launch` and the conversion sell inside `convert`;
   `conversionInProgress(pool)` is true exactly around the conversion's `pool.swap`, is a plain view without a
   reentrancy guard, and never reverts.
@@ -114,7 +135,7 @@ deployed periphery (a wrong label address mislabels swaps; it cannot move money)
 | Variable | Kind | Written by | Notes |
 |---|---|---|---|
 | `pools[pool]` slot 0: `sqrtGrad`, `openAt`, `graduated`, `graduatedAt`, `gradBurnDone` | storage, 32 bytes packed | `registerPool` (all, once), `afterSwap` (latch: `graduated`, `graduatedAt`, once), `beforeModifyPosition` (`gradBurnDone`, once) | `sqrtGrad != 0` is the "registered" test |
-| `pools[pool].coin`, `.sqrtStart` | storage | `registerPool` only | never changed |
+| `pools[pool]` slot 1: `coin`, `tickStart`, `tickGrad`; slot 2: `sqrtStart` | storage | `registerPool` only | never changed; `sqrtStart` / `sqrtGrad` derived from the ticks |
 | `_fees[pool]` (`bondingNative`, `bondingCoin`, `postNative`, `postCoin`, each `{uint128 creator, uint128 router}`) | storage | `afterSwap` (`_book`) only, monotonic | read through `feeTotals(pool)` |
 | hand-over `keccak256(abi.encode(T_SWAP, pool))` | transient | `beforeSwap` (set), `afterSwap` (read and cleared) | one slot per pool |
 
@@ -168,16 +189,19 @@ pool cannot be re-entered while locked. Field widths: `feeUnits < 1e6 < 2^24`, `
 off the after-swap hook) lives until the end of the transaction and is overwritten by the next `beforeSwap` of that
 pool. solc prints its generic EIP-1153 notice for the `tstore`; the slot is cleared in the same swap.
 
-### registerPool(pool, coin, sqrtStart, sqrtGrad, openAt)
+### registerPool(pool, coin, tickStart, tickGrad, openAt)
 
-- **Guard:** none needed: launcher-only and no external call.
+- **Guard:** none needed: launcher-only and no external call (`TickMath` is internal).
 - **CEI:** checks (caller is the launcher; non-zero `pool` and `coin`; the pool is not registered and has no code yet;
-  `0 < sqrtStart < sqrtGrad`; `openAt` in `[now, now + 30 days]`, gen-8's `BadOpenAt` bound), then one storage write and
-  the event. No interaction.
+  `MIN_TICK <= tickStart < tickGrad < MAX_TICK` (`BadTicks`; B needs room above tickGrad); `openAt` in
+  `[now, now + 30 days]`, gen-8's `BadOpenAt` bound), then the two prices are derived from the ticks, then one storage
+  write and the event. No interaction. Tick-spacing alignment is not checked here: the pool's own `mint` refuses ticks
+  that are not multiples of its spacing, so a misaligned launch reverts as a whole.
 - **States:** once per pool address, before the pool is deployed (O1). An existing pool (ours or foreign) can never be
   registered (`pool.code.length != 0` reverts), so the launcher cannot attach our rules to someone else's pool even by
   mistake. A launch that reverts reverts the registration.
-- **Over/underflow:** `block.timestamp + 30 days` cannot overflow; `openAt` is a uint40 argument.
+- **Over/underflow:** `block.timestamp + 30 days` cannot overflow; `openAt` is a uint40 argument;
+  `getSqrtPriceAtTick` cannot revert because both ticks are inside `[MIN_TICK, MAX_TICK]`.
 - **Griefing:** none: only the launcher calls it.
 
 ### beforeInitialize(sender, price) (view)
@@ -191,25 +215,30 @@ pool. solc prints its generic EIP-1153 notice for the `tstore`; the slot is clea
 - **Over/underflow:** none.
 - **Griefing:** none.
 
-### beforeModifyPosition(sender, recipient, ., ., liquidityDelta, .)
+### beforeModifyPosition(sender, recipient, bottomTick, topTick, liquidityDelta, .)
 
 - **Guard:** no lock; the only external call is the calling pool's `globalState()` view.
 - **CEI:** checks, then at most one storage write (`gradBurnDone = true`), no external call after it.
 - **States:**
   - add (`liquidityDelta > 0`): only `sender == launcher` and `recipient == launcher`; everyone else, including every
-    NonfungiblePositionManager mint (sender = the NPM), reverts `LiquidityIsLocked` (proof check 4). The launcher adds
-    only inside `launch` (O3).
-  - burn by the launcher (`liquidityDelta < 0`): only after the latch, with the pool price at or past `sqrtGrad`
-    (position A is all WDOGE there, so the burn can only return WDOGE), and only once (`GraduationBurnRefused`
-    otherwise). This is defense in depth for I6 ("A and B lose liquidity exactly once, never while the price is inside
+    NonfungiblePositionManager mint (sender = the NPM), reverts `LiquidityIsLocked` (proof check 4). The launcher's
+    range must start at or above tickStart and must not straddle tickGrad (`bottomTick < tickGrad < topTick` refused,
+    `BadPositionRange`): A = [tickStart, tickGrad] and B = [tickGrad, tickMax] pass, so no liquidity can ever sit below
+    the F2 floor and no launcher position other than B can hold coins at or past the graduation price. The launcher
+    adds only inside `launch` (O3). Ticks are compared instead of their sqrt prices; `getSqrtPriceAtTick` is strictly
+    increasing, so the two comparisons are identical.
+  - burn by the launcher (`liquidityDelta < 0`): the range must lie inside [tickStart, tickGrad] (`BadPositionRange`;
+    among our positions only A's range qualifies), only after the latch, with the pool price at or past `sqrtGrad` (a
+    range whose top is at most tickGrad is all WDOGE there, so the burn can only return WDOGE, and only from A), and
+    only once (`GraduationBurnRefused` otherwise). This is defense in depth for I6 ("A and B lose liquidity exactly once, never while the price is inside
     A"); the amount (`floor(liqA x 2%)`) and the once-rule remain the launcher's own duty (t32), because the plugin does
     not see the burn if an admin removed the position-modify flag at that moment.
   - burn by anyone else: passes (no other position exists unless an admin cleared our config; such LPs can always exit).
   - zero-amount burns (the launcher's fee pokes for collect): always pass.
   - pluginFee returned is always 0: we never tax a burn.
 - **Over/underflow:** none.
-- **Griefing:** none on others; the launcher's own graduation burn can be refused only if the latch is not set or the
-  price is inside A, which is exactly when it must not run.
+- **Griefing:** none on others; the launcher's own graduation burn can be refused only if the latch is not set, the
+  price is inside A or the range is not A's, which is exactly when it must not run.
 
 ### beforeSwap(sender, ., zeroToOne, ., ., ., .)
 
@@ -217,7 +246,8 @@ pool. solc prints its generic EIP-1153 notice for the `tstore`; the slot is clea
   External calls: `pool.globalState()` (view on the caller) and, only when `sender == launcher`,
   `launcher.conversionInProgress(pool)` (view, cannot change state).
 - **CEI:** checks (registered pool; `TradingNotOpen` for every sender but the launcher before `openAt`; for a
-  conversion: a sell (`ConversionMustSell`) and `lastFee == 0` (`ConversionFeeNotZero`)), then the transient hand-over
+  conversion: a sell (`ConversionMustSell`), not before `openAt + 60 s` (`ConversionInLaunchWindow`, spec Money flow 4:
+  no conversion inside the launch window) and `lastFee == 0` (`ConversionFeeNotZero`)), then the transient hand-over
   write, then the return value. No storage write.
 - **States:**
   - before `openAt`: only the launcher's swap (O2: the creator first buy inside `launch`) passes, at the bonding rate
@@ -227,14 +257,15 @@ pool. solc prints its generic EIP-1153 notice for the `tstore`; the slot is clea
     and also after the price fell back and rose again.
   - conversion (launcher swap with the flag set): returns overrideFee 0, i.e. "use lastFee", which is 0 (O4), so a
     true 0 fee and no community cut; refused if lastFee is not 0 (only possible after an admin `setFee` with the
-    dynamic flag off; the keeper's `restore` fixes it). Never a buy.
+    dynamic flag off; the keeper's `restore` fixes it). Never a buy, never inside the 60 s launch window (enforced
+    here as well as in the launcher).
   - every other swap: overrideFee = `algebraFee(rate, buy)` > 0 (the smallest rate is 100 bps), pluginFee 0.
   - dynamic-fee flag off (admin): a non-zero overrideFee would revert the swap (`dynamicFeeDisabled`), so the plugin
     returns 0 and records `lastFee` as the fee: trading keeps working at lastFee (0 after launch / restore), as the
     spec's accepted risk states, and the books record what was really charged.
   - unknown pool (an admin attached our plugin to a foreign pool): reverts `UnknownPool`; no effect on our pools.
 - **Over/underflow:** `rate <= 9000` (MwzFeeMath, constants); `algebraFee` <= 900,000, cast through `SafeCast.toUint24`
-  (cannot revert); `openAt + 60` in MwzFeeMath cannot overflow.
+  (cannot revert); `openAt + 60` (in MwzFeeMath and in the conversion window check) cannot overflow.
 - **Griefing:** a swap costs its sender the gas and the fee; nothing a swapper does changes another pool or another
   swap's rate. The fee schedule depends on `block.timestamp` exactly as gen-7 and gen-8 (gen-8 A7, accepted).
 
@@ -246,8 +277,8 @@ pool. solc prints its generic EIP-1153 notice for the `tstore`; the slot is clea
   liquidity exists; gen-8 F2 mirrored for the inverted price orientation); the hand-over (or its fallback, below).
   Effects: the fee books (`_book`), then the latch (`graduated = true`, `graduatedAt = now`, both once). Then the
   `BarkSwap` event and, for the latching swap, `Graduated`. Interaction last: the inline graduation fee
-  (`launcher.takeGraduationFee(pool)` through a low-level call that forwards the remaining gas, copies no return data
-  and ignores failure; `GraduationFeeInline(pool, ok)`). When the launcher runs, every plugin write of this swap is done;
+  (`launcher.takeGraduationFee(pool)` through a low-level call that forwards 63/64 of the remaining gas, copies no
+  return data and ignores a revert; `GraduationFeeInline(pool, ok)`). When the launcher runs, every plugin write of this swap is done;
   its burn re-enters only `beforeModifyPosition` (which sees the latch set and the price at or past `sqrtGrad`).
 - **States:**
   - every swap on a registered pool with the after-swap hook on, any phase, any sender; conversions book 0 fee and still
@@ -258,7 +289,7 @@ pool. solc prints its generic EIP-1153 notice for the `tstore`; the slot is clea
     crossing happened while an admin had our hook off: the first swap after `restore` that ends at or past `sqrtGrad`
     latches.
   - fallback without a hand-over (only if an admin turned the before-swap hook off and kept the after-swap hook):
-    `openAt` and the conversion rule are re-checked here, the swap was charged `lastFee`, it is booked at that fee in the
+    `openAt` and the conversion rules (launch window, `lastFee == 0`) are re-checked here, the swap was charged `lastFee`, it is booked at that fee in the
     phase given by the latch (the start price is unknown here) with `rateBps = 0` in the event.
   - unknown pool: reverts.
 - **Over/underflow:** `amountIn x feeUnits` with `feeUnits < 2^24` and `amountIn` bounded by the pool's uint128 reserves:
@@ -269,11 +300,13 @@ pool. solc prints its generic EIP-1153 notice for the `tstore`; the slot is clea
   window, no cumulative book can get there (a revert would only revert that swap). `uint40(block.timestamp)`
   is exact until year 36,812. `-amount` of an int256 cannot hit `type(int256).min` (pool amounts fit uint128).
 - **Griefing:**
-  - The inline graduation fee can be made to fail (a caller who supplies just enough gas for the trade but not for the
-    burn, or a latching swap sent by the launcher while its own lock is held): the trade still completes and the fee is
-    left to the launcher's guarded permissionless fallback, which takes it while the price is at or past `sqrtGrad`
-    (spec: "if the price has fallen back, it waits"). No loss, only deferral; `GraduationFeeInline(pool, false)` tells
-    the keeper.
+  - The inline graduation fee can fail. A revert in the launcher (for example a latching swap sent by the launcher
+    while its own lock is held) cannot revert the trade: the trade completes and the fee is left to the launcher's
+    guarded permissionless fallback, which takes it while the price is at or past `sqrtGrad` (spec: "if the price has
+    fallen back, it waits"). An out-of-gas is different: the plugin keeps only 1/64 of the gas for the rest of
+    `afterSwap` and the pool, so a gas limit that starves the launcher either still finishes the swap (fee deferred to
+    the fallback, as above) or reverts the whole swap (nothing committed). Either way no loss, only deferral or a failed
+    transaction for the sender who chose that gas limit; `GraduationFeeInline(pool, false)` tells the keeper.
   - A 1-wei swap books `gross = 0` while the pool may take 1 wei: within the tolerance, in our favour.
   - An event per swap costs gas to the swapper only.
 
@@ -290,9 +323,24 @@ pool. solc prints its generic EIP-1153 notice for the `tstore`; the slot is clea
   after 8 hours, i.e. freeze trading and the graduation burn. It returns the selector unconditionally. Anyone can call
   it from any contract; for non-pool callers it does nothing.
 
+### getCurrentFee() (view)
+
+- **Guard:** view; one view call to the calling pool (`globalState()`).
+- **CEI:** reads only.
+- **States:** Algebra's `pool.fee()` calls it on the plugin when the dynamic-fee flag is set (msg.sender = the pool);
+  Barkswap's UI, subgraph and periphery read `fee()`, which would revert on our pools without it. It returns the fee a
+  non-launcher SELL would pay now in 1e6 units: phase by the current price, the launch decay from `openAt` included
+  (before `openAt` the start rate), capped at `type(uint16).max` (6.5535%) because the Algebra interface is uint16, so
+  it reports the cap during most of the 60 s launch window. A buy pays r/(1+r) of its input, slightly less than the
+  value shown. For a caller that is not one of our pools it returns 0 (no revert). Nothing on chain that matters reads
+  it: `beforeSwap` computes the real fee itself and returns it as overrideFee. The plugin does not inherit Algebra's
+  `IAlgebraDynamicFeePlugin` (not vendored); the function has that interface's exact signature and selector.
+- **Over/underflow:** rate <= 9000 bps, units <= 900,000, clamped before the uint16 cast.
+- **Griefing:** none (view).
+
 ### Views and the other callbacks
 
-`feeTotals`, `feeConfig`, `algebraFee`, `defaultPluginConfig` (135), the `pools` getter: views or pure. `afterInitialize`,
+`feeTotals`, `feeConfig`, `algebraFee`, `defaultPluginConfig` (135), `getCurrentFee`, the `pools` getter: views or pure. `afterInitialize`,
 `afterModifyPosition`, `beforeFlash`, `afterFlash` are not in `PLUGIN_CONFIG`; they are pure and return their selector,
 so an admin who sets those flags cannot brick initialize, burns or flash loans through us (gen-8's hook reverted unused
 callbacks because V4 permissions are fixed in the hook address; here they are admin-settable flags). Flash loans stay
@@ -303,7 +351,7 @@ possible: they do not move the price, and their 0.01% fee goes to our positions 
 | Spec invariant | How the plugin upholds it | Fork test |
 |---|---|---|
 | Only the launcher initializes and adds liquidity | `beforeInitialize`, `beforeModifyPosition` (with config 135) | t8 |
-| A and B lose liquidity exactly once, never inside A (I6) | launcher duty (t32); the plugin refuses a launcher burn before the latch, inside A, or a second time | t8 |
+| A and B lose liquidity exactly once, never inside A (I6) | launcher duty (t32); the plugin refuses a launcher burn before the latch, inside A, outside A's range, or a second time | t8 |
 | Rate per swap matches phase (start price) and decay from `openAt` | `beforeSwap` with gen-8 `MwzFeeMath` (F1, I3, I14) | t8 |
 | No swap before `openAt` except the creator first buy | `beforeSwap` (and the fallback in `afterSwap`), O2 | t8 |
 | No sell below the start price | `afterSwap` F2 (I15) | t8 |
@@ -312,6 +360,8 @@ possible: they do not move the price, and their 0.01% fee goes to our positions 
 | Creator amount exactly 560 bps of the gross bonding fee and 50% of the gross post fee, whatever the cut (B10) | `_book`, community fee read at swap time; exact up to a cut of 94.4% / 50% | t9 |
 | Plugin per-phase totals equal what collect can take, within a stated tolerance | `_book` from the pool's own amounts; tolerance above | t9 |
 | A conversion pays 0 fee; every other swap the phase rate | `beforeSwap` (`ConversionFeeNotZero`, `ConversionMustSell`) | t8 |
+| No conversion inside the 60 s launch window | `beforeSwap` (`ConversionInLaunchWindow`), also the launcher | t8 |
+| Start / graduation prices sit exactly on A's ticks; no launcher liquidity below the start or straddling the graduation price; the graduation burn takes from A only | `registerPool` derives the prices from the ticks; `beforeModifyPosition` range checks | t8 |
 | Stored rates never change (I12) | constants, no setter | t8 |
 | One swap event per swap with every spec field incl. kind | `BarkSwap` | t8 |
 | The plugin holds no funds of ours | pluginFee always 0; no transfer path | t8 |
@@ -353,11 +403,15 @@ described under `beforeSwap` / `afterSwap`. A2, A3 (display pair) do not apply: 
 
 ### Open questions
 
-1. **Upstream call order, fork-checked in t8.** The plugin relies on: `beforeSwap` runs before the swap is computed
-   (so its `globalState()` price is the start price and its community fee the one the swap uses); `afterSwap` runs after
-   `_unlock()` (facts section 3, verified); `beforeModifyPosition` receives `(msg.sender, recipient)` on mint and
-   `(owner, owner)` on burn; an overrideFee is not written into `lastFee` (consistent with the proof's fee-free
-   conversion after many swaps). Each needs a fork assertion in t8.
+1. **Upstream behaviour (verified in the v1.2.1-integral source by the t3 reviewer, 2026-10-15; t8 confirms each on
+   the fork).** `AlgebraPool.swap` runs `_beforeSwap` -> `_lock` -> the swap calculation, transfers and the payer
+   callback -> `_unlock` -> `_afterSwap`, so `beforeSwap` reads the start price and the community fee the calculation
+   uses, and the pool is unlocked in `afterSwap`. `swapWithPaymentInAdvance` takes the payment (callback) first and then
+   follows the same `_beforeSwap` -> calculation -> `_unlock` -> `_afterSwap` order, so the same holds. `mint` passes
+   `(msg.sender, recipient)` to `beforeModifyPosition`, `burn` passes `(msg.sender, msg.sender)`. `_calculateSwap`
+   writes only price and tick into `globalState`, so an overrideFee is never stored in `lastFee` (a conversion after
+   any number of swaps is still fee-free). Hooks are skipped only when `msg.sender == plugin`; the launcher is not the
+   plugin, so its swaps, mints and burns all pass through our hooks.
 2. **Launcher fallback vs a swapped-in plugin (t32).** The graduation-fee fallback should refuse unless
    `pool.plugin() == plugin` and the config holds `BEFORE_POSITION_MODIFY`: a foreign plugin can tax burns, and with
    our flag off the plugin's burn guard is skipped.
@@ -375,8 +429,8 @@ described under `beforeSwap` / `afterSwap`. A2, A3 (display pair) do not apply: 
    through the SwapRouter, the plugin needs another rule (for example recipient-based) and this section changes.
 7. **Licence.** The plugin is MIT (as gen-8) and compiles the vendored GPL-2.0-or-later Algebra interfaces; confirm the
    licence line for the Bark contracts before mainnet.
-8. **Launch gas (t32).** Unverified idea for the 7M gate: Algebra's `initialize` sets `lastFee = 0` by itself when the
-   dynamic-fee flag is already set, which might allow dropping a separate `EP.setFee(pool, 0)` call; the spec mandates
-   setFee(0) before the flag, so this only matters if t8 measures launch gas close to the gate.
+8. **`setFee(0)` stays mandatory (O4).** Upstream `initialize` calls `_setFee(defaultFee)` unconditionally, so every
+   pool starts with the factory default `lastFee` (500) whatever the plugin config; only `EP.setFee(pool, 0)` while the
+   dynamic-fee flag is off brings it to 0. (The first version of this section suggested the opposite; that was wrong.)
 
 Verdict: pending (t7)

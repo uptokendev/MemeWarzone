@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {IAlgebraPlugin} from "./interfaces/core/plugin/IAlgebraPlugin.sol";
 import {IAlgebraPoolState} from "./interfaces/core/pool/IAlgebraPoolState.sol";
 import {IAlgebraPoolImmutables} from "./interfaces/core/pool/IAlgebraPoolImmutables.sol";
@@ -15,7 +16,9 @@ import {MwzFeeMath} from "../../gen8/libraries/MwzFeeMath.sol";
 /// docs/dogeos/barkswap-audit.md (MwzBarkPlugin).
 ///
 /// Every pool is token0 = the coin, token1 = WDOGE (checked at initialize), so a buy is oneToZero (WDOGE in) and the
-/// pool price (WDOGE per coin) rises on buys: position A spans [start, graduation), position B [graduation, max).
+/// pool price (WDOGE per coin) rises on buys: position A spans [tickStart, tickGrad], position B [tickGrad, max). The
+/// start and graduation prices are DERIVED from the registered ticks (TickMath, as gen-8's hook does), so they sit
+/// exactly on A's lower and upper tick: below sqrtStart no liquidity exists (F2), at or past sqrtGrad A holds WDOGE only.
 ///
 /// - LP-fee mode (B4): `beforeSwap` returns the swap's fee as Algebra's `overrideFee`; the pool's `lastFee` is 0 (the
 ///   launcher sets it before the dynamic-fee flag), our positions are the only liquidity, so the fee accrues to the
@@ -26,12 +29,13 @@ import {MwzFeeMath} from "../../gen8/libraries/MwzFeeMath.sol";
 ///   rate r of its coin input; a buy pays r/(1+r) of its WDOGE input, so the curve gets input/(1+r) and the fee is
 ///   r on top of it (gen-7), within the 1e6 fee-unit rounding.
 /// - Conversion: the launcher's coin-fee conversion sell (recognised through its transient flag) returns overrideFee 0,
-///   which with lastFee 0 is a true 0 fee; it is refused if lastFee is not 0.
+///   which with lastFee 0 is a true 0 fee; it is refused if lastFee is not 0, and inside the 60 s launch window.
 /// - `afterSwap`: no sell may leave the price below the start price (F2); per-pool, per-phase fee totals (creator amount
 ///   on the GROSS fee, router remainder net of the community fee read at swap time; B10); one `BarkSwap` event per
 ///   swap; the graduation latch + graduatedAt; the inline graduation fee through the launcher (failure tolerated).
-/// - Liquidity: only the launcher may add liquidity, to itself; the launcher's only non-zero burn is the one graduation
-///   burn, refused before the latch, inside A or a second time (defense in depth for I6).
+/// - Liquidity: only the launcher may add liquidity, to itself, in ranges at or above tickStart that do not straddle
+///   tickGrad; the launcher's only non-zero burn is the one graduation burn, of a range at or below tickGrad, refused
+///   before the latch, inside A or a second time (defense in depth for I6).
 ///
 /// Reentrancy / CEI (full statement per function in the audit file): every hook acts only on the pool that calls it
 /// (msg.sender must be a registered pool) and on that pool's own state; per-swap hand-over is in transient storage keyed
@@ -46,16 +50,18 @@ contract MwzBarkPlugin is IAlgebraPlugin {
     error NotLauncher();
     error UnknownPool();
     error PoolExists();
-    error BadPrices();
+    error BadTicks();
     error BadOpenAt();
     error OnlyLauncherMayInitialize();
     error BadStartPrice();
     error BadPoolTokens();
     error LiquidityIsLocked();
+    error BadPositionRange();
     error GraduationBurnRefused();
     error TradingNotOpen();
     error ConversionMustSell();
     error ConversionFeeNotZero();
+    error ConversionInLaunchWindow();
     error PriceBelowStart();
 
     // Algebra Integral 1.2.1 plugin config flags (libraries/Plugins.sol)
@@ -98,15 +104,18 @@ contract MwzBarkPlugin is IAlgebraPlugin {
     address public immutable creatorEscrow;
     address public immutable choiceVault;
 
-    /// @dev slot 0: sqrtGrad (20) + openAt (5) + graduated (1) + graduatedAt (5) + gradBurnDone (1) = 32 bytes.
+    /// @dev slot 0: sqrtGrad (20) + openAt (5) + graduated (1) + graduatedAt (5) + gradBurnDone (1) = 32 bytes;
+    /// slot 1: coin (20) + tickStart (3) + tickGrad (3); slot 2: sqrtStart.
     struct PoolState {
-        uint160 sqrtGrad; // graduation price (WDOGE per coin, Q64.96); 0 = not one of our pools
+        uint160 sqrtGrad; // getSqrtPriceAtTick(tickGrad): graduation price (WDOGE per coin, Q64.96); 0 = not ours
         uint40 openAt; // trading opens; the launch-fee decay starts here
         bool graduated; // the latch: false -> true once, never back (I7)
         uint40 graduatedAt; // block time of the latch, 0 before (I17)
         bool gradBurnDone; // the launcher's one graduation burn went through this plugin
         address coin; // token0
-        uint160 sqrtStart; // start price = initialize price = the F2 floor
+        int24 tickStart; // A's lower tick
+        int24 tickGrad; // A's upper tick = B's lower tick
+        uint160 sqrtStart; // getSqrtPriceAtTick(tickStart): start price = initialize price = the F2 floor
     }
 
     /// @notice Running totals of the fee booked in one phase and one token. creator + router == the net fee (gross
@@ -146,7 +155,9 @@ contract MwzBarkPlugin is IAlgebraPlugin {
     mapping(address pool => PoolState) public pools;
     mapping(address pool => FeeTotals) internal _fees;
 
-    event PoolRegistered(address indexed pool, address indexed coin, uint160 sqrtStart, uint160 sqrtGrad, uint40 openAt);
+    event PoolRegistered(
+        address indexed pool, address indexed coin, int24 tickStart, int24 tickGrad, uint160 sqrtStart, uint160 sqrtGrad, uint40 openAt
+    );
     /// @notice One per swap on one of our pools. `sender` is the contract that called pool.swap (a router, the
     /// launcher, the escrow or the choice vault); the trader is the transaction sender. Buy: `nativeAmount` = WDOGE in
     /// (fee included), `coinAmount` = coins out; sell: `coinAmount` = coins in (fee included), `nativeAmount` = WDOGE
@@ -202,15 +213,20 @@ contract MwzBarkPlugin is IAlgebraPlugin {
 
     // ================================================================== registration (launcher only)
 
-    /// @notice Registers a pool before it exists (launcher obligation O1). Values are fixed forever.
-    /// @dev Launcher only; no external call. CEI: checks, then one storage write. Reachable once per pool address, and
-    /// only while that address has no code, so an existing (foreign) pool can never be registered.
-    function registerPool(address pool, address coin, uint160 sqrtStart, uint160 sqrtGrad, uint40 openAt) external {
+    /// @notice Registers a pool before it exists (launcher obligation O1): A's ticks [tickStart, tickGrad] and openAt.
+    /// The start and graduation prices are derived here from the ticks, so they are exactly A's bounds. Fixed forever.
+    /// @dev Launcher only; no external call (TickMath is an internal library). CEI: checks, then one storage write.
+    /// Reachable once per pool address, and only while that address has no code, so an existing (foreign) pool can
+    /// never be registered. getSqrtPriceAtTick cannot revert: both ticks are inside [MIN_TICK, MAX_TICK).
+    function registerPool(address pool, address coin, int24 tickStart, int24 tickGrad, uint40 openAt) external {
         if (msg.sender != launcher) revert NotLauncher();
         if (pool == address(0) || coin == address(0)) revert ZeroAddress();
         if (pools[pool].sqrtGrad != 0 || pool.code.length != 0) revert PoolExists();
-        if (sqrtStart == 0 || sqrtStart >= sqrtGrad) revert BadPrices();
+        // B needs room above tickGrad: tickGrad < MAX_TICK
+        if (tickStart < TickMath.MIN_TICK || tickStart >= tickGrad || tickGrad >= TickMath.MAX_TICK) revert BadTicks();
         if (openAt < block.timestamp || openAt > block.timestamp + MAX_OPEN_DELAY) revert BadOpenAt();
+        uint160 sqrtStart = TickMath.getSqrtPriceAtTick(tickStart);
+        uint160 sqrtGrad = TickMath.getSqrtPriceAtTick(tickGrad);
         pools[pool] = PoolState({
             sqrtGrad: sqrtGrad,
             openAt: openAt,
@@ -218,9 +234,11 @@ contract MwzBarkPlugin is IAlgebraPlugin {
             graduatedAt: 0,
             gradBurnDone: false,
             coin: coin,
+            tickStart: tickStart,
+            tickGrad: tickGrad,
             sqrtStart: sqrtStart
         });
-        emit PoolRegistered(pool, coin, sqrtStart, sqrtGrad, openAt);
+        emit PoolRegistered(pool, coin, tickStart, tickGrad, sqrtStart, sqrtGrad, openAt);
     }
 
     // ================================================================== views
@@ -254,6 +272,23 @@ contract MwzBarkPlugin is IAlgebraPlugin {
         return PLUGIN_CONFIG;
     }
 
+    /// @notice IAlgebraDynamicFeePlugin.getCurrentFee (selector of Algebra 1.2.1's interface): the pool's `fee()` view
+    /// calls it on the plugin when the dynamic-fee flag is set (msg.sender = the pool), and Barkswap's UI, subgraph and
+    /// periphery read `fee()`. Without it `pool.fee()` would revert on our pools.
+    /// @return The fee a non-launcher SELL would pay now, in 1e6 units, launch decay included, phase by the current
+    /// price (a buy pays r/(1+r) of its input, slightly less); capped at type(uint16).max (6.5535%) because the
+    /// Algebra interface is uint16, so during most of the 60 s launch window it reports the cap. 0 for a caller that is
+    /// not one of our pools. Informational only: no swap reads it (beforeSwap computes the fee itself).
+    function getCurrentFee() external view returns (uint16) {
+        PoolState storage st = pools[msg.sender];
+        uint160 sqrtGrad = st.sqrtGrad;
+        if (sqrtGrad == 0) return 0;
+        (uint160 price,,,,,) = IAlgebraPoolState(msg.sender).globalState();
+        uint256 rateBps = MwzFeeMath.rate(feeConfig(), price >= sqrtGrad, false, st.openAt, block.timestamp);
+        uint256 units = algebraFee(rateBps, false);
+        return units > type(uint16).max ? type(uint16).max : uint16(units);
+    }
+
     // ================================================================== initialize and liquidity hooks
 
     /// @dev Always called by Algebra's initialize when a plugin is set. Only the launcher initializes, only at the
@@ -274,19 +309,29 @@ contract MwzBarkPlugin is IAlgebraPlugin {
         return IAlgebraPlugin.afterInitialize.selector;
     }
 
-    /// @dev Adds: only the launcher, for itself. Burns of other owners (none exist unless an admin cleared our config)
-    /// pass. The launcher's non-zero burn is the graduation burn: only after the latch, with the price at or past the
-    /// graduation price (A is all WDOGE), and once. Zero-amount burns (fee pokes) always pass. pluginFee is always 0.
-    function beforeModifyPosition(address sender, address recipient, int24, int24, int128 liquidityDelta, bytes calldata)
-        external
-        returns (bytes4, uint24)
-    {
+    /// @dev Adds: only the launcher, for itself, in a range at or above tickStart that does not straddle tickGrad (A is
+    /// [tickStart, tickGrad], B [tickGrad, max]). Burns of other owners (none exist unless an admin cleared our config)
+    /// pass. The launcher's non-zero burn is the graduation burn: a range inside [tickStart, tickGrad] (so at a price at
+    /// or past sqrtGrad it returns WDOGE only, and only from A), only after the latch, with the price at or past the
+    /// graduation price, and once. Zero-amount burns (fee pokes) always pass. pluginFee is always 0.
+    /// Ticks compare exactly like their sqrt prices (getSqrtPriceAtTick is strictly increasing).
+    function beforeModifyPosition(
+        address sender,
+        address recipient,
+        int24 bottomTick,
+        int24 topTick,
+        int128 liquidityDelta,
+        bytes calldata
+    ) external returns (bytes4, uint24) {
         PoolState storage st = pools[msg.sender];
         uint160 sqrtGrad = st.sqrtGrad;
         if (sqrtGrad == 0) revert UnknownPool();
         if (liquidityDelta > 0) {
             if (sender != launcher || recipient != launcher) revert LiquidityIsLocked();
+            int24 tickGrad = st.tickGrad;
+            if (bottomTick < st.tickStart || (bottomTick < tickGrad && topTick > tickGrad)) revert BadPositionRange();
         } else if (liquidityDelta < 0 && sender == launcher) {
+            if (bottomTick < st.tickStart || topTick > st.tickGrad) revert BadPositionRange();
             if (!st.graduated || st.gradBurnDone) revert GraduationBurnRefused();
             (uint160 price,,,,,) = IAlgebraPoolState(msg.sender).globalState();
             if (price < sqrtGrad) revert GraduationBurnRefused();
@@ -326,6 +371,8 @@ contract MwzBarkPlugin is IAlgebraPlugin {
         uint256 feeUnits;
         if (kind == KIND_CONVERSION) {
             if (!zeroToOne) revert ConversionMustSell();
+            // no conversion inside the 60 s launch window (spec Money flow 4)
+            if (block.timestamp < openAt + MwzFeeMath.SNIPER_WINDOW) revert ConversionInLaunchWindow();
             // overrideFee 0 = "use lastFee"; only a true 0 fee is a conversion
             if (lastFee != 0) revert ConversionFeeNotZero();
         } else {
@@ -424,7 +471,10 @@ contract MwzBarkPlugin is IAlgebraPlugin {
         } else {
             if (sender != launcher && block.timestamp < st.openAt) revert TradingNotOpen();
             r.kind = _kind(sender, pool);
-            if (r.kind == KIND_CONVERSION && lastFee != 0) revert ConversionFeeNotZero();
+            if (r.kind == KIND_CONVERSION) {
+                if (block.timestamp < uint256(st.openAt) + MwzFeeMath.SNIPER_WINDOW) revert ConversionInLaunchWindow();
+                if (lastFee != 0) revert ConversionFeeNotZero();
+            }
             r.feeUnits = lastFee;
             r.communityFee = communityFeeNow;
             r.phase = st.graduated ? PHASE_POST : PHASE_BONDING;
@@ -482,8 +532,10 @@ contract MwzBarkPlugin is IAlgebraPlugin {
         );
     }
 
-    /// @dev try/catch semantics without copying return data (a revert, out-of-gas or return bomb in the launcher can
-    /// never revert the trade). Last action of afterSwap.
+    /// @dev try/catch semantics without copying return data: a revert or a return bomb in the launcher cannot revert the
+    /// trade. Out of gas can: the call gets 63/64 of the remaining gas, and if the launcher burns all of it the 1/64 left
+    /// may not cover the rest of afterSwap and the pool, so the whole swap reverts (the sender's own choice of gas
+    /// limit; it never commits a trade without its fee booking). Last action of afterSwap.
     function _inlineGraduationFee(address pool) private {
         bytes memory data = abi.encodeCall(IMwzBarkLauncher.takeGraduationFee, (pool));
         address target = launcher;

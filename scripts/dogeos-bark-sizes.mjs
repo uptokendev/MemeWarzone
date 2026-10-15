@@ -25,7 +25,7 @@ function artifactFiles(dir) {
   return out;
 }
 
-/** Runtime size in bytes; unlinked library placeholders (__$..$__, 40 hex chars) count as the 20-byte address. */
+/** Runtime size in bytes of an artifact's deployedBytecode hex string. */
 function runtimeSize(deployedBytecode) {
   const hex = String(deployedBytecode ?? "0x").replace(/^0x/, "");
   return hex.length / 2;

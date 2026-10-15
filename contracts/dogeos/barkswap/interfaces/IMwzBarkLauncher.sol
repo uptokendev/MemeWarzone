@@ -10,9 +10,12 @@ pragma solidity 0.8.26;
 /// section 3; audit: docs/dogeos/barkswap-audit.md (MwzBarkPlugin, "Launcher obligations").
 ///
 /// Launcher obligations the plugin relies on (MwzBarkLauncher, t32/t4, must uphold every one; the audit checks them):
-/// - O1 Registration: `plugin.registerPool(pool, coin, sqrtStart, sqrtGrad, openAt)` before the pool exists (before
+/// - O1 Registration: `plugin.registerPool(pool, coin, tickStart, tickGrad, openAt)` before the pool exists (before
 ///   `EP.createCustomPool`, or inside `beforeCreatePoolHook`), with the coin as token0 and WDOGE as token1, then
-///   `pool.initialize(sqrtStart)` by the launcher itself.
+///   `pool.initialize(plugin.pools(pool).sqrtStart)` by the launcher itself. tickStart is A's lower tick and tickGrad
+///   A's upper tick = B's lower tick, so sqrtStart == getSqrtRatioAtTick(bottomTick of A) and
+///   sqrtGrad == getSqrtRatioAtTick(topTick of A) == getSqrtRatioAtTick(bottomTick of B) (the plugin derives both
+///   prices from these ticks; its mint/burn range checks and F2 rely on it).
 /// - O2 Swaps: the launcher sends exactly two kinds of swap: the creator first buy inside `launch` (bonding rate, may
 ///   run before openAt) and the coin-fee conversion sell inside `convert`. It never swaps anywhere else.
 /// - O3 Liquidity: the launcher mints A and B only inside `launch`, with itself as the recipient; its only burn with a
@@ -33,8 +36,9 @@ interface IMwzBarkLauncher {
     /// (Algebra runs `_unlock()` before `afterSwap`), the plugin's latch is set and the pool price is at or past the
     /// graduation price, so position A holds WDOGE only.
     /// @dev The plugin calls this with a low-level call that copies no return data and ignores failure (try/catch
-    /// semantics): a revert or out-of-gas here never reverts the trade; the launcher's guarded permissionless fallback
-    /// takes the fee later. The launcher MUST: take the fee at most once per pool (I6); never take it while the price is
+    /// semantics): a revert here never reverts the trade; an out-of-gas may (the 1/64 the plugin keeps may not finish
+    /// the swap), which reverts the whole swap. After a failure the launcher's guarded permissionless fallback takes
+    /// the fee later. The launcher MUST: take the fee at most once per pool (I6); never take it while the price is
     /// below the graduation price; when `msg.sender` is not the plugin, apply its fallback guards (pool unlocked, latch
     /// set, price at or past the graduation price). It MAY implement the fallback as this function or a separate one.
     function takeGraduationFee(address pool) external;
