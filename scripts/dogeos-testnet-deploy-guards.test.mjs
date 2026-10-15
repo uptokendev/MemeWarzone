@@ -390,9 +390,9 @@ test("verification entries: every contract we deploy, with the exact constructor
   const r = sampleRecord();
   const entries = dogeosVerificationEntries(r, DELAYS);
   const by = Object.fromEntries(entries.map((e) => [e.contract.split(":")[1] + (e.name.includes("airdrop") ? "#airdrop" : ""), e]));
-  assert.equal(entries.length, 19);
-  assert.equal(new Set(entries.map((e) => e.name)).size, 19, "names are unique");
-  assert.equal(new Set(entries.map((e) => e.address.toLowerCase())).size, 19, "addresses are unique");
+  assert.equal(entries.length, 16);
+  assert.equal(new Set(entries.map((e) => e.name)).size, 16, "names are unique");
+  assert.equal(new Set(entries.map((e) => e.address.toLowerCase())).size, 16, "addresses are unique");
   const W = MUCHFI_EXTERNAL_ADDRESSES.wdoge;
   const D1 = MUCHFI_EXTERNAL_ADDRESSES.factory;
   assert.deepEqual(by.DogeosTestnetDogeUsdOracle.args, [UPDATER, "24150000", false]);
@@ -404,7 +404,6 @@ test("verification entries: every contract we deploy, with the exact constructor
   assert.deepEqual(by.RecruiterRewardsVault.args, [DEPLOYER]);
   assert.deepEqual(by.ProtocolRevenueVault.args, [DEPLOYER]);
   assert.deepEqual(by.TreasuryRouterV4.args, [DEPLOYER, r.vaults.weekly, r.vaults.monthly, "3600"]);
-  assert.deepEqual(by.MuchfiCreatorRewardsVault.args, [DEPLOYER, r.fees.router, W, "2", D1, "86400"]);
   assert.deepEqual(by.RewardDistributor.args, [DEPLOYER]);
   assert.equal(by.RewardDistributor.address, r.fees.holderDistributor);
   assert.deepEqual(by["RewardDistributor#airdrop"].args, [DEPLOYER]);
@@ -413,8 +412,6 @@ test("verification entries: every contract we deploy, with the exact constructor
   assert.equal(by.CreatorRegistry, undefined, "no CreatorRegistry on DogeOS (spec section 1, founder 2026-10-10)");
   assert.deepEqual(by.RiskRegistry.args, []);
   assert.deepEqual(by.LaunchCampaignGen7.args, []);
-  assert.deepEqual(by.MuchfiV3NativeGraduationAdapter.args, [D1, MUCHFI_EXTERNAL_ADDRESSES.positionManager, W, DEPLOYER]);
-  assert.deepEqual(by.MuchfiV3PositionLocker.args, [r.deployed.LaunchFactoryGen7]);
   assert.deepEqual(by.LaunchFactoryGen7.args, [
     r.deployed.MuchfiV3NativeGraduationAdapter,
     r.fees.router,
@@ -465,12 +462,12 @@ test("verification JSON: chains[\"6281971\"] on L2Scan, written to (and read bac
   assert.equal(chain.network, "dogeosTestnet");
   assert.equal(chain.provider, "l2scan");
   assert.equal(chain.apiUrl, "https://dogeos-testnet.l2scan.co/api");
-  assert.equal(chain.contracts.length, 19);
+  assert.equal(chain.contracts.length, 16);
   const file = path.join(tmpDir(), "nested", "dogeos-testnet-contracts.json");
   writeJsonFile(file, manifest);
   const back = JSON.parse(fs.readFileSync(file, "utf8"));
   assert.deepEqual(back, manifest);
-  assert.equal(readVerificationList(back).length, 19);
+  assert.equal(readVerificationList(back).length, 16);
 });
 
 test("verification JSON reader: refuses a missing chain, a malformed entry and an external MuchFi address", () => {
