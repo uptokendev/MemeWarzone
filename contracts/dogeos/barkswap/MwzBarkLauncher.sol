@@ -620,13 +620,16 @@ contract MwzBarkLauncher is
     /// @dev O1 + O4: register in the plugin before the pool exists, create it through the entry point (this contract is
     /// the deployer; `beforeCreatePoolHook` returns the plugin only for this pool), initialize at the plugin's stored
     /// start price, tick spacing 10, lastFee 0 while the dynamic-fee flag is still off, then config 135.
+    /// The tick spacing is set only if the factory default differs: Algebra's `setTickSpacing` reverts
+    /// `invalidNewTickSpacing` on an unchanged value, so an unconditional call would stop every launch the day
+    /// Barkswap's default becomes 10 (audit gate 0, L-1). `setFee` and `setPluginConfig` have no such check.
     function _createPool(address coin, address pool, MwzBarkLaunchLib.LaunchPlan memory p, uint40 openAt) private {
         plugin.registerPool(pool, coin, p.tickStart, p.tickGrad, openAt);
         _tstore(T_ACTIVE_POOL, uint256(uint160(pool)));
         if (entryPoint.createCustomPool(address(this), msg.sender, coin, wNative, "") != pool) revert UnexpectedPool();
         (,,,,,,,, uint160 sqrtStart) = plugin.pools(pool);
         IAlgebraPool(pool).initialize(sqrtStart); // plugin.beforeInitialize: sender, price and token order
-        entryPoint.setTickSpacing(pool, TICK_SPACING);
+        if (IAlgebraPool(pool).tickSpacing() != TICK_SPACING) entryPoint.setTickSpacing(pool, TICK_SPACING);
         entryPoint.setFee(pool, 0); // the pool's initialize set the factory default (500); must precede the flag
         entryPoint.setPluginConfig(pool, PLUGIN_CONFIG);
     }
