@@ -14,7 +14,7 @@ verdict may be FAIL.
 | Contract | File | Audit kind | Section written by |
 |---|---|---|---|
 | MwzBarkPlugin (+ `IMwzBarkLauncher`, the launcher surface it calls) | `contracts/dogeos/barkswap/MwzBarkPlugin.sol`, `contracts/dogeos/barkswap/interfaces/IMwzBarkLauncher.sol` | full audit (new code) | t3 |
-| MwzBarkLauncher | `contracts/dogeos/barkswap/MwzBarkLauncher.sol` | full audit (new code) | t32 (launch, restore), t4 (money side) |
+| MwzBarkLauncher (+ its linked libraries `MwzBarkLaunchLib`, `MwzBarkFeeBooks`) | `contracts/dogeos/barkswap/MwzBarkLauncher.sol`, `contracts/dogeos/barkswap/libraries/MwzBarkLaunchLib.sol`, `contracts/dogeos/barkswap/libraries/MwzBarkFeeBooks.sol` | full audit (new code) | t32 (launch, restore), t4 (money side, library split) |
 | MwzBarkFeeSplitter, MwzBarkReserveLock, MwzBarkLaunchLens | `contracts/dogeos/barkswap/` | diff audit against gen-8 `contracts/gen8/` (vendored from `e129712b9`) | t5 |
 | MwzBarkCreatorChoiceVault, MwzBarkCreatorEscrow | `contracts/dogeos/barkswap/` | diff audit against gen-8 | t6 |
 
@@ -29,13 +29,15 @@ solc 0.8.26, EVM `cancun` (TSTORE/TLOAD; Chikyu supports PUSH0, MCOPY and TSTORE
 `bytecodeHash: none`: gen-8's exact settings, taken from `hardhat.gen8.config.ts` by
 `hardhat.dogeos-bark-fork.config.ts` (artifacts in `artifacts-bark/`). OpenZeppelin 5.4.0 (root lockfile; only
 `SafeCast` is used by the plugin); `@uniswap/v4-core` 1.0.2 `TickMath` (pinned exactly, the gen-8 dependency; an
-internal library, no external call). Sizes: `node scripts/dogeos-bark-sizes.mjs` (EIP-170, exits non-zero above 24,576
-bytes).
+internal library, no external call). Sizes: `node scripts/dogeos-bark-sizes.mjs` (EIP-170 for every contract and
+linked library, exits non-zero above 24,576 bytes).
 
 | Contract | Runtime bytes (2026-10-15) |
 |---|---|
 | MwzBarkPlugin | 9,569 (fix round 1; 7,978 at first write) |
-| MwzBarkLauncher | 21,588 (t32, launch path and restore only; 2,988 headroom, see "Size and the library split") |
+| MwzBarkLauncher | 22,307 (t4, with the money side; 2,269 headroom; 21,588 at t32 before the split, see "Size and the library split") |
+| MwzBarkLaunchLib (linked library) | 10,255 (t4) |
+| MwzBarkFeeBooks (linked library) | 1,133 (t4) |
 
 ## Method
 
@@ -422,10 +424,12 @@ described under `beforeSwap` / `afterSwap`. A2, A3 (display pair) do not apply: 
 4. **Unbooked LP fees (t4).** Flash-loan fees, direct token transfers to the pool (Algebra credits a balance surplus to
    in-range LPs) and swaps made while our hooks were off all accrue to our positions without a plugin booking. Collect
    must credit any surplus over the plugin's totals somewhere defined (router book of the current phase is the natural
-   choice) so the launcher's books still equal its balances.
+   choice) so the launcher's books still equal its balances. **Resolved in t4** (MwzBarkLauncher, "Fee books",
+   "Unbooked surplus"): router post, not the current phase's router book, so no splitter band grows without a trade row.
 5. **Rounding tolerance (t9).** The <= 16 wei per swap per book bound above is derived from the per-step rounding, not
    measured; t9 measures it and pins the value it asserts, and t4's apportionment must accept totals a few wei above
-   what collect returns.
+   what collect returns. **t4:** the launcher books what collect returns and lets the plugin's totals only steer the
+   split, so either sign is absorbed by the router books (MwzBarkLauncher, "Fee books", "Tolerance").
 6. **Swap kinds (t6).** Escrow and choice vault must swap directly on the pool for the kind label; if t6 routes them
    through the SwapRouter, the plugin needs another rule (for example recipient-based) and this section changes.
 7. **Licence.** The plugin is MIT (as gen-8) and compiles the vendored GPL-2.0-or-later Algebra interfaces; confirm the
@@ -441,54 +445,72 @@ Verdict: pending (t7)
 ## MwzBarkLauncher
 
 **Files:** `contracts/dogeos/barkswap/MwzBarkLauncher.sol` (t32: launch path, plugin-factory hooks, pool callbacks,
-graduation fee, restore; t4 adds the money side under its own headings below). **Imports:** the vendored Algebra 1.2.1
-interfaces (`IAlgebraPool`, `IAlgebraFactory`, `IAlgebraPluginFactory`, `IAlgebraMintCallback`,
-`IAlgebraSwapCallback`, `IAlgebraCustomPoolEntryPoint`, `IWNativeToken`); `IMwzBarkLauncher` and `MwzBarkPlugin`
-(type only, no bytecode); gen-8 `MwzV4Token` (deployed by CREATE2, same bytecode as gen-8); v4-core 1.0.2 `TickMath`,
-`FullMath`; v4-periphery 1.0.3 `LiquidityAmounts`; OZ 5.4.0 `Math`, `SafeCast`, `ECDSA`, `MessageHashUtils`,
-`SafeERC20`, `ReentrancyGuardTransient`. Three small interfaces are declared in the file for the contracts it calls:
-`IMwzBarkOracle` (the foundation's GraduationOracle, reused unchanged), `IMwzBarkReserveLockForLauncher` (t5) and
-`IMwzBarkChoiceVaultForLauncher` (t6). Their names differ from gen-8's so the Bark build has no duplicate artifact names.
+graduation fee, restore; t4: the money side, the library split and the t32 review minors), and its two linked libraries
+`contracts/dogeos/barkswap/libraries/MwzBarkLaunchLib.sol` (coin deployment, curve planning, the pool calls of
+`restore`, the graduation burn and `collect`) and `contracts/dogeos/barkswap/libraries/MwzBarkFeeBooks.sol` (pure book
+arithmetic). **Imports:** the vendored Algebra 1.2.1 interfaces (`IAlgebraPool`, `IAlgebraFactory`,
+`IAlgebraPluginFactory`, `IAlgebraMintCallback`, `IAlgebraSwapCallback`, `IAlgebraCustomPoolEntryPoint`,
+`IWNativeToken`); `IMwzBarkLauncher` and `MwzBarkPlugin` (type only, no bytecode); gen-8 `MwzV4Token` (deployed by
+CREATE2 from the library, same bytecode as gen-8) and `MwzFeeMath` (only its `SNIPER_WINDOW` constant); v4-core 1.0.2
+`TickMath`, `FullMath`; v4-periphery 1.0.3 `LiquidityAmounts` (library); OZ 5.4.0 `Math` (library), `SafeCast`, `ECDSA`,
+`MessageHashUtils`, `SafeERC20`, `ReentrancyGuardTransient`. Small interfaces declared for the contracts it calls:
+`IMwzBarkOracle` (the foundation's GraduationOracle, reused unchanged; now declared in the library file),
+`IMwzBarkReserveLockForLauncher` (t5) and `IMwzBarkChoiceVaultForLauncher` (t6). Their names differ from gen-8's so the
+Bark build has no duplicate artifact names.
 
 **Diff base:** gen-8 `contracts/gen8/MwzV4Launcher.sol` (vendored at `e129712b9`) for the signed create, the oracle
-band and curve sizing; gen-8 `MwzLaunchHook._graduate` for the graduation fee; the research proof
-`scripts/research/barkswap-plugin/contracts/MwzBarkLauncher.sol` for the Barkswap call sequence (one-tx launch through
-the entry point, CREATE2 coin, direct `pool.mint` with callback). Every production difference is listed below.
+band and curve sizing; gen-8 `MwzLaunchHook` for the graduation fee (`_graduate`) and the whole money side
+(`creatorOwed`, `claimCreator`, two-step creator transfer, `routerOwed` / `pendingBondingFees` / `pendingGradFees`,
+`claimRouter` with F4, `routerPaid`, `routerParked` / `payParkedRouter` / `executeTreasuryRouter` with F3, the 48 h
+router timelock); the research proof `scripts/research/barkswap-plugin/contracts/MwzBarkLauncher.sol` for the Barkswap
+call sequence (one-tx launch through the entry point, CREATE2 coin, direct `pool.mint` with callback). Every production
+difference is listed below. New code with no gen-8 counterpart: `collect` and `convert` (gen-8 took its fees in native
+inside the swap; here they accrue to positions in both tokens, spec B4/B5).
 
 ### Role
 
-The Barkswap custom-pool deployer and plugin factory of every MemeWarzone coin on DogeOS (spec section 3, launcher
-row). The t32 part covers the one-transaction launch, the plugin-factory hooks the entry point forwards, the mint and swap
-callbacks, the one-time graduation fee (inline from the plugin, or the guarded permissionless fallback) and the
-permissionless `restore`. It owns positions A and B of every coin. After launch it makes exactly these calls into a pool
-or the entry point: `restore` (our plugin, lastFee 0, config 135, nothing else), the one graduation burn plus the
-collect of exactly its principal, and (t4) fee collection (zero-amount pokes and fee collects) and the conversion sell.
-There is no withdraw and no admin path to a pool. Nothing removes liquidity except the graduation burn (I6).
+The Barkswap custom-pool deployer and plugin factory of every MemeWarzone coin on DogeOS, and the holder of every
+coin's fees (spec section 3, launcher row; Money flow 1-5). It covers the one-transaction launch, the plugin-factory
+hooks the entry point forwards, the mint and swap callbacks, the one-time graduation fee (inline from the plugin, or the
+guarded permissionless fallback), the permissionless `restore`, and the money side: permissionless `collect(coin)` and
+`convert(coin)`, the per-coin creator balance with `claimCreator` and the two-step creator transfer, and the router
+bucket with `claimRouter`, `routerPaid` and the parked router (gen-8 F3/F4). It owns positions A and B of every coin.
+After launch it makes exactly these calls into a pool or the entry point: `restore` (our plugin, lastFee 0, config 135,
+nothing else), the one graduation burn plus the collect of exactly its principal, `collect`'s two zero-amount burns and
+two fee collects, and `convert`'s one sell. There is no withdraw and no admin path to a pool or to any balance. Nothing
+removes liquidity except the graduation burn (I6).
 
 ### Trust model and wiring
 
 | Actor | Power over the launcher |
 |---|---|
-| `owner` (DogeOS deployer key, testnet, B9) | `setCreatePaused`, `setCreateSigner`, two-step ownership. Launches only (gen-8 L5): no power over pools, positions, fees, the graduation fee, restore or (t4) claims. |
+| `owner` (DogeOS deployer key, testnet, B9) | `setCreatePaused`, `setCreateSigner`, two-step ownership (launches only, gen-8 L5); redirect the router bucket behind a 48 h timelock (`proposeTreasuryRouter` / `cancelTreasuryRouter` / `executeTreasuryRouter`, the bucket accrued before is parked for the old router, F3); `claimRouter` (pays the current router only, F4). No power over pools, positions, fees, books, creator balances, creators, the graduation fee, restore, collect or convert. |
 | `createSigner` (DogeOS route-authority key, B9) | signs launch requests (D3) and picks the CREATE2 salt so the coin sorts below WDOGE. Cannot launch by itself (the creator sends the transaction) and cannot touch a launched coin. |
-| creator (msg.sender of `launch`) | launches with a valid signature for itself only; receives the first buy. Its fee recipient (`feeCreator`) is itself or the choice vault. |
-| `plugin` (immutable, MwzBarkPlugin) | calls `takeGraduationFee` inline and `conversionInProgress`; its `pools(pool)` is the source of the latch, `sqrtStart` and `sqrtGrad`. |
+| creator (msg.sender of `launch`) | launches with a valid signature for itself only; receives the first buy. Its fee recipient (`feeCreator`) is itself (keep) or the choice vault (holders / split / buyback). |
+| `feeCreator` of a coin | `claimCreator(coin, to)` (the coin's whole native creator balance, to any address), `proposeCreator(coin, next)`; the proposed address `acceptCreator(coin)`. Nothing else. |
+| `treasuryRouter` (MwzBarkFeeSplitter, t5) and its `operator()` (DogeOS operator key, B9) | `claimRouter` (F4: router, its operator, or the owner); the payout goes to the router only. |
+| `plugin` (immutable, MwzBarkPlugin) | calls `takeGraduationFee` inline and `conversionInProgress`; its `pools(pool)` is the source of the latch, `sqrtStart` and `sqrtGrad`; its `feeTotals(pool)` steers how `collect` splits what it receives. |
 | `entryPoint` (immutable, Barkswap's AlgebraCustomPoolEntryPoint) | the only caller of `beforeCreatePoolHook` / `afterCreatePoolHook`; the launcher's only path to `setTickSpacing`, `setFee`, `setPluginConfig`, `setPlugin`. |
 | our pools | the only callers of the mint / swap callbacks, and only while this launcher is minting into / swapping on that very pool (transient `T_ACTIVE_POOL`). |
 | `oracle`, `reserveLock`, `choiceVault`, `wNative` (immutable) | read at launch (oracle), called at launch (lock, register), WDOGE wrap/unwrap. |
-| keeper / anyone | `restore(coin)`, the graduation-fee fallback, views. |
+| linked libraries `MwzBarkLaunchLib`, `MwzBarkFeeBooks` | code only, run by DELEGATECALL in the launcher's context (see "Size and the library split"); fixed at deploy by linking. |
+| keeper / anyone | `restore(coin)`, the graduation-fee fallback, `collect(coin)`, `convert(coin)`, `payParkedRouter(router)`, views. |
 | Barkswap admin | can change our pools' plugin, config, community fee, (flag off) static fee and tick spacing; cannot call the launcher with any effect beyond what anyone can. See "Barkswap admin powers". |
 
-**Deploy wiring.** Plugin, reserve lock and choice vault are deployed first against the launcher's predicted address
-(option (b) of the plugin section). The launcher's constructor reverts `WiringMismatch` unless `plugin.launcher()`,
-`reserveLock.launcher()` and `choiceVault.launcher()` are this contract, `plugin.wNative()` is the given WDOGE,
-`plugin.choiceVault()` is the given choice vault and `plugin.PLUGIN_CONFIG()` equals the launcher's own constant 135.
-The Algebra factory is read from `entryPoint.factory()` (non-zero). Oracle checks (`OracleUnsuitable`): band
-`0 < minNativeUsd < maxNativeUsd` (DogeOS inputs: $0.01 = 1e16 and $10 = 10e18 USD per DOGE, F6), the age input
-`0 < maxOracleAge <= 2 days` (DogeOS input 3600 s), and the oracle's own immutable `maxPriceAge` in
-`(0, maxOracleAge]`. The GraduationOracle reverts on a reading older than its `maxPriceAge`, so every launch uses a price
-at most `maxOracleAge` old. `plugin.creatorEscrow()` is a label only; the deploy script (t15) checks it.
-`createPaused` starts true.
+**Deploy wiring.** Plugin, reserve lock, choice vault and fee splitter are deployed first against the launcher's
+predicted address (option (b) of the plugin section), and both libraries are deployed and linked. The constructor
+reverts `ZeroAddress` for a zero entry point, WDOGE, plugin, oracle, reserve lock, choice vault, owner or
+`treasuryRouter_` (t4, the 9th argument), and `WiringMismatch` unless `plugin.launcher()`, `reserveLock.launcher()` and
+`choiceVault.launcher()` are this contract, `plugin.wNative()` is the given WDOGE, `plugin.choiceVault()` is the given
+choice vault and `plugin.PLUGIN_CONFIG()` equals the launcher's own constant 135. The router is not cross-checked (gen-8
+did not either); a wrong router can only be paid what `claimRouter` pays it, and the owner can redirect behind the 48 h
+timelock with the bucket parked for the wrong one. The Algebra factory is read from `entryPoint.factory()` (non-zero).
+Oracle checks (`OracleUnsuitable`): band `0 < minNativeUsd < maxNativeUsd` (DogeOS inputs: $0.01 = 1e16 and $10 = 10e18
+USD per DOGE, F6), the age input `0 < maxOracleAge <= MAX_ORACLE_AGE_INPUT` (2 days; renamed from `MAX_ORACLE_AGE` in
+t4 so it reads as the bound on the input, not the oracle's age; DogeOS input 3600 s), and the oracle's own immutable
+`maxPriceAge` in `(0, maxOracleAge]`. The GraduationOracle reverts on a reading older than its `maxPriceAge`, so every
+launch uses a price at most `maxOracleAge` old. `plugin.creatorEscrow()` is a label only; the deploy script (t15)
+checks it. `createPaused` starts true.
 
 ### State
 
@@ -497,26 +519,41 @@ at most `maxOracleAge` old. `plugin.creatorEscrow()` is a label only; the deploy
 | `owner`, `pendingOwner`, `createSigner`, `createPaused` | storage | owner functions | launches only |
 | `usedAuthorizations[digest]` | storage | `launch` (`_consumeAuthorization`) | replay map, never cleared |
 | `launches[coin]` slot 0: `pool`, `openAt`, `tickStart`, `tickGrad`, `gradFeeTaken` | storage | `launch` (all, once); `takeGraduationFee` (`gradFeeTaken`, once) | `pool != 0` is the "ours" test |
-| `launches[coin]` slot 1: `feeCreator`; slot 2: `liqA`, `liqB` | storage | `launch` only | `feeCreator` = creator (keep) or the choice vault (holders / split / buyback), gen-8's "hook creator"; t4's two-step creator transfer is its only later writer |
-| `launches[coin].graduationFee` | storage | `takeGraduationFee` (`_bookGraduationFee`) | native taken by the burn; t4 credits it to the router bucket's graduation book |
+| `launches[coin]` slot 1: `feeCreator`, `lastConvertAt` | storage | `launch`; `acceptCreator` (`feeCreator`); `convert` (`lastConvertAt`) | `feeCreator` = creator (keep) or the choice vault, gen-8's "hook creator"; never 0 for a launched coin |
+| `launches[coin]` slot 2: `liqA`, `liqB` | storage | `launch` only | |
+| `launches[coin].graduationFee` | storage | `takeGraduationFee` | record of the native taken by the burn (also credited to the graduation book) |
 | `coinOf[pool]` | storage | `launch` only | pool -> coin |
-| `T_ACTIVE_POOL` | transient | `_createPool` (set), `_seed` (cleared), `_firstBuy` (set, cleared); t4 `convert` | gates the plugin-factory hook and both callbacks |
-| `T_CONVERSION` per pool | transient | t4 `convert` only (never set in t32) | read by `conversionInProgress` |
-| reentrancy lock | transient (OZ `ReentrancyGuardTransient`) | `launch`, `takeGraduationFee`, `restore` (t4: every money function) | |
+| `creatorOwed[coin]` | storage | `collect`, `convert` (+), `claimCreator` (zeroed) | native |
+| `pendingCreator[coin]` | storage | `proposeCreator`, `acceptCreator` | |
+| `coinFees[coin]` (`creatorBonding`, `routerBonding`, `creatorPost`, `routerPost`, uint128 each) | storage | `collect` (+), `convert` (-) | pending coin fees, in coins |
+| `_collectedTotals[coin]` (view `collectedTotals`) | storage | `collect` only | the plugin's `feeTotals(pool)` at the coin's last collect |
+| `routerOwed`, `pendingBondingFees` (uint128 pair), `pendingGradFees` | storage | `collect`, `convert`, `takeGraduationFee` (+); `claimRouter`, `executeTreasuryRouter` (zeroed) | the router bucket and the B11 net bonding / graduation DOGE inside it |
+| `routerPaid[router]`, `routerParked[router]`, `parkedOwed` | storage | `claimRouter` / `payParkedRouter` (paid); `executeTreasuryRouter` (parked) / `payParkedRouter` (unparked) | gen-8 F3 |
+| `treasuryRouter`, `pendingRouter`, `routerEta` | storage | constructor; owner router functions | 48 h timelock |
+| `T_ACTIVE_POOL` | transient | `_createPool` (set), `_seed` (cleared), `_firstBuy` and `convert` (set, cleared around the swap) | gates the plugin-factory hook and both callbacks |
+| `T_CONVERSION` per pool | transient | `convert` only (set immediately before its `pool.swap`, cleared immediately after) | read by `conversionInProgress` |
+| reentrancy lock | transient (OZ `ReentrancyGuardTransient`) | every state-changing external function except the owner / creator-transfer setters (no external call) and the callbacks (gated by `T_ACTIVE_POOL` inside a locked caller) | shared by all of them, and by the library code they DELEGATECALL |
 
-Constants: supply split 850M / 130M / 20M and first buy <= 700M (spec section 2); gen-7 C8 constants; targets $30K and
-$50K everywhere, $150 on 6281971 and 31337 only (B2, test-target chain list); `TICK_SPACING` 10, `TICK_MAX` 887,270
-(`maxUsableTick(10)`), `PLUGIN_CONFIG` 135, `GRAD_FEE_BPS` 200, `MAX_AUTH_TTL` 1 day, `MAX_OPEN_DELAY` 30 days.
+Constants: supply split 850M / 130M / 20M and first buy <= 700M (spec section 2); gen-7 C8 constants (library); targets
+$30K and $50K everywhere, $150 on 6281971 and 31337 only (B2, test-target chain list); `TICK_SPACING` 10, `TICK_MAX`
+887,270 (`maxUsableTick(10)`, a multiple of 10), `PLUGIN_CONFIG` 135, `GRAD_FEE_BPS` 200, `MAX_AUTH_TTL` 1 day,
+`MAX_OPEN_DELAY` 30 days, `MAX_ORACLE_AGE_INPUT` 2 days; money side: `CONVERT_IMPACT_BPS` 100 (with the sqrt factor
+`CONVERT_SQRT_FACTOR_E9` = 994,987,438), `CONVERT_INTERVAL` 10 minutes, `ROUTER_TIMELOCK` 48 h, `OPERATOR_READ_GAS`
+30,000 (gen-8 F4).
 
 ### Curve sizing in the Barkswap orientation
 
-Gen-8's `curveForMarketCap` (gen-7 integer math and C8 bounds) and `nearestGridTick` are copied unchanged. The price
-orientation is inverted. In V4 native is currency0 (coin per native, buys move the price down); here the coin is token0
-and the pool price is WDOGE per coin (buys move it up). With gen-7's price at sold `s` = `vN x vT / (vT - s)^2`:
-`sqrtStart = sqrt(vN x 2^192 / vT)` and `sqrtGrad = sqrt(vN x vT x 2^192 / (vT - 850M)^2)` (`curveSqrtPrices`). This is
-the formula of the proof's off-chain `plan()`, which measured the spacing-10 grid within 1,000 ppm of gen-7 on start
-market cap, graduation market cap and A's raise. Each is rounded to the nearest spacing-10 tick, so tickStart < tickGrad.
-Ranges: `vN <= 1e30` (C8) and `vT ~ 1.007e27` (a constant of the supply split), so `vN x vT < 2^256`,
+Gen-8's `curveForMarketCap` (gen-7 integer math and C8 bounds) and `nearestGridTick` are copied unchanged (now in
+`MwzBarkLaunchLib`, public pure, callable on the library address). The price orientation is inverted. In V4 native is
+currency0 (coin per native, buys move the price down); here the coin is token0 and the pool price is WDOGE per coin
+(buys move it up). With gen-7's price at sold `s` = `vN x vT / (vT - s)^2`: `sqrtStart = sqrt(vN x 2^192 / vT)` and
+`sqrtGrad = sqrt(vN x vT x 2^192 / (vT - 850M)^2)` (`curveSqrtPrices`). This is the formula of the proof's off-chain
+`plan()`, which measured the spacing-10 grid within 1,000 ppm of gen-7 on start market cap, graduation market cap and
+A's raise. Each is rounded to the nearest spacing-10 tick. **tickStart < tickGrad** does not depend on that rounding:
+`sqrtGrad / sqrtStart = vT / (vT - 850M)`, about 1,007.2M / 157.2M = 6.41 for every target (a constant of the supply
+split, since `vT` does not depend on the market cap), i.e. a price ratio of about 41 and about 37,150 ticks between the
+two prices, far more than the 10 ticks the two roundings can move them (reworded at t4, controller minor; the check
+`tickStart < tickGrad` stays as a guard). Ranges: `vN <= 1e30` (C8) and `vT ~ 1.007e27`, so `vN x vT < 2^256`,
 `mulDiv(vN, 2^192, vT) <= ~6e60`, and both square roots are below 2^160 (checked cast) and inside TickMath's domain
 (`vN >= 1` gives `sqrtStart >= ~2.5e15 > MIN_SQRT_PRICE`). `getTickAtSqrtPrice` therefore cannot revert for any
 C8-valid curve; tickStart >= -622,000 and tickGrad <= 107,000, well inside `[minUsableTick, TICK_MAX)`.
@@ -528,46 +565,57 @@ at the testnet target, far below Algebra's per-tick liquidity cap.
 
 ### constructor
 
-- **Guard:** n/a. **CEI:** checks (zero addresses, factory, wiring, oracle suitability; all view calls), then
-  immutables and storage, then events. **States:** once. **Over/underflow:** none. **Griefing:** none (wrong wiring
-  reverts the deployment).
+- **Guard:** n/a. **CEI:** checks (zero addresses incl. the router, factory, wiring, oracle suitability; all view calls),
+  then immutables and storage, then events (`OwnershipTransferred`, `CreateSignerUpdated`, `RouterChanged(0, router)`,
+  `CreatePauseUpdated`). **States:** once. **Over/underflow:** none. **Griefing:** none (wrong wiring reverts the
+  deployment).
 
 ### setCreatePaused / setCreateSigner / transferOwnership / acceptOwnership
 
 - Gen-8 L5 unchanged. **Guard:** none needed (no external call). **CEI:** check owner, write, event. **States:** any
   time; opening launches requires a non-zero signer, and a zero signer is a second pause. **Over/underflow:** none.
-  **Griefing:** only the owner, who can stop new launches and nothing else (trading, restore, the graduation fee and
-  t4's claims ignore the pause).
+  **Griefing:** only the owner, who can stop new launches and nothing else (trading, restore, the graduation fee,
+  collect, convert and every claim ignore the pause).
 
-### plan / curveForMarketCap / curveSqrtPrices / nearestGridTick / isGraduationTargetAllowed / hashRequest / authorizationDigest (views)
+### plan / isGraduationTargetAllowed / hashRequest / authorizationDigest (views); curveForMarketCap / curveSqrtPrices / nearestGridTick (library, pure)
 
-- **Guard:** views. `plan` makes two view calls to the oracle inside try/catch and maps any failure to
-  `OraclePriceUnavailable`; the band check gives `OraclePriceOutOfBand` (F6). **Over/underflow:** see "Curve sizing".
-  `vT - 850M` cannot underflow for the curve `curveForMarketCap` returns (`vT = curve x rd / (rd - rn) > curve`); for
-  arbitrary inputs the public pure function reverts. **Griefing:** none.
+- **Guard:** views. `plan(targetUsd)` returns `MwzBarkLaunchLib.planLaunch(oracle, minNativeUsd, maxNativeUsd,
+  targetUsd)`, the exact plan `launch` uses (t4: it now returns the whole `LaunchPlan`, liquidity included, and reverts
+  with the launch's own tick and liquidity errors). `planLaunch` makes two view calls to the oracle inside try/catch and
+  maps any failure to `OraclePriceUnavailable`; the band check gives `OraclePriceOutOfBand` (F6). **Over/underflow:** see
+  "Curve sizing". `vT - 850M` cannot underflow for the curve `curveForMarketCap` returns (`vT = curve x rd / (rd - rn) >
+  curve`); for arbitrary inputs the public pure function reverts. **Griefing:** none.
 - `hashRequest` and `authorizationDigest` are gen-8's, with the same `LaunchRequest` fields and order and the same
   `CREATE_AUTH_TYPE` string, so the API's gen-8 signer code is reused (t21). The digest binds `block.chainid` and this
   launcher's address, so a gen-8 authorization cannot be replayed here or the reverse.
+- `collectedTotals(coin)` returns the plugin totals at the coin's last collect; `plugin.feeTotals(pool)` minus it is what
+  the next collect will book (within the tolerance in "Fee books").
 
 ### launch(req, auth) (payable)
 
 - **Guard:** `nonReentrant` (OZ transient). Every external call goes to our own contracts (plugin, reserve lock, choice
-  vault, the brand-new coin), Barkswap's entry point / factory / the pool being created, the oracle (view) or WDOGE.
+  vault, the brand-new coin), our linked library (DELEGATECALL), Barkswap's entry point / factory / the pool being
+  created, the oracle (view) or WDOGE.
 - **CEI, in order:**
   1. Checks: not paused; name, symbol, logo non-empty; target on the allow-list; fee choice 1..4 with `feeCreatorPct`
      1..99 iff split, else 0; `msg.value == firstBuyValue`; `openAt` = now if 0 or past, refused above now + 30 days
      (`OpenAtTooFar`); the signature (`_consumeAuthorization`: signer set, deadline in [now, now + 1 day], ECDSA recover
      rejects malleable and invalid signatures, digest not used), then its effect `usedAuthorizations[digest] = true`.
-  2. Plan (oracle views, see above) and the tick checks (`BadTicks`): tickStart and tickGrad multiples of 10 (TICK_MAX is
-     a constant multiple), tickStart >= minUsableTick(10), tickStart < tickGrad < TICK_MAX; liquidity (`BadLiquidity`:
-     `liqA >= 10,000` so the 2% burn is non-zero, `liqB > 0`). Alignment is checked here so a bad plan reverts with our
-     reason instead of the pool's `tickIsNotSpaced` (controller minor for t32).
-  3. Coin: `new MwzV4Token{salt: keccak256(abi.encode(creator, req.salt))}(name, symbol, 1B, this)`, refused unless
-     `coin < WDOGE` (`CoinNotBelowWNative`; the coin must be token0, O1). The salt includes the creator, so two creators
-     never collide; a repeated (creator, salt, name, symbol) collides in CREATE2 and reverts. Pool address:
-     `factory.computeCustomPoolAddress(this, coin, WDOGE)`.
-  4. Effects: `launches[coin]` (pool, openAt, ticks, `feeCreator`, liqA, liqB) and `coinOf[pool]`, before any call that
-     could observe them.
+  2. Plan (`MwzBarkLaunchLib.planLaunch`, a view DELEGATECALL: oracle views, see above) and its checks: `BadTicks` unless
+     tickStart and tickGrad are multiples of 10, tickStart >= minUsableTick(10) and tickStart < tickGrad < TICK_MAX
+     (t4 dropped the dead `TICK_MAX % TICK_SPACING` term: TICK_MAX is the constant 887,270); `BadLiquidity` unless
+     `liqA >= 10,000` (so the 2% burn is non-zero) and `liqB > 0`. Alignment is checked so a bad plan reverts with our
+     reason instead of the pool's `tickIsNotSpaced`.
+  3. Coin: `MwzBarkLaunchLib.deployCoin(name, symbol, creator, req.salt)`, a DELEGATECALL running `new
+     MwzV4Token{salt: keccak256(abi.encode(creator, req.salt))}(name, symbol, 1B, address(this))` in the launcher's
+     context, so the CREATE2 deployer and the initial holder are the launcher: same coin address and bytecode as t32's
+     direct `new`. Refused unless `coin < WDOGE` (`CoinNotBelowWNative`; the coin must be token0, O1). The salt includes
+     the creator, so two creators never collide; a repeated (creator, salt, name, symbol) collides in CREATE2 and
+     reverts. Pool address: `factory.computeCustomPoolAddress(this, coin, WDOGE)`. (A `Create2.computeAddress`
+     pre-check was considered, controller minor, and left out: the revert reason and the outcome are the same, it would
+     only save the gas of a refused launch, and the API mines the salt off chain, open question 2.)
+  4. Effects: `launches[coin]` (pool, openAt, ticks, `feeCreator`, `lastConvertAt` 0, liqA, liqB) and `coinOf[pool]`,
+     before any call that could observe them.
   5. Interactions: choice-vault `registerCoin` (holders / split / buyback only); `plugin.registerPool(pool, coin,
      tickStart, tickGrad, openAt)`; `T_ACTIVE_POOL = pool`; `entryPoint.createCustomPool(this, creator, coin, WDOGE, "")`,
      which must return the predicted pool (`UnexpectedPool`); `pool.initialize(plugin.pools(pool).sqrtStart)` (the
@@ -579,7 +627,7 @@ at the testnet target, far below Algebra's per-tick liquidity cap.
      exact input msg.value, limit sqrtGrad)`, `T_ACTIVE_POOL = 0`. The pool must have taken all of `msg.value`
      (`FirstBuyTooLarge` otherwise: the swap stopped at the graduation price, which means more than A's 850M > 700M);
      out <= 700M (`FirstBuyTooLarge`) and out >= `minFirstBuyOut` (`FirstBuyTooSmall`). The coins go straight to the
-     creator (gen-8 L8).
+     creator (gen-8 L8). Its 2% fee accrues to A like any buy fee and is booked by the plugin; `collect` takes it later.
   7. Events `Launched` and `LaunchMetadata`.
 - **States:** only while not paused and with a fresh, valid signature for msg.sender; once per (creator, salt, name,
   symbol); any `openAt` in [now, now + 30 days]. The first buy is the launcher's only swap in `launch` and runs with the
@@ -593,13 +641,15 @@ at the testnet target, far below Algebra's per-tick liquidity cap.
   (fits int128) cannot hit `type(int256).min`; curve math as above.
 - **Griefing:** a launch can only be sent by the signed creator. A front-runner cannot create our pool (the entry point
   requires msg.sender == deployer, and the deployer is this contract) or deploy at the coin's address (CREATE2 from this
-  contract only). Anyone can create a default or foreign custom pool for the predicted coin/WDOGE pair, before or after
-  the launch: that is the accepted side-pool risk (B3; detected, not prevented) and does not block or affect our pool.
-  WDOGE or coins sent to the launcher do not change the launch (the first-buy check uses the pool's own amounts; the
-  dust burn only sees the brand-new coin, which nobody else can hold before the launch). Native arrives only from WDOGE
-  (`receive`) or a forced transfer (selfdestruct), which changes nothing here (t4: books-equal-balances must treat
-  forced native as surplus). Oracle: a testnet feed moved by the oracle-updater key; the band limits the damage to
-  curves sized at a DOGE price between $0.01 and $10 (accepted, spec section 2).
+  contract only; the library's `deployCoin` is state-changing, so Solidity's library guard refuses any call that is not
+  a DELEGATECALL, and a DELEGATECALL from elsewhere deploys from that caller's address, not ours). Anyone can create a
+  default or foreign custom pool for the predicted coin/WDOGE pair, before or after the launch: that is the accepted
+  side-pool risk (B3; detected, not prevented) and does not block or affect our pool. WDOGE or coins sent to the
+  launcher do not change the launch (the first-buy check uses the pool's own amounts; the dust burn only sees the
+  brand-new coin, which nobody else can hold before the launch). Native arrives only from WDOGE (`receive`) or a forced
+  transfer (selfdestruct), which changes nothing here and is never booked ("Fee books"). Oracle: a testnet feed moved by
+  the oracle-updater key; the band limits the damage to curves sized at a DOGE price between $0.01 and $10 (accepted,
+  spec section 2).
 
 ### beforeCreatePoolHook / afterCreatePoolHook (plugin factory, views)
 
@@ -612,9 +662,10 @@ at the testnet target, far below Algebra's per-tick liquidity cap.
 
 ### algebraMintCallback(amount0Owed, amount1Owed, .)
 
-- **Guard:** the caller must be the pool in `T_ACTIVE_POOL` (non-zero), i.e. our pool while `launch` is minting into it
+- **Guard:** the caller must be the pool in `T_ACTIVE_POOL`, i.e. our pool while `launch` is minting into it
   (`BadCallback`), and `amount1Owed == 0` (A and B sit at or above the start price, so they owe no WDOGE). The `launch`
-  lock is held.
+  lock is held. (t4 dropped the redundant `msg.sender == address(0)` term, controller minor: msg.sender is never 0, so a
+  cleared slot never matches.)
 - **CEI:** checks, then one transfer of the coin (`coinOf[pool]`, our plain ERC-20) to the pool. No state.
 - **States:** two calls per launch (A, B). Outside a mint the slot is 0 or another pool, so a direct call reverts; after
   `_seed` clears the slot not even the pool itself can pull more.
@@ -623,20 +674,21 @@ at the testnet target, far below Algebra's per-tick liquidity cap.
 
 ### algebraSwapCallback(amount0Delta, amount1Delta, .)
 
-- **Guard:** the caller must be the pool in `T_ACTIVE_POOL` (`BadCallback`); the launcher's lock is held (t32: inside
-  `launch`; t4: inside `convert`).
+- **Guard:** the caller must be the pool in `T_ACTIVE_POOL` (`BadCallback`; the redundant zero-address term dropped as
+  above); the launcher's lock is held (inside `launch` or `convert`).
 - **CEI:** checks, then pays the pool what it is owed: a positive `amount0Delta` in the coin, a positive `amount1Delta`
   in WDOGE. No state.
-- **States:** t32: only the creator first buy (WDOGE owed). t4's conversion sell (coin owed) must set and clear
-  `T_ACTIVE_POOL` the same way.
+- **States:** the creator first buy (WDOGE owed, exactly the `msg.value` just wrapped) and the conversion sell (coins
+  owed, at most the pending coin books, which this contract holds; see `convert`). Both set and clear `T_ACTIVE_POOL`
+  around their one `pool.swap`.
 - **Over/underflow:** positive int256 -> uint256 casts only. **Griefing:** as for the mint callback. A swap the pool runs
   for another caller calls that caller's callback, never ours.
 
 ### conversionInProgress(pool) (view)
 
 - Reads the per-pool transient flag `keccak256(abi.encode(T_CONVERSION, pool))`. No guard, never reverts (O2 and the
-  `IMwzBarkLauncher` contract). Always false in t32 because no code sets the flag yet; t4's `convert` sets it
-  immediately before its `pool.swap` and clears it immediately after.
+  `IMwzBarkLauncher` contract). `convert` sets it immediately before its `pool.swap` and clears it immediately after,
+  for that pool only; nothing else writes it, so it is false during the first buy and at every other moment.
 
 ### takeGraduationFee(pool)
 
@@ -649,13 +701,16 @@ at the testnet target, far below Algebra's per-tick liquidity cap.
      in `afterSwap` the pool is unlocked, facts section 3); the plugin's latch (`NotGraduated`); pool price >= `sqrtGrad`
      (`PriceBelowGraduation`). The latch and `sqrtGrad` are read from `plugin.pools(pool)`.
   2. Effect: `gradFeeTaken = true` (I6: at most once).
-  3. Interactions: `pool.burn(tickStart, tickGrad, floor(liqA x 200 / 10,000))`, which re-enters only the plugin's
+  3. Interactions (`MwzBarkLaunchLib.graduationBurn`, DELEGATECALL, so the pool sees the launcher as the position
+     owner): `pool.burn(tickStart, tickGrad, floor(liqA x 200 / 10,000))`, which re-enters only the plugin's
      `beforeModifyPosition` (it re-checks range, latch, price and its own once-flag). The burn must return no coin
      (`GraduationBurnNotNative`; unreachable, because at a price at or past A's top tick A is WDOGE only).
      `pool.collect(this, A, 0, a1)` takes exactly the burned WDOGE principal (`CollectMismatch` otherwise); WDOGE
      `withdraw` to native.
-  4. Record: `launches[coin].graduationFee = a1` (`_bookGraduationFee`, the t4 seam), then the event
-     `GraduationFeeTaken(coin, pool, amount, liquidity, inlineCall)`.
+  4. Books (t4): `graduationFee = a1` (record), `routerOwed += a1`, `pendingGradFees += a1`: the router bucket's
+     graduation book, creator 0%. The base is the whole burn: it is a liquidity burn, not a swap fee, so Barkswap's
+     community fee does not cut it, and B11's net base equals the gross. Then the event `GraduationFeeTaken(coin, pool,
+     amount, liquidity, inlineCall)`.
 - **States:** only after the latch, at a price at or past the graduation price, with our plugin installed, the pool idle,
   and once. The amount is fixed by `liqA` and the two tick prices (`liq x (sqrtGrad - sqrtStart) / 2^96`, floored by the
   pool) whatever the price above graduation, so moving the price before the call cannot change it. The config flag
@@ -664,32 +719,33 @@ at the testnet target, far below Algebra's per-tick liquidity cap.
   price, once) is enforced here first, and no plugin fee can be charged on the burn (the hook is not even called).
   Requiring the flag would only defer the fee until `restore`. Reached inline from swaps of any sender except the
   launcher itself. A latching swap sent while the launcher's lock is held makes the inline call revert on the lock, and
-  the fallback takes the fee later. Only t4's conversion (a sell) could be such a swap, and only if the price was already
+  the fallback takes the fee later. Only `convert` (a sell) could be such a swap, and only if the price was already
   past graduation with the latch unset after an admin outage.
-- **Collectable after the burn (for t4):** Algebra's burn updates A's fee growth, so afterwards A's `tokensOwed` holds
-  the burned principal plus all of A's accrued, uncollected fees in BOTH tokens (WDOGE from buys, coins from sells). This
-  function collects exactly the principal (`amount0Requested = 0`, `amount1Requested = a1`), so A's accrued fees stay
-  owed to the position and t4's collect takes them as fees. t4's apportionment must therefore expect coin fees in A
-  after graduation as well (controller minor for t4/t32).
+- **Collectable after the burn:** Algebra's burn updates A's fee growth, so afterwards A's owed amounts hold the burned
+  principal plus all of A's accrued, uncollected fees in BOTH tokens (WDOGE from buys, coins from sells). This function
+  collects exactly the principal (`amount0Requested = 0`, `amount1Requested = a1`), so A's accrued fees stay owed to the
+  position and `collect` takes them as fees, in both tokens (it never assumes WDOGE only; controller minor for t4/t32).
 - **Over/underflow:** `liqA x 200` fits uint256 and the result is below `liqA` (uint128); `a1` -> uint128 through
-  `SafeCast` (the burn of a uint128 liquidity returns at most uint128 amounts).
+  `SafeCast` (the burn of a uint128 liquidity returns at most uint128 amounts); `routerOwed + a1` through `SafeCast`
+  (uint128: DogeOS's native supply is far below 2^128 wei).
 - **Griefing:** the inline call can be made to fail by a gas limit that starves the launcher (plugin section, `afterSwap`
   griefing); the fee is then deferred to the fallback and nothing is lost. Anyone can call the fallback; it pays the fee
-  to the protocol, never to the caller. A sandwich around the fallback (buy past graduation, call it, sell back) gains
-  nothing because the amount does not depend on the price.
-- **Until t4:** the native sits in this contract, recorded per coin, with no exit. Nothing is deployed before Gate 0
-  (t7), which audits t4's book credit together with this seam.
+  to the router bucket, never to the caller. A sandwich around the fallback (buy past graduation, call it, sell back)
+  gains nothing because the amount does not depend on the price.
 
 ### receive()
 
-- Accepts native only from WDOGE (`NotWNative`), i.e. the unwraps above. A WETH9-style `withdraw` forwards 2,300 gas;
-  the check reads one immutable and fits. No state.
+- Accepts native only from WDOGE (`NotWNative`), i.e. the unwraps of the graduation burn, `collect` and `convert`. A
+  WETH9-style `withdraw` forwards 2,300 gas; the check reads one immutable and fits. No state. WDOGE pays native only to
+  the address that calls `withdraw`, so no third party can make native arrive here through it.
 
 ### restore(coin)
 
 - **Guard:** `nonReentrant`; permissionless (the keeper calls it after the admin-change watch fires).
-- **CEI:** checks: known coin (`UnknownCoin`); the pool unlocked (`PoolBusy`: never mid-swap, so a swap's hooks and fee
-  cannot change under it). Then interactions only, in this order (O4):
+- **CEI:** check: known coin (`UnknownCoin`). Then `MwzBarkLaunchLib.restorePool(entryPoint, pool, plugin)` (t4: moved
+  to the library unchanged; DELEGATECALL, so the entry point sees the launcher, the pool's deployer, as the caller):
+  the pool unlocked (`PoolBusy`: never mid-swap, so a swap's hooks and fee cannot change under it); then interactions
+  only, in this order (O4):
   1. if `pool.plugin()` is not ours: `entryPoint.setPlugin(pool, plugin)` (upstream `setPlugin` also resets the config
      to 0); the state is re-read after it;
   2. if `lastFee != 0`: if the dynamic-fee flag is on, `setPluginConfig(pool, 0)` first (Algebra refuses `setFee` while
@@ -701,12 +757,265 @@ at the testnet target, far below Algebra's per-tick liquidity cap.
   lastFee 0 and config 135. It cannot set a fee, a tick spacing, a community fee or any other config (spec: "no other
   post-launch entry-point call exists"). The intermediate config 0 in step 2 exists only inside this call (the pool is
   idle and nothing else runs in between). The plugin's state (latch, books, `gradBurnDone`) survives a plugin swap and
-  resumes.
+  resumes. It touches no book.
 - **Over/underflow:** none.
 - **Griefing:** an admin can undo it again at will (accepted testnet risk; the letter mitigates mainnet), and each round
   costs the keeper one transaction. It cannot be used against us: re-applying our own settings is always correct, and it
   refuses to run mid-swap. Tick spacing and community fee are left as the admin set them (the community fee is read at
   every swap; tick spacing only affects new mints, and only the launcher mints, only at launch).
+
+### Fee books (money side design, spec Money flow 1-5, B10, B11)
+
+**Where every wei sits.** Native (DOGE): `creatorOwed[coin]` per coin, the router bucket `routerOwed` (with
+`pendingBondingFees` and `pendingGradFees` inside it), parked buckets `routerParked[router]` (sum `parkedOwed`). Coins:
+`coinFees[coin]`, four books per coin in `MwzBarkFeeBooks` order [creator bonding, router bonding, creator post, router
+post] (the order of the plugin's `FeeTotals`). WDOGE: none at rest (every WDOGE the launcher receives is unwrapped in the
+same call).
+
+**Books equal balances (spec invariant).** At the end of every transaction:
+`address(this).balance == sum(creatorOwed) + routerOwed + parkedOwed + F`, `WDOGE.balanceOf(this) == D_w` and, per coin,
+`coin.balanceOf(this) == sum(coinFees[coin]) + D_c`, where F is native forced in without a call (selfdestruct, block
+reward; `receive` refuses everything but WDOGE), and `D_w`, `D_c` are tokens transferred straight to the launcher. Those
+three are donations: every booking uses the amounts the pool returns (`collect`, `burn`, `swap`), never `balanceOf`, so
+a donation can never be booked, paid or swapped, and it can never make a book exceed its balance; it stays inert (no
+sweep exists; open question 4). Every function keeps the equality: `collect` books exactly what the two pool collects
+returned (`apportion` sums exactly) and unwraps exactly the WDOGE part; `convert` removes exactly the coins the pool took
+from the coin books (`draw` sums exactly), and credits exactly the WDOGE the pool paid, unwrapped; the graduation fee
+credits exactly the WDOGE collected, unwrapped; claims zero a book and send exactly that amount; a router change moves
+amounts between router books without a transfer. The launch keeps no coin (dust burned) and no WDOGE (first buy spends
+its deposit whole). Fork test (t9): the equality after every step of a scripted run, and `balance - books ==` the
+donation after a donation.
+
+**Collect apportionment (`MwzBarkFeeBooks.apportion`).** The plugin books, per swap, the creator amount on the gross
+fee and the router remainder of the net fee (B10), per pool, per phase and per token, as running totals. A collect reads
+the totals, takes the difference `d` against `_collectedTotals[coin]` (the totals at the coin's last collect) and moves
+the snapshot to the current totals. It then splits what it actually received, per token, over the four books:
+1. each creator book gets its plugin amount `d`, capped by what is left of the received amount (creators first, B10:
+   the creator's amount is exactly the plugin's, computed on the gross fee);
+2. router bonding gets its plugin amount if the rest covers both router amounts, otherwise its pro-rata share of the
+   rest (`mulDiv(rest, dRb, dRb + dRp)`, floored);
+3. router post gets everything else.
+So the four results always sum to the received amount (books == balances), and the creator books equal the plugin's
+creator totals unless the whole collect is smaller than the creator amounts alone (only possible if an outside LP shares
+our fees after a Barkswap admin cleared our config; then the creators get all of it and the router 0).
+
+**Tolerance (spec: "the plugin's per-phase totals equal what collect can still take, within a stated rounding
+tolerance").** The plugin's per-swap estimate and the pool's per-step fee, community cut and Q128 fee-growth flooring
+differ by a few wei per swap either way (plugin section, "Tolerance": derived <= 16 wei per swap per book; t9 measures
+and pins it). The launcher books collected amounts only, so the difference never enters a creator book and never
+accumulates: rounding in our favour lands in router post, rounding against us shrinks the two router books pro rata,
+and each collect moves the snapshot to the plugin's current totals (no carry). The plugin's books and the pool's fee
+growth always describe the same set of completed swaps, because `collect` can only run with the pool idle: its first
+zero burn reverts on a locked pool, and the plugin books a swap in `afterSwap` before the pool can be entered again.
+
+**Unbooked surplus (plugin open question 4, controller minor).** Flash-loan fees (cut by the community fee), tokens
+transferred straight to the pool (Algebra's `_updateReserves`, run by every burn including our zero burns, hands any
+balance above the reserves to the in-range liquidity as fees; we are the only liquidity) and the LP fees of a period in
+which a Barkswap admin had turned our swap hooks off or installed another plugin all reach our positions without a
+plugin booking. They land in **router post**, by step 3 above. Why router post and not the router book of the current
+phase: B (bonding) and G (graduation) are the splitter's band bases (league 37.5% of B, recruiter + squad + airdrop in
+bands of B and G), and the off-chain pipeline backs every B wei with an attributed trade row (D1); surplus has no trade
+row, so it must not grow a band. Router post is part of `routerPaid.amount` only, which the splitter routes as the
+protocol remainder: nothing is lost, no band moves, and a route run still matches `expectedPaid` (the indexer reads the
+surplus from `FeesCollected`: the router post book minus the plugin's router post delta).
+
+**Conversion draw (`MwzBarkFeeBooks.draw`).** `convert` sells `used` of the `pending` coins (the four books' sum) and
+receives `out` WDOGE. Each book gives `floor(book x used / pending)` (the whole book if `used == pending`); the at most 3
+coins the floors leave are placed on books with room, router post first, so the four draws sum to `used` exactly and no
+book goes negative (total room = pending - sum(floors) >= the leftover, since used <= pending). Each book then gets
+`floor(out x drawn / used)` of the WDOGE, and the at most 3 wei left go to router post. So every pending coin of the coin,
+creator or router, bonding or post, converts by the same fraction `used / pending` at the same average price (D1,
+on-chain part; within 3 coins of dust per call), and the DOGE goes back to the same books.
+
+**Credit (`_creditNative`).** Native per book: creator bonding + creator post to `creatorOwed[coin]`; router bonding +
+router post to `routerOwed`; router bonding also to `pendingBondingFees`. The graduation fee goes to `routerOwed` and
+`pendingGradFees` only. So, cumulatively and per router payout, `bondingFees` is the router's NET bonding DOGE (after
+Barkswap's cut, the creator's amount and coin conversion), `gradFees` the graduation fees, and `amount - bondingFees -
+gradFees` the router's post-graduation DOGE plus rounding and surplus.
+
+**B11 (a route run never reverts `OutOfBand` because of the cut).** The splitter (t5, gen-8's arithmetic) needs
+`floor(3750 B / 1e4)` (league) plus a recruiter + squad + airdrop sum in `[1500 B + 1750 G, 1750 B + 2000 G] / 1e4` to fit
+in the run's total. With B and G the net books above, the most it can commit is `0.55 B + 0.2 G <= B + G <= total`
+whatever Barkswap's community fee is (B and G shrink with the cut, and so does the total, but never below B + G). The
+spec's Barkswap cut is therefore shared pro rata by league, recruiter, airdrop and protocol, as B11 decided.
+
+**Routable totals are realised DOGE (spec Money flow 5).** `routerPaid` and the bucket hold native only: buy fees from
+the moment they are collected and unwrapped, sell fees only from the moment they are converted. A coin fee that has not
+been converted is in no router total, so the splitter's `expectedPaid` always compares against DOGE that exists.
+
+### collect(coin)
+
+- Permissionless; the keeper calls it on a schedule. Moves the fees accrued to the coin's A and B into the books.
+- **Guard:** `nonReentrant`.
+- **CEI, in order:**
+  1. Checks: known coin (`UnknownCoin`).
+  2. Effects that depend on no external outcome: `t = plugin.feeTotals(pool)` (view), the eight differences `d` against
+     `_collectedTotals[coin]` (checked uint128 subtraction; the plugin's totals only ever grow, `+=` in its `_book`), and
+     `_collectedTotals[coin] = t`.
+  3. Interactions (`MwzBarkLaunchLib.collectFees`, DELEGATECALL, so the pool sees the launcher as the owner): zero-amount
+     `burn` on A `[tickStart, tickGrad]` and on B `[tickGrad, TICK_MAX]` (O3: collect's only burns; the pool first runs
+     `_updateReserves`, then moves each position's accrued fees into its owed amounts; our plugin's
+     `beforeModifyPosition` lets zero-amount burns pass and its plugin fee is 0, and any plugin fee applies to burned
+     principal only, which is 0 here), then `collect(this, range, max, max)` on both, then `WDOGE.withdraw` of the WDOGE
+     part. Principal is never in the owed amounts: the only non-zero burn (the graduation burn) collects exactly its
+     principal in its own call. `NothingToCollect` if nothing arrived and the plugin booked nothing since the last
+     collect.
+  4. Books: `apportion` per token ("Fee books"); WDOGE credited at once (`_creditNative`), coins added to `coinFees[coin]`
+     (`SafeCast` to uint128). Event `FeesCollected(coin, native, coins, nativeBooks[4], coinBooks[4])`.
+- **Reentrancy reasoning:** the code that runs between steps 2 and 4 is Barkswap's unmodified AlgebraPool, our plugin
+  (`beforeModifyPosition`, no call back), our plain `MwzV4Token` and WDOGE (transfers; WDOGE's `withdraw` calls our
+  `receive`, which only checks the sender). No third-party code runs, so nothing can observe the books between the
+  snapshot and the credit, and every state-changing launcher entry is locked anyway.
+- **States:** any launched coin, any phase, before or after `openAt`, any time the pool is idle (a pool that is mid-swap,
+  mint, burn or flash reverts the first burn with Algebra's lock error). Also with a foreign plugin installed (its
+  `beforeModifyPosition` runs on the zero burns; if it reverts them, collect waits for `restore`). Collect never swaps
+  and never moves a price.
+- **Over/underflow:** differences of uint128 totals, checked; sums of eight uint128 values < 2^131; book additions
+  checked through `SafeCast` (a coin book cannot exceed the coin's 1e27 supply; native books stay far below 2^128);
+  `apportion` as argued in "Fee books" (`mulDiv` with `rest < dR`, so the result is below `dRb`).
+- **Griefing:** anyone may call it at any time; it only moves our own fees into our own books. The booked totals are
+  path-independent up to rounding: the creator amounts are the plugin's whatever the collect schedule, and timing can
+  only move rounding-level wei between the two router books. A donation to the pool is a gift to router post. Spam
+  costs the caller gas and gives nothing (`NothingToCollect` when there is nothing). Fixed work per call (2 burns, 2
+  collects), so no gas griefing. Gas: about 0.25-0.33M (fork-measured in t9), far below the 10M gate.
+
+### convert(coin)
+
+- Permissionless; the keeper calls it on a schedule. Sells the coin's pending coin fees for DOGE (B5).
+- **Guard:** `nonReentrant`.
+- **CEI, in order:**
+  1. Checks: known coin (`UnknownCoin`); `now >= openAt + 60` (`ConversionInLaunchWindow`; the plugin refuses it too);
+     `now >= lastConvertAt + CONVERT_INTERVAL` (`ConversionTooSoon`); `pool.plugin() == plugin` (`ForeignPlugin`: a
+     foreign plugin could charge a plugin fee of up to 99.9999% on the sell); `lastFee == 0` (`ConversionFeeNotZero`).
+     With our plugin installed and lastFee 0, the conversion's fee is 0 by the launcher's own checks whatever hooks an
+     admin left on: our `beforeSwap` returns overrideFee 0 for a conversion and never a plugin fee, and with the
+     before-swap hook off the pool charges lastFee = 0 (spec invariant "a conversion swap pays 0 fee"). Price limit:
+     `limit = max(ceil(sqrtPrice x 994,987,438 / 1e9), sqrtStart)` with `sqrtStart = getSqrtPriceAtTick(tickStart)`
+     (exactly the plugin's `sqrtStart`, same ticks and the same TickMath); `NothingToConvert` if nothing is pending or
+     `limit >= sqrtPrice` (the price is at the start price: no coin can be sold without breaking F2).
+  2. Effect: `lastConvertAt = now` (the one outcome-independent write).
+  3. Interaction: `T_ACTIVE_POOL = pool` and the pool's `T_CONVERSION` flag set immediately before
+     `pool.swap(this, zeroToOne, exact input = pending, limit)`, both cleared immediately after (O2). Inside the swap
+     the pool calls our plugin (`beforeSwap` reads `conversionInProgress`, a transient view, and returns overrideFee 0;
+     `afterSwap` books nothing for a 0 fee, checks F2, emits the conversion kind), transfers the WDOGE out to us, and
+     calls our `algebraSwapCallback`, which pays the coins owed (at most `pending`, which this contract holds as the coin
+     books) from our balance.
+  4. Books: `coinsIn` = the pool's positive coin delta (`NothingToConvert` if 0), `nativeOut` = its negative WDOGE delta;
+     `draw` ("Fee books"); the four coin books lowered by their draws; `WDOGE.withdraw(nativeOut)`; `_creditNative`;
+     event `CoinFeesConverted(coin, pending, coinsIn, nativeOut, coins[4], native[4])`.
+- **Always the full capped amount, whatever the caller:** the call has no amount argument. It offers the pool everything
+  pending, exact input, with the impact-capped limit, so the pool sells exactly min(pending, the coins that move the
+  price to the limit): a dust call cannot use up an interval, because every call converts everything the cap allows.
+- **Bounds (spec "Griefing bounds"):** the price never ends below the start price (the limit is at least `sqrtStart`, so
+  F2 holds by the launcher's own limit even if an admin turned the plugin's after-swap check off); the price moves at most
+  1% per call (`CONVERT_SQRT_FACTOR_E9` is `ceil(sqrt(0.99) x 1e9)`, so `(limit / sqrtPrice)^2 >= 0.990000001`, and
+  the limit itself is rounded up); one call per coin per 10 minutes; none inside the 60 s launch window.
+- **Deviation from the spec's wording (for t7):** the spec says "books updated before the swap's external calls settle".
+  The coin and DOGE books depend on the filled amount, which only the swap's return value gives, so they are updated
+  right after the swap returns, before any further external call except the WDOGE unwrap. This is safe for the same
+  reason as in `collect`: no third-party code runs inside the swap (Barkswap's unmodified pool, our plugin, our swap
+  callback, our plain coin and WDOGE); the plugin's only calls back are the transient view and, only if this sell were
+  to latch graduation (possible only if an admin outage left the latch unset past graduation), `takeGraduationFee`,
+  which hits the lock and is deferred to the fallback; and every state-changing launcher entry is locked. The interval
+  stamp, the one effect that does not depend on the outcome, is written before the swap. A revert anywhere (plugin
+  refusal, F2, callback, cast) reverts the stamp and every book.
+- **States:** any launched coin, after the launch window, at most once per interval, any phase (in A, in B, or crossing
+  back from B into A: the rate rule does not apply to a conversion), only with our plugin installed and lastFee 0 (after
+  an admin change: `restore` first), only with coins pending and the price above the start price, and only with the
+  pool idle (a locked pool reverts the swap).
+- **Over/underflow:** `mulDivRoundingUp(sqrtPrice < 2^160, 994,987,438, 1e9)` is below `sqrtPrice`, so the uint160 cast is
+  exact; `pending` (four uint128) -> int256 through `SafeCast`; `a0 >= 0` and `a1 <= 0` for an exact-input zeroToOne swap
+  (guarded casts anyway); `book - draw >= 0` by `draw`'s construction and the uint128 cast of a smaller value is exact;
+  `lastConvertAt` is uint40 (block times fit until year 36,812); native credits checked.
+- **Griefing:** (1) Sandwich: an outsider who sells before a conversion and buys back after gains at most the conversion's
+  own price move (<= 1%) on the size it buys back, and pays the phase fee on both legs (2 x 2% = 4% while bonding, 2 x 1%
+  = 2% after graduation; the 90% window is excluded): unprofitable in both phases. (2) Timing: anyone can trigger the
+  conversion at a moment of their choosing, at most once per interval, and only for coins that are actually pending; the
+  coins sold over time are fixed by the fee books (a fee is 2% / 1% of a sell that moved the price far more), so the cap
+  and the interval bound only when, never how much. Front-running the keeper delays the next conversion by at most 10
+  minutes and costs nothing. (3) Blocking: pushing the price to the start price makes `convert` revert
+  `NothingToConvert` until the price rises (selling down to the start costs the seller the 2% fee and gives no gain);
+  an admin's plugin or fee change makes it revert until `restore`. Nothing is lost while it waits; pending coins stay
+  booked. Gas: about 0.2-0.3M (fork-measured in t9).
+- **Deploy-time constants and rationale.** `CONVERT_IMPACT_BPS` = 100 (1% of price per call) and `CONVERT_INTERVAL` =
+  10 minutes are compile-time constants (fixed at deployment; changing them is a new generation, so they are no admin
+  knob and no griefing surface). The cap is set below the cheapest round trip an outsider can make around a conversion
+  (2% after graduation, 4% while bonding), so sandwiching a conversion never pays, while one call still converts
+  everything ordinary trading leaves pending: the coin fee of a sell is 2% (1%) of that sell, whose own price impact was
+  far larger, so the cap binds only after a burst of selling, and then the remainder converts over the next intervals.
+  The interval caps forced conversions at six per coin per hour (at most 1% each), which bounds the sell pressure an
+  outsider can time, and it is short against what waits on conversion: the keeper's schedule, and attribution and league
+  pots, which count converted DOGE only (spec D1, weekly epochs), so a coin fee is never held back more than one
+  interval beyond the keeper's own cadence.
+
+### claimCreator(coin, to)
+
+- Gen-8 `claimCreator(PoolId, to)` keyed by coin. **Guard:** `nonReentrant`.
+- **CEI:** checks (`msg.sender == launches[coin].feeCreator`, `NotCreator`; an unknown coin has feeCreator 0, which no
+  sender equals; `to != 0`, `ZeroAddress`; amount > 0, `NothingOwed`), effect (`creatorOwed[coin] = 0`), then the payout
+  (native `call` with all gas and no return-data copy, `SendFailed` on failure) as the last call, then the event.
+- **States:** any time, any phase, also while launches are paused; only the coin's current `feeCreator` (the creator for
+  keep coins, the choice vault for holders / split / buyback, which claims to itself, t6). The owner has no path.
+  Pays only what `collect` and `convert` have credited: the keeper (or the creator) calls `collect` and `convert` first
+  to bring recent fees in.
+- **Over/underflow:** none (a stored value is paid and zeroed).
+- **Griefing:** none on others. A recipient that rejects native (or re-enters, which hits the lock) reverts the claim and
+  the balance stays (gen-8 A13); it can only hurt its own claim. A return bomb cannot cost the claimer gas for copying.
+
+### proposeCreator(coin, next) / acceptCreator(coin)
+
+- Gen-8 4.6 two-step transfer of `feeCreator`, keyed by coin. **Guard:** none needed (no external call).
+- **CEI:** `proposeCreator`: known coin (`UnknownCoin`), caller is the current feeCreator (`NotCreator`), write
+  `pendingCreator`, event; `address(0)` cancels. `acceptCreator`: caller is the pending address (`NotPendingCreator`;
+  a cleared slot is 0, which no sender equals, so t4 drops gen-8's redundant zero check), event, then `feeCreator =
+  caller` and the pending slot cleared.
+- **States:** any time. After the hand-over only the new feeCreator can claim, including the balance owed before it (gen-8
+  semantics: the balance belongs to the coin's creator seat). For holders / split / buyback coins the seat is the choice
+  vault, which decides itself whether it ever proposes. **Over/underflow:** none. **Griefing:** none; a wrong proposal
+  can be overwritten or cancelled before it is accepted.
+
+### claimRouter()
+
+- Gen-8 F4 unchanged in substance. **Guard:** `nonReentrant`.
+- **CEI:** checks: the caller is the current `treasuryRouter`, the `owner`, or the router's `operator()` (read with a
+  30,000-gas `staticcall`; a router without one, or one that reverts, returns short data or burns the gas, simply has no
+  operator) (`NotRouterCaller`); `routerOwed > 0` (`NothingOwed`). Effects: the bucket and its two counters zeroed, then
+  `routerPaid[router] += (amount, bonding, grad)`. Interaction: the native payout to the router as the last call
+  (`SendFailed` on failure), then `RouterClaimed(router, amount, bondingFees, gradFees)`.
+- **States:** any time with a non-zero bucket; also while launches are paused. Pays the current router only.
+- **What the splitter sees (B11, spec Money flow 5):** `routerPaid(router)` = cumulative (amount, net bonding DOGE,
+  graduation DOGE) actually paid, all post-conversion realised DOGE; the splitter's `expectedPaid` pins a run to it as in
+  gen-8 (V13).
+- **Over/underflow:** cumulative sums are uint256 of uint128 buckets.
+- **Griefing:** a third party cannot claim (gen-8 C-M1 / D-L3 closed), so it cannot move `routerPaid` between the
+  operator's plan and its route. Our own second claim (two workers, or the owner) makes a stale plan revert
+  `PaidMismatch`, which the worker handles by re-planning. A router that rejects native reverts the claim and the bucket
+  stays. A malicious router could return any address from `operator()`; the router is chosen by the owner behind the
+  48 h timelock, and whoever it names can only pay the router its own bucket.
+
+### payParkedRouter(router) / proposeTreasuryRouter / cancelTreasuryRouter / executeTreasuryRouter
+
+- Gen-8 A4 / F3 unchanged (gen-8 audit 15.3). **Guard:** `payParkedRouter` is `nonReentrant`; the three owner functions
+  make no external call.
+- **CEI:** `proposeTreasuryRouter(next)`: owner, `next != 0`, pending router and `eta = now + 48 h`, event.
+  `cancelTreasuryRouter`: owner, a pending router (`NoPendingRouter`), cleared, event. `executeTreasuryRouter`: owner, a
+  pending router at or after its eta (`TimelockActive`); if the bucket is non-zero it moves into `routerParked[old]`
+  with its two counters and `parkedOwed += amount` (event `RouterParked`), then the router switches (event
+  `RouterChanged`). `payParkedRouter(r)`: amount > 0 (`NothingOwed`), `delete routerParked[r]`, `parkedOwed -= amount`,
+  `routerPaid[r] +=`, then the payout to `r` as the last call.
+- **States:** execute only by the owner with a pending proposal at or after its eta; pay parked by anyone, any time, to
+  the router the bucket was accrued under only. Re-proposing the same router parks to itself; proposing an old router
+  again adds to its parked counters.
+- **Over/underflow:** `parkedOwed -= amount` follows an earlier `+=` of the same amount; sums are uint256.
+- **Griefing:** gen-8 A-2 is closed (no flush to make fail: the change makes no external call). A refusing old router
+  keeps its parked bucket until it accepts and cannot block the change. `payParkedRouter` is one-shot per change, so it
+  can move the old splitter's cumulative paid between that splitter's plan and route at most once per change (the
+  operator re-plans).
+
+### routerPaid / routerParked / routerOwed / creatorOwed / coinFees (views)
+
+- Public getters. `routerPaid(router)` returns `(amount, bondingFees, gradFees)` in gen-8's order, so the t5 splitter
+  reads it with gen-8's code; the meaning of `bondingFees` is B11's net bonding DOGE ("Fee books").
 
 ### Launcher obligations (O1-O4 of `IMwzBarkLauncher`, checked)
 
@@ -716,87 +1025,114 @@ at the testnet target, far below Algebra's per-tick liquidity cap.
   getter, destructured), so the start price is exactly the plugin's. A is minted at exactly `[tickStart, tickGrad]` and
   B at exactly `[tickGrad, TICK_MAX]` (B's lower tick is tickGrad itself, controller minor), so
   `sqrtStart == getSqrtRatioAtTick(A.bottom)` and `sqrtGrad == getSqrtRatioAtTick(A.top) == getSqrtRatioAtTick(B.bottom)`.
-  All three ticks are checked to be multiples of 10 before `registerPool`. (v4-core vs Algebra sqrt-at-tick equality is
-  a t8 fork check.)
-- [x] **O2 Swaps.** t32 has exactly one launcher swap: the creator first buy in `launch` (conversion flag clear, bonding
-  rate, may run before openAt). t4 adds the conversion sell in `convert`. No other `pool.swap` call exists.
-  `conversionInProgress` is a plain view without the reentrancy guard and cannot revert.
+  Both planned ticks are checked to be multiples of 10 before `registerPool` (TICK_MAX is the constant 887,270). (v4-core
+  vs Algebra sqrt-at-tick equality is a t8 fork check.)
+- [x] **O2 Swaps.** Exactly two launcher swaps exist: the creator first buy in `launch` (conversion flag clear, bonding
+  rate, may run before openAt) and the conversion sell in `convert`, which sets the pool's `T_CONVERSION` flag
+  immediately before its `pool.swap` and clears it immediately after. No other `pool.swap` call exists (the libraries
+  make none). `conversionInProgress` is a plain view without the reentrancy guard and cannot revert.
 - [x] **O3 Liquidity.** `pool.mint` appears only in `_seed`, called only from `launch`, with this contract as recipient
-  (and leftovers recipient). The only non-zero `pool.burn` is the graduation burn in `takeGraduationFee`
-  (`floor(liqA x 2%)`, once). t4's collect must use zero-amount burns only.
+  (and leftovers recipient). The only non-zero `pool.burn` is the graduation burn (`MwzBarkLaunchLib.graduationBurn`,
+  called only from `takeGraduationFee`, `floor(liqA x 2%)`, once). `collect`'s burns (`MwzBarkLaunchLib.collectFees`)
+  have amount 0.
 - [x] **O4 Fee setting.** Launch: `setFee(pool, 0)` before `setPluginConfig(pool, 135)` (the config is 0 after
-  creation, so the flag is off). `restore`: `setFee(pool, 0)` only while the flag is off (cleared first if needed), then
-  135. `setFee(0)` is unconditional at launch because upstream `initialize` always sets the factory default fee (plugin
-  open question 8).
+  creation, so the flag is off). `restore` (`MwzBarkLaunchLib.restorePool`): `setFee(pool, 0)` only while the flag is
+  off (cleared first if needed), then 135. `setFee(0)` is unconditional at launch because upstream `initialize` always
+  sets the factory default fee (plugin open question 8).
 - [x] `takeGraduationFee(pool)`: at most once per pool, never below the graduation price, fallback guards (unlocked,
   latch, price, plus our plugin installed) applied to every caller.
 
-### Invariants this contract upholds (launch part)
+### Invariants this contract upholds
 
 | Spec invariant | How | Fork test |
 |---|---|---|
-| A and B lose liquidity exactly once, `floor(liqA x 2%)` at graduation (I6) | no burn path but `takeGraduationFee`; `gradFeeTaken` once-flag; plugin `gradBurnDone` as defense in depth | t8 |
-| 2% graduation fee at most once, never inside A | latch + price >= `sqrtGrad` + once-flag; the burn returns WDOGE only | t8 |
+| A and B lose liquidity exactly once, `floor(liqA x 2%)` at graduation (I6) | no burn path but `takeGraduationFee`; `gradFeeTaken` once-flag; plugin `gradBurnDone` as defense in depth; `collect` burns amount 0 only | t8 |
+| 2% graduation fee at most once, never inside A; the only entry in the graduation book, creator 0% | latch + price >= `sqrtGrad` + once-flag; the burn returns WDOGE only; `pendingGradFees` written only there | t8, t9 |
 | `restore` re-applies only our plugin and launch config | no argument but the coin; writes only `plugin`, lastFee 0, config 135 | t9 |
 | Only the launcher initializes and adds liquidity | launcher side: `initialize` and `mint` only inside `launch` (plugin side in its section) | t8 |
-| No swap before `openAt` except the creator first buy | the first buy is the launcher's only pre-open swap (O2) | t8 |
+| No swap before `openAt` except the creator first buy | the first buy is the launcher's only pre-open swap (O2); `convert` refuses before `openAt + 60` | t8 |
 | Supply split 850M / 130M / 20M, first buy <= 70% | constants; `MintMismatch`, dust burn, `FirstBuyTooLarge` | t8 |
-| Target sized once at launch from the oracle; band $0.01-$10; age <= 3600 s | `plan` (F6), constructor age check | t8 |
+| Target sized once at launch from the oracle; band $0.01-$10; age <= 3600 s | `planLaunch` (F6), constructor age check | t8 |
 | Signed create (D3) with `openAt`, replay-safe | `_consumeAuthorization`, gen-8 digest | t8 |
 | Pool tick spacing 10, lastFee 0, config 135 at launch | `_createPool` | t8 |
+| Creator amount exactly B10 (bonding: 560 bps of the gross fee; post: 50% of the gross fee, sells valued at their conversion price), whatever the cut | the plugin's creator totals booked unchanged (`apportion`, creators first); converted pro rata with the router books | t9 |
+| The launcher's books (per coin, per phase, in WDOGE, coin and DOGE) equal its balances | bookings from pool return amounts only; `apportion` / `draw` sum exactly; unwrap in the same call ("Fee books") | t9 |
+| The plugin's per-phase totals equal what collect can take, within the stated tolerance | snapshot differences; the tolerance goes to the router books only; no carry | t9 |
+| A conversion never ends below the start price, never exceeds its impact cap, respects its interval, converts the full capped amount | limit `max(ceil(sqrtP x sqrt(0.99)), sqrtStart)`; exact input of all pending; `lastConvertAt` | t9 |
+| A conversion swap pays 0 fee; every other swap the phase rate | our plugin installed + lastFee 0 checked by `convert`; the flag only inside `convert` | t9 |
+| A route run never reverts `OutOfBand` whatever the community fee (B11) | `routerPaid` bonding / graduation are the net books; `0.55 B + 0.2 G <= total` | t10 |
+| Claims pay only the entitled party | `claimCreator`: the coin's feeCreator; `claimRouter`: the current router; `payParkedRouter`: the router it was parked for | t9 |
+| Parked-router rules (F3 / F4) | gen-8's code, keyed the same | t9 |
 
 ### Barkswap admin powers relevant to the launcher (facts section 5)
 
 | Admin action | Effect on the launcher | Remedy |
 |---|---|---|
-| `setPlugin(other)` | graduation fee refused (`ForeignPlugin`) until restored; positions and principal untouched (no admin burn exists) | `restore` |
-| config / static fee changes | no effect on the launcher's state; `restore` re-applies 135 and lastFee 0 | `restore` |
-| `setTickSpacing` | none (positions are minted once, at launch) | none needed |
-| `setCommunityFee` | none on the launcher in t32 (the burn is not a swap fee and is not cut) | watch |
-| revoke the entry point's `CUSTOM_POOL_DEPLOYER` role | new launches revert inside `createCustomPool`; existing pools unaffected | founder / Barkswap |
+| `setPlugin(other)` | graduation fee and `convert` refused (`ForeignPlugin`) until restored; `collect` keeps working unless the other plugin reverts burns; LP fees charged meanwhile (lastFee) reach our positions unbooked and land in router post; positions and principal untouched (no admin burn exists) | `restore` |
+| config / static fee changes | `convert` refused while lastFee != 0 (`ConversionFeeNotZero`); swaps charged lastFee without our before-swap hook are booked by the plugin's after-swap fallback, or, with both hooks off, not at all (router post surplus); `restore` re-applies 135 and lastFee 0 | `restore` |
+| `setTickSpacing` | none: positions are minted once, at launch; zero burns, collects and the graduation burn address the existing ranges (t9 case) | none needed |
+| `setCommunityFee` | the net fee shrinks; the plugin books net per swap with the creator first (B10), so only the router books shrink; B11 keeps route runs inside the bands; the graduation burn is not cut | watch |
+| revoke the entry point's `CUSTOM_POOL_DEPLOYER` role | new launches revert inside `createCustomPool`; existing pools unaffected; `restore` reverts until the role is back | founder / Barkswap |
 
 ### Launch gas (estimate against the 7M gate; fork-measured in t8)
 
 The proof's launch through the entry point with direct `pool.mint` measured 6,132,142 gas at spacing 10 (README "Gas").
 That includes the coin CREATE2 (763,441 for the proof's token, which carried guard code; `MwzV4Token`'s runtime is 1,502
 bytes), the pool deployment (~4.5M), registration, initialize, the three entry-point setters, both mints, the 20M
-transfer and the dust burn. t32 adds about: calldata of the signed request (~1-1.5 KB, ~20k); request hashing, ecrecover
+transfer and the dust burn. t32 added about: calldata of the signed request (~1-1.5 KB, ~20k); request hashing, ecrecover
 and the replay-map SSTORE (~35k); two oracle reads (~30k); curve math, `getTickAtSqrtPrice` x2 and `getSqrtPriceAtTick`
 x6 (~15k); `launches` (3 new slots) and `coinOf` (~90k); the `plugin.pools` read-back (~5k); `reserveLock.lock` (~45k
 beyond the proof's 20M transfer); the two events with the metadata strings (~15k). That is about +255k: **~6.39M**
-without a first buy and **~6.46M** with a non-keep fee choice (choice-vault registration, ~60k). The creator first buy
-added 167k in the proof (10 DOGE), so the worst case is **~6.55-6.65M**, about 0.35M under the 7M gate (65-67% of a
-10M block). t8 pins the measured figure.
+without a first buy and **~6.46M** with a non-keep fee choice (choice-vault registration, ~60k). **t4 re-estimate with
+the library split:** `launch` now makes two DELEGATECALLs into `MwzBarkLaunchLib` (`planLaunch`, `deployCoin`): one cold
+account access (2,600) plus one warm (100), the ABI encoding of name and symbol and of the 7-word plan (~2-3k), and the
+library's call guard (a few gas): about +6k. `lastConvertAt` shares slot 1 with `feeCreator` and starts at 0 (no extra
+SSTORE); nothing else of the money side runs in `launch`. So **~6.40M** / **~6.47M**, and with the creator first buy
+(167k in the proof, 10 DOGE) a worst case of **~6.56-6.66M**, about 0.34M under the 7M gate (66-67% of a 10M block). t8
+pins the measured figure.
 
-### Size and the library split (plan for t4)
+### Size and the library split (done in t4)
 
-Runtime is 21,588 bytes at t32 (2,988 under EIP-170). t4 adds collect, convert, the books, claims and the parked router;
-gen-8's money side was a large part of `MwzLaunchHook`, so the launcher will not fit without a split. Measured on this
-file at t32 by stubbing: the `MwzV4Token` creation code embedded for the CREATE2 is ~2.8 KB, and the curve planning
-(`plan`, `curveForMarketCap`, `curveSqrtPrices`, `nearestGridTick`, `getTickAtSqrtPrice`) ~2.5 KB. Plan for t4: a
-linked library with public functions in `contracts/dogeos/barkswap/libraries/MwzBarkLaunchLib.sol` (DELEGATECALL, as
-gen-8 links `MwzSwapSim`):
-- `deployCoin(name, symbol, creator, salt)`: the `new MwzV4Token{salt}`. It runs in the launcher's context, so the
-  coin's CREATE2 deployer and initial holder stay the launcher: same coin address, same bytecode.
-- `planLaunch(oracle, minNativeUsd, maxNativeUsd, targetUsd)` returning `LaunchPlan` (curve, ticks, liquidity), with the
-  pure helpers.
-- Optionally `hashRequest` and the digest (~1-1.5 KB more).
+At t32 the launcher was 21,588 bytes (2,988 under EIP-170) and the money side could not fit beside the launch code. t4
+split it as planned and further, measured with `node scripts/dogeos-bark-sizes.mjs` (which now labels libraries and the
+libraries each contract links):
 
-That frees ~5.3-6.8 KB (launcher ~15-16.5 KB before t4). If t4's money side still does not fit, its pure apportionment
-math (per-phase books, pro-rata conversion split, impact-cap price limit) goes into a second linked library. The deploy
-script (t15) links the libraries. Errors raised inside a library are not in the launcher's ABI, so the t7 ABI export
-must merge them. The launch path above changes only by moving code; t4 updates these entries in the same commit.
+| Artifact | Kind | Runtime bytes (t4) | Holds |
+|---|---|---|---|
+| `MwzBarkLauncher` | contract | 22,307 (2,269 headroom) | launch, callbacks, plugin-factory hooks, graduation-fee guards and books, restore entry, the whole money side |
+| `MwzBarkLaunchLib` | linked library | 10,255 | `deployCoin` (the embedded `MwzV4Token` creation code), `planLaunch` + the pure curve helpers, `restorePool`, `graduationBurn`, `collectFees` |
+| `MwzBarkFeeBooks` | linked library | 1,133 | `apportion`, `draw` (pure) |
 
-### Hand-off to t4 (money side)
+Measured steps: moving the coin deployment and the curve planning first (the plan), then the pool calls of `restore`
+(-672 bytes), of the graduation burn (-265) and of `collect` (-676), and making the two book functions linked instead of
+inlined (-322). The book arithmetic, the books themselves and every guard stay in the launcher; the libraries hold no
+state, read none of the launcher's storage and receive every value as an argument. Every library function that writes
+state (`deployCoin`, `restorePool`, `graduationBurn`, `collectFees`) is reachable only by DELEGATECALL (Solidity's
+library guard), so a direct call on the library address reverts; a DELEGATECALL from any other contract acts as that
+contract (its own address deploys, its own positions are touched), never as the launcher. The launch path and the
+graduation fee changed only by moving code: the same calls, in the same order, from the same address. The deploy
+script (t15) deploys and links both libraries (link references in the launcher's artifact); errors raised inside a
+library (`OraclePriceUnavailable`, `OraclePriceOutOfBand`, `TargetOutOfRangeAtPrice`, `SupplyBoundBroken`, `BadTicks`,
+`BadLiquidity`, `PoolBusy` from `restorePool`, `NothingToRestore`, `GraduationBurnNotNative`, `CollectMismatch`) are in
+the library's ABI, not the launcher's, so the t7 ABI export must merge them.
 
-- Keep `T_ACTIVE_POOL` around the conversion swap (set just before `pool.swap`, cleared just after) and set and clear
-  the per-pool `T_CONVERSION` flag the same way (O2); `convert` is `nonReentrant`.
-- Collect: zero-amount burns on A and B, then fee collects. After the graduation burn, A's collectable fees include its
-  accrued coin fees. `_bookGraduationFee` is the graduation-book seam (creator 0%); `launches[coin].graduationFee`
-  already holds the amount taken.
-- Books must equal balances (spec invariant): WDOGE or native that reaches the launcher outside a collect (direct
-  transfers, a forced native send) is surplus and needs a defined home (plugin open question 4).
-- `feeCreator` is the per-coin creator for `claimCreator` and the two-step creator transfer.
+### Hand-off from t4
+
+- t5 splitter: reads `routerPaid(address)` (gen-8 order), receives native from the launcher (gen-8's `receive` accepted
+  only the PoolManager: it must accept the launcher), exposes `operator()` (F4), is deployed against the launcher's
+  predicted address and passed to the launcher as `treasuryRouter_`.
+- t5 lens and reserve lock: `launches(coin)` is now a 10-tuple (`lastConvertAt` after `feeCreator`); owed amounts are
+  `creatorOwed(coin)`, `coinFees(coin)`, `routerOwed()`; the uncollected estimate is `plugin.feeTotals(pool)` minus
+  `collectedTotals(coin)`; `plan(targetUsd)` returns the `LaunchPlan` struct.
+- t6 choice vault: claims with `launcher.claimCreator(coin, address(this))` and must accept native from the launcher.
+- t15: deploy `MwzBarkLaunchLib` and `MwzBarkFeeBooks`, link them, then the launcher with 12 constructor arguments
+  (`treasuryRouter_` 9th).
+- t9: the money invariants in the table above; the surplus cases (flash, direct transfer to the pool, hooks off); the
+  tolerance measurement; conversion cap, interval, window, F2 limit, `ForeignPlugin` and `ConversionFeeNotZero`; a sandwich
+  around `convert` loses money; claims and F3 / F4 cases; `setTickSpacing` then a collect and the graduation burn.
+- t18-t20 (indexer, attribution, keepers): events `FeesCollected`, `CoinFeesConverted` (with `pending`, so every pending
+  sell row converts by `coinsIn / pending`), `CreatorClaimed`, `RouterClaimed`, `RouterParked`; the keeper runs
+  `collect` then `convert` per coin (after `restore` when the admin watch fires).
 
 ### Open questions
 
@@ -807,8 +1143,18 @@ must merge them. The launch path above changes only by moving code; t4 updates t
    `launcher.launches(coin)`.
 2. **CREATE2 salt mining (t21).** The API must find `req.salt` with
    `create2(launcher, keccak256(abi.encode(creator, salt)), keccak256(MwzV4Token.creationCode ++ abi.encode(name,
-   symbol, 1e27, launcher))) < WDOGE`. WDOGE is `0xF6BD...`, so about 96% of salts qualify. There is no on-chain
-   predictor view (it would cost ~360 bytes); t8 computes the address off chain the same way.
+   symbol, 1e27, launcher))) < WDOGE`. The deployer is the launcher even though the CREATE2 runs in `MwzBarkLaunchLib`
+   (DELEGATECALL). WDOGE is `0xF6BD...`, so about 96% of salts qualify. There is no on-chain predictor view; t8 computes
+   the address off chain the same way.
 3. **Test target chains.** `TEST_GRADUATION_USD` ($150) is allowed on 6281971 and 31337 only; the fork runs as 6281971.
+4. **Donations to the launcher (t7 decision).** Native forced in, and WDOGE or coins transferred straight to the
+   launcher, are never booked and stay inert (books use pool return amounts only). A permissionless sweep into router
+   post would make `balance == books` hold exactly instead of `balance - books == donations`, at the cost of one more
+   entry point (~300 bytes). Proposed: Informational, accept.
+5. **"Books updated before the swap's external calls settle" (t7 decision).** See `convert`, "Deviation from the spec's
+   wording": the books move right after the swap returns, under the lock, with no third-party code inside the swap.
+   Proposed: accept as written.
+6. **Conversion constants are compile-time.** The spec calls them deploy-time constants; they are code constants fixed
+   at deployment (no setter). A different cap or interval is a new generation.
 
 Verdict: pending (t7)
