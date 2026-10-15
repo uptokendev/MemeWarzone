@@ -10,6 +10,7 @@
  * wallet_switchEthereumChain, and eth_sendTransaction. The first sell of a coin approves Permit2 and sets one
  * allowance for our router. Every later sell is only the swap.
  */
+import { gen8FormatAmount } from "../../shared/gen8FormatAmount.mjs";
 import { STYLE, fromRaw, toRaw } from "./widgetShared";
 import { addProtectedBscRpc, offersProtectedRpc, readProtectedRpcChoice, rememberProtectedRpcChoice } from "../lib/bscProtectedRpc.mjs";
 
@@ -234,7 +235,7 @@ export class Gen8SwapWidget {
       return;
     }
     const raw = this.side === "buy" ? this.balances.nativeRaw : this.balances.tokenRaw;
-    this.el.balance.textContent = `Balance ${fromRaw(raw, 18, 4)} ${this.side === "buy" ? this.native() : this.symbol()}`;
+    this.el.balance.textContent = `Balance ${gen8FormatAmount(raw)} ${this.side === "buy" ? this.native() : this.symbol()}`;
     this.el.max.hidden = this.side !== "sell" || raw === 0n;
   }
 
@@ -283,16 +284,16 @@ export class Gen8SwapWidget {
   private paintQuote() {
     const q = this.quote;
     const outUnit = this.side === "buy" ? this.symbol() : this.native();
-    this.el.out.textContent = q ? `${fromRaw(q.amountOut, 18)} ${outUnit}` : "-";
-    this.el.min.textContent = q ? `${fromRaw(q.minAmountOut, 18)} ${outUnit}` : "-";
+    this.el.out.textContent = q ? `${gen8FormatAmount(q.amountOut)} ${outUnit}` : "-";
+    this.el.min.textContent = q ? `${gen8FormatAmount(q.minAmountOut)} ${outUnit}` : "-";
     this.el.impact.textContent = q ? formatPriceImpact(q.priceImpactBps) : "-";
     this.el.minLabel.textContent = q && Number.isFinite(Number(q.slippageBps)) ? `At least (${Number(q.slippageBps) / 100}% slippage)` : "At least";
     const feeBps = q?.feeBps ?? this.token?.feeBps ?? null;
     this.el.feeLabel.textContent = feeBps ? `Fee ${Number((feeBps / 100).toFixed(2))}%` : "Fee";
-    this.el.fee.textContent = q ? `${fromRaw(q.feeNativeRaw, 18, 8)} ${this.native()}` : "-";
+    this.el.fee.textContent = q ? `${gen8FormatAmount(q.feeNativeRaw)} ${this.native()}` : "-";
     const creatorRaw = q ? BigInt(q.creatorShareNativeRaw || "0") : 0n;
     this.el.creatorRow.hidden = creatorRaw === 0n;
-    this.el.creator.textContent = `${fromRaw(creatorRaw, 18, 8)} ${this.native()}`;
+    this.el.creator.textContent = `${gen8FormatAmount(creatorRaw)} ${this.native()}`;
     this.paintButton();
   }
 
@@ -430,7 +431,7 @@ export class Gen8SwapWidget {
     }
     const reserve = GAS_RESERVE[this.token.chainId] ?? 0n;
     if (this.balances && (this.side === "buy" ? raw + reserve > this.balances.nativeRaw : raw > this.balances.tokenRaw)) {
-      this.say(this.side === "buy" ? `Keep about ${fromRaw(reserve, 18)} ${this.native()} for gas: lower the amount.` : "Amount is above your balance.", "err");
+      this.say(this.side === "buy" ? `Keep about ${gen8FormatAmount(reserve)} ${this.native()} for gas: lower the amount.` : "Amount is above your balance.", "err");
       return;
     }
     this.busy = true;

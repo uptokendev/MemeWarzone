@@ -479,12 +479,17 @@ export function gen8PriceImpactBps({ amountIn, amountOut, refIn, refOut }) {
   const rIn = BigInt(refIn);
   const rOut = BigInt(refOut);
   if (aIn <= 0n || rIn <= 0n || rOut <= 0n) return null;
+  if (aOut <= 0n) return 10_000;
+  // Under 10,000 wei, one wei is coarser than 1 bp. A ~60 wei reference made a 0.001 sell look like 1.65%.
+  if (aOut < 10_000n || rOut < 10_000n) return 0;
   // execution rate / reference rate, in bps (rounded down)
   const ratioBps = (aOut * rIn * 10_000n) / (rOut * aIn);
   const impact = 10_000n - ratioBps;
   if (impact <= 0n) return 0;
   return Number(impact > 10_000n ? 10_000n : impact);
 }
+
+export { gen8FormatAmount } from "./gen8FormatAmount.mjs";
 
 /** "2.45%" for the panel and the widget; "<0.01%" under one bp; "-" when unknown. */
 export function gen8FormatPriceImpact(bps) {

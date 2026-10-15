@@ -26,7 +26,7 @@ import {
   quoteGen8Trade,
   readGen8SellSetup,
 } from "@/lib/evmGen8Client.mjs";
-import { gen8FormatPriceImpact, gen8UsesSizedSlippage } from "../../../shared/evmGen8Swap.mjs";
+import { gen8FormatAmount, gen8FormatPriceImpact, gen8UsesSizedSlippage } from "../../../shared/evmGen8Swap.mjs";
 import {
   BSC_PROTECTED_RPC_DEFAULT,
   addProtectedBscRpc,
@@ -70,8 +70,6 @@ function parseUnitsSafe(text: string, decimals: number): bigint | null {
 const BNB_SLIPPAGE_CHOICES: Array<typeof GEN8_AUTO_SLIPPAGE | number> = [GEN8_AUTO_SLIPPAGE, 50, 100, 300];
 /** Price impact from which the panel shows it in red. */
 const HIGH_IMPACT_BPS = 1000;
-
-const fmt = (raw: bigint | string, digits: number) => Number(ethers.formatUnits(raw, 18)).toLocaleString(undefined, { maximumFractionDigits: digits });
 
 /**
  * The trade box for an EVM generation 8 coin, before and after graduation (design 6.2): one Uniswap V4 pool, quoted
@@ -393,11 +391,11 @@ export function Gen8TradePanel({
         <div className={`${cp.inset} mt-3 flex flex-col gap-1.5 p-3 text-sm`} data-gen8-quote={quote ? "true" : undefined}>
           <div className={row}>
             <span className="text-mw-muted">Balance</span>
-            <span className="font-mw-mono text-mw-text">{balances ? (side === "buy" ? `${fmt(balances.nativeRaw, 6)} ${native}` : `${fmt(balances.tokenRaw, 2)} ${symbol || "tokens"}`) : "—"}</span>
+            <span className="font-mw-mono text-mw-text">{balances ? (side === "buy" ? `${gen8FormatAmount(balances.nativeRaw)} ${native}` : `${gen8FormatAmount(balances.tokenRaw)} ${symbol || "tokens"}`) : "—"}</span>
           </div>
           <div className={row}>
             <span className="text-mw-muted">Receive</span>
-            <span className="font-mw-mono font-bold text-mw-text">{quote ? (side === "buy" ? `${fmt(quote.amountOut, 4)} ${symbol || "tokens"}` : `${fmt(quote.amountOut, 8)} ${native}`) : "—"}</span>
+            <span className="font-mw-mono font-bold text-mw-text">{quote ? (side === "buy" ? `${gen8FormatAmount(quote.amountOut)} ${symbol || "tokens"}` : `${gen8FormatAmount(quote.amountOut)} ${native}`) : "—"}</span>
           </div>
           <div className={row} data-gen8-price-impact={quote?.priceImpactBps ?? undefined}>
             <span className="text-mw-muted">Price impact</span>
@@ -405,16 +403,16 @@ export function Gen8TradePanel({
           </div>
           <div className={row}>
             <span className="text-mw-muted">At least{quote ? ` (${quote.slippageBps / 100}% slippage)` : ""}</span>
-            <span className="font-mw-mono text-mw-muted">{quote ? (side === "buy" ? `${fmt(quote.minOut, 4)} ${symbol || "tokens"}` : `${fmt(quote.minOut, 8)} ${native}`) : "—"}</span>
+            <span className="font-mw-mono text-mw-muted">{quote ? (side === "buy" ? `${gen8FormatAmount(quote.minOut)} ${symbol || "tokens"}` : `${gen8FormatAmount(quote.minOut)} ${native}`) : "—"}</span>
           </div>
           <div className={row}>
             <span className="text-mw-muted">Fee {(feeBps / 100).toFixed(feeBps % 100 ? 2 : 0)}%</span>
-            <span className="font-mw-mono text-mw-muted">{quote ? `${fmt(quote.feeWei, 8)} ${native}` : "—"}</span>
+            <span className="font-mw-mono text-mw-muted">{quote ? `${gen8FormatAmount(quote.feeWei)} ${native}` : "—"}</span>
           </div>
           {quote && quote.creatorShareWei > 0n ? (
             <div className={row}>
               <span className="text-mw-muted">Of which to the coin&apos;s creator</span>
-              <span className="font-mw-mono text-mw-muted">{fmt(quote.creatorShareWei, 8)} {native}</span>
+              <span className="font-mw-mono text-mw-muted">{gen8FormatAmount(quote.creatorShareWei)} {native}</span>
             </div>
           ) : null}
         </div>
@@ -430,7 +428,7 @@ export function Gen8TradePanel({
         ) : null}
         {side === "sell" && maxSellable != null ? (
           <p className="mt-2 text-center text-[11px] text-mw-muted" data-gen8-max-sellable="true">
-            Max sellable {fmt(maxSellable, 2)} {symbol || "tokens"}
+            Max sellable {gen8FormatAmount(maxSellable)} {symbol || "tokens"}
           </p>
         ) : null}
         <p className="mt-2 text-center text-[11px] text-mw-muted">{gen8FeeLine({ graduated, feeBps: graduated ? state.tradeFee?.postGraduationBps ?? 100 : state.tradeFee?.bondingBps ?? 200 })}</p>

@@ -2,7 +2,10 @@
 // compared field by field, for both router layouts, buys and sells, exact input and output, with and without a
 // Permit2 permit. Execution against the real routers is in src/lib/evmGen8Client.chain.test.mjs (local forks).
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { AbiCoder, Interface, Wallet, getAddress, verifyTypedData } from "ethers";
 import {
   GEN8_KNOWN_ROUTERS,
@@ -24,6 +27,7 @@ import {
   gen8MinOut,
   GEN8_DEFAULT_SLIPPAGE_BPS,
   GEN8_SIZED_SLIPPAGE,
+  gen8FormatAmount,
   gen8FormatPriceImpact,
   gen8PermitTypedData,
   gen8PriceImpactBps,
@@ -229,6 +233,31 @@ test("F13 price impact: execution rate against a 1/1000 reference quote of the s
   assert.equal(gen8ReferenceAmount(10n ** 18n), 10n ** 15n);
   assert.equal(gen8ReferenceAmount(10n ** 11n), null, "too small to price to 0.01%");
   assert.deepEqual([gen8FormatPriceImpact(null), gen8FormatPriceImpact(0), gen8FormatPriceImpact(245), gen8FormatPriceImpact(10_000)], ["-", "<0.01%", "2.45%", "100.00%"]);
+  // 60,000 out against a 61 wei reference is one wei of rounding, not 1.65%.
+  assert.equal(gen8PriceImpactBps({ amountIn: 10n ** 15n, amountOut: 60_000n, refIn: 10n ** 12n, refOut: 61n }), 0);
+});
+
+test("tiny quote amounts keep significant digits, down to 0.000001", () => {
+  assert.equal(gen8FormatAmount(0n), "0");
+  assert.equal(gen8FormatAmount(1n), "< 0.000001");
+  assert.equal(gen8FormatAmount(10n ** 12n - 1n), "< 0.000001");
+  assert.equal(gen8FormatAmount(10n ** 12n), "0.000001");
+  assert.equal(gen8FormatAmount(15n * 10n ** 11n), "0.0000015");
+  assert.equal(gen8FormatAmount(10n ** 18n), "1");
+  assert.equal(gen8FormatAmount(15n * 10n ** 17n), "1.5");
+  assert.equal(gen8FormatAmount(1_234_567_890_123_456_789n), "1.234568");
+  assert.equal(gen8FormatAmount(1_234_567n * 10n ** 18n), "1,234,567");
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const panel = fs.readFileSync(path.join(here, "../src/components/evm/Gen8TradePanel.tsx"), "utf8");
+  const widget = fs.readFileSync(path.join(here, "../src/widget/gen8Widget.ts"), "utf8");
+  assert.match(panel, /gen8FormatAmount\(quote\.amountOut\)/);
+  assert.match(panel, /gen8FormatAmount\(quote\.feeWei\)/);
+  assert.match(panel, /gen8FormatAmount\(quote\.minOut\)/);
+  assert.match(panel, /gen8FormatAmount\(quote\.creatorShareWei\)/);
+  assert.doesNotMatch(panel, /maximumFractionDigits/);
+  assert.match(widget, /gen8FormatAmount\(q\.amountOut\)/);
+  assert.match(widget, /gen8FormatAmount\(q\.feeNativeRaw\)/);
+  assert.doesNotMatch(widget, /evmGen8Swap\.mjs/);
 });
 
 test("F13 sized slippage: BNB Chain 0.3% + impact / 10, between 0.3% and 1%; Robinhood keeps 1%", () => {
