@@ -13,7 +13,7 @@ Integration branch: `feat/dogeos-testnet` (worktree `C:\Users\sven\Projects\Meme
   1.2.1, unmodified) with our own plugin. This is "gen-8 on Algebra". MuchFi is dropped. The gen-7 curve +
   MuchFi V3 graduation path built earlier on this branch was never deployed and is being removed.
 - **Economics:** gen-8 one-to-one. Testnet graduation target $150 (DOGE/USD testnet oracle, read once at launch).
-- **Side pools:** the coin stays a plain ERC-20; we detect side pools and alert (like gen-8 F18). No token guard.
+- **Side pools:** the coin stays a plain ERC-20; we detect side pools and alert (like gen-8 design 6.8, audit point A5). No token guard.
 - **Fee mode:** LP-fee mode. The plugin sets the swap's pool fee; our positions are the only liquidity,
   so fees accrue to our positions and are collectable at any time. Barkswap keeps 3% of every fee
   (community fee, admin-settable up to 100%).
@@ -52,8 +52,10 @@ must pass after every merge.
 
 ## Keys
 
-Separate DogeOS keys live in the gitignored `config/dogeos.local` (deployer, oracle updater, graduation
-keeper, route authority). Never read, print or commit their values.
+Separate DogeOS keys live in the gitignored `config/dogeos.local` (deployer, oracle updater, keeper,
+route authority = create signer, and from 2026-10-15 a fifth "DogeOS operator" key for the splitter,
+router-claim and choice-vault operator roles; the keeper holds no contract role). Never read, print or commit
+their values.
 
 ## Rules
 

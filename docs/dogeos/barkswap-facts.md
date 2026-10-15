@@ -78,7 +78,7 @@ Line numbers are from that tag. Scratch scripts are in `scripts/`, raw data in `
 - **Side-pool risk (VERIFIED, source).** Anyone can call `factory.createPool(tokenA, tokenB, data)` or `NPM.createAndInitializePoolIfNecessary(t0, t1, address(0), price, data)` for our coin and WDOGE, at any time. There is no access check, and the factory does not even check that the token has code.
   - Anyone can also create a *custom* pool for the same pair under their own deployer contract.
   - The default pool gets the BasePluginV1 adaptive fee: `defaultFeeConfiguration` = (alpha1 2900, alpha2 12000, beta1 360, beta2 60000, gamma1 59, gamma2 8500, baseFee 100), i.e. 0.01% base rising to about 1.5% when volatility is high. That is cheaper than our 2%.
-  - Barkswap confirms their router picks the best quote. This is the same side-pool risk as gen-8 F18.
+  - Barkswap confirms their router picks the best quote. This is the same side-pool risk as gen-8 design 6.8 (audit point A5).
 
 ### Who may initialize, and when
 - **VERIFIED.** `pool.initialize(uint160)` has no access control (`AlgebraPool.sol:32`). Anyone can call it once, directly or through `NPM.createAndInitializePoolIfNecessary` with our deployer address (PoolInitializer.sol:29-43).
