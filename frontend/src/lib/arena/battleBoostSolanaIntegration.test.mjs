@@ -18,9 +18,9 @@ test("Normal Battle SOL Boost uses frozen server lifecycle endpoints", () => {
 });
 
 test("SOL quote is fail-closed on founder economics and V3 lock", () => {
-  // Metrics battles: 1 pt, V3 curve. Vote Battles: 2 pts (Free Vote 1, Boost 2), V3 off -- only when
-  // the API marks the quote voteBattle (arenaSolanaBoosts.js, VOTE_BATTLE_BOOST_POINTS_PER_UNIT).
-  assert.match(client, /const expectedPoints = voteBattle \? 2 : 1;/);
+  // Metrics battles: 1 pt marker, V3 curve. Vote Battles: 1 pt per Boost since 2026-10-15 (was 2),
+  // V3 off -- only when the API marks the quote voteBattle (VOTE_BATTLE_BOOST_POINTS_PER_UNIT).
+  assert.match(client, /const expectedPoints = 1;/);
   assert.match(client, /pointsPerBoost\) !== expectedPoints/);
   assert.match(client, /usdPerBoostMicros\) !== "1000000"/);
   assert.match(client, /prizeBps\) !== 9000/);

@@ -10,9 +10,9 @@ import {
   tournamentVoteMatchRef,
 } from "./tournamentVotePresentation.mjs";
 
-test("Vote Tournament locked scoring labels stay 1 free / 2 boost / 24h", () => {
+test("Vote Tournament locked scoring labels stay 1 free / 1 boost / 24h", () => {
   assert.equal(VOTE_TOURNAMENT_FREE_VOTE_POINTS, 1);
-  assert.equal(VOTE_TOURNAMENT_BOOST_POINTS_PER_UNIT, 2);
+  assert.equal(VOTE_TOURNAMENT_BOOST_POINTS_PER_UNIT, 1);
   assert.equal(VOTE_TOURNAMENT_REGULATION_HOURS, 24);
   const model = presentTournamentVoteSummary({
     votingLive: true,
@@ -23,7 +23,7 @@ test("Vote Tournament locked scoring labels stay 1 free / 2 boost / 24h", () => 
   assert.equal(model.leftPoints, 7);
   assert.equal(model.rightPoints, 5);
   assert.equal(model.regulationLabel, "24H REGULATION");
-  assert.equal(model.scoringLabel, "FREE VOTE = 1 PT · BOOST = 2 PTS");
+  assert.equal(model.scoringLabel, "FREE VOTE = 1 PT · BOOST = 1 PT");
   assert.equal(model.scoreScopeLabel, "FREE VOTE SCORE");
 });
 

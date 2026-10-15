@@ -27,6 +27,17 @@ import {
   serializeBoostSummary,
   validateConfirmedBoost,
 } from "./lib/arenaBoostRuntime.mjs";
+import {
+  boostRulesShape,
+  boostWindowClosed,
+  clampedQuoteDeadlineSeconds,
+  evmWalletBoostUnitsUsed,
+  insertEvmBoostReservation,
+  lockWalletBoostCap,
+  readEvmBoostNonceUsed,
+  solanaWalletBoostUnitsUsed,
+  walletBoostCapExceeded,
+} from "./lib/arenaBoostRules.js";
 
 function safeBattleId(value) {
   const id = String(value || "").trim();
@@ -108,7 +119,8 @@ function chainProofShape(proof) {
 
 async function battleForBoost(battleId) {
   const result = await pool.query(
-    `select id, chain_id, state, battle_mode, source, tournament_id, competition_generation, contest_scoring_version, participants, ends_at
+    `select id, chain_id, state, battle_mode, source, tournament_id, competition_generation, contest_scoring_version, participants,
+            started_at, ends_at, duration_hours
        from public.arena_battles
       where id = $1
       limit 1`,
@@ -118,7 +130,7 @@ async function battleForBoost(battleId) {
 }
 
 // Normal battles and standalone Vote Battles share this route: same pool,
-// same on-chain boost, different scoring (Vote Battles: 2 pts per unit in
+// same on-chain boost, different scoring (Vote Battles: 1 pt per unit in
 // arena_contest_actions, no Battle Points V3 projection).
 function validateNormalV2Battle(battle, chainId, targetToken) {
   if (!battle) return { status: 404, error: "Battle not found" };
@@ -244,12 +256,34 @@ async function loadBattlePointsV3Runtime(battle, db = pool) {
   };
 }
 
-async function readBattleBoosts(res, battleId) {
+function readNonceUsedOn(chainId) {
+  let provider = null;
+  return async ({ treasuryAddress, wallet, nonce }) => {
+    provider = provider || (await getServerReadProvider(chainId));
+    return readEvmBoostNonceUsed({ provider, treasuryAddress, wallet, nonce });
+  };
+}
+
+/** Boost units this wallet already holds or has open in the battle; null when no valid wallet is given. */
+async function walletBoostUnitsFor(battle, rawWallet) {
+  const chainId = Number(battle.chain_id);
+  const wallet = String(rawWallet || "").trim();
+  if (!wallet) return null;
+  if (chainId === 101 || chainId === 102) {
+    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(wallet)) return null;
+    return solanaWalletBoostUnitsUsed(pool, { chainId, battleId: String(battle.id), wallet });
+  }
+  if (!isAddress(wallet)) return null;
+  return evmWalletBoostUnitsUsed(pool, { chainId, battleId: String(battle.id), wallet: wallet.toLowerCase(), readNonceUsed: readNonceUsedOn(chainId) });
+}
+
+async function readBattleBoosts(req, res, battleId) {
   if (!battleId) return json(res, 400, { ok: false, error: "Invalid battle id" });
   const battle = await battleForBoost(battleId);
   if (!battle) return json(res, 404, { ok: false, error: "Battle not found" });
 
-  const [actionsResult, runtime] = await Promise.all([
+  const walletParam = new URL(req.url, "http://localhost").searchParams.get("wallet");
+  const [actionsResult, runtime, walletBoostUnits] = await Promise.all([
     pool.query(
       `select side, boost_units, gross_native_raw, pool_native_raw, protocol_native_raw
          from public.arena_contest_actions
@@ -261,6 +295,10 @@ async function readBattleBoosts(res, battleId) {
       [battleId],
     ),
     loadBattlePointsV3Runtime(battle),
+    walletBoostUnitsFor(battle, walletParam).catch((error) => {
+      console.warn("[api/arenaBoosts] wallet Boost count unavailable", error?.message || error);
+      return null;
+    }),
   ]);
 
   res.setHeader("cache-control", "no-store");
@@ -280,6 +318,9 @@ async function readBattleBoosts(res, battleId) {
     battlePointsV3: runtime.rows,
     scoringActive: runtime.authority.active === true,
     scoringReason: runtime.authority.reason,
+    pointsPerBoost: isStandaloneVoteBattle(battle) ? VOTE_BATTLE_BOOST_POINTS_PER_UNIT : null,
+    boostRules: boostRulesShape(battle),
+    walletBoostUnits: walletBoostUnits == null ? null : walletBoostUnits.toString(),
     updatedAt: new Date().toISOString(),
   });
 }
@@ -302,6 +343,12 @@ async function createBattleBoostQuote(req, res) {
   const battle = await battleForBoost(battleId);
   const battleCheck = validateNormalV2Battle(battle, chainId, targetToken);
   if (battleCheck.error) return json(res, battleCheck.status, { ok: false, error: battleCheck.error });
+
+  const windowClosed = boostWindowClosed(battle);
+  if (windowClosed) {
+    const { status, ...body } = windowClosed;
+    return json(res, status, { ok: false, ...body });
+  }
 
   let runtime = null;
   if (battleCheck.voteBattle) {
@@ -346,19 +393,53 @@ async function createBattleBoostQuote(req, res) {
     return json(res, 503, { ok: false, error: "Battle Boost pricing is unavailable" });
   }
 
+  // Cap check, signature and reservation in one transaction under a per-wallet lock, so two quote
+  // requests cannot both pass the cap (arenaBoostRules.js).
+  const client = await pool.connect();
+  let signed;
+  let deadline;
   try {
+    await client.query("BEGIN");
+    await lockWalletBoostCap(client, { chainId, battleId, wallet });
+    const used = await evmWalletBoostUnitsUsed(client, { chainId, battleId, wallet, readNonceUsed: readNonceUsedOn(chainId) });
+    const capped = walletBoostCapExceeded(used, boostUnits);
+    if (capped) {
+      await client.query("ROLLBACK");
+      const { status, ...rest } = capped;
+      return json(res, status, { ok: false, ...rest });
+    }
     const now = Math.floor(Date.now() / 1000);
-    const deadline = now + quoteTtlSeconds();
-    const signed = await signBoostQuote(config, {
+    deadline = clampedQuoteDeadlineSeconds(battle, now, quoteTtlSeconds());
+    if (deadline === null) {
+      await client.query("ROLLBACK");
+      const { status, ...rest } = boostWindowClosed(battle, Number.POSITIVE_INFINITY);
+      return json(res, status, { ok: false, ...rest });
+    }
+    const nonce = randomBoostNonce();
+    signed = await signBoostQuote(config, {
       poolId: battlePoolId(battleId),
       matchId: ZeroHash,
       roundNumber: 0,
       booster: wallet,
       sideToken: targetToken,
       boostUnits,
-      nonce: randomBoostNonce(),
+      nonce,
       deadline,
     });
+    await insertEvmBoostReservation(client, {
+      chainId, battleId, wallet, side: battleCheck.side, boostUnits,
+      treasuryAddress: config.treasuryAddress, nonce, deadlineSeconds: deadline,
+    });
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[api/arenaBoosts] quote signing failed", error);
+    return json(res, 503, { ok: false, error: "Battle Boost quote could not be created" });
+  } finally {
+    client.release();
+  }
+
+  try {
     res.setHeader("cache-control", "no-store");
     return json(res, 200, {
       ok: true,
@@ -369,6 +450,7 @@ async function createBattleBoostQuote(req, res) {
       boostCurveVersion: runtime ? runtime.lock.boost_curve_version : null,
       voteBattle: Boolean(battleCheck.voteBattle),
       pointsPerBoost: battleCheck.voteBattle ? VOTE_BATTLE_BOOST_POINTS_PER_UNIT : null,
+      boostRules: boostRulesShape(battle),
       quote: serializeSignedBoostQuote(signed),
       expiresAt: new Date(deadline * 1000).toISOString(),
     });
@@ -478,7 +560,7 @@ async function confirmBattleBoost(req, res) {
         txHash,
         logIndex,
         confirmedAt,
-        // Vote Battles score boosts directly (2 pts per unit); normal battles
+        // Vote Battles score boosts directly (1 pt per unit); normal battles
         // score through the Battle Points V3 projection below.
         battleCheck.voteBattle ? (split.boostUnits * BigInt(VOTE_BATTLE_BOOST_POINTS_PER_UNIT)).toString() : 0,
       ],
@@ -512,6 +594,12 @@ async function confirmBattleBoost(req, res) {
         scoringReason: runtime.authority.reason,
       });
     }
+
+    await client.query(
+      `update public.arena_boost_quote_reservations set status = 'paid', resolved_at = now()
+        where chain_id = $1 and wallet = $2 and nonce = $3 and status <> 'paid'`,
+      [chainId, wallet, String(chainProof.nonce)],
+    );
 
     const lock = (await client.query(
       `select battle_id, scoring_version, boost_curve_version, boost_curve_parameters, locked_at
@@ -602,7 +690,7 @@ export default async function handler(req, res) {
   const method = String(req.method || "GET").toUpperCase();
   if (route.action === "read") {
     if (method !== "GET") return badMethod(res);
-    return readBattleBoosts(res, route.battleId);
+    return readBattleBoosts(req, res, route.battleId);
   }
   if (route.action === "quote") {
     if (method !== "POST") return badMethod(res);

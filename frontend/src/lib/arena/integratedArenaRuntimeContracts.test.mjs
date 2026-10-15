@@ -53,11 +53,16 @@ test("Vote Tournament paid Boost consumes EVM and frozen Solana runtime without 
   assert.match(tournamentBoostClient, /\/solana-payment/);
   assert.match(tournamentBoostClient, /sendSolanaArenaInstruction/);
   assert.doesNotMatch(tournamentBoostClient, /findProgramAddress|receiptPda.*===|getAccountInfo/);
-  assert.match(tournamentBoostApi, /pointsPerBoost: 2/);
+  assert.match(tournamentBoostApi, /pointsPerBoost: VOTE_BATTLE_BOOST_POINTS_PER_UNIT/);
   assert.match(tournamentBoostApi, /prizeBps: 9000, protocolBps: 1000, leagueBps: 0/);
   assert.match(tournamentBoostApi, /Boost is disabled during Final Salvo/);
-  assert.match(solanaBoostApi, /pointsPerBoost: 2/);
+  assert.match(solanaBoostApi, /pointsPerBoost: VOTE_BATTLE_BOOST_POINTS_PER_UNIT/);
   assert.match(solanaBoostApi, /FINAL_SALVO_BOOST_DISABLED/);
+  // Boost rules (2026-10-15): 2 per wallet per battle, closed in the last 20%, enforced at the quote.
+  assert.match(solanaBoostApi, /walletBoostCapExceeded\(used, units\)/);
+  assert.match(solanaBoostApi, /clampedQuoteDeadlineSeconds\(context\.battle/);
+  assert.match(solanaBoostApi, /quote\.points_per_boost/);
+  assert.match(tournamentBoostApi, /walletBoostCapExceeded\(used, boostUnits\)/);
   assert.match(solanaBoostApi, /verifySolanaBoostPayment/);
   assert.match(solanaBrowser, /transaction\.accounts\.map|envelope\.accounts\.map/);
   assert.doesNotMatch(solanaBrowser, /findProgramAddress|derive.*Pda|verifySolanaBoostPayment/);

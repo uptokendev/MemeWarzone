@@ -134,10 +134,11 @@ function CombatControls({
     if (vote.unavailable) note = "Vote Battle runtime unavailable.";
     else if (!vote.payload) note = null;
     else if (!vote.model.votingLive) note = "Voting is closed for this battle.";
-    else if (!vote.walletAddress) note = "Connect a wallet on this battle's chain to vote. One Free Vote per wallet; each Boost ($1) adds 2 pts.";
-    else if (vote.model.walletVote) note = "Your Free Vote is in. Boosts ($1 each) still add 2 pts.";
-    else note = "One Free Vote per wallet (1 pt). Each Boost costs $1 and adds 2 pts.";
+    else if (!vote.walletAddress) note = "Connect a wallet on this battle's chain to vote. One Free Vote per wallet; each Boost ($1) adds 1 pt, max 2 per wallet.";
+    else if (vote.model.walletVote) note = `Your Free Vote is in. ${boost.allowance.label}`;
+    else note = "One Free Vote per wallet (1 pt). Each Boost costs $1 and adds 1 pt, max 2 per wallet.";
   }
+  if (!note && showBoost && boost.runtimeReady === true && (!boost.allowance.open || boost.allowance.remaining === 0)) note = boost.allowance.label;
 
   const renderSide = (side: (typeof sides)[number]) => {
     const votedHere = Boolean(vote.model.walletVote) && vote.model.walletVote === side.voteToken;
@@ -157,10 +158,10 @@ function CombatControls({
               type="button"
               className={BOOST_CLASS}
               disabled={boost.disabled || !side.boostToken || boost.sideBlocked(side.key)}
-              // A confirmed boost adds 2 pts server-side; re-read the tally now instead of waiting
+              // A confirmed boost adds 1 pt server-side; re-read the tally now instead of waiting
               // for the 15 s vote poll.
               onClick={() => void boost.boost(side.key, side.boostToken).finally(() => void vote.refresh())}
-              title={`${boosts} boost${boosts === 1 ? "" : "s"} on this side`}
+              title={!boost.allowance.open || boost.allowance.remaining === 0 ? boost.allowance.label : `${boosts} boost${boosts === 1 ? "" : "s"} on this side`}
             >
               <Zap className="h-4 w-4 shrink-0" aria-hidden />
               <span className="truncate">{boost.busySide === side.key ? "Boosting…" : boosts > 0 ? `Boost · ${boosts}` : "Boost"}</span>

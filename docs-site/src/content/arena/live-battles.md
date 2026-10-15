@@ -22,7 +22,9 @@ The first live battle is shown large at the top. Each battle card shows both coi
 | Vote Battle | free votes and boosts | 6, 12, 24 or 48 hours |
 | Metrics battle | change in market cap, holders and trading volume during the fight, plus boosts | 24 hours, 3 days or 7 days |
 
-In a Vote Battle each wallet has one free vote, worth 1 point. A boost costs $1 and adds 2 points. There is no limit on boosts.
+In a Vote Battle each wallet has one free vote, worth 1 point. A boost costs $1 and adds 1 point.
+
+In every battle, each wallet can buy 2 boosts in total, on either side. Boosts close when 80% of the battle time has passed: in a 24-hour battle, the last boost can be bought 19 hours and 12 minutes after the start.
 
 A metrics battle scores the change during the fight, in percent, so a bigger coin does not win just for being bigger. Both coins need live market data.
 

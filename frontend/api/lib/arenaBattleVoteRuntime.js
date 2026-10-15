@@ -1,6 +1,6 @@
 /**
  * Standalone Vote Battle voting: the Vote Tournament round rules
- * (one free vote per wallet, boosts = 2 pts) applied to a battle opened from
+ * (one free vote per wallet, boosts = 1 pt) applied to a battle opened from
  * the queue or a challenge. Rows live in arena_contest_actions exactly like
  * tournament rounds, with tournament_id null, match_id = battle id and
  * round_number 1, so the existing Final Salvo and boost readers keep working.
