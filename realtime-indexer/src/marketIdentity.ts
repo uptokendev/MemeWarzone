@@ -18,6 +18,8 @@ export type MarketIdentity = {
   matchedBy: "campaign" | "token";
   /** Raw normalized input. */
   inputAddress: string;
+  /** campaigns.factory_generation. 8 is a gen-8 coin, which has no campaign contract. */
+  factoryGeneration?: number | null;
 };
 
 function isSolanaChain(chainId: number) {
@@ -75,7 +77,8 @@ export async function resolveMarketIdentity(
   const result = await pool.query(
     `select
        campaign_address,
-       token_address
+       token_address,
+       factory_generation
      from public.campaigns
      where chain_id = $1
        and (
@@ -108,6 +111,7 @@ export async function resolveMarketIdentity(
     tokenAddress: isMarketAddress(chainId, tokenAddress) ? tokenAddress : "",
     matchedBy: campaignAddress === input ? "campaign" : "token",
     inputAddress: input,
+    factoryGeneration: row.factory_generation == null ? null : Number(row.factory_generation),
   };
 }
 
@@ -137,5 +141,6 @@ export async function resolveMarketIdentityOrPassthrough(
     tokenAddress: "",
     matchedBy: "campaign",
     inputAddress: input,
+    factoryGeneration: null,
   };
 }

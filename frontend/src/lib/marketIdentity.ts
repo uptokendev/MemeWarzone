@@ -11,6 +11,8 @@ export type MarketIdentity = {
   publicUrlAddress: string;
   /** True when indexer has no campaigns row yet (discovery/cleanup lag). */
   provisional?: boolean;
+  /** campaigns.factory_generation. 8 means the address is a gen-8 coin, not a campaign contract. */
+  generation?: number | null;
 };
 
 /**
@@ -48,6 +50,7 @@ export async function resolveMarketIdentity(input: {
       inputAddress: normalizeEvmAddress(body.inputAddress) || address,
       publicUrlAddress: normalizeEvmAddress(body.publicUrlAddress) || tokenAddress || campaignAddress,
       provisional,
+      generation: body.factoryGeneration == null || body.factoryGeneration === "" ? null : Number(body.factoryGeneration),
     };
   } catch {
     return null;
