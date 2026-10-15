@@ -12,6 +12,7 @@ File inventory for every task (paths, line ranges, REMOVE/KEEP/ADAPT calls): `do
 - **Audit before test** (spec §3 Audit, §5 Gate 0): t3, t32 and t4-t6 write contracts and their audit sections; no task deploys, calls or tests a Bark contract before t7 records PASS for all seven. A contract change after t7 updates `docs/dogeos/barkswap-audit.md` in the same commit (the changed function's reentrancy guard, CEI order, reachable states, over/underflow, griefing) and is re-reviewed.
 - EIP-170: every Bark contract's runtime ≤ 24,576 bytes (`node scripts/dogeos-bark-sizes.mjs`, added in t3, exits non-zero otherwise); every transaction ≤ 10M gas, launch ≤ 7M (spec §5).
 - Off-chain: the gen-8 V4 path for 56/97/4663/46630 keeps its behaviour; gen-8's existing tests (`npm --prefix realtime-indexer run test:evm-gen8` and the frontend gen-8 `node --test` files in Inv. §B) pass unchanged. 6281971 enters gen-8 code only through a `barkswap` venue branch.
+- **Row identity:** Bark rows keep `execution_source = 'gen8_v4'`, `venue = 'gen8'` and `factory_generation = 8`; the Barkswap venue lives only in gen-8 config and `evm_gen8_pools`. So every existing gen-8 reader (`useUnifiedMarket.ts`, `chart/gen8TokenPage.ts`, `marketContinuityApi.ts`, `tokenTradeList.ts`, `evmGen8SidePools.ts`) serves DogeOS unchanged, and no new `market_trades_v` label is added.
 - Every hand-kept chain list: 6281971 or a named entry in `scripts/dogeos-chain-list-exceptions.json`; `node --test scripts/dogeos-chain-list-guard.test.mjs` passes after every task. Source-pin tests change only to admit reviewed DogeOS changes (never weakened).
 - The DogeOS operator's public address is unknown until t29: code and guards take it from `DOGEOS_OPERATOR_ADDRESS` (env or deploy input), never hard-coded.
 - New keepers/workers are off by default behind per-chain env flags; nothing points at production services.
@@ -34,7 +35,7 @@ File inventory for every task (paths, line ranges, REMOVE/KEEP/ADAPT calls): `do
 ### Task 2: Bark fork harness and Barkswap fact pins            [id: t2]
 **Depends-on:** [t1]
 **TDD:** required
-**Files:** `hardhat.dogeos-bark-fork.config.ts`, `contracts/dogeos/barkswap/interfaces/**` (Algebra Integral 1.2.1 GPL interfaces only, as used by the proof), `test/dogeos/barkswap/fixtures/barkswap.ts` (addresses, impersonation, funding), `test/dogeos/barkswap/BarkswapFacts.fork.spec.ts`
+**Files:** `hardhat.dogeos-bark-fork.config.ts`, `.gitignore` (`artifacts-bark`, `cache-bark`), `contracts/dogeos/barkswap/interfaces/**` (Algebra Integral 1.2.1 GPL interfaces only, as used by the proof), `test/dogeos/barkswap/fixtures/barkswap.ts` (addresses, impersonation, funding), `test/dogeos/barkswap/BarkswapFacts.fork.spec.ts`
 - Spec §1, facts §1-§2; proof `run-proof.mjs` (local-block workaround for the fork's first block).
 - Config: gen-8 compiler settings; compiles `contracts/gen8/**` and `contracts/dogeos/barkswap/**` (source-paths override, own `artifacts-bark` / `cache-bark`, gitignored); Chikyū fork, chainId 6281971, block gas 10M, fork block pinned by `DOGEOS_FORK_BLOCK` (default: the proof's 8,578,734).
 - Facts test pins: factory/EP/router/QuoterV2/NPM/WDOGE have code, `POOL_INIT_CODE_HASH` = 1.2.1's, EP holds `CUSTOM_POOL_DEPLOYER`, default community fee 30.
@@ -92,14 +93,14 @@ File inventory for every task (paths, line ranges, REMOVE/KEEP/ADAPT calls): `do
 ### Task 8: Fork tests: launch and plugin invariants            [id: t8]
 **Depends-on:** [t7]
 **TDD:** required
-**Files:** `test/dogeos/barkswap/fixtures/barkswap.ts` (full-stack deploy helpers; this task owns the fixture), `test/dogeos/barkswap/BarkLaunch.fork.spec.ts`, `test/dogeos/barkswap/BarkPlugin.fork.spec.ts`, `test/fixtures/dogeos/barkSwapEvent.json` (recorded plugin and launcher events for t18)
+**Files:** `test/dogeos/barkswap/fixtures/barkswap.ts` (full-stack deploy helpers; this task owns the fixture), `test/dogeos/barkswap/BarkLaunch.fork.spec.ts`, `test/dogeos/barkswap/BarkPlugin.fork.spec.ts`, `test/fixtures/dogeos/barkSwapEvent.json` (recorded plugin and launcher events for t18, plus one signed create request: struct fields, salt, signature and signer, for t21)
 - Spec §3 Invariants (launch, init/LP guards, rate/decay/`openAt`, conversion 0 fee vs creator first buy 2%, latch, I6 burn at most once and never inside A, F2, restore incl. `setFee(0)`, swap-event fields and kinds), §5 gas.
 **Verify:** `npx hardhat --config hardhat.dogeos-bark-fork.config.ts test test/dogeos/barkswap/BarkLaunch.fork.spec.ts test/dogeos/barkswap/BarkPlugin.fork.spec.ts` → all passing, including an assertion that launch gas ≤ 7,000,000
 
 ### Task 9: Fork tests: money flow, attribution and Barkswap admin cases            [id: t9]
 **Depends-on:** [t8]
 **TDD:** required
-**Files:** `test/dogeos/barkswap/BarkMoney.fork.spec.ts`, `test/dogeos/barkswap/BarkAdmin.fork.spec.ts`
+**Files:** `test/dogeos/barkswap/BarkMoney.fork.spec.ts`, `test/dogeos/barkswap/BarkAdmin.fork.spec.ts`, `test/fixtures/dogeos/barkMoneyFlow.json` (recorded swaps, collects, `CoinFeesConverted` events, a route plan and the `routerPaid`/book read-backs, for t19)
 - Spec §3 Money flow, Attribution, Invariants (books = balances; uncollected within the stated tolerance; creator amounts B10 on gross; B11 net splitter base; never `OutOfBand` at any community fee incl. an impersonated admin raise; conversion cap/interval/dust/F2/launch window), admin `setPlugin`/`setPluginConfig`/`setCommunityFee`/`setFee` (principal safe, books correct, `restore`), side-pool creation.
 **Verify:** `npx hardhat --config hardhat.dogeos-bark-fork.config.ts test test/dogeos/barkswap/BarkMoney.fork.spec.ts test/dogeos/barkswap/BarkAdmin.fork.spec.ts` → all passing
 
@@ -115,12 +116,12 @@ File inventory for every task (paths, line ranges, REMOVE/KEEP/ADAPT calls): `do
 **TDD:** waived (deletion; the root suite and compile are the check)
 **Files:** per Inv. §C: `contracts/dogeos/muchfi/*`, `contracts/test/Muchfi*`, `docs/dogeos/muchfi-variants-audit-diff.md`, `test/Muchfi*.fork.spec.ts` + their helper, `test/DogeosGen7*.fork.spec.ts`, `scripts/lib/dogeosV3Stack.ts` + its spec
 - Spec §4 "Removed (B8)". The MuchFi JSON fixtures stay until t13 (indexer tests read them); `scripts/lib/dogeosGen7Stack.ts` and the deploy scripts go in t15 (their reusable parts move first).
-**Verify:** `git ls-files contracts test | grep -i muchfi` → exactly `test/fixtures/muchfiSlot0.json` and `test/fixtures/muchfiSwapLog.json`; root `npx hardhat compile` → success; root `npx hardhat test` → no new failures vs before the task
+**Verify:** `git ls-files contracts test | grep -i muchfi` → nothing except possibly `test/fixtures/muchfiSlot0.json` and `test/fixtures/muchfiSwapLog.json` (t13 deletes them); root `npx hardhat compile` → success; root `npx hardhat test` → no new failures vs before the task
 
 ### Task 12: Remove the gen-7/MuchFi DogeOS trade path from the app            [id: t12]
 **Depends-on:** none
 **TDD:** required (pin and launch-path tests change in the same commit)
-**Files:** per Inv. §C: `frontend/src/lib/robinhoodV3Trade.ts` (back to `3a10c6bf`), `robinhoodAdapter`/`robinhoodNativeSwapAdapterEnv` DogeOS branches, `TokenDetails.tsx` `isV3GraduatedTradePage` hunks, tests (`graduatedEvmTradeRoute.test.mjs` `DOGEOS_REVIEWED`, `dogeosLaunchPath.test.mjs`, adapter-env tests), `frontend/.gitignore` (`.mwz-dogeos-launch-path-*`), chain-list exceptions (frontend block)
+**Files:** per Inv. §C: `frontend/src/lib/robinhoodV3Trade.ts` (back to `3a10c6bf`), `robinhoodAdapter`/`robinhoodNativeSwapAdapterEnv` DogeOS branches, `TokenDetails.tsx` `isV3GraduatedTradePage` hunks, tests (`graduatedEvmTradeRoute.test.mjs` `DOGEOS_REVIEWED`, `dogeosLaunchPath.test.mjs`, adapter-env tests), `frontend/.gitignore` (`.mwz-dogeos-launch-path-*`), chain-list exceptions (frontend block), `scripts/dogeos-chain-list-guard.test.mjs` (anchors for removed branches)
 - Spec §4 "Removed (B8)". Keep the DOGE gas reserve and the foundation's identity/presentation.
 **Verify:** `cd frontend && node --test src/lib/graduatedEvmTradeRoute.test.mjs src/lib/dogeosLaunchPath.test.mjs src/lib/evmGen7Wiring.test.mjs src/lib/evmGen6Wiring.test.mjs` → no failures beyond the known pre-existing ones; `git diff 3a10c6bf -- frontend/src/lib/robinhoodV3Trade.ts` → empty; chain-list guard → pass
 
@@ -134,14 +135,14 @@ File inventory for every task (paths, line ranges, REMOVE/KEEP/ADAPT calls): `do
 ### Task 14: Remove the gen-7 DogeOS paths from the API            [id: t14]
 **Depends-on:** [t13]
 **TDD:** required
-**Files:** per Inv. §C: `route-auth.js` / `routeAuthorizationSigner.js` 6281971 pair `[7,6]` and gen-7 test-target gates, tests (`frontend/api/dev-fix/dogeosRouteAuth.test.mjs`, `frontend/api/lib/dogeosApiIdentity.test.mjs` parts), chain-list exceptions (API block)
-- Spec §4 "Removed (B8)". The `20261010` migration keeps its $150 constraint (Inv. §C). The gen-7 DogeOS Create readiness in `frontend/src/lib/bnbContracts.ts` is not touched here: t22 replaces it in one edit. The per-chain route-key resolution tests in `dogeosRouteAuth.test.mjs` (L212-273) move to t21's test file, not deleted.
+**Files:** per Inv. §C: `route-auth.js` / `routeAuthorizationSigner.js` 6281971 pair `[7,6]` and gen-7 test-target gates, tests (`frontend/api/dev-fix/dogeosRouteAuth.test.mjs`, `frontend/api/lib/dogeosApiIdentity.test.mjs` parts), chain-list exceptions (API block), `scripts/dogeos-chain-list-guard.test.mjs` (anchors for removed branches)
+- Spec §4 "Removed (B8)". The `20261010` migration keeps its $150 constraint (Inv. §C). The gen-7 DogeOS Create readiness in `frontend/src/lib/bnbContracts.ts` is not touched here: t22 replaces it in one edit. `dogeosRouteAuth.test.mjs` is deleted here; its route-key resolution cases (L212-273) are re-created in t21's `evmGen8BarkCreate.test.mjs`.
 **Verify:** `cd frontend && node --test api/dev-fix/route-authorization-gen7.test.mjs api/lib/dogeosApiIdentity.test.mjs` → pass; chain-list guard → pass
 
 ### Task 15: DogeOS Bark deploy stack            [id: t15]
-**Depends-on:** [t7, t11]
+**Depends-on:** [t7, t11, t17]
 **TDD:** required
-**Files:** `scripts/lib/dogeosBarkStack.ts` (new; lifts oracle, `GraduationOracle`, vault deploys and the manifest writer from `dogeosGen7Stack.ts`, which is deleted), `scripts/deploy-dogeos-testnet.ts`, `scripts/verify-dogeos-testnet.ts`, `scripts/activate-dogeos-testnet.ts`, `scripts/lib/dogeosTestnetDeployGuards.mjs`, `scripts/dogeos-testnet-deploy-guards.test.mjs` (rewritten), `hardhat.dogeos-bark-verify.config.ts` (new: Bark build settings + `dogeosTestnet` network + explorer, for the seven Bark contracts; `hardhat.dogeos-verify.config.ts` stays 0.8.24 for the reused contracts), `scripts/lib/deployFactoryWithLocker.ts` (revert the DogeOS `lockerName` option if nothing else uses it), `scripts/make-airdrop-setup-calls.mjs`, `scripts/dogeos-chain-list-exceptions.json` (drop entries made stale by the guard changes), `test/dogeos/barkswap/DogeosBarkStack.fork.spec.ts` (imports only t2's fixture exports and adds nothing to the fixture file, which t8 owns)
+**Files:** `scripts/lib/dogeosBarkStack.ts` (new; lifts oracle, `GraduationOracle`, vault deploys and the manifest writer from `dogeosGen7Stack.ts`, which is deleted), `scripts/deploy-dogeos-testnet.ts`, `scripts/verify-dogeos-testnet.ts`, `scripts/activate-dogeos-testnet.ts`, `scripts/lib/dogeosTestnetDeployGuards.mjs`, `scripts/dogeos-testnet-deploy-guards.test.mjs` (rewritten), `hardhat.dogeos-bark-verify.config.ts` (new: Bark build settings + `dogeosTestnet` network + explorer, for the seven Bark contracts; `hardhat.dogeos-verify.config.ts` stays 0.8.24 for the reused contracts) and an npm script `verify:dogeos-bark-testnet` that runs explorer verification with it, `package.json` (that script line only), `scripts/lib/deployFactoryWithLocker.ts` (revert the DogeOS `lockerName` option if nothing else uses it), `scripts/make-airdrop-setup-calls.mjs`, `scripts/dogeos-chain-list-exceptions.json` (drop entries made stale by the guard changes), `test/dogeos/barkswap/DogeosBarkStack.fork.spec.ts` (imports only t2's fixture exports and adds nothing to the fixture file, which t8 owns)
 - Spec §3 (contracts, "Reused unchanged", Roles B9), §5 Deployment 1; Inv. §C/§D.
 - No `TreasuryRouterV4` or capped main vault; wire `CommunityRewardsVault` the way gen-8 does (`e129712b9:scripts/gen8/deploy/`). Guards: Barkswap addresses and code-hash pins replace MuchFi's; the operator address comes from `DOGEOS_OPERATOR_ADDRESS` and must differ from deployer/keeper/updater/route authority.
 **Verify:** `npx hardhat --config hardhat.dogeos-bark-fork.config.ts test test/dogeos/barkswap/DogeosBarkStack.fork.spec.ts` → passing (deploy + activate in one fork, read-backs of every role and address); `node --test scripts/dogeos-testnet-deploy-guards.test.mjs` → pass; `git ls-files scripts/lib/dogeosGen7Stack.ts` → empty; chain-list guard → pass
@@ -149,7 +150,7 @@ File inventory for every task (paths, line ranges, REMOVE/KEEP/ADAPT calls): `do
 ### Task 16: Env generator, env examples and keeper guards            [id: t16]
 **Depends-on:** [t15, t17]
 **TDD:** required
-**Files:** `scripts/dogeos-env-blocks.mjs` (+ its test), `.env.example`, `frontend/.env.example`, `config/coolify-qa-staging.env.example`, `realtime-indexer/src/evm/*` `FORBIDDEN_KEEPER_ADDRESSES` for 6281971 (operator from `DOGEOS_OPERATOR_ADDRESS`), `scripts/dogeos-chain-list-exceptions.json`
+**Files:** `scripts/dogeos-env-blocks.mjs` (+ its test), `.env.example`, `frontend/.env.example`, `config/coolify-qa-staging.env.example`, `realtime-indexer/src/evm/evmGraduationKeeper.ts` `FORBIDDEN_KEEPER_ADDRESSES` for 6281971 (operator from `DOGEOS_OPERATOR_ADDRESS`), `scripts/dogeos-chain-list-exceptions.json`
 - Spec §4 Indexer config, Keepers; B9. Placeholders only, never key values.
 **Verify:** `node --test scripts/dogeos-env-blocks.test.mjs` → pass; `cd realtime-indexer && npx tsx --test src/tests/dogeosGraduationKeeper.test.ts` → pass (forbidden list includes the operator when set); chain-list guard → pass
 
@@ -164,6 +165,7 @@ File inventory for every task (paths, line ranges, REMOVE/KEEP/ADAPT calls): `do
 **Depends-on:** [t8, t17]
 **TDD:** required
 **Files:** `realtime-indexer/src/evm/evmGen8Bark.ts` (launcher + plugin log decode and ingestion, from the t7 ABIs), wiring in `evmGen8Pool.ts`/`server.ts` by venue, `evmGen8Holders.ts` (exclude pool, launcher, plugin, reserve lock, escrow, choice vault for 6281971), `evmGen8HolderBatch.ts` (pool-id representation for Algebra pools), `realtime-indexer/src/tests/evmGen8Bark.test.ts`
+- Rows use `execution_source = 'gen8_v4'` (global constraint "Row identity").
 - Spec §4 Indexer (two addresses, windowed getLogs, trader `tx.from`, D14, stats from pool price, swap kinds: conversion writes no trade/accrual row, escrow/buyback `league_excluded`); fixture from t8.
 **Verify:** `cd realtime-indexer && npx tsx --test src/tests/evmGen8Bark.test.ts` → pass (a recorded Bark swap produces the same row shape as a recorded V4 swap); `npm --prefix realtime-indexer run test:evm-gen8` → all pass
 
@@ -172,7 +174,7 @@ File inventory for every task (paths, line ranges, REMOVE/KEEP/ADAPT calls): `do
 **TDD:** required
 **Files:** `realtime-indexer/src/evm/evmGen8Fees.ts`, `realtime-indexer/src/evm/evmGen8FeeRouting.ts` (route-run row selection and the Bark `ethersRouteChain` venue branch reading the launcher's `routerPaid` and sending `claimRouter`), `realtime-indexer/src/evm/evmGen8Pool.ts` (apply-trade only if needed), `realtime-indexer/src/evm/evmGen8BarkAttribution.ts`, `realtime-indexer/src/tests/evmGen8BarkAttribution.test.ts`
 - Spec §3 "Attribution for D1" (buy rows final at swap; sell rows converted by each `CoinFeesConverted` fraction at its average price; route row set matches `expectedPaid`), B11 net base, epoch rule (unconverted remainder counts in the converting epoch).
-**Verify:** `cd realtime-indexer && npx tsx --test src/tests/evmGen8BarkAttribution.test.ts` → pass (a scripted sequence of swaps, collects, partial conversions and a route plan reconciles to the wei with the t9-recorded `routerPaid`); `npm --prefix realtime-indexer run test:evm-gen8` → all pass
+**Verify:** `cd realtime-indexer && npx tsx --test src/tests/evmGen8BarkAttribution.test.ts` → pass (a scripted sequence of swaps, collects, partial conversions and a route plan reconciles to the wei with `routerPaid` and the books in `test/fixtures/dogeos/barkMoneyFlow.json`); `npm --prefix realtime-indexer run test:evm-gen8` → all pass
 
 ### Task 20: DogeOS keepers            [id: t20]
 **Depends-on:** [t19, t16]
@@ -184,7 +186,7 @@ File inventory for every task (paths, line ranges, REMOVE/KEEP/ADAPT calls): `do
 ### Task 21: API: campaign state and signed create for Barkswap            [id: t21]
 **Depends-on:** [t17, t7]
 **TDD:** required
-**Files:** `frontend/api/lib/evmGen8CampaignState.js` (venue branch), `frontend/api/dev-fix/evmGen8CreateAuthorization.js` (+ CREATE2 salt search so the coin sorts below WDOGE), `frontend/api/lib/evmCampaignProgress.js`, `frontend/api/lib/evmGen8BarkCreate.test.mjs` (new; includes the route-key resolution cases moved from t14)
+**Files:** `frontend/api/lib/evmGen8CampaignState.js` (venue branch), `frontend/api/dev-fix/evmGen8CreateAuthorization.js` (+ CREATE2 salt search so the coin sorts below WDOGE), `frontend/api/lib/evmCampaignProgress.js`, `frontend/api/lib/evmGen8Coins.js` (`findGen8Coin` RPC fallback reads the launcher for 6281971), `frontend/api/lib/evmGen8BarkCreate.test.mjs` (new; includes the route-key resolution cases moved from t14)
 - Spec §4 API, §3 launcher (salt, `openAt`); the create signer is the DogeOS route-authority key (B9). V4 branch unchanged.
 **Verify:** the gen-8 API tests (Inv. §B) → unchanged results; `cd frontend && node --test api/lib/evmGen8BarkCreate.test.mjs` → pass (salt always sorts below WDOGE; the test replays the launcher's create digest from `MwzBarkLauncher.sol` and the t8 fixture, and the signature recovers to the create signer)
 
@@ -198,7 +200,7 @@ File inventory for every task (paths, line ranges, REMOVE/KEEP/ADAPT calls): `do
 ### Task 23: Staging migration for Barkswap rows            [id: t23]
 **Depends-on:** [t19]
 **TDD:** required
-**Files:** `db/migrations/20261015_000010_dogeos_barkswap.sql` (side-pool venue value, event kinds, `market_trades_v` label, conversion bookkeeping if t19 needs it), `database/staging_apply_dogeos_barkswap.sh` (new; applies 20261010 then 20261015), `database/staging_apply_dogeos_launch_path.sh` and `db/migrations/dogeosLaunchPathMigration.test.mjs` (deleted; the new test covers the 20261010 checks it had), `db/migrations/dogeosBarkswapMigration.test.mjs` (new)
+**Files:** `db/migrations/20261015_000010_dogeos_barkswap.sql` (side-pool venue value, event kinds, conversion bookkeeping if t19 needs it; no new `market_trades_v` label), `database/staging_apply_dogeos_barkswap.sh` (new; applies 20261010 then 20261015), `database/staging_apply_dogeos_launch_path.sh` and `db/migrations/dogeosLaunchPathMigration.test.mjs` (deleted; the new test covers the 20261010 checks it had), `db/migrations/dogeosBarkswapMigration.test.mjs` (new)
 - Spec §4 Database (incl. "the 2026-10-10 DogeOS migration is revised": record in the new migration's header that `20261010` stays as is, per Inv. §C). Not run anywhere in this task.
 **Verify:** `node --test db/migrations/*.test.mjs` → pass
 
@@ -241,7 +243,7 @@ File inventory for every task (paths, line ranges, REMOVE/KEEP/ADAPT calls): `do
 **TDD:** waived (on-chain deploy)
 **Files:** `deployments/dogeos/testnet.bark.json` (manifest)
 - Spec §5 Deployment 1. **Stop and ask the founder for an explicit go first.** The founder generates the operator key and provides its address (`DOGEOS_OPERATOR_ADDRESS`); deployer funded. Deploy, verify on the explorer, activate.
-**Verify:** `npm run verify:dogeos-testnet` → every read-back passes against the manifest
+**Verify:** `npm run verify:dogeos-testnet` → every read-back passes against the manifest; `npm run verify:dogeos-bark-testnet` → the seven Bark contracts verified on the explorer
 
 ### Task 30: FOUNDER-GATED — TEST wiring            [id: t30]
 **Depends-on:** [t29]
