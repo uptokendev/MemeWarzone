@@ -6,7 +6,10 @@
  * lands while the loop is idle is still inside the next range.
  */
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { GEN8_LAUNCHER_IFACE } from "../evm/evmGen8Abi.js";
 import type { Gen8ChainConfig } from "../evm/evmGen8Config.js";
 import type { Gen8Provider, Gen8Sinks } from "../evm/evmGen8Pool.js";
@@ -263,4 +266,18 @@ test("a quiet minute still checks the tip once, and a posted gen-8 fill asks for
   const notGen8 = { query: async () => ({ rows: [] }) };
   assert.equal(await wakeGen8Campaign(notGen8, 46630, coin, env), false);
   assert.equal(gen8FastPollPending(46630), false);
+});
+
+test("the ingest route logs a gen-8 wake and returns before the gen-7 scanner", () => {
+  const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../server.ts"), "utf8");
+  const start = src.indexOf('app.post("/api/token/:campaign/ingest-tx"');
+  const end = src.indexOf('app.post("/internal/indexer/ingest-tx"');
+  const pub = src.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.match(pub, /wakeIfGen8Campaign\(chainId, campaign, evmHash\)/);
+  assert.ok(pub.indexOf('skipped: "gen8_fast"') < pub.indexOf("ingestCampaignTransaction"));
+  assert.match(src, /console\.log\("\[gen8\] fast poll", \{ chainId, campaign, txHash \}\)/);
+  const internal = src.slice(end, src.indexOf('app.post("/internal/indexer/solana-backfill-campaign"'));
+  assert.match(internal, /wakeIfGen8Campaign\(chainId, campaign, txHash\)/);
+  assert.ok(internal.indexOf('skipped: "gen8_fast"') < internal.indexOf("ingestCampaignTransaction"));
 });

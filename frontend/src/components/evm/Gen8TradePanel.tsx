@@ -31,6 +31,7 @@ import {
   rememberProtectedRpcChoice,
 } from "@/lib/bscProtectedRpc.mjs";
 import { GEN8_COIN_POLL_MS, useNowSeconds, type Gen8CoinState } from "@/hooks/useGen8Coin";
+import { notifyIndexerFills } from "@/lib/indexerTradeIngest";
 import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 type Quote = {
@@ -245,11 +246,14 @@ export function Gen8TradePanel({
         side === "buy" && escrowBuy
           ? await executeGen8EscrowBuy({ signer, chainId, cfg, token, amountIn: amountRaw, slippageBps: slippageArg, readProvider })
           : await executeGen8Trade({ signer, chainId, cfg, token, side, amountIn: amountRaw, slippageBps: slippageArg, readProvider });
+      const txHash = result.receipt?.hash ?? null;
+      // The token is the gen-8 campaign. This post wakes the indexer; the approval transactions are not this hash.
+      if (txHash) notifyIndexerFills({ chainId, campaignAddress: token, txHashes: [txHash] });
       toast.success(`${side === "buy" ? "Buy" : "Sell"} confirmed: ${String(result.receipt?.hash || "").slice(0, 10)}…`);
       setAmount("");
       setQuote(null);
       setBalanceTick((n) => n + 1);
-      onTraded?.({ side, txHash: result.receipt?.hash ?? null });
+      onTraded?.({ side, txHash });
     } catch (error) {
       toast.error(gen8ErrorMessage(error) || String((error as Error)?.message || "Trade failed."));
     } finally {
