@@ -195,7 +195,21 @@ async function runChain(chainId, port, { display, extraRouters = [] }) {
     const hfSell = events(sell.receipt, HOOK_IFACE, "HookFee")[0];
     assert.equal(BigInt(hfSell.args.fee), qSell.feeWei, "sell fee == gross-for-net split");
     assert.equal(BigInt(hfSell.args.curveAmount), qSell.curveWei);
-    assert.equal(swap.decodeGen8RouterCall(sell.call.data, cfg.router.layout).permit.permitSingle.details.amount, sellAmount, "permit for exactly the sell");
+    const decodedSell = swap.decodeGen8RouterCall(sell.call.data, cfg.router.layout);
+    assert.equal(decodedSell.permit, null, "the swap carries no permit");
+    assert.deepEqual(decodedSell.commands, [swap.UR_COMMANDS.V4_SWAP]);
+    const erc20Read = new ethers.Contract(token, ["function allowance(address,address) view returns (uint256)"], provider);
+    const permit2Read = new ethers.Contract(swap.PERMIT2_ADDRESS, swap.PERMIT2_ABI, provider);
+    assert.equal(await erc20Read.allowance(buyer.address, swap.PERMIT2_ADDRESS), (1n << 256n) - 1n, "ERC20 allowance to Permit2 is the max");
+    const standing = await permit2Read.allowance(buyer.address, token, cfg.router.address);
+    assert.equal(swap.gen8RouterAllowanceCovers(standing, sellAmount, Number((await provider.getBlock("latest")).timestamp)), true);
+    const sellAgainAmount = sellAmount / 5n;
+    const nonceBefore = await provider.getTransactionCount(buyer.address);
+    const qSellAgain = await client.quoteGen8Trade({ provider, cfg, token, side: "sell", amountIn: sellAgainAmount, slippageBps: client.GEN8_AUTO_SLIPPAGE });
+    const sellAgain = await client.executeGen8Trade({ signer: buyer, chainId, cfg, token, side: "sell", amountIn: sellAgainAmount, quote: qSellAgain });
+    assert.equal(Number(await provider.getTransactionCount(buyer.address)) - Number(nonceBefore), 1, "a later sell is only the swap");
+    assert.equal(swap.decodeGen8RouterCall(sellAgain.call.data, cfg.router.layout).permit, null);
+    assert.equal(await nativeDelta(provider, buyer.address, sellAgain.receipt), qSellAgain.amountOut, "second sell == quote");
     r.sellGas = Number(sell.receipt.gasUsed);
 
     // ---- F14: native left in the router. Exact input settles exactly msg.value (nothing left); exact output pays
@@ -266,18 +280,33 @@ async function runChain(chainId, port, { display, extraRouters = [] }) {
     assert.equal(recorded[0].fingerprint, evmFingerprint(landed.to, landed.data, landed.value), "partner link: landed tx fingerprint == recorded build");
     assert.equal(events(sent, HOOK_IFACE, "HookFee")[0].args.referrer, swap.GEN8_REFERRER_WIDGET);
     assert.deepEqual(await gen8SwapStatusCore({ chainId, txHash: sent.hash }, wdeps), { chainId, status: "success", blockNumber: sent.blockNumber });
-    // widget sell: first answer asks for the approval and the permit, the second builds with the signed permit
+    // widget sell: first answer is the one-time allowance; the rebuild is only the swap. A signed permit is still accepted.
     const sellRaw = BigInt(wq.amountOut) / 2n;
     const step1 = await gen8SwapBuildCore({ chainId, token, side: "sell", wallet: buyer2.address, amountRaw: sellRaw.toString(), partner: "crypticpump" }, wdeps);
-    assert.equal(step1.needsPermit, true);
-    assert.ok(step1.approval, "first sell: exact ERC20 approval to Permit2");
+    assert.equal(step1.needsAllowance, true);
+    assert.equal(step1.needsPermit, undefined);
+    assert.equal(step1.approval.to, ethers.getAddress(token));
+    assert.equal(step1.permit2Approval.to, swap.PERMIT2_ADDRESS);
+    assert.equal(recorded.length, 1, "the allowance step is not a partner swap");
+    const nowSec = Number((await provider.getBlock("latest")).timestamp);
+    const typed = swap.gen8PermitTypedData({ chainId, token, amount: sellRaw, nonce: 0n, spender: cfg.router.address, nowSec });
+    const signature = await buyer2.signTypedData(typed.domain, typed.types, typed.message);
+    await assert.rejects(gen8SwapBuildCore({ chainId, token, side: "sell", wallet: buyer.address, amountRaw: sellRaw.toString(), permit: { permitSingle: typed.message, signature } }, wdeps), /not signed by this wallet/);
+    const permitted = await gen8SwapBuildCore({ chainId, token, side: "sell", wallet: buyer2.address, amountRaw: sellRaw.toString(), permit: { permitSingle: typed.message, signature } }, wdeps);
+    assert.equal(swap.decodeGen8RouterCall(permitted.data, cfg.router.layout).permit.permitSingle.details.amount, sellRaw, "a caller that still sends a permit gets it encoded");
+    assert.equal(recorded.length, 1, "that permit build named no partner");
     await (await buyer2.sendTransaction({ to: step1.approval.to, data: step1.approval.data })).wait();
-    const t = step1.permitTypedData;
-    const signature = await buyer2.signTypedData(t.domain, t.types, t.message);
-    await assert.rejects(gen8SwapBuildCore({ chainId, token, side: "sell", wallet: buyer.address, amountRaw: sellRaw.toString(), permit: { permitSingle: t.message, signature } }, wdeps), /not signed by this wallet/);
-    const step2 = await gen8SwapBuildCore({ chainId, token, side: "sell", wallet: buyer2.address, amountRaw: sellRaw.toString(), permit: { permitSingle: t.message, signature }, partner: "crypticpump" }, wdeps);
+    await (await buyer2.sendTransaction({ to: step1.permit2Approval.to, data: step1.permit2Approval.data })).wait();
+    const step2 = await gen8SwapBuildCore({ chainId, token, side: "sell", wallet: buyer2.address, amountRaw: sellRaw.toString(), partner: "crypticpump" }, wdeps);
+    assert.equal(step2.needsAllowance, undefined);
+    assert.equal(swap.decodeGen8RouterCall(step2.data, cfg.router.layout).permit, null, "the swap after the allowance carries no permit");
     const sold = await (await buyer2.sendTransaction({ to: step2.to, data: step2.data, value: 0n })).wait();
     assert.equal(await nativeDelta(provider, buyer2.address, sold), BigInt(step2.quote.amountOut), "widget sell == the build's quote");
+    assert.equal(recorded.length, 2);
+    const again = await gen8SwapBuildCore({ chainId, token, side: "sell", wallet: buyer2.address, amountRaw: (sellRaw / 4n).toString() }, wdeps);
+    assert.equal(again.needsAllowance, undefined);
+    assert.ok(again.to && again.data, "a later sell is the swap itself");
+    assert.equal(swap.decodeGen8RouterCall(again.data, cfg.router.layout).permit, null);
     assert.equal(recorded.length, 2);
     const bal = await gen8SwapBalancesCore({ chainId, token, wallet: buyer2.address }, wdeps);
     assert.equal(BigInt(bal.tokenRaw), await new ethers.Contract(token, ERC20, provider).balanceOf(buyer2.address));

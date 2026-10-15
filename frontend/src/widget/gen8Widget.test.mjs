@@ -1,7 +1,7 @@
-// The gen-8 EVM widget's wallet helpers (src/widget/gen8Widget.ts): hex values, the eth_signTypedData_v4 JSON of the
-// Permit2 permit the API hands out (signed here and recovered as the API recovers it), wallet detection, and that
-// mount() picks the EVM widget only for { chainId, token }. The swaps themselves are built by the API
-// (api/gen8Swap.js; executed against Uniswap's real contracts in src/lib/evmGen8Client.chain.test.mjs).
+// The gen-8 EVM widget's wallet helpers (src/widget/gen8Widget.ts): hex values, the EIP-712 JSON of a Permit2 permit
+// (the sell path no longer asks for one; a caller that still has one recovers the same way the API checks it),
+// wallet detection, and that mount() picks the EVM widget only for { chainId, token }. The swaps themselves are
+// built by the API (api/gen8Swap.js; executed against Uniswap's real contracts in src/lib/evmGen8Client.chain.test.mjs).
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -30,6 +30,14 @@ try {
 }
 const { hexValue, typedDataJson, findEvmWallet, formatPriceImpact, slippageRequest, shouldOfferProtectedRpc, GEN8_WIDGET_REFRESH_MS } = mod;
 const { gen8PermitTypedData } = await import("../../shared/evmGen8Swap.mjs");
+
+test("a sell sends allowance transactions and does not ask for a typed-data permit", () => {
+  const src = fs.readFileSync(path.join(dir, "gen8Widget.ts"), "utf8");
+  assert.match(src, /needsAllowance/);
+  assert.match(src, /permit2Approval/);
+  assert.doesNotMatch(src, /eth_signTypedData_v4/);
+  assert.doesNotMatch(src, /needsPermit/);
+});
 
 test("the widget reloads the lens on a 60s timer, not a 5s one", () => {
   assert.equal(GEN8_WIDGET_REFRESH_MS, 60_000);

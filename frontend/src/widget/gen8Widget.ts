@@ -7,7 +7,8 @@
  * the coin's own Uniswap V4 pool, so a partner's builds carry the partner fingerprint the API records. The fee is the
  * pool's own (2% before graduation, 1% after, half of it to the coin's creator), taken on chain. The widget talks to
  * the page's EVM wallet through EIP-1193 only (no ethers, no RPC of its own): eth_requestAccounts,
- * wallet_switchEthereumChain, eth_sendTransaction, and eth_signTypedData_v4 for a sell's Permit2 permit.
+ * wallet_switchEthereumChain, and eth_sendTransaction. The first sell of a coin approves Permit2 and sets one
+ * allowance for our router. Every later sell is only the swap.
  */
 import { STYLE, fromRaw, toRaw } from "./widgetShared";
 import { addProtectedBscRpc, offersProtectedRpc, readProtectedRpcChoice, rememberProtectedRpcChoice } from "../lib/bscProtectedRpc.mjs";
@@ -47,7 +48,9 @@ type TokenInfo = {
 };
 type Quote = { amountIn: string; amountOut: string; minAmountOut: string; slippageBps: number; slippageAuto?: boolean; priceImpactBps?: number | null; feeBps: number; feeNativeRaw: string; creatorShareNativeRaw: string; phase: string };
 type Built = { to: string; data: string; value: string; quote: Quote };
-type NeedsPermit = { needsPermit: true; approval: { to: string; data: string; value: string } | null; permitTypedData: { domain: Record<string, unknown>; types: Record<string, Array<{ name: string; type: string }>>; primaryType: string; message: Record<string, unknown> }; quote: Quote };
+type TxStep = { to: string; data: string; value: string };
+type NeedsAllowance = { needsAllowance: true; approval: TxStep | null; permit2Approval: TxStep | null; quote: Quote };
+type PermitTypedData = { domain: Record<string, unknown>; types: Record<string, Array<{ name: string; type: string }>>; primaryType: string; message: Record<string, unknown> };
 
 const DEFAULT_API = "https://api.memewar.zone";
 const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
@@ -60,8 +63,8 @@ export function hexValue(value: string | bigint): string {
   return `0x${BigInt(value).toString(16)}`;
 }
 
-/** The EIP-712 JSON eth_signTypedData_v4 takes (the EIP712Domain type added from the domain's fields). */
-export function typedDataJson(t: NeedsPermit["permitTypedData"]): string {
+/** EIP-712 JSON for a Permit2 permit (the EIP712Domain type added from the domain's fields). The sell path does not ask for one. */
+export function typedDataJson(t: PermitTypedData): string {
   const domainTypes = [
     { name: "name", type: "string" },
     { name: "chainId", type: "uint256" },
@@ -435,16 +438,19 @@ export class Gen8SwapWidget {
       await this.ensureChain(wallet);
       const body = { chainId: this.token.chainId, token: this.token.token, side: this.side, wallet: this.account, amountRaw: raw.toString(), ...slippageRequest(this.options), ...(this.options.partner ? { partner: this.options.partner } : {}) };
       this.say("Getting the latest price...");
-      let built = await this.call<Built | NeedsPermit>("/api/widget/swap/gen8/build", { method: "POST", body: JSON.stringify(body) });
-      if ((built as NeedsPermit).needsPermit) {
-        const step = built as NeedsPermit;
+      let built = await this.call<Built | NeedsAllowance>("/api/widget/swap/gen8/build", { method: "POST", body: JSON.stringify(body) });
+      if ((built as NeedsAllowance).needsAllowance) {
+        const step = built as NeedsAllowance;
         if (step.approval) {
-          this.say("Approve the token in your wallet (one time for this amount)...");
+          this.say("Approve this coin once in your wallet...");
           await this.send(wallet, step.approval);
         }
-        this.say("Sign the permit for this sell in your wallet (no gas)...");
-        const signature = String(await wallet.request({ method: "eth_signTypedData_v4", params: [this.account, typedDataJson(step.permitTypedData)] }));
-        built = await this.call<Built>("/api/widget/swap/gen8/build", { method: "POST", body: JSON.stringify({ ...body, permit: { permitSingle: step.permitTypedData.message, signature } }) });
+        if (step.permit2Approval) {
+          this.say("Allow the router once in your wallet...");
+          await this.send(wallet, step.permit2Approval);
+        }
+        built = await this.call<Built | NeedsAllowance>("/api/widget/swap/gen8/build", { method: "POST", body: JSON.stringify(body) });
+        if ((built as NeedsAllowance).needsAllowance) throw new Error("The allowance is not visible yet. Try the sell again.");
       }
       const tx = built as Built;
       this.say("Confirm the swap in your wallet...");

@@ -3,11 +3,13 @@
 // Permit2 permit. Execution against the real routers is in src/lib/evmGen8Client.chain.test.mjs (local forks).
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AbiCoder, Wallet, getAddress, verifyTypedData } from "ethers";
+import { AbiCoder, Interface, Wallet, getAddress, verifyTypedData } from "ethers";
 import {
   GEN8_KNOWN_ROUTERS,
   GEN8_REFERRER_APP,
   GEN8_REFERRER_WIDGET,
+  GEN8_ROUTER_ALLOWANCE_SECONDS,
+  GEN8_SWAP_DEADLINE_SECONDS,
   PERMIT2_ADDRESS,
   UR_COMMANDS,
   UR_MSG_SENDER,
@@ -30,7 +32,9 @@ import {
   gen8SizedSlippageBps,
   gen8UsesSizedSlippage,
   gen8RouterFor,
+  gen8RouterAllowanceCovers,
   gen8SellFeeSplit,
+  gen8SellSetup,
   permitFromJson,
   permitToJson,
 } from "./evmGen8Swap.mjs";
@@ -149,6 +153,38 @@ test("refusals: unknown layout, coin as currency0, zero amount, a permit on a bu
   assert.throws(() => buildGen8RouterCall({ router: ROUTER, layout: "v2.1", poolKey: KEY, side: "buy", amount: 1n, limit: 0n, deadline: 1n, permit: { permitSingle: {}, signature: "0x" } }), /sell/);
   assert.throws(() => gen8MinOut(100n, 6000), /slippage/);
   assert.equal(gen8MinOut(10_000n, 100), 9_900n);
+});
+
+test("a sell's one-time setup: max approval to Permit2 and one router allowance, then nothing", () => {
+  const now = 1_700_000_000;
+  const amount = 5n * 10n ** 21n;
+  const max256 = (1n << 256n) - 1n;
+  const max160 = (1n << 160n) - 1n;
+  const erc20 = new Interface(["function approve(address spender, uint256 value) returns (bool)"]);
+  const permit2 = new Interface(["function approve(address token, address spender, uint160 amount, uint48 expiration)"]);
+  const both = gen8SellSetup({ token: TOKEN, router: ROUTER, erc20Allowance: 0n, permit2Allowance: [0n, 0n, 0n], amountIn: amount, nowSec: now });
+  assert.equal(both.approval.to, TOKEN);
+  assert.equal(both.approval.value, "0");
+  const approved = erc20.decodeFunctionData("approve", both.approval.data);
+  assert.equal(approved[0], PERMIT2_ADDRESS);
+  assert.equal(approved[1], max256);
+  assert.equal(both.permit2Approval.to, PERMIT2_ADDRESS);
+  assert.equal(both.permit2Approval.value, "0");
+  const allowed = permit2.decodeFunctionData("approve", both.permit2Approval.data);
+  assert.equal(allowed[0], TOKEN);
+  assert.equal(allowed[1], ROUTER);
+  assert.equal(allowed[2], max160);
+  assert.equal(allowed[3], BigInt(now) + BigInt(GEN8_ROUTER_ALLOWANCE_SECONDS));
+
+  const covered = { amount: max160, expiration: BigInt(now) + BigInt(GEN8_SWAP_DEADLINE_SECONDS) + 1n };
+  assert.equal(gen8SellSetup({ token: TOKEN, router: ROUTER, erc20Allowance: max256, permit2Allowance: covered, amountIn: amount, nowSec: now }), null);
+  const short = gen8SellSetup({ token: TOKEN, router: ROUTER, erc20Allowance: max256, permit2Allowance: { amount, expiration: BigInt(now) + BigInt(GEN8_SWAP_DEADLINE_SECONDS) }, amountIn: amount, nowSec: now });
+  assert.equal(short.approval, null);
+  assert.ok(short.permit2Approval, "an allowance that dies before the swap deadline is refreshed");
+  const exact = gen8SellSetup({ token: TOKEN, router: ROUTER, erc20Allowance: amount, permit2Allowance: covered, amountIn: amount, nowSec: now });
+  assert.ok(exact.approval, "an exact ERC20 approval is raised to the max once");
+  assert.equal(exact.permit2Approval, null);
+  assert.equal(gen8RouterAllowanceCovers({ amount: amount - 1n, expiration: BigInt(now) + 10n ** 9n }, amount, now), false);
 });
 
 test("Permit2 typed data: signed by the wallet, recovers, round-trips through JSON", async () => {

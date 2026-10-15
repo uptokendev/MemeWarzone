@@ -431,7 +431,7 @@ export function Gen8TradePanel({
           void trade();
         }}
       >
-        {!account ? `Connect ${robinhood ? "Robinhood" : "BNB"} wallet` : !tradingOpen ? "Trading not open yet" : busy ? (side === "sell" ? "Approve and sign in your wallet..." : "Confirm in your wallet...") : `${side === "buy" ? "Buy" : "Sell"} ${symbol ? `$${symbol}` : ""}`.trim()}
+        {!account ? `Connect ${robinhood ? "Robinhood" : "BNB"} wallet` : !tradingOpen ? "Trading not open yet" : busy ? "Confirm in your wallet..." : `${side === "buy" ? "Buy" : "Sell"} ${symbol ? `$${symbol}` : ""}`.trim()}
       </Button>
     </div>
   );

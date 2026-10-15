@@ -1,8 +1,8 @@
 /**
  * The app's client for EVM generation 8 coins (docs/evm-launch/EVM_GEN8_V4_DESIGN.md on build/evm-gen8, sections 4 and
  * 6): create (signed create authorization, then MwzV4Launcher.launch exactly as the API returned it), trades in the
- * coin's own Uniswap V4 pool before and after graduation (V4Quoter quotes, UniversalRouter V4_SWAP execution, Permit2
- * for sells), the creator's escrowed buys (MwzCreatorEscrow, D5) and the creator panel's claims.
+ * coin's own Uniswap V4 pool before and after graduation (V4Quoter quotes, UniversalRouter V4_SWAP execution, a
+ * one-time Permit2 allowance for sells), the creator's escrowed buys (MwzCreatorEscrow, D5) and the creator panel's claims.
  *
  * Plain ESM over ethers, no React and no app globals, so the node tests run exactly this code against a local chain
  * with the real gen-8 contracts. Every function takes its provider / signer and addresses explicitly.
@@ -52,8 +52,8 @@ import {
   gen8CreatorShareWei,
   gen8HookData,
   gen8MinOut,
-  gen8PermitTypedData,
   gen8PriceImpactBps,
+  gen8SellSetup,
   gen8QuoterFor,
   gen8ReferenceAmount,
   gen8RouterFor,
@@ -530,33 +530,37 @@ export function buildGen8TradeCall({ cfg, quote, deadline, permit = null, referr
 }
 
 /**
- * Sells pull the coin through Permit2: an exact ERC20 approval to Permit2 when the current one is short (one
- * transaction), then a signed permit for exactly this sell to the router, valid 30 minutes (no transaction).
+ * Sells pull the coin through Permit2. The first sell of a coin sends ERC20 approve(Permit2, max) when that allowance
+ * is not already the max, then Permit2.approve for our router (uint160 max, one year) when the standing allowance
+ * does not cover this sell through the swap deadline. Later sells send nothing here. These are transactions. There
+ * is no typed-data signature. Returns the setup that was sent, or null when the swap can go alone.
  */
-export async function prepareGen8SellPermit({ signer, chainId, token, amountIn, router, nowSec = null }) {
+export async function ensureGen8SellAllowance({ signer, chainId, token, amountIn, router, nowSec = null }) {
   const owner = await signer.getAddress();
-  const erc20 = new Contract(token, ERC20_ABI, signer);
-  if (BigInt(await erc20.allowance(owner, PERMIT2_ADDRESS)) < BigInt(amountIn)) {
-    await sendGen8Call({ signer, chainId, contract: erc20, method: "approve", args: [PERMIT2_ADDRESS, BigInt(amountIn)] });
-  }
-  const permit2 = new Contract(PERMIT2_ADDRESS, PERMIT2_ABI, signer);
-  const [, , nonce] = await permit2.allowance(owner, token, router);
-  const now = nowSec ?? Number((await signer.provider.getBlock("latest")).timestamp);
-  const typed = gen8PermitTypedData({ chainId, token, amount: amountIn, nonce, spender: router, nowSec: now });
-  const signature = await signer.signTypedData(typed.domain, typed.types, typed.message);
-  return { permitSingle: typed.message, signature };
+  const reads = signer.provider;
+  const now = nowSec ?? Number((await reads.getBlock("latest")).timestamp);
+  const [erc20Allowance, permit2Allowance] = await Promise.all([
+    new Contract(token, ERC20_ABI, reads).allowance(owner, PERMIT2_ADDRESS),
+    new Contract(PERMIT2_ADDRESS, PERMIT2_ABI, reads).allowance(owner, token, router),
+  ]);
+  const setup = gen8SellSetup({ token, router, erc20Allowance, permit2Allowance, amountIn, nowSec: now });
+  if (!setup) return null;
+  if (setup.approval) await sendGen8Tx({ signer, chainId, tx: setup.approval });
+  if (setup.permit2Approval) await sendGen8Tx({ signer, chainId, tx: setup.permit2Approval });
+  return setup;
 }
 
 /**
- * One trade in the coin's pool from the app: re-quotes, then (sell) the Permit2 steps, then the router call with gas
- * headroom. Returns { receipt, quote, call }.
+ * One trade in the coin's pool from the app: re-quotes, then (sell) the one-time Permit2 allowance, then the router
+ * call with gas headroom and no permit. Returns { receipt, quote, call }.
  */
 export async function executeGen8Trade({ signer, chainId, cfg, token, side, amountIn, slippageBps = GEN8_DEFAULT_SLIPPAGE_BPS, readProvider = null, quote = null }) {
   const reads = readProvider || signer.provider;
   const q = quote || (await quoteGen8Trade({ provider: reads, cfg, token, side, amountIn, slippageBps }));
   const now = Number((await reads.getBlock("latest")).timestamp);
-  const permit = side === "sell" ? await prepareGen8SellPermit({ signer, chainId, token, amountIn: q.amountIn, router: cfg.router.address, nowSec: now }) : null;
-  const call = buildGen8TradeCall({ cfg, quote: q, deadline: BigInt(now + GEN8_SWAP_DEADLINE_SECONDS), permit });
+  if (side === "sell") await ensureGen8SellAllowance({ signer, chainId, token, amountIn: q.amountIn, router: cfg.router.address, nowSec: now });
+  const swapNow = side === "sell" ? Number((await reads.getBlock("latest")).timestamp) : now;
+  const call = buildGen8TradeCall({ cfg, quote: q, deadline: BigInt(swapNow + GEN8_SWAP_DEADLINE_SECONDS), permit: null });
   const receipt = await sendGen8Tx({ signer, chainId, tx: call, floor: 400_000n });
   return { receipt, quote: q, call };
 }
