@@ -30,6 +30,7 @@ const { default: rewardsHandler } = await import("../rewards.js");
 const generic = await import("../dev-fix/reward-claim-intent-generic.js");
 const closeout = await import("../dev-fix/reward-claim-closeout-router.js");
 const lpFees = await import("../dashboard/lp-fees.js");
+const { drafts } = await import("../dev-fix/drafts-base.js");
 
 const RPC_ENV_KEYS = [
   "DOGEOS_RPC_HTTP_6281971",
@@ -529,6 +530,36 @@ test("rewards reconcile accepts 6281971 as an EVM reward chain", async () => {
 
 // ---------------------------------------------------------------- drafts, campaign state, feed SQL
 
+// Moved from dev-fix/dogeosRouteAuth.test.mjs (deleted with the gen-7 DogeOS route authorization, B8): the $150
+// draft tier on 6281971 stays for gen-8 drafts (drafts-base.js, migration 20261010).
+test("draft save: 6281971 accepts the $150 test tier and still refuses $6; existing chains unchanged", async () => {
+  const usd = (n) => (BigInt(n) * 10n ** 18n).toString();
+  const creator = "0x" + "2".repeat(40);
+  const draftRequest = (chainId, graduationTargetWei) => ({
+    method: "POST",
+    body: { chainId, creatorWallet: creator, name: "Doge Draft", ticker: "DDRAFT", graduationTargetWei },
+    async *[Symbol.asyncIterator]() {},
+  });
+  const save = async (chainId, target) => {
+    const res = nodeRes();
+    await drafts(draftRequest(chainId, target), res);
+    return res;
+  };
+  // Past the target gate the save asks for wallet auth (none is sent): 401, not INVALID_GRADUATION_TARGET.
+  for (const chainId of [97, 46630, DOGEOS]) {
+    const res = await save(chainId, usd(150));
+    assert.notEqual(res.body?.code, "INVALID_GRADUATION_TARGET", `${chainId}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.statusCode, 401, String(chainId));
+  }
+  for (const target of [usd(30_000), usd(50_000)]) assert.equal((await save(DOGEOS, target)).statusCode, 401);
+  const dogeos6 = await save(DOGEOS, usd(6));
+  assert.equal(dogeos6.statusCode, 400);
+  assert.equal(dogeos6.body.code, "INVALID_GRADUATION_TARGET");
+  assert.equal((await save(46630, usd(6))).body.code, "INVALID_GRADUATION_TARGET");
+  assert.equal((await save(97, usd(6))).statusCode, 401);
+  assert.equal((await save(56, usd(150))).body.code, "INVALID_GRADUATION_TARGET");
+});
+
 test("draft EVM launch options include 6281971; existing chains unchanged", () => {
   for (const id of [56, 97, 4663, 46630, 31337, DOGEOS]) assert.ok(EVM_LAUNCH_OPTION_CHAIN_IDS.has(id), `chain ${id}`);
   assert.equal(EVM_LAUNCH_OPTION_CHAIN_IDS.has(101), false);
@@ -570,7 +601,7 @@ test("lp-fees: 6281971 is testnet-open like 97/46630", async () => {
   }
 });
 
-test("lp-fees: 6281971 reads the V3 locker in DOGE and never borrows the BNB generic locker", async () => {
+test("lp-fees: 6281971 has no LP locker (no gen-7 V3 locker, B8) and never borrows the BNB generic locker", async () => {
   const locker = "0x" + "1".repeat(40);
   const v3Factory = "0x" + "2".repeat(40);
   const router = "0x" + "3".repeat(40);
@@ -589,6 +620,7 @@ test("lp-fees: 6281971 reads the V3 locker in DOGE and never borrows the BNB gen
   try {
     await withEnv(
       {
+        LP_LOCKER_ADDRESS: locker,
         LP_LOCKER_ADDRESS_6281971: locker,
         LP_LOCKER_ADDRESS_46630: locker,
         DOGEOS_RPC_HTTP_6281971: dogeRpc.url,
@@ -596,17 +628,18 @@ test("lp-fees: 6281971 reads the V3 locker in DOGE and never borrows the BNB gen
       },
       async () => {
         resetServerReadProviders();
+        // A leftover gen-7 locker env does not revive the V3 locker read: DogeOS launches on gen-8 only.
         const doge = await lpFees.lpFeesPayload({ chainId: String(DOGEOS) }, { mode: "testnet-open" });
         assert.equal(doge.status, 200, JSON.stringify(doge.body));
-        assert.equal(doge.body.dex, "robinhood_v3");
-        assert.equal(doge.body.nativeSymbol, "DOGE");
-        assert.equal(doge.body.v3Factory, v3Factory);
-        assert.ok(dogeRpc.callSelectors().includes(selector("v3Factory()")), "V3 locker ABI used");
-        assert.ok(!dogeRpc.callSelectors().includes(selector("topazFactory()")));
+        assert.equal(doge.body.lockerAddress, null);
+        assert.deepEqual(doge.body.items, []);
+        assert.deepEqual(dogeRpc.calls, [], "no DogeOS RPC read");
         // Before/after: Robinhood testnet unchanged.
         const rh = await lpFees.lpFeesPayload({ chainId: "46630" }, { mode: "testnet-open" });
         assert.equal(rh.body.dex, "robinhood_v3");
         assert.equal(rh.body.nativeSymbol, "ETH");
+        assert.equal(rh.body.v3Factory, v3Factory);
+        assert.ok(rhRpc.callSelectors().includes(selector("v3Factory()")), "Robinhood keeps the V3 locker ABI");
       },
     );
   } finally {

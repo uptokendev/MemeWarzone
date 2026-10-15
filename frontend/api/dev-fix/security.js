@@ -235,8 +235,8 @@ async function readCluster(clusterId) {
 }
 
 // Founder 2026-10-10: one creator rule set on every launch chain. The creator tier limits (live bonding
-// count, launch cooldown, cluster size) do not apply on BNB, Robinhood, DogeOS Chikyu 6281971 (gen-7 factories
-// run without a CreatorRegistry: setRegistries(0x0, RiskRegistry)) or Solana (DBC). Restrictions, manual
+// count, launch cooldown, cluster size) do not apply on BNB, Robinhood, DogeOS Chikyu 6281971 (gen-8 only: the
+// gen-8 launcher has no CreatorRegistry) or Solana (DBC). Restrictions, manual
 // review and risk warnings stay. A chain not listed here keeps the tier limits.
 export const OPEN_CREATOR_CHAIN_IDS = Object.freeze([56, 97, 4663, 46630, 101, 102, 6281971]);
 

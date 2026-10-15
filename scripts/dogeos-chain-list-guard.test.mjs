@@ -54,12 +54,10 @@ const INDIRECT_LAUNCH_PATH_CHECKS = [
   { file: "frontend/src/lib/tradeBalanceReserve.ts", anchor: "evmBuyGasReserveWei(isRobinhoodChainId(chainId))", window: 1, why: "buy gas reserve" },
   { file: "frontend/src/components/postgrad/RobinhoodWarRoomTradePanel.tsx", anchor: "id === ROBINHOOD_TESTNET_CHAIN_ID ||", window: 0, why: "War Room panel never defaults DogeOS to 46630" },
   { file: "frontend/src/components/postgrad/WarRoomCampaignRow.tsx", anchor: "const isRobinhoodRow =", window: 0, why: "War Room V3 row" },
-  // t16 route authorization
-  { file: "frontend/api/dev-fix/routeAuthorizationSigner.js", anchor: "[ROBINHOOD_TESTNET_CHAIN_ID, [[4, 3], [6, 5], [7, 6]]]", window: 3, why: "generation pairs" },
-  // t14 / t15 API symbol, price and V3 locker
+  // t14 / t15 API symbol and price; the LP locker read (barkswap t14: no gen-7 locker on DogeOS, B8)
   { file: "frontend/api/lib/chainNative.js", anchor: "if (isRobinhoodChainId(id)) return \"ETH\";", window: 1, why: "nativeSymbolFor" },
   { file: "frontend/api/lib/arenaMarketSnapshot.js", anchor: "if (isRobinhoodChainId(chainId)) return resolveEthUsdPrice();", window: 1, why: "native USD price, no BNB fallthrough" },
-  { file: "frontend/api/dashboard/lp-fees.js", anchor: "return isRobinhoodChain(chainId) ||", window: 0, why: "V3 locker fee path" },
+  { file: "frontend/api/dashboard/lp-fees.js", anchor: "if (isDogeosChain(chainId)) return null;", window: 0, why: "DogeOS has no LP locker and never borrows the BNB locker fallback" },
   { file: "frontend/api/dev-fix/airdrop-preview.js", anchor: "const robinhood = isRobinhood(chainId);", window: 1, why: "airdrop symbol, no BNB fallthrough" },
   // t10 / t12 chain identity
   { file: "frontend/src/lib/chainConfig.ts", anchor: "if (isRobinhoodChainId(chainId)) return \"ETH\";", window: 1, why: "getNativeSymbol" },
