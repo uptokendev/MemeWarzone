@@ -1,10 +1,12 @@
 /**
- * DogeOS Chikyū TESTNET (6281971) fork config for the MuchFi fork tests (MuchFi publishes no source, so its
- * real bytecode can only be exercised on a fork). Read-only: it forks the public Chikyū RPC into the in-process
- * hardhat network and signs with hardhat's own funded local accounts. No key from config/dogeos.local is used
- * on the fork, and nothing is ever broadcast to Chikyū.
+ * DogeOS Chikyū TESTNET (6281971) fork config on the root 0.8.24 build. Read-only: it forks the public Chikyū RPC
+ * into the in-process hardhat network and signs with hardhat's own funded local accounts. No key from
+ * config/dogeos.local is used on the fork, and nothing is ever broadcast to Chikyū.
  *
- *   npx hardhat --config hardhat.dogeos-testnet-fork.config.ts test test/MuchfiFork.facts.spec.ts
+ * Used by the Barkswap research proof's hardhat node (scripts/research/barkswap-plugin/run-proof.mjs). The Bark
+ * contracts (solc 0.8.26) and their fork specs, including the deploy stack, use hardhat.dogeos-bark-fork.config.ts:
+ *
+ *   npx hardhat --config hardhat.dogeos-bark-fork.config.ts test test/dogeos/barkswap/DogeosBarkStack.fork.spec.ts
  *
  * DOGEOS_TESTNET_FORK_RPC overrides the RPC; DOGEOS_FORK_BLOCK pins the block (default: latest - 16).
  */

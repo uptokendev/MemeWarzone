@@ -15,6 +15,7 @@
     "verify:robinhood-5c-freeze": "hardhat run scripts/verify-robinhood-testnet-acceptance-freeze.ts --network robinhoodTestnet",
     "deploy:dogeos-testnet": "hardhat run scripts/deploy-dogeos-testnet.ts --network dogeosTestnet",
     "verify:dogeos-testnet": "hardhat --config hardhat.dogeos-verify.config.ts run scripts/verify-dogeos-testnet.ts --network dogeosTestnet",
+    "verify:dogeos-bark-testnet": "hardhat --config hardhat.dogeos-bark-verify.config.ts run scripts/verify-dogeos-testnet.ts --network dogeosTestnet",
     "report:robinhood-5c": "node scripts/report-robinhood-testnet-acceptance-5c.mjs",
     "sync:frontend-abis": "node scripts/sync-frontend-abis.cjs",
     "compile:frontend-abis": "hardhat compile && node scripts/sync-frontend-abis.cjs",

@@ -39,7 +39,11 @@ const DAY = 86_400;
 const CHAINS = [56, 97, 4663, 46630, 6281971];
 const PROGRAMS = ["airdrop_trader", "airdrop_creator"];
 
-function wiringCalls({ vault, distributor, operator }) {
+/**
+ * The three wiring calls of one pot. Exported for the DogeOS Bark deploy (scripts/lib/dogeosBarkStack.ts), which sends
+ * exactly these at deploy time and leaves the weekly authorizations to this script (--chain 6281971 --skip-wiring).
+ */
+export function airdropWiringCalls({ vault, distributor, operator }) {
   return [
     { contract: "CommunityRewardsVault", to: vault, fn: "setRewardDistributor", args: [distributor] },
     { contract: "CommunityRewardsVault", to: vault, fn: "setAirdropOperator", args: [operator] },
@@ -77,7 +81,7 @@ export function airdropSetupCalls({ chainId, pots, weeks = 12, now = new Date(),
     if (p.wire && !p.operator) throw new Error(`--operator (the Coolify airdrop key) is required to wire the ${p.pot} pot`);
   }
   const calls = [];
-  for (const p of pots) if (p.wire) calls.push(...wiringCalls(p));
+  for (const p of pots) if (p.wire) calls.push(...airdropWiringCalls(p));
   const firstEnd = firstWeekEnd({ now, from });
   for (const p of pots) {
     for (let week = 0; week < count; week += 1) {

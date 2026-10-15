@@ -1,5 +1,5 @@
 /**
- * DogeOS Chikyū testnet (6281971): open the gen-7 factory for creates (plan t8; used only in t29, gate 5, with the
+ * DogeOS Chikyū testnet (6281971): open the Bark launcher for creates (barkswap plan t15; used only in t29, with the
  * founder's explicit go).
  *
  *   DOGEOS_TESTNET_ACTIVATE_BROADCAST=I_HAVE_FOUNDER_GO \
@@ -8,26 +8,37 @@
  *
  * Its own broadcast variable (DOGEOS_TESTNET_ACTIVATE_BROADCAST, not the deploy one), and the same network, signer and
  * route-authority guards as deploy-dogeos-testnet.ts:
- *   Chikyū: the signer is the DogeOS deployer 0x6c5C…82f8, and both the env route authority and
- *     factory.routeAuthority() must be the DogeOS route authority 0x4fcD…76FF.
+ *   Chikyū: the signer is the DogeOS deployer 0x6c5C…82f8, and the env route authority, the manifest's and the
+ *     launcher's createSigner() must all be the DogeOS route authority 0x4fcD…76FF.
  *   Chikyū fork (in-process, cannot broadcast to Chikyū): the signer must be the manifest's admin and owner (the fork
- *     deploy's own signer), and factory.routeAuthority() must equal the fork-local env route authority.
- * Reads the factory from deployments/dogeos/testnet.json (a fork run may point DOGEOS_TESTNET_MANIFEST elsewhere; Chikyū
- * may not) and refuses unless the signer owns the factory, the factory's graduationOracle() is the manifest's, and
- * GraduationOracle.nativeUsdPrice() does not revert (the DOGE/USD answer is fresh). Then enableLive() (when not live
- * yet) and setCreatePaused(false), and asserts live() && !createPaused(). Never locks security defaults.
+ *     deploy's own signer), and createSigner() must equal the fork-local env route authority.
+ * Reads the stack from deployments/dogeos/testnet.bark.json (a fork run may point DOGEOS_TESTNET_MANIFEST elsewhere;
+ * Chikyū may not), reads every address and role back (readBackDogeosBarkStack, launcher still paused), and refuses
+ * unless the signer owns the launcher and GraduationOracle.nativeUsdPrice() is fresh and inside the launcher's band.
+ * Then the one call, setCreatePaused(false) on the launcher, and the read-back again with create open.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { ethers, network } from "hardhat";
-import { hardhatForkUrl, loadDogeosDeployGuards } from "./deploy-dogeos-testnet";
+import { hardhatForkUrl } from "./deploy-dogeos-testnet";
+import { loadDogeosDeployGuards, readBackDogeosBarkStack } from "./lib/dogeosBarkStack";
 
 const ROOT = path.join(__dirname, "..");
 
+const LAUNCHER_ABI = [
+  "function owner() view returns (address)",
+  "function createSigner() view returns (address)",
+  "function oracle() view returns (address)",
+  "function minNativeUsd() view returns (uint256)",
+  "function maxNativeUsd() view returns (uint256)",
+  "function createPaused() view returns (bool)",
+  "function setCreatePaused(bool paused_)",
+];
+
 /** The whole activation, guards first. Reads its inputs from process.env; exported so a fork run can chain it. */
-export async function runDogeosTestnetActivate(): Promise<{ mode: string; factory: string; calls: string[] }> {
+export async function runDogeosTestnetActivate(opts: { log?: (line: string) => void } = {}): Promise<{ mode: string; launcher: string; calls: string[] }> {
   const guards = await loadDogeosDeployGuards();
-  const log = (line: string) => console.log(`[activate-dogeos] ${line}`);
+  const log = opts.log ?? ((line: string) => console.log(`[activate-dogeos] ${line}`));
 
   // ---------------------------------------------------------------- guards
   const chainId = Number((await ethers.provider.getNetwork()).chainId);
@@ -49,22 +60,23 @@ export async function runDogeosTestnetActivate(): Promise<{ mode: string; factor
   const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
 
   // ---------------------------------------------------------------- on-chain preconditions (read-only)
-  const factoryAddress = ethers.getAddress(String(manifest?.deployed?.LaunchFactoryGen7 || ethers.ZeroAddress));
-  const hasCode = (await ethers.provider.getCode(factoryAddress)) !== "0x";
-  const factory: any = await ethers.getContractAt("LaunchFactoryGen7", factoryAddress, signer);
+  const launcherAddress = ethers.getAddress(String(manifest?.deployed?.MwzBarkLauncher || ethers.ZeroAddress));
+  const hasCode = (await ethers.provider.getCode(launcherAddress)) !== "0x";
+  const launcher: any = new ethers.Contract(launcherAddress, LAUNCHER_ABI, signer);
   const onchain = hasCode
     ? {
         hasCode,
-        routeAuthority: await factory.routeAuthority(),
-        owner: await factory.owner(),
-        graduationOracle: await factory.graduationOracle(),
-        live: await factory.live(),
-        createPaused: await factory.createPaused(),
+        owner: await launcher.owner(),
+        createSigner: await launcher.createSigner(),
+        oracle: await launcher.oracle(),
+        minNativeUsd: BigInt(await launcher.minNativeUsd()),
+        maxNativeUsd: BigInt(await launcher.maxNativeUsd()),
+        createPaused: await launcher.createPaused(),
       }
     : { hasCode };
   let oracleProbe: { ok: true; price: bigint } | { ok: false; error: string } = { ok: false, error: "no oracle read" };
   if (hasCode) {
-    const oracle: any = await ethers.getContractAt("GraduationOracle", (onchain as any).graduationOracle, signer);
+    const oracle: any = new ethers.Contract((onchain as any).oracle, ["function nativeUsdPrice() view returns (uint256)"], ethers.provider);
     try {
       oracleProbe = { ok: true, price: BigInt(await oracle.nativeUsdPrice()) };
     } catch (error) {
@@ -72,25 +84,21 @@ export async function runDogeosTestnetActivate(): Promise<{ mode: string; factor
     }
   }
   const plan = guards.planActivation({ mode, manifest, expectedRouteAuthority: routeAuthority, signer: sender, onchain, oracleProbe });
-  log(`mode ${mode}, factory ${plan.factory}, route authority ${routeAuthority}, nativeUsdPrice ${(oracleProbe as any).price}`);
+  const checks = await readBackDogeosBarkStack(manifest, { provider: ethers.provider, expectCreatePaused: true });
+  log(`mode ${mode}, launcher ${plan.launcher}, createSigner ${routeAuthority}, nativeUsdPrice ${(oracleProbe as any).price}, read-back ${checks} checks`);
   log(`calls: ${plan.calls.join(", ")}`);
 
   // ---------------------------------------------------------------- send
-  async function send(txPromise: Promise<any>, label: string) {
-    const tx = await txPromise;
-    const receipt = await tx.wait(1);
-    if (!receipt || receipt.status !== 1) throw new Error(`${label} failed`);
-    log(`${label}: ${tx.hash}`);
-  }
-  if (plan.calls.includes("enableLive")) await send(factory.enableLive(), "LaunchFactoryGen7.enableLive");
-  if (plan.calls.includes("setCreatePaused(false)")) await send(factory.setCreatePaused(false), "LaunchFactoryGen7.setCreatePaused(false)");
+  const tx = await launcher.setCreatePaused(false);
+  const receipt = await tx.wait(1);
+  if (!receipt || receipt.status !== 1) throw new Error("MwzBarkLauncher.setCreatePaused(false) failed");
+  log(`MwzBarkLauncher.setCreatePaused(false): ${tx.hash}`);
 
   // ---------------------------------------------------------------- read-back
-  const live = await factory.live();
-  const createPaused = await factory.createPaused();
-  guards.assertActivated({ live, createPaused });
-  log(`factory ${plan.factory} is live and create is unpaused (live=${live}, createPaused=${createPaused})`);
-  return { mode, factory: plan.factory, calls: plan.calls };
+  guards.assertActivated({ createPaused: await launcher.createPaused() });
+  await readBackDogeosBarkStack(manifest, { provider: ethers.provider, expectCreatePaused: false });
+  log(`launcher ${plan.launcher} is open for creates signed by ${routeAuthority}`);
+  return { mode, launcher: plan.launcher, calls: plan.calls };
 }
 
 if (require.main === module) {
