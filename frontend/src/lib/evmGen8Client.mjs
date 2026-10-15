@@ -619,7 +619,7 @@ export async function ensureGen8SellAllowance({ signer, chainId, token, amountIn
  * One trade in the coin's pool from the app: re-quotes, then (sell) the one-time Permit2 allowance, then the router
  * call with gas headroom and no permit. Returns { receipt, quote, call }.
  */
-export async function executeGen8Trade({ signer, chainId, cfg, token, side, amountIn, slippageBps = GEN8_DEFAULT_SLIPPAGE_BPS, readProvider = null, quote = null, onStep = null }) {
+export async function executeGen8Trade({ signer, chainId, cfg, token, side, amountIn, slippageBps = GEN8_DEFAULT_SLIPPAGE_BPS, readProvider = null, quote = null, onStep = null, onReceipt = null }) {
   const reads = readProvider || signer.provider;
   const q = quote || (await quoteGen8Trade({ provider: reads, cfg, token, side, amountIn, slippageBps }));
   const now = Number((await reads.getBlock("latest")).timestamp);
@@ -641,16 +641,19 @@ export async function executeGen8Trade({ signer, chainId, cfg, token, side, amou
     readProvider: reads,
     onPhase: (phase) => onStep?.({ index: total, total, kind: side === "buy" ? "buy" : "sell", phase }),
   });
+  // The fill wake runs here, before this function returns to the toast and the page refresh.
+  if (onReceipt) onReceipt(receipt);
   return { receipt, quote: q, call };
 }
 
 /** The creator's own buy in the app (D5): through MwzCreatorEscrow, coins held on the gen-7 schedule. */
-export async function executeGen8EscrowBuy({ signer, chainId, cfg, token, amountIn, slippageBps = GEN8_DEFAULT_SLIPPAGE_BPS, readProvider = null }) {
+export async function executeGen8EscrowBuy({ signer, chainId, cfg, token, amountIn, slippageBps = GEN8_DEFAULT_SLIPPAGE_BPS, readProvider = null, onReceipt = null }) {
   if (!cfg?.escrow) throw new Error("Creator buys are not set up on this chain yet.");
   const reads = readProvider || signer.provider;
   const q = await quoteGen8Trade({ provider: reads, cfg, token, side: "buy", amountIn, slippageBps, sender: cfg.escrow });
   const escrow = new Contract(cfg.escrow, GEN8_ESCROW_ABI, signer);
   const receipt = await sendGen8Call({ signer, chainId, contract: escrow, method: "buy", args: [token, q.minOut], value: q.amountIn, floor: 400_000n });
+  if (onReceipt) onReceipt(receipt);
   return { receipt, quote: q };
 }
 

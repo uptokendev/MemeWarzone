@@ -273,13 +273,21 @@ export function Gen8TradePanel({
         signer = switched.signer;
       }
       const onStep = (next: { index: number; total: number; kind: string; phase: "sign" | "pending" }) => setStep(next);
+      // Runs inside the trade, the moment the swap receipt is in, before the toast.
+      const onReceipt = (receipt: { hash?: string } | null) => {
+        const txHash = receipt?.hash ?? null;
+        // The token is the gen-8 campaign. This post wakes the indexer; the approval transactions are not this hash.
+        if (txHash) notifyIndexerFills({ chainId, campaignAddress: token, txHashes: [txHash] });
+        if (!txHash || typeof window === "undefined") return;
+        window.dispatchEvent(new CustomEvent("memewarzone:txConfirmed", {
+          detail: { kind: side, campaignAddress: token, chainId, txHash },
+        }));
+      };
       const result =
         side === "buy" && escrowBuy
-          ? await executeGen8EscrowBuy({ signer, chainId, cfg, token, amountIn: amountRaw, slippageBps: slippageArg, readProvider })
-          : await executeGen8Trade({ signer, chainId, cfg, token, side, amountIn: amountRaw, slippageBps: slippageArg, readProvider, onStep });
+          ? await executeGen8EscrowBuy({ signer, chainId, cfg, token, amountIn: amountRaw, slippageBps: slippageArg, readProvider, onReceipt })
+          : await executeGen8Trade({ signer, chainId, cfg, token, side, amountIn: amountRaw, slippageBps: slippageArg, readProvider, onStep, onReceipt });
       const txHash = result.receipt?.hash ?? null;
-      // The token is the gen-8 campaign. This post wakes the indexer; the approval transactions are not this hash.
-      if (txHash) notifyIndexerFills({ chainId, campaignAddress: token, txHashes: [txHash] });
       toast.success(`${side === "buy" ? "Buy" : "Sell"} confirmed: ${String(result.receipt?.hash || "").slice(0, 10)}…`);
       setAmount("");
       setQuote(null);

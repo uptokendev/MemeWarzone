@@ -6642,7 +6642,7 @@ const toSeconds = (ts: number): number => {
             className="absolute inset-x-0 bottom-0 flex max-h-[92dvh] flex-col gap-4 overflow-y-auto rounded-t-2xl border border-border/70 bg-background p-4"
             style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
           >
-            <Gen8TradePanel key={tradeTab} chainId={Number(chainIdForStorage)} state={gen8State} symbol={tokenData.ticker} initialSide={tradeTab} onTraded={() => gen8.refresh()} />
+            <Gen8TradePanel key={tradeTab} chainId={Number(chainIdForStorage)} state={gen8State} symbol={tokenData.ticker} initialSide={tradeTab} onTraded={() => { gen8.refresh(); void unifiedMarket.refresh().catch(() => undefined); }} />
             <Gen8CoinStatus chainId={Number(chainIdForStorage)} state={gen8State} explorerBase={getExplorerBase(chainIdForStorage)} nativeUsd={nativeUsd ?? null} />
             <Gen8CreatorPanel chainId={Number(chainIdForStorage)} state={gen8State} onDone={() => gen8.refresh()} />
           </div>
