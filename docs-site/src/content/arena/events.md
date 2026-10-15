@@ -22,7 +22,9 @@ Use **View bracket** to follow the rounds, and **Watch live round** to see the b
 In a Vote Tournament:
 
 - each wallet has one free vote per matchup and round
-- a Tournament Boost costs $1 and adds 2 points
+- a Tournament Boost costs $1 and adds 1 point
+- each wallet can buy 2 boosts per matchup, on either side
+- boosts close when 80% of the round time has passed
 - the score is free vote points plus boost points
 
 Some matchups go to a **Final Salvo**: short voting windows called shots. Only free votes count there, one per wallet per shot.

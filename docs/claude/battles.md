@@ -151,3 +151,34 @@ removed `buildArenaCancelInstructions`.
   (its receipt insert has no conflict target), then the migration, then the scheduled task.
 - Mainnet backfill (dry run 2026-10-06, 3 battles, 169 txs): 3 receipt rows replaced, 164 rows
   added (owner B's stake, 157 boosts, 2 winner, 2 protocol, 2 MWL claims).
+
+### Boost rules: 2 per wallet, 1 point, closed in the last 20% (founder, 2026-10-15)
+
+Applies to metrics battles, Vote Battles and Vote Tournament rounds, EVM and Solana.
+
+- **2 Boosts per wallet per battle**, both sides together. A tournament matchup is its own
+  `arena_battles` row, so the 2 apply per matchup (a new round gives 2 new ones).
+- **Vote Battle / Vote Tournament Boost = 1 point** (`VOTE_BATTLE_BOOST_POINTS_PER_UNIT`, was 2).
+  Metrics battles keep the V3 curve (`boost_hyperbolic_100_v1`, max 10). Points are stored per
+  action, so Boosts confirmed before the change keep 2; a Solana quote issued before it scores its
+  stored `points_per_boost`.
+- **No Boosts in the last 20%:** close = `started_at + 0.8 * (ends_at - started_at)` (fallback
+  `ends_at - duration_hours`; unknown clock = closed). 24 h battle: closes at 19 h 12 min.
+- All in `api/lib/arenaBoostRules.js`, enforced where the server signs the quote. EVM: deadline
+  clamped to the close (treasury enforces `block.timestamp <= deadline`). Solana: `expires_at`
+  clamped; the client registers before broadcast and an expired quote is refused.
+- **Cap between payment and confirmation:** nothing in the repo calls the internal EVM
+  `/arena/boosts/confirm` or `/arena/tournaments/.../boosts/confirm`, so EVM boosts never reach
+  `arena_contest_actions`. The cap therefore counts **`arena_boost_quote_reservations`** (one row per
+  signed EVM quote, written under a per-wallet advisory lock before the quote is returned): pending
+  counts until deadline + 2 min, then `usedBoostNonces(wallet, nonce)` on the treasury decides paid
+  (counts) or void (freed). RPC failure keeps it counting. Solana counts confirmed actions plus
+  quotes that can still land. Migration `db/migrations/20261015_000010_arena_boost_quote_reservations.sql`
+  (also relaxes `arena_solana_boost_quotes_vote_binding` to allow 1 for tournaments) must be applied
+  before the API deploys, or every Boost quote returns 503.
+- Read routes take `?wallet=` and return `boostRules` + `walletBoostUnits`; the panels show 1x/2x and
+  lock at the close without a reload.
+- **Open (found 2026-10-15, not fixed):** because nothing calls the EVM confirm routes, EVM Boost
+  points (Vote Battle tally, V3 boost curve, tournament boost points) are never recorded. Verify on
+  production with `select chain_id, count(*) from arena_contest_actions where action_type='boost'
+  group by 1`.

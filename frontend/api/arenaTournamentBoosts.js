@@ -22,6 +22,18 @@ import {
   tournamentBoostPoolId,
   verifyTournamentBoostPayment,
 } from "./lib/arenaTournamentBoostVerification.mjs";
+import { VOTE_BATTLE_BOOST_POINTS_PER_UNIT } from "./lib/arenaBattleMode.js";
+import {
+  boostRulesShape,
+  boostWindowClosed,
+  clampedQuoteDeadlineSeconds,
+  evmWalletBoostUnitsUsed,
+  insertEvmBoostReservation,
+  lockWalletBoostCap,
+  readEvmBoostNonceUsed,
+  solanaWalletBoostUnitsUsed,
+  walletBoostCapExceeded,
+} from "./lib/arenaBoostRules.js";
 
 function safeId(value) {
   const id = String(value || "").trim();
@@ -74,7 +86,7 @@ async function loadTournament(id) {
 
 async function loadBattle(id) {
   const result = await pool.query(
-    `select id, chain_id, state, source, tournament_id, battle_mode, ends_at, competition_generation
+    `select id, chain_id, state, source, tournament_id, battle_mode, started_at, ends_at, duration_hours, competition_generation
        from public.arena_battles where id = $1 limit 1`,
     [id],
   );
@@ -105,14 +117,40 @@ async function activeMatchForQuote(route, tournament, selectedToken) {
     return { error: "Vote Tournament battle is not live" };
   }
   if (!battle.ends_at || new Date(battle.ends_at).getTime() <= Date.now()) return { error: "Vote Tournament regulation has ended" };
+  const closed = boostWindowClosed(battle);
+  if (closed) return { error: closed.error, code: closed.code, boostClosesAt: closed.boostClosesAt };
   const tiebreak = await pool.query(`select battle_id from public.arena_vote_tiebreaks where battle_id = $1 limit 1`, [match.battleId]);
   if (tiebreak.rows[0]) return { error: "Boost is disabled during Final Salvo" };
   return { match, battle };
 }
 
-async function readBoostSummary(res, route, tournament) {
+function readNonceUsedOn(chainId) {
+  let provider = null;
+  return async ({ treasuryAddress, wallet, nonce }) => {
+    provider = provider || (await getServerReadProvider(chainId));
+    return readEvmBoostNonceUsed({ provider, treasuryAddress, wallet, nonce });
+  };
+}
+
+async function readBoostSummary(req, res, route, tournament) {
   const match = findTournamentVoteMatch({ tournament, matchRef: route.matchRef });
   if (!match.ok) return json(res, 404, { ok: false, error: "Tournament matchup not found", reason: match.reason });
+  const battle = await loadBattle(match.battleId);
+  const walletParam = String(new URL(req.url, "http://localhost").searchParams.get("wallet") || "").trim();
+  const chainId = Number(tournament.chain_id);
+  const solana = chainId === 101 || chainId === 102;
+  let walletCount = null;
+  if (battle && solana && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(walletParam)) {
+    walletCount = solanaWalletBoostUnitsUsed(pool, { chainId, battleId: match.battleId, wallet: walletParam });
+  } else if (battle && !solana && isAddress(walletParam)) {
+    walletCount = evmWalletBoostUnitsUsed(pool, { chainId, battleId: match.battleId, wallet: walletParam.toLowerCase(), readNonceUsed: readNonceUsedOn(chainId) });
+  }
+  const walletBoostUnits = walletCount
+    ? await walletCount.catch((error) => {
+      console.warn("[api/arenaTournamentBoosts] wallet Boost count unavailable", error?.message || error);
+      return null;
+    })
+    : null;
   const result = await pool.query(
     `select side,
             coalesce(sum(boost_units),0)::bigint as boost_units,
@@ -148,9 +186,11 @@ async function readBoostSummary(res, route, tournament) {
     matchId: match.matchId,
     battleId: match.battleId,
     usdPerBoost: 1,
-    pointsPerBoost: 2,
+    pointsPerBoost: VOTE_BATTLE_BOOST_POINTS_PER_UNIT,
     split: { prizeBps: 9000, protocolBps: 1000, leagueBps: 0 },
     summary,
+    boostRules: boostRulesShape(battle),
+    walletBoostUnits: walletBoostUnits == null ? null : walletBoostUnits.toString(),
     finalSalvoBoostAllowed: false,
     updatedAt: new Date().toISOString(),
   });
@@ -169,7 +209,7 @@ async function createQuote(req, res, route, tournament) {
   const tournamentError = validateVoteTournament(tournament, chainId);
   if (tournamentError) return json(res, 409, { ok: false, error: tournamentError });
   const active = await activeMatchForQuote(route, tournament, targetToken);
-  if (active.error) return json(res, 409, { ok: false, error: active.error });
+  if (active.error) return json(res, 409, { ok: false, error: active.error, code: active.code, boostClosesAt: active.boostClosesAt });
 
   const auth = await requireWalletActionAuth({
     res,
@@ -192,20 +232,63 @@ async function createQuote(req, res, route, tournament) {
     return;
   }
 
+  let config;
   try {
-    const config = await resolveBoostPricingConfig(chainId);
+    config = await resolveBoostPricingConfig(chainId);
+  } catch (error) {
+    console.error("[api/arenaTournamentBoosts] quote failed", error?.message || error);
+    return json(res, 503, { ok: false, error: "Tournament Boost pricing is unavailable" });
+  }
+
+  // Cap check, signature and reservation in one transaction under a per-wallet lock
+  // (arenaBoostRules.js). A matchup is its own battle row, so the cap is per matchup.
+  const battleId = active.match.battleId;
+  const client = await pool.connect();
+  let signed;
+  let deadline;
+  try {
+    await client.query("begin");
+    await lockWalletBoostCap(client, { chainId, battleId, wallet });
+    const used = await evmWalletBoostUnitsUsed(client, { chainId, battleId, wallet, readNonceUsed: readNonceUsedOn(chainId) });
+    const capped = walletBoostCapExceeded(used, boostUnits);
+    if (capped) {
+      await client.query("rollback");
+      const { status, ...rest } = capped;
+      return json(res, status, { ok: false, ...rest });
+    }
     const now = Math.floor(Date.now() / 1000);
-    const deadline = now + quoteTtlSeconds();
-    const signed = await signBoostQuote(config, {
+    deadline = clampedQuoteDeadlineSeconds(active.battle, now, quoteTtlSeconds());
+    if (deadline === null) {
+      await client.query("rollback");
+      const { status, ...rest } = boostWindowClosed(active.battle, Number.POSITIVE_INFINITY);
+      return json(res, status, { ok: false, ...rest });
+    }
+    const nonce = randomBoostNonce();
+    signed = await signBoostQuote(config, {
       poolId: tournamentBoostPoolId(route.tournamentId),
       matchId: tournamentBoostMatchId({ tournamentId: route.tournamentId, roundNumber: active.match.roundNumber, matchId: active.match.matchId }),
       roundNumber: active.match.roundNumber,
       booster: wallet,
       sideToken: targetToken,
       boostUnits,
-      nonce: randomBoostNonce(),
+      nonce,
       deadline,
     });
+    await insertEvmBoostReservation(client, {
+      chainId, battleId, tournamentId: route.tournamentId, roundNumber: active.match.roundNumber, matchId: active.match.matchId,
+      wallet, side: sideForToken(active.match, targetToken), boostUnits,
+      treasuryAddress: config.treasuryAddress, nonce, deadlineSeconds: deadline,
+    });
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    console.error("[api/arenaTournamentBoosts] quote failed", error?.message || error);
+    return json(res, 503, { ok: false, error: "Tournament Boost quote could not be created" });
+  } finally {
+    client.release();
+  }
+
+  try {
     res.setHeader("cache-control", "no-store");
     return json(res, 200, {
       ok: true,
@@ -215,8 +298,9 @@ async function createQuote(req, res, route, tournament) {
       battleId: active.match.battleId,
       side: sideForToken(active.match, targetToken),
       usdPerBoostMicros: "1000000",
-      pointsPerBoost: 2,
+      pointsPerBoost: VOTE_BATTLE_BOOST_POINTS_PER_UNIT,
       split: { prizeBps: 9000, protocolBps: 1000, leagueBps: 0 },
+      boostRules: boostRulesShape(active.battle),
       quote: serializeSignedBoostQuote(signed),
       expiresAt: new Date(deadline * 1000).toISOString(),
     });
@@ -281,7 +365,7 @@ async function confirmBoost(req, res, route, tournament) {
   }
 
   const side = sideForToken(match, targetToken);
-  const points = split.boostUnits * 2n;
+  const points = split.boostUnits * BigInt(VOTE_BATTLE_BOOST_POINTS_PER_UNIT);
   const client = await pool.connect();
   try {
     await client.query("begin");
@@ -300,6 +384,13 @@ async function confirmBoost(req, res, route, tournament) {
         split.pool.toString(), split.protocol.toString(), txHash, logIndex, proof.confirmedAt,
       ],
     );
+    if (inserted.rows[0] && proof.nonce != null) {
+      await client.query(
+        `update public.arena_boost_quote_reservations set status='paid', resolved_at=now()
+          where chain_id=$1 and wallet=$2 and nonce=$3 and status <> 'paid'`,
+        [chainId, wallet, String(proof.nonce)],
+      );
+    }
     if (!inserted.rows[0]) {
       const existing = await client.query(
         `select * from public.arena_contest_actions where chain_id=$1 and tx_hash=$2 and log_index=$3 limit 1`,
@@ -345,7 +436,7 @@ export default async function handler(req, res) {
   try {
     const tournament = await loadTournament(route.tournamentId);
     if (!tournament) return json(res, 404, { ok: false, error: "Tournament not found" });
-    if (route.action === "read") return method === "GET" ? readBoostSummary(res, route, tournament) : badMethod(res);
+    if (route.action === "read") return method === "GET" ? readBoostSummary(req, res, route, tournament) : badMethod(res);
     if (route.action === "quote") return method === "POST" ? createQuote(req, res, route, tournament) : badMethod(res);
     if (route.action === "confirm") return method === "POST" ? confirmBoost(req, res, route, tournament) : badMethod(res);
     return json(res, 404, { ok: false, error: "Unknown Tournament Boost route" });

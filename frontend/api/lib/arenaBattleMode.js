@@ -3,9 +3,12 @@
  *
  *   normal  metrics battle: market cap / holders / volume / boost points,
  *           24 hours minimum (24 / 72 / 168).
- *   vote    Vote Battle: free votes (1 pt) and boosts (2 pts per unit), the
- *           same scoring the Vote Tournament rounds already run, but as a
- *           standalone battle of 1, 6, 12 or 24 hours. Ties go to Final Salvo.
+ *   vote    Vote Battle: free votes (1 pt) and boosts (1 pt per unit, was 2
+ *           until 2026-10-15), the same scoring the Vote Tournament rounds run,
+ *           but as a standalone battle. Ties go to Final Salvo.
+ *
+ * Boost cap and Boost close (2 per wallet per battle, none in the last 20%):
+ * arenaBoostRules.js.
  *
  * Tournament battles keep their own mode from the tournament row (trigger
  * enforce_arena_tournament_battle_mode); nothing here applies to them.
@@ -21,7 +24,7 @@ export const VOTE_BATTLE_DURATION_HOURS = Object.freeze([6, 12, 24, 48]);
 export const VOTE_BATTLE_SCORING_VERSION = "vote_tournament_v1";
 export const VOTE_BATTLE_COMPETITION_GENERATION = "arena_competition_v2";
 export const VOTE_BATTLE_FREE_VOTE_POINTS = 1;
-export const VOTE_BATTLE_BOOST_POINTS_PER_UNIT = 2;
+export const VOTE_BATTLE_BOOST_POINTS_PER_UNIT = 1;
 /** arena_contest_actions.round_number for a standalone battle (the check is >= 1). */
 export const VOTE_BATTLE_ROUND_NUMBER = 1;
 /** arena_battles.settlement_version written by the Vote Battle settlement. */

@@ -72,9 +72,9 @@ test("Battle Wall Boost uses signed quote paths without client-side receipt auth
   assert.match(panel, /backend-authoritative/);
   assert.match(wall, /battleBoostAvailability/);
   assert.match(wall, /useBattleBoost/);
-  // Vote Battle boosts are quoted at 2 pts with V3 scoring off (arenaSolanaBoosts.js); the client
-  // must accept that shape or every Vote Battle boost is refused before payment.
-  assert.match(client, /const expectedPoints = voteBattle \? 2 : 1;/);
+  // Vote Battle boosts are quoted at 1 pt with V3 scoring off (arenaSolanaBoosts.js, since
+  // 2026-10-15; was 2); the client must accept that shape or every Vote Battle boost is refused.
+  assert.match(client, /const expectedPoints = 1;/);
   assert.match(client, /scoringVersion \|\| ""\) !== "vote_tournament_v1"/);
 });
 
@@ -86,4 +86,31 @@ test("Battle Boost fails closed when aggregate runtime is unavailable and polls 
   assert.match(panel, /Battle Boost unavailable/);
   assert.match(panel, /for \(let attempt = 0; attempt < 4; attempt \+= 1\)/);
   assert.match(panel, /unitsFor\(fresh\?\.summary \|\| null, side\) > previousUnits/);
+});
+
+test("boost allowance: 2 per wallet, closed in the last 20%", async () => {
+  const { boostAllowance, boostQuantityOptions } = await import("./battleBoostPresentation.mjs");
+  const closesAt = "2026-10-15T12:00:00.000Z";
+  const before = Date.parse(closesAt) - 60_000;
+  const fresh = boostAllowance({ boostRules: { maxUnitsPerWallet: 2, closesAt }, walletBoostUnits: "0", nowMs: before });
+  assert.equal(fresh.open, true);
+  assert.equal(fresh.remaining, 2);
+  assert.match(fresh.label, /^2 of 2 Boosts left for your wallet\. Boosts close at \d\d:\d\d\.$/);
+  assert.deepEqual(boostQuantityOptions(fresh).map((o) => [o.value, o.disabled]), [[1, false], [2, false]]);
+
+  const one = boostAllowance({ boostRules: { maxUnitsPerWallet: 2, closesAt }, walletBoostUnits: "1", nowMs: before });
+  assert.deepEqual(boostQuantityOptions(one).map((o) => o.disabled), [false, true]);
+
+  const used = boostAllowance({ boostRules: { maxUnitsPerWallet: 2, closesAt }, walletBoostUnits: "2", nowMs: before });
+  assert.equal(used.remaining, 0);
+  assert.equal(used.label, "You used your 2 Boosts in this battle.");
+
+  const closed = boostAllowance({ boostRules: { maxUnitsPerWallet: 2, closesAt }, walletBoostUnits: "0", nowMs: Date.parse(closesAt) });
+  assert.equal(closed.open, false);
+  assert.equal(closed.label, "Boosts are closed for the last 20% of the battle.");
+  assert.deepEqual(boostQuantityOptions(closed).map((o) => o.disabled), [true, true]);
+
+  const anonymous = boostAllowance({ boostRules: { maxUnitsPerWallet: 2, closesAt }, walletBoostUnits: null, nowMs: before });
+  assert.equal(anonymous.remaining, null);
+  assert.match(anonymous.label, /^Max 2 Boosts per wallet\./);
 });
