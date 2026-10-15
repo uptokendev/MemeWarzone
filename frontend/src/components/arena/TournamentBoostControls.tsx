@@ -11,6 +11,7 @@ import {
   createTournamentBoostQuote,
   fetchTournamentBoostState,
   formatSolanaBoostLamports,
+  reportTournamentBoostPayment,
   formatTournamentBoostNative,
   submitSolanaTournamentBoost,
   submitTournamentBoost,
@@ -153,7 +154,9 @@ export function TournamentBoostControls({ tournamentId, chainId, match }: {
         );
         if (!confirmed) return;
         const submitted = await submitTournamentBoost({ signer: wallet.signer, quote: quoted.quote });
-        toast.success(`Tournament Boost submitted${submitted.txHash ? `: ${submitted.txHash.slice(0, 10)}…` : "."}`);
+        const recorded = submitted.txHash ? await reportTournamentBoostPayment({ tournamentId, matchRef, chainId, txHash: submitted.txHash }) : false;
+        if (recorded) toast.success(`Tournament Boost confirmed: ${submitted.txHash.slice(0, 10)}…`);
+        else toast.success("Tournament Boost paid. Its points are added within a few minutes.");
       }
 
       for (let attempt = 0; attempt < 4; attempt += 1) {

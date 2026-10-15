@@ -13,6 +13,7 @@ import {
   formatBoostLamports,
   formatBoostNative,
   recoverSolanaBattleBoost,
+  reportBattleBoostPayment,
   submitBattleBoost,
   submitSolanaBattleBoost,
   type BattleBoostSummary,
@@ -162,7 +163,9 @@ export function useBattleBoost({ battleId, chainId, left, right }: { battleId: s
         if (Number(wallet.chainId) !== Number(chainId)) return toast.error("Switch your wallet to the battle chain before Boosting.");
         const quoted = await createBattleBoostQuote({ battleId, chainId, wallet: wallet.account, targetToken: tokenId, boostUnits: effectiveQuantity, signer: wallet.signer });
         const submitted = await submitBattleBoost({ signer: wallet.signer, quote: quoted.quote });
-        toast.success(`Battle Boost submitted${submitted.txHash ? `: ${submitted.txHash.slice(0, 10)}…` : "."}`);
+        const recorded = submitted.txHash ? await reportBattleBoostPayment({ chainId, battleId, txHash: submitted.txHash }) : false;
+        if (recorded) toast.success(`Battle Boost confirmed: ${submitted.txHash.slice(0, 10)}…`);
+        else toast.success("Battle Boost paid. Its points are added within a few minutes.");
       }
       for (let attempt = 0; attempt < 4; attempt += 1) {
         await new Promise((resolve) => window.setTimeout(resolve, attempt === 0 ? 1_000 : 1_500));
