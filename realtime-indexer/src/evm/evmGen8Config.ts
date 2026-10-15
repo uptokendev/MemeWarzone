@@ -129,11 +129,29 @@ export function intEnv(value: unknown, fallback: number, min: number, max = Numb
 }
 
 /**
- * Gen-8 chain reads. The default and the floor are both 60 s, so a short env (the old 4 s / 15 s values)
- * cannot bring a faster loop back. The coin page refreshes on a new trade; these are the safety polls.
+ * Display ingest cadence. One tick reads the display head once and catches up to that frozen head.
+ * Fast poll is 4 s (floor 4 s). EVM_GEN8_POLL_MS can only slow it: 60000 keeps the fast poll at 60 s, and the
+ * idle poll is never faster than the fast poll, so unset the variable (or set 4000) for the 4 s / 15 s pair.
+ * After 20 ticks with no gen-8 log the loop idles at 15 s. Holders and the side-pool watcher keep their own
+ * 60 s floors. The money lane is gen8MoneyPollMs, not this poll.
  */
+export const GEN8_IDLE_AFTER_EMPTY_TICKS = 20;
+
 export function gen8IngestPollMs(env: NodeJS.ProcessEnv = process.env): number {
-  return intEnv(env.EVM_GEN8_POLL_MS, 60_000, 60_000);
+  return intEnv(env.EVM_GEN8_POLL_MS, 4_000, 4_000);
+}
+
+export function gen8IngestIdlePollMs(env: NodeJS.ProcessEnv = process.env): number {
+  return Math.max(gen8IngestPollMs(env), intEnv(env.EVM_GEN8_IDLE_POLL_MS, 15_000, 15_000));
+}
+
+export function gen8DelayForEmptyTicks(emptyTicks: number, env: NodeJS.ProcessEnv = process.env): number {
+  return emptyTicks >= GEN8_IDLE_AFTER_EMPTY_TICKS ? gen8IngestIdlePollMs(env) : gen8IngestPollMs(env);
+}
+
+/** Money lane (safe on Robinhood, finalized on BNB). Its own cadence, not every display tick. */
+export function gen8MoneyPollMs(env: NodeJS.ProcessEnv = process.env): number {
+  return intEnv(env.EVM_GEN8_MONEY_POLL_MS, 60_000, 60_000);
 }
 
 export function gen8HolderPollMs(env: NodeJS.ProcessEnv = process.env): number {
