@@ -457,7 +457,7 @@ async function setCampaignGraduated(
   await notifyCampaignGraduated(pool, {
     chainId,
     campaignAddress: campaign,
-    // Robinhood: v3/WETH; DogeOS: v3/WDOGE; BNB: topaz/WBNB.
+    // Gen-8 passes its own market; otherwise Robinhood: v3/WETH, BNB: topaz/WBNB.
     market: market ?? graduatedMarketFor(chainId),
     graduatedAt,
   });

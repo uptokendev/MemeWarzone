@@ -1,7 +1,7 @@
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
 
-/** Factory start block used as the rewind floor. DogeOS reads only its own (0 when unset), never BSC 97's. */
+/** Factory start block used as the rewind floor. DogeOS has no gen-7 factory (Removed B8): 0, never BSC 97's. */
 export function factoryStartBlockForChain(chainId: number): number {
   return chainId === 56
     ? Number(ENV.FACTORY_START_BLOCK_56 || 0)
@@ -10,7 +10,7 @@ export function factoryStartBlockForChain(chainId: number): number {
       : chainId === 4663
         ? Number(ENV.FACTORY_START_BLOCK_4663 || 0)
         : chainId === 6281971
-          ? Number(ENV.FACTORY_START_BLOCK_6281971 || 0)
+          ? 0
           : Number(ENV.FACTORY_START_BLOCK_97 || 0);
 }
 

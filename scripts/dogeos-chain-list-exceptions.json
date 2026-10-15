@@ -10,7 +10,8 @@
     "robinhood-only": "Robinhood-only features (beat-the-market, local scanner, RH dev scripts)",
     "plan-directed": "not in the global-constraints list: the plan or spec names this exact site as unchanged (source in the reason)",
     "evm-gen8-v4": "EVM generation 8 (Uniswap V4 hook pools, BNB 56/97 and Robinhood 4663/46630), merged from release/evm-gen8: DogeOS is out of gen-8 (EVM_GEN8_V4_DESIGN.md Appendix A, 'DogeOS (not in this generation) [Decided: waits]'; no Uniswap V4 on Chikyu) and stays on gen-7 + MuchFi V3 graduation",
-    "partner-api": "partner integrations outside sub-project #1 (the CrypticPump /api/partner stats endpoint), merged from release/evm-gen8"
+    "partner-api": "partner integrations outside sub-project #1 (the CrypticPump /api/partner stats endpoint), merged from release/evm-gen8",
+    "gen7-only-b8": "gen-7 (and older) LaunchFactory/campaign and Uniswap-V3-graduation paths: DogeOS launches on gen-8 only, so its gen-7/MuchFi branches were removed (barkswap spec section 4, Removed B8)"
   },
   "exceptions": [
     { "file": "db/migrations/20260902_000001_robinhood_generic_market_pairs.sql", "pattern": "chain_id in (4663,46630)", "category": "stock-quote-catalog", "reason": "Robinhood Stock Battlefield market-pair backfills and the robinhood_market_pairs_v view; applied history." },
@@ -82,7 +83,7 @@
     { "file": "frontend/scripts/capture-create-graduation-market.mjs", "pattern": "VITE_ALLOWED_CHAIN_IDS: \"56,97,101,4663,46630\"", "category": "stock-quote-catalog", "reason": "Graduation Market (quote assets) screenshot fixture script." },
     { "file": "frontend/scripts/seed-quote-catalog-testnet-candidates.mjs", "pattern": "chain: \"46630\"", "category": "stock-quote-catalog", "reason": "Quote catalog testnet seed rows." },
     { "file": "frontend/scripts/verify-quote-catalog.mjs", "pattern": "46630", "category": "stock-quote-catalog", "reason": "Quote catalog verification usage text." },
-    { "file": "realtime-indexer/src/robinhoodMarketApi.ts", "pattern": "const ROBINHOOD_CHAIN_IDS = new Set([4663, 46630]);", "category": "stock-quote-catalog", "reason": "Gates /api/robinhood/stock-tokens; DogeOS market routes use V3_MARKET_ROUTE_CHAIN_IDS (:22)." },
+    { "file": "realtime-indexer/src/robinhoodMarketApi.ts", "pattern": "const ROBINHOOD_CHAIN_IDS = new Set([4663, 46630]);", "category": "stock-quote-catalog", "reason": "Gates /api/robinhood/stock-tokens and the Robinhood V3 market routes; DogeOS has no MuchFi V3 market (Removed B8), so 6281971 falls through to the generic handlers like BNB." },
     { "file": "realtime-indexer/src/robinhoodStockAcquisitionQuote.ts", "pattern": "46630", "category": "stock-quote-catalog", "reason": "Robinhood stock acquisition quote." },
     { "file": "realtime-indexer/src/robinhoodStockTokenRegistry.ts", "pattern": "46630", "category": "stock-quote-catalog", "reason": "Robinhood stock token registry." },
 
@@ -104,10 +105,23 @@
     { "file": "frontend/shared/evmGen8.mjs", "pattern": "export const GEN8_TEST_TARGET_CHAIN_IDS = Object.freeze([97, 46630, 31337]);", "category": "evm-gen8-v4", "reason": "MwzV4Launcher $150 test-target chains; gen-8 only (Appendix A)." },
     { "file": "frontend/src/widget/gen8Widget.ts", "pattern": "const GAS_RESERVE: Record<number, bigint> = { 56:", "category": "evm-gen8-v4", "reason": "Gen-8 swap widget buy gas reserve; the widget trades gen-8 V4 pools only (Appendix A). DogeOS buy reserve lives in tradeBalanceReserve.ts." },
     { "file": "realtime-indexer/src/evm/evmGen8Config.ts", "pattern": "46630: \"0x52a47a33930b8a90a2000b1ba3cb96e879569670\",", "category": "evm-gen8-v4", "reason": "GEN8_WRAPPED_NATIVE: quote for gen-8 dex_trades; gen-8 indexer only (Appendix A)." },
-    { "file": "realtime-indexer/src/evm/evmGen8Config.ts", "pattern": "export const GEN8_EVM_CHAIN_IDS = [56, 97, 4663, 46630] as const;", "category": "evm-gen8-v4", "reason": "Gen-8 indexer chains; DogeOS is indexed by the gen-7 + MuchFi V3 paths, not V4 (Appendix A)." },
+    { "file": "realtime-indexer/src/evm/evmGen8Config.ts", "pattern": "export const GEN8_EVM_CHAIN_IDS = [56, 97, 4663, 46630] as const;", "category": "evm-gen8-v4", "reason": "Gen-8 V4 indexer chains (Appendix A). DogeOS's gen-7 + MuchFi V3 indexer paths were removed (Removed B8); it enters gen-8 only through the Barkswap venue branch." },
     { "file": "realtime-indexer/src/evm/evmGen8Config.ts", "pattern": "const isRobinhood = (chainId: number) => chainId === 4663 || chainId === 46630;", "category": "evm-gen8-v4", "reason": "Gen-8 display/money head tag per chain; only read for gen-8 chains (Appendix A)." },
     { "file": "realtime-indexer/src/evm/evmGen8Pool.ts", "pattern": "quoteAsset: cfg.chainId === 4663 || cfg.chainId === 46630 ? \"ETH\" : \"BNB\"", "category": "evm-gen8-v4", "reason": "Gen-8 V4 graduation market quote; cfg exists only for GEN8_EVM_CHAIN_IDS, so 6281971 never reaches the BNB default (Appendix A)." },
     { "file": "realtime-indexer/src/partnerTokenStats.ts", "pattern": "const PARTNER_CHAIN_IDS = new Set([56, 97, 101, 4663, 46630]);", "category": "partner-api", "reason": "CrypticPump partner Live Stats endpoint (/api/partner); a partner integration, not part of the DogeOS launch (sub-project #1). An unlisted chain is refused (400 Invalid address or chainId), never a BNB fallback." },
+
+    { "file": "realtime-indexer/src/env.ts", "pattern": "FACTORY_ADDRESS_46630: firstEnv(", "category": "gen7-only-b8", "reason": "RH gen-7 active factory env; DogeOS has no gen-7 factory." },
+    { "file": "realtime-indexer/src/env.ts", "pattern": "SUPPORTED_FACTORY_ADDRESSES_46630: csvEnv(", "category": "gen7-only-b8", "reason": "RH gen-7 factory inventory env; DogeOS has no gen-7 factory." },
+    { "file": "realtime-indexer/src/env.ts", "pattern": "SUPPORTED_FACTORY_START_BLOCKS_46630: csvEnv(", "category": "gen7-only-b8", "reason": "RH gen-7 factory inventory start blocks; DogeOS has no gen-7 factory." },
+    { "file": "realtime-indexer/src/env.ts", "pattern": "FACTORY_START_BLOCK_46630: Number(", "category": "gen7-only-b8", "reason": "RH gen-7 factory start block; DogeOS has no gen-7 factory (its rewind/backfill floors are a hard 0, never BSC 97's)." },
+    { "file": "realtime-indexer/src/factoryDiscovery.ts", "pattern": "46630", "category": "gen7-only-b8", "reason": "RH gen-7 factory discovery block; the DogeOS block was removed." },
+    { "file": "realtime-indexer/src/evm/evmGraduationKeeperConfig.ts", "pattern": "46630: 30_000_000n", "category": "gen7-only-b8", "reason": "Gen-7 graduation keeper max gas; the keeper is off for 6281971 (foundation-spec amendment)." },
+    { "file": "realtime-indexer/src/evm/evmGraduationKeeperConfig.ts", "pattern": "export const V3_GRADUATION_CHAINS = new Set([4663, 46630]);", "category": "gen7-only-b8", "reason": "Gen-7 keeper V3 observation-slot chains; MuchFi slot0 path removed." },
+    { "file": "realtime-indexer/src/evm/evmGraduationKeeperConfig.ts", "pattern": "return [56, 4663, 97, 46630].filter(", "category": "gen7-only-b8", "reason": "Gen-7 graduation keeper enable list; the keeper is off for 6281971 (foundation-spec amendment)." },
+    { "file": "realtime-indexer/src/robinhoodCmsHeal.ts", "pattern": "if (chainId !== 46630 && chainId !== 4663) return", "category": "gen7-only-b8", "reason": "Gen-7 V3 graduation CMS heal; DogeOS has no MuchFi V3 graduation." },
+    { "file": "realtime-indexer/src/robinhoodMarketApi.ts", "pattern": "asNumber(req.query.chainId, 46630)", "category": "gen7-only-b8", "reason": "RH V3 market route default when chainId is omitted; DogeOS requests pass chainId and fall through (no MuchFi V3 market)." },
+    { "file": "realtime-indexer/src/robinhoodMarketApi.ts", "pattern": ": parseRpcList(ENV.ROBINHOOD_RPC_HTTP_46630)[0];", "category": "gen7-only-b8", "reason": "RH market-state CMS heal RPC; DogeOS no longer reaches it." },
+    { "file": "realtime-indexer/src/robinhoodV3PoolIndexer.ts", "pattern": "46630", "category": "gen7-only-b8", "reason": "RH V3 pool indexer (gen-7 graduated Uniswap V3 pools); the DogeOS MuchFi chain config and decoding were removed." },
 
     { "file": "frontend/api/dev-fix/draft-deploy-base.js", "pattern": "cid === 46630 || cid === 101", "category": "plan-directed", "reason": "Plan t16: leave the $6 tier alone; gen-7 arming rejects $6, so adding 6281971 would save DogeOS drafts that can never be armed." },
     { "file": "frontend/scripts/dev-vite.mjs", "pattern": "configuredAllowedChainIds, 56, 101, 46630", "category": "plan-directed", "reason": "Spec section 7: keeps the configured VITE_ALLOWED_CHAIN_IDS (which carry 6281971) and needs no change." },
@@ -133,12 +147,8 @@
     { "file": "frontend/src/lib/scheduledLaunchClientV2.ts", "pattern": "const ROBINHOOD_TESTNET_CHAIN_ID = 46630;", "sibling": "6281971: [[7, 6]],", "reason": "RH chain constant; DogeOS has its own generation-pair entry (API mirror)." },
     { "file": "realtime-indexer/src/emptyTradeCursorRewind.ts", "pattern": ": chainId === 46630", "sibling": ": chainId === 6281971", "reason": "RH start block; DogeOS has its own start-block branch (never FACTORY_START_BLOCK_97)." },
     { "file": "realtime-indexer/src/env.ts", "pattern": "ROBINHOOD_RPC_HTTP_46630: usableRpc(", "sibling": "DOGEOS_RPC_HTTP_6281971: usableRpc(", "reason": "RH RPC env field; DogeOS has its own field." },
-    { "file": "realtime-indexer/src/env.ts", "pattern": "SUPPORTED_FACTORY_ADDRESSES_46630: csvEnv(", "sibling": "SUPPORTED_FACTORY_ADDRESSES_6281971: csvEnv(", "reason": "RH env field; DogeOS has its own field." },
     { "file": "realtime-indexer/src/evmIndexerChains.ts", "pattern": "46630", "sibling": "rpcHttp: env.DOGEOS_RPC_HTTP_6281971,", "reason": "RH CHAINS entry; DogeOS has its own entry." },
-    { "file": "realtime-indexer/src/factoryDiscovery.ts", "pattern": "46630", "sibling": "rpcHttp: ENV.DOGEOS_RPC_HTTP_6281971,", "reason": "RH discovery block; DogeOS has its own block." },
-    { "file": "realtime-indexer/src/robinhoodMarketApi.ts", "pattern": "asNumber(req.query.chainId, 46630)", "sibling": "const V3_MARKET_ROUTE_CHAIN_IDS = new Set([4663, 46630, DOGEOS_TESTNET_CHAIN_ID]);", "reason": "Default when the chainId query is omitted; DogeOS requests pass chainId and are admitted by V3_MARKET_ROUTE_CHAIN_IDS." },
     { "file": "realtime-indexer/src/robinhoodNativeUsdOracle.ts", "pattern": "46630", "siblingFile": "realtime-indexer/src/dogeosNativeUsdOracle.ts", "sibling": "DOGEOS_NATIVE_USD_ORACLE_ADDRESS_6281971", "reason": "RH ETH/USD oracle reader stays untouched (plan t19); DogeOS reads its own DOGE/USD oracle." },
-    { "file": "realtime-indexer/src/robinhoodV3PoolIndexer.ts", "pattern": "46630", "sibling": "if (active.has(DOGEOS_CHAIN_ID) && dogeos.length) {", "reason": "RH V3 pool chainConfigs block; DogeOS has its own block." },
     { "file": "realtime-indexer/src/server.ts", "pattern": "rpc46630Configured", "sibling": "rpc6281971Configured", "reason": "RH health flag; DogeOS has its own." }
   ]
 }

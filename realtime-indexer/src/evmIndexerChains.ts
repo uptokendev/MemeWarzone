@@ -81,21 +81,26 @@ export function buildActiveEvmIndexerChains(
 export const DOGEOS_TESTNET_CHAIN_ID = 6281971;
 
 /**
- * Chains whose graduated market is a Uniswap-V3 style pool (Robinhood and DogeOS).
+ * Chains whose graduated market is a Uniswap-V3 style pool (Robinhood).
  * Drives the V3 campaign_market_state seed and the pre-scan V3 CMS heal in indexer.ts.
+ * DogeOS has no gen-7 / MuchFi V3 graduation (spec section 4, Removed B8).
  */
 export function isV3GraduationIndexerChainId(chainId: number): boolean {
-  return chainId === 46630 || chainId === 4663 || chainId === DOGEOS_TESTNET_CHAIN_ID;
+  return chainId === 46630 || chainId === 4663;
 }
 
-/** Venue + quote asset announced when a campaign graduates. DogeOS quotes in WDOGE, never WETH/WBNB. */
-export function graduatedMarketFor(chainId: number): { venue: "v3" | "topaz"; quoteAsset: "WDOGE" | "WETH" | "WBNB" } {
-  if (chainId === DOGEOS_TESTNET_CHAIN_ID) return { venue: "v3", quoteAsset: "WDOGE" };
+/**
+ * Venue + quote asset announced when a gen-7 (or older) campaign graduates. Gen-8 coins pass their own
+ * market label (evm/evmGen8Pool.ts), and that is the only way DogeOS graduates (Removed B8).
+ */
+export function graduatedMarketFor(chainId: number): { venue: "v3" | "topaz"; quoteAsset: "WETH" | "WBNB" } {
   if (chainId === 46630 || chainId === 4663) return { venue: "v3", quoteAsset: "WETH" };
   return { venue: "topaz", quoteAsset: "WBNB" };
 }
 
 type IndexerChainListChainId = 56 | 97 | 46630 | 4663 | 6281971;
+/** Chains with a gen-7 (or older) LaunchFactory in the CHAINS list; DogeOS has none (Removed B8). */
+type IndexerFactoryChainId = Exclude<IndexerChainListChainId, 6281971>;
 
 /** The env fields the main indexer CHAINS list reads. `ENV` from env.ts satisfies it. */
 export type IndexerChainListEnv = {
@@ -104,8 +109,8 @@ export type IndexerChainListEnv = {
   ROBINHOOD_RPC_HTTP_46630: string;
   ROBINHOOD_RPC_HTTP_4663: string;
   DOGEOS_RPC_HTTP_6281971: string;
-} & Record<`FACTORY_ADDRESS_${IndexerChainListChainId}` | `VOTE_TREASURY_ADDRESS_${IndexerChainListChainId}`, string>
-  & Record<`FACTORY_START_BLOCK_${IndexerChainListChainId}` | `VOTE_TREASURY_START_BLOCK_${IndexerChainListChainId}`, number>;
+} & Record<`FACTORY_ADDRESS_${IndexerFactoryChainId}` | `VOTE_TREASURY_ADDRESS_${IndexerChainListChainId}`, string>
+  & Record<`FACTORY_START_BLOCK_${IndexerFactoryChainId}` | `VOTE_TREASURY_START_BLOCK_${IndexerChainListChainId}`, number>;
 
 export type IndexerChainCfg = {
   chainId: number;
@@ -159,11 +164,12 @@ export function buildIndexerChainList(env: IndexerChainListEnv): IndexerChainCfg
     },
     {
       // DogeOS Chikyu testnet. Gated the same way: present only when its RPC is
-      // configured. Vote treasury stays empty until sub-project 3.
+      // configured. No gen-7 factory (Removed B8: DogeOS launches on gen-8 only).
+      // Vote treasury stays empty until sub-project 3.
       chainId: 6281971,
       rpcHttp: env.DOGEOS_RPC_HTTP_6281971,
-      factoryAddress: env.FACTORY_ADDRESS_6281971 || undefined,
-      factoryStartBlock: env.FACTORY_START_BLOCK_6281971 || undefined,
+      factoryAddress: undefined,
+      factoryStartBlock: undefined,
       voteTreasuryAddress: env.VOTE_TREASURY_ADDRESS_6281971 || undefined,
       voteTreasuryStartBlock: env.VOTE_TREASURY_START_BLOCK_6281971 || undefined
     }

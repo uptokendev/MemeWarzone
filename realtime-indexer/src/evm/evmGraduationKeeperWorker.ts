@@ -2,12 +2,11 @@
  * EVM graduation keeper loop (launch generation, campaign 5). Off unless enabled per chain; dry-run
  * unless EVM_GRADUATION_KEEPER_SEND=true.
  *
- *   EVM_GRADUATION_KEEPER_ENABLED_<chainId>=true    56, 4663 (97, 46630, 6281971 for testnets)
+ *   EVM_GRADUATION_KEEPER_ENABLED_<chainId>=true    56, 4663 (97, 46630 for testnets)
  *   EVM_GRADUATION_KEEPER_SEND=true                 real sends; otherwise decisions are only logged
  *   EVM_GRADUATION_KEEPER_PRIVATE_KEY[_<chainId>]   keeper key (never a deployer: refused at start)
  *   EVM_GRADUATION_KEEPER_INTERVAL_MS               default 10000
- *   EVM_GRADUATION_KEEPER_MAX_GAS[_<chainId>]       default 56: 15,000,000; 4663: 30,000,000 (Nitro cap 32M);
- *                                                   6281971: 10,000,000, a ceiling env can lower, never raise
+ *   EVM_GRADUATION_KEEPER_MAX_GAS[_<chainId>]       default 56: 15,000,000; 4663: 30,000,000 (Nitro cap 32M)
  *   EVM_GRADUATION_KEEPER_MIN_FLUSH_WEI             default 1
  *   EVM_GRADUATION_KEEPER_REPAIR_HALVINGS           default 8
  *   EVM_GRADUATION_KEEPER_DUE_SLACK_BPS             default 200 (due-but-not-pending pre-filter slack)
@@ -15,7 +14,7 @@
  *   EVM_GRADUATION_KEEPER_TARGET_TTL_MS             default 60000 (cached graduationNativeTarget())
  *   EVM_KEEPER_V3_FACTORY_<id> / EVM_KEEPER_WETH_<id> / EVM_KEEPER_V3_FEE_<id>  partial-repair price read
  *   EVM_KEEPER_FORBIDDEN_ADDRESSES                  extra refused keeper addresses
- *   EVM_KEEPER_V3_OBSERVATION_SLOTS[_<chainId>]     default 180 on 4663 / 46630 / 6281971 (0 = off): grow a graduated V3
+ *   EVM_KEEPER_V3_OBSERVATION_SLOTS[_<chainId>]     default 180 on 4663 / 46630 (0 = off): grow a graduated V3
  *                                                   pool's observationCardinalityNext once, for TWAP reads
  */
 import type { ethers } from "ethers";

@@ -44,9 +44,9 @@ export function rpcUrlsFor(chainId: number): string[] {
   return parseRpcList(ENV.BSC_RPC_HTTP_97);
 }
 
-/** Factory start block for the backfill floor. DogeOS reads only its own (0 when unset), never BSC 97's. */
+/** Factory start block for the backfill floor. DogeOS has no gen-7 factory (Removed B8): 0, never BSC 97's. */
 export function historyFactoryStartBlock(chainId: number): number {
-  if (chainId === 6281971) return Number(ENV.FACTORY_START_BLOCK_6281971 || 0);
+  if (chainId === 6281971) return 0;
   return chainId === 56 ? Number(ENV.FACTORY_START_BLOCK_56 || 0) : Number(ENV.FACTORY_START_BLOCK_97 || 0);
 }
 

@@ -2,7 +2,6 @@ import { ethers } from "ethers";
 import { LAUNCH_CAMPAIGN_ABI } from "./abis.js";
 import { pool } from "./db.js";
 import { GEN5_GRADUATED_TOPIC } from "./evm/evmGen5Handoff.js";
-import { DOGEOS_TESTNET_CHAIN_ID } from "./evmIndexerChains.js";
 import { skipBondingRecheck } from "./robinhoodCmsHealThrottle.js";
 
 const ZERO = ethers.ZeroAddress.toLowerCase();
@@ -21,28 +20,6 @@ export type RobinhoodCmsHealResult = {
 };
 
 const notLaunchedCheckedAt = new Map<string, number>();
-
-/** The DogeOS RPC caps eth_getLogs at 10,000 blocks per call. */
-const DOGEOS_MAX_LOG_WINDOW = 10_000;
-
-/**
- * DogeOS only: the graduation log lookup in windows of at most 10,000 blocks from created_block to
- * the head, stopping at the first window that holds a graduation log. Robinhood keeps its single call.
- */
-async function dogeosGraduationLogs(
-  provider: ethers.Provider,
-  address: string,
-  topics: string[],
-  fromBlock: number,
-): Promise<ethers.Log[]> {
-  const head = await provider.getBlockNumber();
-  for (let start = Math.max(0, fromBlock); start <= head; start += DOGEOS_MAX_LOG_WINDOW) {
-    const end = Math.min(head, start + DOGEOS_MAX_LOG_WINDOW - 1);
-    const logs = await provider.getLogs({ address, topics: [topics], fromBlock: start, toBlock: end });
-    if (logs.length) return logs;
-  }
-  return [];
-}
 
 /**
  * campaign_market_state_graduation_order rejects a graduated row whose
@@ -75,14 +52,12 @@ async function findGraduationAnchor(
     const topic = iface.getEvent("CampaignFinalized")?.topicHash;
     if (!topic) return null;
     // Launch generation (campaign 5) anchors on Graduated; one filter covers both generations.
-    const logs = chainId === DOGEOS_TESTNET_CHAIN_ID
-      ? await dogeosGraduationLogs(provider, camp, [topic, GEN5_GRADUATED_TOPIC], Number(known?.created_block || 0))
-      : await provider.getLogs({
-          address: camp,
-          topics: [[topic, GEN5_GRADUATED_TOPIC]],
-          fromBlock: Number(known?.created_block || 0),
-          toBlock: "latest",
-        });
+    const logs = await provider.getLogs({
+      address: camp,
+      topics: [[topic, GEN5_GRADUATED_TOPIC]],
+      fromBlock: Number(known?.created_block || 0),
+      toBlock: "latest",
+    });
     const finalized = logs[logs.length - 1];
     if (!finalized) return null;
     const block = await provider.getBlock(finalized.blockNumber);
@@ -217,11 +192,7 @@ export async function healRobinhoodGraduatedCms(
   tokenAddress: string | null,
   opts: { force?: boolean } = {},
 ): Promise<RobinhoodCmsHealResult> {
-  // DogeOS graduates into a MuchFi V3 pool the same way; this heal is what fills the CMS wrapped
-  // native (WDOGE) that V3 pool discovery requires, and the token page's post-grad panel reads it.
-  if (chainId !== 46630 && chainId !== 4663 && chainId !== DOGEOS_TESTNET_CHAIN_ID) {
-    return { healed: false, reason: "not_robinhood_chain" };
-  }
+  if (chainId !== 46630 && chainId !== 4663) return { healed: false, reason: "not_robinhood_chain" };
   const camp = campaign.toLowerCase();
   if (!ethers.isAddress(camp)) return { healed: false, reason: "bad_campaign_address" };
 
@@ -449,7 +420,3 @@ export async function healRobinhoodGraduatedCms(
   console.log("[indexer] RH CMS heal seeded GRADUATING", { chainId, campaign: camp, pair, venue });
   return { healed: true, reason: "seeded_graduating", pair, anchor };
 }
-
-export const robinhoodCmsHealInternals = {
-  findGraduationAnchor,
-};

@@ -1,7 +1,6 @@
 import type { Express, NextFunction, Request, Response } from "express";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
-import { DOGEOS_TESTNET_CHAIN_ID } from "./evmIndexerChains.js";
 import { createStaticJsonRpcProvider, parseRpcList } from "./rpcProvider.js";
 import { healRobinhoodGraduatedCms } from "./robinhoodCmsHeal.js";
 import { isGen8Campaign } from "./evm/evmGen8Guard.js";
@@ -14,13 +13,6 @@ import {
 } from "./robinhoodStockTokenRegistry.js";
 
 const ROBINHOOD_CHAIN_IDS = new Set([4663, 46630]);
-/**
- * Chains whose token page reads the V3 market routes below (market-state, trade-route, summary,
- * trades). DogeOS 6281971 graduates into a MuchFi V3 pool, so it is served here instead of falling
- * through to the BNB/Topaz handlers. It never joins ROBINHOOD_CHAIN_IDS, which also gates the
- * stock-token registry route (a named exception).
- */
-const V3_MARKET_ROUTE_CHAIN_IDS = new Set([4663, 46630, DOGEOS_TESTNET_CHAIN_ID]);
 
 type RobinhoodMarketMetadataInput = {
   chainId: number;
@@ -43,18 +35,6 @@ function truthyQuery(value: unknown, fallback = false): boolean {
 
 function isRobinhood(chainId: number): boolean {
   return ROBINHOOD_CHAIN_IDS.has(Number(chainId));
-}
-
-function isV3MarketRouteChain(chainId: number): boolean {
-  return V3_MARKET_ROUTE_CHAIN_IDS.has(Number(chainId));
-}
-
-/** RPC for the market-state CMS heal. Robinhood: 4663 or else 46630, as before. DogeOS: its own RPC. */
-function marketStateHealRpcUrl(chainId: number): string | undefined {
-  if (chainId === DOGEOS_TESTNET_CHAIN_ID) return parseRpcList(ENV.DOGEOS_RPC_HTTP_6281971)[0];
-  return chainId === 4663
-    ? parseRpcList(ENV.ROBINHOOD_RPC_HTTP_4663)[0]
-    : parseRpcList(ENV.ROBINHOOD_RPC_HTTP_46630)[0];
 }
 
 function normalizeAddress(value: unknown): string {
@@ -89,7 +69,7 @@ function parseTradeSide(value: unknown): RobinhoodTradeSide | null {
 
 async function campaignFromParam(chainId: number, raw: string): Promise<string | null> {
   const input = normalizeAddress(raw);
-  if (!isV3MarketRouteChain(chainId) || !isEvmAddress(input)) return null;
+  if (!isRobinhood(chainId) || !isEvmAddress(input)) return null;
   const identity = await resolveMarketIdentityOrPassthrough(chainId, input);
   return identity.campaignAddress;
 }
@@ -298,7 +278,7 @@ function provisionalRobinhoodMarketState(chainId: number, campaign: string) {
 
 function robinhoodOnly(req: Request, _res: Response, next: NextFunction): boolean {
   const chainId = asNumber(req.query.chainId ?? (req.body as any)?.chainId, 0);
-  if (!isV3MarketRouteChain(chainId)) {
+  if (!isRobinhood(chainId)) {
     next();
     return false;
   }
@@ -344,7 +324,10 @@ export function registerRobinhoodMarketContinuityRoutes(app: Express): void {
       // until the venue is populated too.
       // Gen-8 coins (Uniswap V4 hook pool, no campaign contract) are never healed from a campaign contract.
       if ((!state.pairAddress || !state.wrappedNativeAddress) && !(await isGen8Campaign(pool, chainId, campaign))) {
-        const rpcUrl = marketStateHealRpcUrl(chainId);
+        const rpcUrl =
+          chainId === 4663
+            ? parseRpcList(ENV.ROBINHOOD_RPC_HTTP_4663)[0]
+            : parseRpcList(ENV.ROBINHOOD_RPC_HTTP_46630)[0];
         if (!rpcUrl) healReason = "rh_rpc_not_configured";
         if (rpcUrl) {
           try {
@@ -522,5 +505,4 @@ export const robinhoodMarketApiInternals = {
   buildRobinhoodMarketMetadata,
   provisionalRobinhoodMarketState,
   parseTradeSide,
-  marketStateHealRpcUrl,
 };

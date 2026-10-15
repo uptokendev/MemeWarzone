@@ -32,10 +32,12 @@ Object.assign(process.env, {
   FACTORY_START_BLOCK_97: String(START[97]),
   FACTORY_START_BLOCK_46630: String(START[46630]),
   FACTORY_START_BLOCK_4663: String(START[4663]),
+  // Stale gen-7 DogeOS start block (B8): nothing reads it, so it must never become a floor.
   FACTORY_START_BLOCK_6281971: String(START[DOGEOS]),
   // Generic (unsuffixed) names that 56/97 fall back to. DogeOS must never pick them up.
   FACTORY_ADDRESS: BSC_GENERIC_FACTORY,
   VOTE_TREASURY_ADDRESS: BSC_GENERIC_VOTE_TREASURY,
+  // Stale gen-7/MuchFi DogeOS values (B8): set here to prove nothing reads them any more.
   FACTORY_ADDRESS_6281971: DOGEOS_FACTORY,
   SUPPORTED_FACTORY_ADDRESSES_6281971: `${DOGEOS_FACTORY},${DOGEOS_SUPPORTED}`,
   SUPPORTED_FACTORY_START_BLOCKS_6281971: `${START[DOGEOS]},${START[DOGEOS] + 1}`,
@@ -71,13 +73,18 @@ test("6281971 is a known EVM indexer chain but not in the hard-coded ACTIVE list
   assert.equal(chains.isActiveEvmIndexerChainId(DOGEOS), false);
 });
 
-test("env: DogeOS block reads only its own per-chain names; vote treasury stays empty", () => {
+test("env: DogeOS block reads only its RPC; no gen-7 factory or MuchFi router fields (B8); vote treasury stays empty", () => {
   assert.equal(ENV.DOGEOS_RPC_HTTP_6281971, RPC[DOGEOS]);
-  assert.equal(ENV.FACTORY_ADDRESS_6281971, DOGEOS_FACTORY, "never the generic BSC FACTORY_ADDRESS");
-  assert.deepEqual(ENV.SUPPORTED_FACTORY_ADDRESSES_6281971, [DOGEOS_FACTORY, DOGEOS_SUPPORTED]);
-  assert.deepEqual(ENV.SUPPORTED_FACTORY_START_BLOCKS_6281971, [START[DOGEOS], START[DOGEOS] + 1]);
-  assert.equal(ENV.FACTORY_START_BLOCK_6281971, START[DOGEOS]);
-  assert.equal(ENV.ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_6281971, DOGEOS_ROUTER);
+  // The gen-7 factory inventory and the MuchFi SmartRouter are gone even when someone sets them.
+  for (const key of [
+    "FACTORY_ADDRESS_6281971",
+    "SUPPORTED_FACTORY_ADDRESSES_6281971",
+    "SUPPORTED_FACTORY_START_BLOCKS_6281971",
+    "FACTORY_START_BLOCK_6281971",
+    "ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_6281971",
+  ]) {
+    assert.equal(key in ENV, false, `${key} is a gen-7/MuchFi field (B8)`);
+  }
   assert.equal(ENV.VOTE_TREASURY_ADDRESS_6281971, "");
   assert.equal(ENV.VOTE_TREASURY_START_BLOCK_6281971, 0);
   // Existing chains read what they read before.
@@ -87,7 +94,7 @@ test("env: DogeOS block reads only its own per-chain names; vote treasury stays 
   assert.equal(ENV.ROBINHOOD_RPC_HTTP_46630, RPC[46630]);
 });
 
-test("CHAINS: a 6281971 entry exists only when its RPC is configured; existing entries unchanged", () => {
+test("CHAINS: a 6281971 entry (RPC only, no gen-7 factory) exists only when its RPC is configured; existing entries unchanged", () => {
   const existing = [
     {
       chainId: 56,
@@ -125,8 +132,8 @@ test("CHAINS: a 6281971 entry exists only when its RPC is configured; existing e
   const dogeos = {
     chainId: DOGEOS,
     rpcHttp: RPC[DOGEOS],
-    factoryAddress: DOGEOS_FACTORY,
-    factoryStartBlock: START[DOGEOS],
+    factoryAddress: undefined,
+    factoryStartBlock: undefined,
     voteTreasuryAddress: undefined,
     voteTreasuryStartBlock: undefined,
   };
@@ -140,14 +147,17 @@ test("CHAINS: a 6281971 entry exists only when its RPC is configured; existing e
   );
 });
 
-test("graduated market and V3 branches: 6281971 is V3 with WDOGE; Robinhood and BNB unchanged", () => {
-  assert.deepEqual(chains.graduatedMarketFor(DOGEOS), { venue: "v3", quoteAsset: "WDOGE" });
+test("graduated market and V3 branches: 6281971 is no gen-7 V3 graduation chain (B8); Robinhood and BNB unchanged", () => {
+  // DogeOS graduates only through gen-8, which passes its own market label; the gen-7 V3/WDOGE
+  // announcement, the V3 CMS seed and the pre-scan V3 heal are gone for 6281971.
+  assert.notEqual(chains.graduatedMarketFor(DOGEOS).venue, "v3");
+  assert.notEqual(chains.graduatedMarketFor(DOGEOS).quoteAsset, "WDOGE");
   assert.deepEqual(chains.graduatedMarketFor(46630), { venue: "v3", quoteAsset: "WETH" });
   assert.deepEqual(chains.graduatedMarketFor(4663), { venue: "v3", quoteAsset: "WETH" });
   assert.deepEqual(chains.graduatedMarketFor(56), { venue: "topaz", quoteAsset: "WBNB" });
   assert.deepEqual(chains.graduatedMarketFor(97), { venue: "topaz", quoteAsset: "WBNB" });
 
-  assert.equal(chains.isV3GraduationIndexerChainId(DOGEOS), true);
+  assert.equal(chains.isV3GraduationIndexerChainId(DOGEOS), false);
   assert.equal(chains.isV3GraduationIndexerChainId(46630), true);
   assert.equal(chains.isV3GraduationIndexerChainId(4663), true);
   assert.equal(chains.isV3GraduationIndexerChainId(56), false);
@@ -179,10 +189,8 @@ test("trade-history backfill: RPC and factory start block are DogeOS or empty, n
   assert.deepEqual(history.rpcUrlsFor(46630), [RPC[46630]]);
   assert.deepEqual(history.rpcUrlsFor(4663), [RPC[4663]]);
 
-  assert.equal(history.historyFactoryStartBlock(DOGEOS), START[DOGEOS]);
-  withEnv({ FACTORY_START_BLOCK_6281971: 0 }, () => {
-    assert.equal(history.historyFactoryStartBlock(DOGEOS), 0, "unset DogeOS start must not borrow the BSC 97 start");
-  });
+  // No gen-7 factory on DogeOS (B8): the floor is 0, never the BSC 97 start.
+  assert.equal(history.historyFactoryStartBlock(DOGEOS), 0, "DogeOS start must not borrow the BSC 97 start");
   assert.equal(history.historyFactoryStartBlock(56), START[56]);
   assert.equal(history.historyFactoryStartBlock(97), START[97]);
 });
@@ -197,11 +205,8 @@ test("trade-history tip window: 6281971 takes the explicit fast-chain window (2,
   assert.equal(history.historyTipWindow(97).logChunkSize, undefined, "BSC unchanged");
 });
 
-test("empty-trade cursor rewind: factory start block is DogeOS or 0, never BSC 97", () => {
-  assert.equal(factoryStartBlockForChain(DOGEOS), START[DOGEOS]);
-  withEnv({ FACTORY_START_BLOCK_6281971: 0 }, () => {
-    assert.equal(factoryStartBlockForChain(DOGEOS), 0);
-  });
+test("empty-trade cursor rewind: DogeOS floor is 0 (no gen-7 factory, B8), never BSC 97", () => {
+  assert.equal(factoryStartBlockForChain(DOGEOS), 0);
   assert.equal(factoryStartBlockForChain(56), START[56]);
   assert.equal(factoryStartBlockForChain(97), START[97]);
   assert.equal(factoryStartBlockForChain(46630), START[46630]);

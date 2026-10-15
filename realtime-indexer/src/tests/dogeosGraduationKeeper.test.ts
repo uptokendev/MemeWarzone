@@ -33,13 +33,10 @@ const { keeperRpc } = await import("../evm/evmGraduationKeeperWorker.js");
 const DOGEOS_DEPLOYER = "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8";
 const DOGEOS_UPDATER = "0x7dBDFe829309B4170346CF7e4496094CD126E9c1";
 const DOGEOS_ROUTE_AUTHORITY = "0x4fcD24d620f8eCd298bF4d43CB1cA2F4D23876FF";
-const TEN_M = 10_000_000n;
 
-test("keeper is enabled on 6281971 only with EVM_GRADUATION_KEEPER_ENABLED_6281971", () => {
+test("the gen-7 graduation keeper is off for 6281971: its enable flag is ignored (B8)", () => {
   assert.deepEqual(enabledKeeperChains({}), []);
-  assert.deepEqual(enabledKeeperChains({ EVM_GRADUATION_KEEPER_ENABLED_6281971: "true" }), [DOGEOS]);
-  assert.deepEqual(enabledKeeperChains({ EVM_GRADUATION_KEEPER_ENABLED_6281971: "0" }), []);
-  // Enabling another chain never switches DogeOS on.
+  assert.deepEqual(enabledKeeperChains({ EVM_GRADUATION_KEEPER_ENABLED_6281971: "true" }), []);
   assert.deepEqual(enabledKeeperChains({ EVM_GRADUATION_KEEPER_ENABLED_46630: "1" }), [46630]);
   assert.deepEqual(
     enabledKeeperChains({
@@ -49,18 +46,8 @@ test("keeper is enabled on 6281971 only with EVM_GRADUATION_KEEPER_ENABLED_62819
       EVM_GRADUATION_KEEPER_ENABLED_46630: "1",
       EVM_GRADUATION_KEEPER_ENABLED_6281971: "1",
     }),
-    [56, 4663, 97, 46630, DOGEOS],
+    [56, 4663, 97, 46630],
   );
-});
-
-test("max gas on 6281971 defaults to <= 10M (Chikyu block gas limit) and env can lower but never raise it", () => {
-  assert.ok(keeperConfig(DOGEOS, {}).maxGas <= TEN_M, "default must fit a 10M block");
-  assert.equal(keeperConfig(DOGEOS, {}).maxGas, TEN_M);
-  assert.equal(keeperConfig(DOGEOS, { EVM_GRADUATION_KEEPER_MAX_GAS_6281971: "15000000" }).maxGas, TEN_M);
-  assert.equal(keeperConfig(DOGEOS, { EVM_GRADUATION_KEEPER_MAX_GAS: "15000000" }).maxGas, TEN_M);
-  assert.equal(keeperConfig(DOGEOS, { EVM_GRADUATION_KEEPER_MAX_GAS_6281971: "8000000" }).maxGas, 8_000_000n);
-  assert.equal(keeperConfig(DOGEOS, { EVM_GRADUATION_KEEPER_MAX_GAS: "7000000" }).maxGas, 7_000_000n);
-  assert.equal(keeperConfig(DOGEOS, { EVM_GRADUATION_KEEPER_MAX_GAS_6281971: "abc" }).maxGas, TEN_M);
 });
 
 test("max gas for the existing chains is unchanged", () => {
@@ -69,7 +56,6 @@ test("max gas for the existing chains is unchanged", () => {
   assert.equal(keeperConfig(4663, {}).maxGas, 30_000_000n);
   assert.equal(keeperConfig(46630, {}).maxGas, 30_000_000n);
   assert.equal(keeperConfig(12345, {}).maxGas, 15_000_000n);
-  // Env overrides still apply above 10M on non-DogeOS chains.
   assert.equal(keeperConfig(56, { EVM_GRADUATION_KEEPER_MAX_GAS_56: "20000000" }).maxGas, 20_000_000n);
   assert.equal(keeperConfig(46630, { EVM_GRADUATION_KEEPER_MAX_GAS: "25000000" }).maxGas, 25_000_000n);
 });
@@ -101,16 +87,15 @@ test("keeperWallet on 6281971: a throwaway key is allowed, and refused once its 
   assert.equal(keeperWallet(DOGEOS, {}), null);
 });
 
-test("observation slots: 6281971 is a V3 graduation chain with 180 slots by default", () => {
-  assert.equal(V3_GRADUATION_CHAINS.has(DOGEOS), true);
-  assert.equal(v3ObservationSlots(DOGEOS, {}), 180);
-  assert.equal(keeperConfig(DOGEOS, {}).v3ObservationSlots, 180);
-  assert.equal(v3ObservationSlots(DOGEOS, { EVM_KEEPER_V3_OBSERVATION_SLOTS_6281971: "0" }), 0);
-  // BNB stays off, Robinhood stays on.
+test("observation slots: 6281971 is no V3 graduation chain any more (MuchFi removed, B8); Robinhood/BNB unchanged", () => {
+  assert.equal(V3_GRADUATION_CHAINS.has(DOGEOS), false);
+  assert.equal(v3ObservationSlots(DOGEOS, {}), 0);
+  assert.equal(v3ObservationSlots(DOGEOS, { EVM_KEEPER_V3_OBSERVATION_SLOTS_6281971: "180" }), 0);
   assert.equal(v3ObservationSlots(56, {}), 0);
   assert.equal(v3ObservationSlots(97, {}), 0);
   assert.equal(v3ObservationSlots(4663, {}), 180);
   assert.equal(v3ObservationSlots(46630, {}), 180);
+  assert.deepEqual([...V3_GRADUATION_CHAINS], [4663, 46630]);
 });
 
 test("keeperRpc: 6281971 reads DOGEOS_RPC_HTTP_6281971 and never falls back to BSC/Robinhood", () => {
