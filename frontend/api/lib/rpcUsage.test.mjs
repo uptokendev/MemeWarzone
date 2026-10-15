@@ -19,6 +19,7 @@ test("counts by chain and method, batches per entry; delta is the window since t
   countRpcRequest(4663, "eth_getLogs");
   const snap = rpcUsageSnapshot();
   assert.equal(snap.total, 4);
+  assert.deepEqual(snap.byCaller, {});
   assert.deepEqual(snap.byChain["56"], { total: 3, methods: { eth_call: 2, eth_blockNumber: 1 } });
   assert.deepEqual(snap.byChain["4663"], { total: 1, methods: { eth_getLogs: 1 } });
   assert.ok(snap.estimatedPerDay["56"] > 0);
@@ -106,6 +107,48 @@ test("fetch hook attributes each batch entry to the calling function", async () 
   assert.equal(snap.byChain.solana.methods.getTransaction, 2);
   const keys = Object.keys(snap.bySourcePerDay);
   assert.ok(keys.some((k) => k.startsWith("solana rpcUsage.test.mjs:importTradesLikeCaller")), JSON.stringify(keys));
+  const row = Object.entries(snap.byCaller.solana).find(([key]) => key.startsWith("rpcUsage.test.mjs:importTradesLikeCaller"));
+  assert.ok(row, JSON.stringify(snap.byCaller));
+  assert.equal(row[1].total, 2);
+  assert.equal(row[1].methods.getTransaction, 2);
+  assert.ok(!JSON.stringify(snap).includes("http"));
+});
+
+test("byCaller is the raw count for every caller, and bySourcePerDay stays the top 60 rates", async () => {
+  resetRpcUsage();
+  const counted = countingFetch(async () => new Response("[]"), () => 46630);
+  for (let i = 0; i < 61; i += 1) {
+    const fn = async function callOnce(fetchImpl) {
+      await fetchImpl("https://rpc.invalid", {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [] }),
+      });
+    };
+    Object.defineProperty(fn, "name", { value: `caller${String(i).padStart(2, "0")}` });
+    await fn(counted);
+  }
+  const again = async function caller00(fetchImpl) {
+    await fetchImpl("https://rpc.invalid", {
+      method: "POST",
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [] }),
+    });
+  };
+  await again(counted);
+  const snap = rpcUsageSnapshot();
+  const callers = snap.byCaller["46630"];
+  const top = Object.entries(callers).find(([key]) => key.startsWith("rpcUsage.test.mjs:caller00"));
+  assert.ok(top, JSON.stringify(Object.keys(callers)));
+  assert.equal(top[1].total, 2);
+  assert.equal(top[1].methods.eth_call, 2);
+  assert.equal(Object.keys(callers).length, 61);
+  const rates = Object.keys(snap.bySourcePerDay);
+  assert.equal(rates.length, 60);
+  assert.equal(rates.some((key) => key.includes("caller60")), false);
+  assert.equal(Object.keys(callers).some((key) => key.startsWith("rpcUsage.test.mjs:caller60")), true);
+  const rateKey = rates.find((key) => key.includes("caller00"));
+  assert.equal(snap.bySourcePerDay[rateKey], Math.round((2 / snap.uptimeSec) * 86_400));
+  assert.equal(Object.keys(callers)[0].startsWith("rpcUsage.test.mjs:caller00"), true);
+  assert.ok(!JSON.stringify(snap).includes("http"));
 });
 
 test("server.mjs installs the counters with its first import, before modules that capture fetch", async () => {
