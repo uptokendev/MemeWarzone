@@ -1,7 +1,6 @@
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, json, normalizeAddress, readJson } from "../server/http.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
-import { VOTE_BATTLE_BOOST_POINTS_PER_UNIT } from "./lib/arenaBattleMode.js";
 import {
   resolveTournamentVoteMatch,
   tournamentVoteSummary,
@@ -89,7 +88,7 @@ async function handleGet(req, res, route, tournament) {
     phase: "regulation",
     votingLive: true,
     freeVotePoints: 1,
-    boostPointsPerUsd: VOTE_BATTLE_BOOST_POINTS_PER_UNIT,
+    boostPointsPerUsd: 2,
     summary,
     walletVote,
     updatedAt: new Date().toISOString(),
