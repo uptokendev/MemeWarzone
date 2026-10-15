@@ -2,7 +2,7 @@ import { ethers } from "ethers";
 import { DOGEOS_TESTNET_CHAIN_ID } from "./chainNative.js";
 import { DOGEOS_TESTNET_PUBLIC_RPC, dogeosConfiguredRpcUrls } from "./getServerReadProvider.js";
 import { gen8Progress } from "../../shared/evmGen8.mjs";
-import { gen8ConfigFor } from "./evmGen8Config.js";
+import { gen8V4ConfigFor } from "./evmGen8Config.js";
 
 /**
  * BNB / Robinhood / DogeOS bonding progress for the campaign list, exactly as Token Details computes it
@@ -83,7 +83,7 @@ export async function gen8ItemProgress(item, { readLens = null, env = process.en
       return null;
     }
   }
-  const cfg = gen8ConfigFor(item.chainId, env);
+  const cfg = gen8V4ConfigFor(item.chainId, env);
   if (!cfg?.lens) return null;
   const read = readLens || (async (chainId, lens, poolId) => {
     if (!rpcUrl(Number(chainId))) return null;

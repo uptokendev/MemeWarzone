@@ -33,6 +33,7 @@ import {
   gen8Progress,
   nativePerCoinWei,
 } from "../../shared/evmGen8.mjs";
+import { isGen8V4Config } from "./evmGen8Config.js";
 
 const ZERO = ethers.ZeroAddress;
 const POOLS_SLOT = 6n; // v4-core StateLibrary.POOLS_SLOT
@@ -95,6 +96,7 @@ export function decodeSlot0(word) {
  * before the gen-5/6/7 reader (one eth_call).
  */
 export async function readGen8Pool({ provider, cfg, token }) {
+  if (!isGen8V4Config(cfg)) return null; // a Barkswap config has no hook: not a V4 gen-8 pool (plan t21 adds its reader)
   const poolId = gen8PoolId(token, cfg.hook);
   const hook = new ethers.Contract(cfg.hook, GEN8_HOOK_STATE_ABI, provider);
   const p = await hook.pools(poolId);
@@ -174,6 +176,7 @@ export function gen8PhaseFields({ openAt, latched, graduatedAt, postPhase, now, 
  * PoolManager nor the lens answered).
  */
 export async function readGen8CampaignState({ provider, cfg, token, wallet = null, pool = null, indexed = null }) {
+  if (!isGen8V4Config(cfg)) return null;
   const tokenAddress = ethers.getAddress(token);
   const p = pool || (await readGen8Pool({ provider, cfg, token: tokenAddress }));
   if (!p) return null;
@@ -426,8 +429,10 @@ export async function readGen8IndexedPool(db, chainId, token) {
  * Coin-page state from the indexer alone (the RPC failed): the phase, open and reserve fields of gen8PhaseFields from
  * evm_gen8_pools.open_at / last_phase / graduated_block and campaigns.graduated_at_chain, plus progress from the last
  * indexed price. `source: "indexer"`, `stale: true`; nothing that needs the chain (claims, fee ledgers) is present.
+ * null for a Barkswap config (its pool key is not the V4 one; plan t21).
  */
 export function gen8IndexedCampaignState({ cfg, indexed, nowSec = Math.floor(Date.now() / 1000) }) {
+  if (!isGen8V4Config(cfg)) return null;
   const latched = indexed.graduatedBlock !== null;
   const postPhase = indexed.lastPhase === "post" ? true : indexed.lastPhase === "bonding" ? false : null;
   const phase = gen8PhaseFields({ openAt: indexed.openAt ?? 0, latched, graduatedAt: indexed.graduatedAt, postPhase, now: nowSec });

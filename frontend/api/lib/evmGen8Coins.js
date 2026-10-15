@@ -8,7 +8,7 @@
  */
 import { ethers } from "ethers";
 import { EVM_GEN8_FACTORY_GENERATION, GEN8_TRADE_PATH, gen8PoolId, gen8PoolKey } from "../../shared/evmGen8.mjs";
-import { gen8ConfigFor } from "./evmGen8Config.js";
+import { gen8V4ConfigFor } from "./evmGen8Config.js";
 
 // build/evm-gen8 20d95e0a: openAt (was launchTime) and a tenth field graduatedAt. Read by name only.
 const HOOK_POOLS_ABI = ["function pools(bytes32) view returns (address creator, uint40 openAt, bool graduated, int24 tickGrad, int24 tickStart, uint128 liqA, uint128 liqB, uint160 sqrtGrad, tuple(uint16,uint16,uint16,uint16,uint16) fees, uint40 graduatedAt)"];
@@ -20,7 +20,7 @@ const HOOK_POOLS_ABI = ["function pools(bytes32) view returns (address creator, 
  * deps: { db, getProvider(chainId), env }
  */
 export async function findGen8Coin({ chainId, address, db = null, getProvider = null, env = process.env }) {
-  const cfg = gen8ConfigFor(chainId, env);
+  const cfg = gen8V4ConfigFor(chainId, env);
   if (!cfg || !ethers.isAddress(String(address || ""))) return null;
   const token = ethers.getAddress(address);
   const answer = (source, graduated = null) => ({

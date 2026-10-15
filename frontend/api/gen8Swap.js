@@ -44,7 +44,7 @@ import {
   gen8SizedSlippageBps,
   permitFromJson,
 } from "../shared/evmGen8Swap.mjs";
-import { gen8ConfigFor } from "./lib/evmGen8Config.js";
+import { gen8V4ConfigFor } from "./lib/evmGen8Config.js";
 import { evmFingerprint } from "./lib/importSwapFingerprint.js";
 
 const HOOK_ABI = [
@@ -88,8 +88,8 @@ async function defaultPartnerDeps() {
  * only: the widget builds UniversalRouter / Permit2 calls, which a Barkswap chain (DogeOS) has no use for.
  */
 export function gen8SwapSetup(chainId, env = process.env) {
-  const cfg = gen8ConfigFor(chainId, env);
-  if (!cfg || cfg.venue !== "v4") throw new Gen8SwapError(400, "GEN8_NOT_CONFIGURED", "Generation 8 coins are not set up on this chain.");
+  const cfg = gen8V4ConfigFor(chainId, env);
+  if (!cfg) throw new Gen8SwapError(400, "GEN8_NOT_CONFIGURED", "Generation 8 coins are not set up on this chain.");
   const router = gen8RouterFor(chainId, env);
   const quoter = gen8QuoterFor(chainId, env);
   if (!router || !quoter) throw new Gen8SwapError(503, "GEN8_ROUTER_NOT_CONFIGURED", "No Uniswap router or quoter is configured for this chain.");

@@ -30,7 +30,7 @@ import { ethers } from "ethers";
 import { GEN8_REWARD_SOURCE } from "../../shared/evmGen8.mjs";
 import { GEN8_REFERRER_WIDGET } from "../../shared/evmGen8Swap.mjs";
 import { evmFingerprint, partnersForFingerprints } from "./importSwapFingerprint.js";
-import { gen8ConfigFor } from "./evmGen8Config.js";
+import { gen8V4ConfigFor } from "./evmGen8Config.js";
 import { gen8Tables, isSchemaMissingError } from "./evmGen8Schema.js";
 
 export const GEN8_PARTNER_BPS_OF_VOLUME = 25n; // D9: partner 0.25% of volume, out of MemeWarzone's 0.50%
@@ -157,7 +157,7 @@ async function readLive({ cfg, provider }) {
  * when the indexer migration is not applied. `getProvider(chainId)` is optional (live balances).
  */
 export async function buildGen8Finance({ db, chainId, getProvider = null, env = process.env }) {
-  const cfg = gen8ConfigFor(chainId, env);
+  const cfg = gen8V4ConfigFor(chainId, env);
   if (!cfg) return { chainId: Number(chainId), configured: false };
   const tables = await gen8Tables(db);
   const base = { chainId: Number(chainId), configured: true, hook: cfg.hook, launcher: cfg.launcher, splitter: cfg.splitter };

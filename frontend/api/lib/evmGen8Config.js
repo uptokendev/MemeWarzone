@@ -21,7 +21,13 @@
  *   EVM_GEN8_PLUGIN_<id>         MwzBarkPlugin (the Barkswap pool plugin: per-swap fee, graduation)
  * with the same optional LENS (MwzBarkLaunchLens) / SPLITTER / CHOICE_VAULT / RESERVE_LOCK / ESCROW names. A Barkswap
  * config has `plugin` and `hook: null, poolManager: null`; EVM_GEN8_HOOK_ / EVM_GEN8_POOL_MANAGER_ on a Barkswap
- * chain disable it (V4 settings never reach a Barkswap chain). Paths that only speak V4 check `cfg.venue === "v4"`.
+ * chain disable it (V4 settings never reach a Barkswap chain).
+ *
+ * Which accessor to use: gen8ConfigFor (any venue) for code that only needs "is gen-8 configured here" or the shared
+ * gen-8 rows (SQL; Bark rows keep the gen-8 identity). gen8V4ConfigFor (null unless venue "v4") for code that reads the
+ * hook, the PoolManager or the MwzV4Launcher: evmGen8CreateAuthorization.js, evmCampaignState.js (and the readers in
+ * evmGen8CampaignState.js, which also refuse a non-V4 cfg via isGen8V4Config), evmGen8Coins.js, financeGen8.js,
+ * evmCampaignProgress.js (lens fallback) and gen8Swap.js. The Barkswap branches of those come with plan t21 / t22.
  */
 import { ethers } from "ethers";
 import { GEN8_VENUE_BARKSWAP, GEN8_VENUE_V4, gen8VenueFor } from "../../shared/evmGen8.mjs";
@@ -96,11 +102,11 @@ const BARK_OPTIONAL = { lens: "EVM_GEN8_LENS", splitter: "EVM_GEN8_SPLITTER", ch
 function barkswapApiConfig(id, env) {
   const name = (base) => `${base}_${id}`;
   const read = (base) => parseEntry(env[name(base)]);
+  const v4Only = ["EVM_GEN8_HOOK", "EVM_GEN8_POOL_MANAGER"].map(name).filter((key) => String(env[key] || "").trim());
+  if (v4Only.length) return { config: null, reason: `${v4Only.join(", ")}: Uniswap V4 settings on chain ${id}, which is on the barkswap venue` };
   const launcher = read("EVM_GEN8_LAUNCHER");
   const plugin = read("EVM_GEN8_PLUGIN");
   if (!launcher.value && !plugin.value && !launcher.invalid && !plugin.invalid) return { config: null, reason: "unset" };
-  const v4Only = ["EVM_GEN8_HOOK", "EVM_GEN8_POOL_MANAGER"].map(name).filter((key) => String(env[key] || "").trim());
-  if (v4Only.length) return { config: null, reason: `${v4Only.join(", ")}: Uniswap V4 settings on chain ${id}, which is on the barkswap venue` };
   const parts = Object.fromEntries(Object.entries(BARK_OPTIONAL).map(([key, base]) => [key, read(base)]));
   const invalid = [["EVM_GEN8_LAUNCHER", launcher], ["EVM_GEN8_PLUGIN", plugin], ...Object.entries(parts).map(([key, v]) => [BARK_OPTIONAL[key], v])]
     .filter(([, v]) => v.invalid)
@@ -128,6 +134,20 @@ function barkswapApiConfig(id, env) {
 /** The chain's gen-8 config or null (inert). */
 export function gen8ConfigFor(chainId, env = process.env) {
   return evmGen8ApiConfig(chainId, env).config;
+}
+
+/**
+ * The chain's gen-8 config only when it is on the V4 venue (hook + PoolManager + MwzV4Launcher), else null. For the
+ * readers that speak V4 only (see the header); a Barkswap chain answers as "gen-8 not configured" there.
+ */
+export function gen8V4ConfigFor(chainId, env = process.env) {
+  const cfg = gen8ConfigFor(chainId, env);
+  return isGen8V4Config(cfg) ? cfg : null;
+}
+
+/** True for a V4-venue config. A config object without `venue` (the pre-seam shape, e.g. test fixtures) counts as V4. */
+export function isGen8V4Config(cfg) {
+  return Boolean(cfg) && (cfg.venue ?? GEN8_VENUE_V4) === GEN8_VENUE_V4;
 }
 
 /** True when `address` is the chain's gen-8 launcher. */

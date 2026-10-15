@@ -169,9 +169,9 @@ export function evmGen8BarkConfig(chainId: number, env: NodeJS.ProcessEnv = proc
   const choiceVault = parseAddress(v("EVM_GEN8_CHOICE_VAULT"), env[v("EVM_GEN8_CHOICE_VAULT")], invalid);
   const reserveLock = parseAddress(v("EVM_GEN8_RESERVE_LOCK"), env[v("EVM_GEN8_RESERVE_LOCK")], invalid);
   const escrow = parseAddress(v("EVM_GEN8_ESCROW"), env[v("EVM_GEN8_ESCROW")], invalid);
-  if (!launcher && !plugin && !invalid.length) return { config: null, invalid, reason: "unset" };
   const v4Only = ["EVM_GEN8_HOOK", "EVM_GEN8_POOL_MANAGER"].map(v).filter((key) => String(env[key] || "").trim());
   if (v4Only.length) return { config: null, invalid, reason: `${v4Only.join(", ")}: Uniswap V4 settings on chain ${chainId}, which is on the barkswap venue` };
+  if (!launcher && !plugin && !invalid.length) return { config: null, invalid, reason: "unset" };
   if (invalid.length) return { config: null, invalid, reason: "invalid gen-8 env" };
   if (!launcher || !plugin) return { config: null, invalid, reason: "launcher and plugin must both be set" };
   return {
@@ -240,12 +240,13 @@ export type Gen8HeadTag = "finalized" | "safe" | "latest";
  *            97; about 1 s behind the head). A reorg at the tip (block hash mismatch) rolls the display rows above the
  *            common ancestor back and re-ingests (evmGen8Pool.ts rollbackGen8Display).
  *   money    evm_gen8_fee_accruals, reward_events, route runs, recruiter credit, the holder census. Reads only up to
- *            `safe` on the rollups (Robinhood: the batch posted to Ethereum, about 10 minutes behind on 2026-10-12;
- *            DogeOS: about 1,059 blocks behind, `finalized` about 1,217, max reorg 17 blocks, 2026-10-10 foundation
- *            spec) and `finalized` on BNB, and never past the display cursor. Money rows are written once and need no
- *            rollback.
+ *            `safe` on Robinhood (the batch posted to Ethereum, about 10 minutes behind on 2026-10-12), `finalized` on
+ *            BNB, and on DogeOS a fixed depth below `latest` (GEN8_MONEY_DEPTH: 20 blocks, founder 2026-10-15; Chikyu's
+ *            max reorg is 17 blocks while `safe` lags about 1,059 and `finalized` about 1,217, 2026-10-10 foundation
+ *            spec). Never past the display cursor. Money rows are written once and need no rollback.
  * EVM_GEN8_DISPLAY_HEAD_TAG(_<id>) and EVM_GEN8_MONEY_HEAD_TAG(_<id>) override (finalized | safe | latest); `latest`
- * is EVM_GEN8_CONFIRMATIONS blocks behind the head and, for the money tag, meant for local chains only.
+ * is EVM_GEN8_CONFIRMATIONS blocks behind the head (for the money tag: meant for local chains only), except for the
+ * money head of a chain in GEN8_MONEY_DEPTH, which is its depth (EVM_GEN8_MONEY_DEPTH_<id>, never below its max reorg).
  */
 function headTagEnv(raw: unknown): Gen8HeadTag | null {
   const v = String(raw ?? "").trim().toLowerCase();
@@ -258,8 +259,20 @@ export function gen8DisplayHeadTag(chainId: number, env: NodeJS.ProcessEnv = pro
   return headTagEnv(env[`EVM_GEN8_DISPLAY_HEAD_TAG_${chainId}`]) ?? headTagEnv(env.EVM_GEN8_DISPLAY_HEAD_TAG) ?? (isRollup(chainId) ? "latest" : "finalized");
 }
 
+/** Money head = latest minus `blocks` on these chains (`maxReorg` is the floor of the env override). */
+export const GEN8_MONEY_DEPTH: Readonly<Record<number, { blocks: number; maxReorg: number }>> = Object.freeze({
+  6281971: { blocks: 20, maxReorg: 17 },
+});
+
 export function gen8MoneyHeadTag(chainId: number, env: NodeJS.ProcessEnv = process.env): Gen8HeadTag {
-  return headTagEnv(env[`EVM_GEN8_MONEY_HEAD_TAG_${chainId}`]) ?? headTagEnv(env.EVM_GEN8_MONEY_HEAD_TAG) ?? (isRollup(chainId) ? "safe" : "finalized");
+  const byDefault: Gen8HeadTag = Object.hasOwn(GEN8_MONEY_DEPTH, chainId) ? "latest" : isRollup(chainId) ? "safe" : "finalized";
+  return headTagEnv(env[`EVM_GEN8_MONEY_HEAD_TAG_${chainId}`]) ?? headTagEnv(env.EVM_GEN8_MONEY_HEAD_TAG) ?? byDefault;
+}
+
+/** Blocks below `latest` for the chain's money head (EVM_GEN8_MONEY_DEPTH_<id> overrides), or null: no fixed depth. */
+export function gen8MoneyDepth(chainId: number, env: NodeJS.ProcessEnv = process.env): number | null {
+  const d = Object.hasOwn(GEN8_MONEY_DEPTH, chainId) ? GEN8_MONEY_DEPTH[chainId]! : null;
+  return d ? intEnv(env[`EVM_GEN8_MONEY_DEPTH_${chainId}`], d.blocks, d.maxReorg, 100_000) : null;
 }
 
 export type Gen8HeadProvider = {
@@ -279,9 +292,12 @@ export async function gen8HeadBlock(provider: Gen8HeadProvider, chainId: number,
   return Number(n);
 }
 
-/** The money head: gen8HeadBlock with the chain's money tag. */
-export function gen8MoneyHead(provider: Gen8HeadProvider, chainId: number, env: NodeJS.ProcessEnv = process.env): Promise<number> {
-  return gen8HeadBlock(provider, chainId, gen8MoneyHeadTag(chainId, env), env);
+/** The money head: gen8HeadBlock with the chain's money tag; at `latest` on a GEN8_MONEY_DEPTH chain, head minus its depth. */
+export async function gen8MoneyHead(provider: Gen8HeadProvider, chainId: number, env: NodeJS.ProcessEnv = process.env): Promise<number> {
+  const tag = gen8MoneyHeadTag(chainId, env);
+  const depth = gen8MoneyDepth(chainId, env);
+  if (tag === "latest" && depth !== null) return (await provider.getBlockNumber()) - depth;
+  return gen8HeadBlock(provider, chainId, tag, env);
 }
 
 /** The display head: gen8HeadBlock with the chain's display tag. */

@@ -43,7 +43,7 @@ import {
   gen8RevertReason,
   isGen8TargetAllowed,
 } from "../../shared/evmGen8.mjs";
-import { gen8ConfigFor } from "../lib/evmGen8Config.js";
+import { gen8V4ConfigFor } from "../lib/evmGen8Config.js";
 import { strictEvmWallet } from "../lib/evmGen8StrictWallet.js";
 import { createCanaryRefusalBody, isCreateAllowedForWallet } from "../lib/createCanary.js";
 
@@ -90,7 +90,7 @@ export function gen8CreateSigner(env = process.env, fallbackKey = "") {
 /** True when the body asks for a gen-8 create on a chain where gen-8 is configured. */
 export function isGen8CreateRequest(body, env = process.env) {
   const chainId = Number(body?.chainId);
-  const cfg = gen8ConfigFor(chainId, env);
+  const cfg = gen8V4ConfigFor(chainId, env);
   if (!cfg) return false;
   if (Number(body?.generation) === EVM_GEN8_FACTORY_GENERATION) return true;
   const target = String(body?.launcherAddress || body?.factoryAddress || "").trim().toLowerCase();
@@ -338,7 +338,7 @@ function authDeadline(env, nowSec) {
 export async function gen8CreateAuthorization(body, deps) {
   const env = deps.env || process.env;
   const chainId = Number(body?.chainId);
-  const cfg = gen8ConfigFor(chainId, env);
+  const cfg = gen8V4ConfigFor(chainId, env);
   if (!cfg) return { status: 400, body: { error: "Generation 8 launches are not configured on this chain.", code: "GEN8_NOT_CONFIGURED" } };
   const signer = deps.signer;
   if (!signer) {
@@ -467,7 +467,7 @@ export async function gen8CreateAuthorization(body, deps) {
  * authorization can be issued now. Same top-level fields as the gen-7 status where they apply.
  */
 export async function gen8RoutingStatus({ chainId, signer, getProvider, env = process.env }) {
-  const cfg = gen8ConfigFor(chainId, env);
+  const cfg = gen8V4ConfigFor(chainId, env);
   if (!cfg) return { ok: false, status: "gen8_not_configured", chainId };
   const warnings = [];
   let onChain = null;

@@ -11,9 +11,12 @@ import {
   configuredGen8Chains,
   evmGen8BarkConfig,
   evmGen8Config,
+  gen8DisplayHead,
   gen8DisplayHeadTag,
   gen8LeagueExcluded,
   gen8LinkPolicy,
+  gen8MoneyDepth,
+  gen8MoneyHead,
   gen8MoneyHeadTag,
   gen8Venue,
   gen8WrappedNative,
@@ -63,6 +66,11 @@ test("Barkswap config: inert until launcher and plugin are both set; start block
   assert.deepEqual(configuredGen8BarkChains({}), []);
 });
 
+test("Barkswap config: a V4 setting alone on DogeOS gets the named refusal, not 'unset'", () => {
+  assert.match(String(evmGen8BarkConfig(DOGE, { EVM_GEN8_HOOK_6281971: H }).reason), /EVM_GEN8_HOOK_6281971.*barkswap/);
+  assert.match(String(evmGen8BarkConfig(DOGE, { EVM_GEN8_POOL_MANAGER_6281971: PM }).reason), /EVM_GEN8_POOL_MANAGER_6281971.*barkswap/);
+});
+
 test("Barkswap config: V4 settings or malformed env disable DogeOS; V4 chains have no Barkswap config", () => {
   assert.match(String(evmGen8BarkConfig(DOGE, { ...BARK_ENV, EVM_GEN8_HOOK_6281971: H }).reason), /EVM_GEN8_HOOK_6281971.*barkswap/);
   assert.match(String(evmGen8BarkConfig(DOGE, { ...BARK_ENV, EVM_GEN8_POOL_MANAGER_6281971: PM }).reason), /EVM_GEN8_POOL_MANAGER_6281971.*barkswap/);
@@ -102,10 +110,27 @@ test("link policy on DogeOS: Barkswap's SwapRouter, the launcher and the escrow;
   assert.equal(gen8LeagueExcluded(cfg, { creator: H, hookCreator: null }, PM, BARK_SWAP_ROUTER), false);
 });
 
-test("head tags: DogeOS reads like a rollup (display latest, money safe); BNB and Robinhood unchanged", () => {
+test("head tags: DogeOS display at latest, money at latest minus 20 blocks (founder 2026-10-15); BNB and Robinhood unchanged", async () => {
   assert.equal(gen8DisplayHeadTag(DOGE, {}), "latest");
-  assert.equal(gen8MoneyHeadTag(DOGE, {}), "safe");
-  assert.equal(gen8MoneyHeadTag(DOGE, { EVM_GEN8_MONEY_HEAD_TAG_6281971: "finalized" }), "finalized");
+  assert.equal(gen8MoneyHeadTag(DOGE, {}), "latest");
+  assert.equal(gen8MoneyDepth(DOGE, {}), 20);
   assert.deepEqual([56, 97, 4663, 46630].map((id) => gen8DisplayHeadTag(id, {})), ["finalized", "finalized", "latest", "latest"]);
   assert.deepEqual([56, 97, 4663, 46630].map((id) => gen8MoneyHeadTag(id, {})), ["finalized", "finalized", "safe", "safe"]);
+  for (const id of [56, 97, 4663, 46630]) assert.equal(gen8MoneyDepth(id, {}), null, String(id));
+
+  const asked: unknown[] = [];
+  const p = { getBlockNumber: async () => 1_000, getBlock: async (t: any) => (asked.push(t), t === "finalized" ? { number: 990 } : t === "safe" ? { number: 940 } : null) };
+  assert.equal(await gen8MoneyHead(p, DOGE, {}), 980, "latest - 20");
+  assert.equal(await gen8MoneyHead(p, DOGE, { EVM_GEN8_CONFIRMATIONS: "3" }), 980, "the display confirmations do not change the money depth");
+  assert.equal(await gen8DisplayHead(p, DOGE, {}), 999, "display: latest - EVM_GEN8_CONFIRMATIONS (1)");
+  assert.deepEqual(asked, [], "DogeOS asks for no safe / finalized tag");
+  assert.equal(await gen8MoneyHead(p, 4663, {}), 940, "Robinhood money stays at safe");
+  assert.equal(await gen8MoneyHead(p, 46630, {}), 940);
+  assert.equal(await gen8MoneyHead(p, 56, {}), 990, "BNB money stays at finalized");
+
+  // Env overrides: the depth (never below the 17-block max reorg) and the tag itself.
+  assert.equal(await gen8MoneyHead(p, DOGE, { EVM_GEN8_MONEY_DEPTH_6281971: "50" }), 950);
+  assert.equal(gen8MoneyDepth(DOGE, { EVM_GEN8_MONEY_DEPTH_6281971: "5" }), 17);
+  assert.equal(gen8MoneyDepth(DOGE, { EVM_GEN8_MONEY_DEPTH_6281971: "nope" }), 20);
+  assert.equal(await gen8MoneyHead(p, DOGE, { EVM_GEN8_MONEY_HEAD_TAG_6281971: "finalized" }), 990);
 });
