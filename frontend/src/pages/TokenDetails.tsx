@@ -820,9 +820,6 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
   const isRobinhoodPage = isRobinhoodChainId(chainIdForStorage);
   // Presentation only (labels, DOGE/USD). DogeOS trade/graduation routing is not wired here.
   const isDogeosPage = isDogeosChainId(chainIdForStorage);
-  // Graduated-trade surfaces only: DogeOS graduates into MuchFi (V3) and trades through the Robinhood V3 panel,
-  // never the Topaz/BNB V2 box. Text and price branches keep isRobinhoodPage / isDogeosPage.
-  const isV3GraduatedTradePage = isRobinhoodPage || isDogeosPage;
 
   useEffect(() => {
     const campaignPda = String(campaign?.campaign || campaignAddr || "").trim();
@@ -2078,7 +2075,7 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     campaignAddress: hasValidCampaignAddress && !isSolanaPage ? resolvedCampaignAddress : undefined,
     tokenAddress: campaign?.token,
     chainId: chainIdForStorage,
-    enabled: hasValidCampaignAddress && contractGraduatedEarly && !isSolanaPage && !isV3GraduatedTradePage,
+    enabled: hasValidCampaignAddress && contractGraduatedEarly && !isSolanaPage && !isRobinhoodPage,
     pollMs: 8_000,
   });
 
@@ -2375,8 +2372,8 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     // the campaign's currentPrice(), which the bonding curve freezes at the final
     // curve price on graduation. The header then showed the graduation price while
     // the chart used pool spot: 2.3195e-9 against 1.3981e-8 on RH5661. Prefer the
-    // indexed DEX price, which is the post-swap pool spot. DogeOS (MuchFi V3) graduates the same way.
-    if (isV3GraduatedTradePage && contractGraduatedEarly) {
+    // indexed DEX price, which is the post-swap pool spot.
+    if (isRobinhoodPage && contractGraduatedEarly) {
       const indexed = Number(unifiedMarket.summary?.last_price_bnb);
       if (Number.isFinite(indexed) && indexed > 0) return indexed;
     }
@@ -2391,8 +2388,8 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
   }, [
     contractGraduatedEarly,
     gen8State,
+    isRobinhoodPage,
     isSolanaPage,
-    isV3GraduatedTradePage,
     metrics?.currentPrice,
     rtStats?.lastPriceBnb,
     solanaLivePrice,
@@ -3483,14 +3480,14 @@ const toSeconds = (ts: number): number => {
       (verifiedMarketStage === "TOPAZ_DEGRADED" && contractGraduated);
   // Allow Topaz when on-chain graduated even if market-state is a soft BONDING skeleton
   // (common after cleanup / CMS lag). Soft BONDING must not block WIC-style trades.
-  const isTopazTradingActive = isSolanaPage || isV3GraduatedTradePage
+  const isTopazTradingActive = isSolanaPage || isRobinhoodPage
     ? false
     : onChainLaunched ||
       contractGraduated ||
       (verifiedMarketStage === "TOPAZ_ACTIVE" &&
         (Boolean(unifiedMarket.state?.tradingEnabled) || Boolean(unifiedMarket.state?.pairAddress || onChainPair)));
   const isUniswapTradingActive =
-    isV3GraduatedTradePage &&
+    isRobinhoodPage &&
     (contractGraduated ||
       verifiedMarketStage === "DEX_ACTIVE" ||
       verifiedMarketStage === "DEX_PENDING" ||
@@ -3754,7 +3751,7 @@ const toSeconds = (ts: number): number => {
     // DexScreener and GeckoTerminal report the sum of both sides, so match them.
     const unifiedNative = unifiedMarket.state?.reserves?.nativeRaw;
     const unifiedToken = unifiedMarket.state?.reserves?.tokenRaw;
-    if (isV3GraduatedTradePage && unifiedNative) {
+    if (isRobinhoodPage && unifiedNative) {
       try {
         const nativeWei = BigInt(unifiedNative);
         if (nativeWei > 0n) {
@@ -3774,7 +3771,7 @@ const toSeconds = (ts: number): number => {
       }
     }
     // Graduated RH must not fall back to bonding-era $0.000000 / leftover reserve.
-    if (isV3GraduatedTradePage && isDexStage) return "—";
+    if (isRobinhoodPage && isDexStage) return "—";
     if (tokenData.liquidity && tokenData.liquidity !== "—") return tokenData.liquidity;
     return "—";
   })();
@@ -3841,10 +3838,10 @@ const toSeconds = (ts: number): number => {
       return 0;
     }
   })();
-  const rhGraduatedTrade = isV3GraduatedTradePage && (contractGraduated || isUniswapTradingActive);
+  const rhGraduatedTrade = isRobinhoodPage && (contractGraduated || isUniswapTradingActive);
   // A graduated BNB coin trades through the import route (same quote, build, 1% fee and panel as an imported coin)
   // while the chain's import fee route is on; off, the Topaz trade below as before (graduatedEvmTradeRoute.mjs).
-  const bnbGraduatedImportTrade = !isSolanaPage && !isV3GraduatedTradePage && isDexStage && graduatedImportRouteEnabled(chainIdForStorage);
+  const bnbGraduatedImportTrade = !isSolanaPage && !isRobinhoodPage && isDexStage && graduatedImportRouteEnabled(chainIdForStorage);
   const graduatedImportItem = graduatedCampaignTradeItem(campaign, chainIdForStorage);
   // The indexer writes the trade from the pool's Swap log (trader = tx.from); refresh the market and pool reads now.
   const refreshAfterGraduatedImportTrade = () => {
@@ -6140,7 +6137,7 @@ const toSeconds = (ts: number): number => {
                 ) : null}
               </section>
             ) : null
-          ) : isV3GraduatedTradePage && (contractGraduated || isUniswapTradingActive) ? (
+          ) : isRobinhoodPage && (contractGraduated || isUniswapTradingActive) ? (
             isXlUp ? (
               <section aria-label="Trade" className={`${cp.card} flex flex-col gap-4 p-4`}>
                 <RobinhoodWarRoomTradePanel campaign={campaign as CampaignInfo} />

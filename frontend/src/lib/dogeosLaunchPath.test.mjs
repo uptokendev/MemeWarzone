@@ -12,9 +12,11 @@ import { evmGen7DexName, evmGen7GraduationTiers } from "./evmGen7.mjs";
 import { DOGEOS_DEX_LABEL } from "./dogeosPresentation.mjs";
 
 // DogeOS Chikyu testnet (6281971) on the gen-7 launch path: it takes the Robinhood V3 family branches
-// (adapter, USD graduation target, $150 test tier, V3 post-graduation trade) through isDogeosChainId,
-// never through isRobinhoodChainId, and its post-graduation trade runs on MuchFi (fee 10000).
-// Robinhood 46630 is asserted next to it so the existing behaviour stays pinned.
+// (adapter, USD graduation target, $150 test tier) through isDogeosChainId, never through isRobinhoodChainId.
+// The gen-7/MuchFi post-graduation trade (Robinhood V3 trade library at fee 10000, token-page V3 gate) is
+// removed (plan t12, spec section 4 "Removed (B8)"): the V3 trade library refuses 6281971 and the token page's
+// graduated-trade gates are Robinhood-only again. Robinhood 46630 is asserted next to it so the existing
+// behaviour stays pinned.
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const srcRoot = path.resolve(dir, "..");
@@ -24,14 +26,13 @@ const read = (rel) => readFileSync(path.join(srcRoot, rel), "utf8");
 const DOGEOS = 6281971;
 const RH_TESTNET = 46630;
 
-// Global constraints / spec section 1 (MuchFi on Chikyu, verified on a fork by t30).
+// MuchFi on Chikyu (the removed gen-7 venue): the refusal test serves its addresses so a DogeOS row is realistic.
 const MUCHFI = {
   FACTORY: "0x7d175e06570CaFA1cfDF060850b84E0Ca23EfF0B",
   SMART_ROUTER: "0x54f7D7f6FeDf4E930eFd6b4742Ba0B9E8a6dC1CB",
   QUOTER_V2: "0x5DE1Ea595653419f295511DEb781b98387a77cc2",
   WDOGE: "0xF6BDB158A5ddF77F1B83bC9074F6a472c58D78aE",
 };
-const MUCHFI_POOL_FEE = 10000;
 
 const addr = (n) => ethers.getAddress(`0x${n.toString(16).padStart(40, "0")}`);
 const DOGEOS_S1_ADAPTER = addr(0x5101);
@@ -304,21 +305,22 @@ test("token page entry, war-room row and trade panel keep 6281971 instead of def
   assert.match(row, /inferredChainId === ROBINHOOD_TESTNET_CHAIN_ID \|\| inferredChainId === DOGEOS_TESTNET_CHAIN_ID\s*\? inferredChainId/);
   assert.match(row, /const isRobinhoodRow = rowChainId === ROBINHOOD_CHAIN_ID \|\| rowChainId === ROBINHOOD_TESTNET_CHAIN_ID \|\| isDogeosRow;/);
   assert.match(row, /rowChainId === ROBINHOOD_TESTNET_CHAIN_ID \|\|\s*rowChainId === DOGEOS_TESTNET_CHAIN_ID \|\|\s*rowChainId === 101\s*\) \{\s*setSelectedFeedChainId\(rowChainId\);/);
-  // Token page: a graduated DogeOS coin gets the V3 (MuchFi) panel, never the Topaz/BNB V2 box or the BNB
-  // import route; its header price and liquidity read the V3 market like Robinhood's; buys keep the DOGE reserve.
+  // Token page: the gen-7/MuchFi V3 gate (isV3GraduatedTradePage) is removed (B8). Every graduated-trade site is
+  // Robinhood-only again, exactly as on release/evm-gen8; DogeOS keeps its presentation flag and the DOGE reserve.
   const page = read("pages/TokenDetails.tsx");
-  assert.match(page, /const isV3GraduatedTradePage = isRobinhoodPage \|\| isDogeosPage;/);
-  assert.match(page, /const isTopazTradingActive = isSolanaPage \|\| isV3GraduatedTradePage\s*\? false/);
-  assert.match(page, /const isUniswapTradingActive =\s*isV3GraduatedTradePage &&/);
-  assert.match(page, /const rhGraduatedTrade = isV3GraduatedTradePage && \(contractGraduated \|\| isUniswapTradingActive\);/);
-  assert.match(page, /const bnbGraduatedImportTrade = !isSolanaPage && !isV3GraduatedTradePage && isDexStage/);
-  assert.match(page, /\) : isV3GraduatedTradePage && \(contractGraduated \|\| isUniswapTradingActive\) \? \(/);
-  assert.match(page, /enabled: hasValidCampaignAddress && contractGraduatedEarly && !isSolanaPage && !isV3GraduatedTradePage,/);
-  assert.match(page, /if \(isV3GraduatedTradePage && contractGraduatedEarly\) \{\s*const indexed = Number\(unifiedMarket\.summary\?\.last_price_bnb\);/);
-  // gen8State is gen-8's own dependency (release/evm-gen8, merged in 126ffbc8b); the DogeOS change is isV3GraduatedTradePage.
-  assert.match(page, /contractGraduatedEarly,\s*gen8State,\s*isSolanaPage,\s*isV3GraduatedTradePage,\s*metrics\?\.currentPrice,/);
-  assert.match(page, /if \(isV3GraduatedTradePage && unifiedNative\) \{/);
-  assert.match(page, /if \(isV3GraduatedTradePage && isDexStage\) return "—";/);
+  assert.doesNotMatch(page, /isV3GraduatedTradePage/);
+  assert.match(page, /const isDogeosPage = isDogeosChainId\(chainIdForStorage\);/);
+  assert.match(page, /const isTopazTradingActive = isSolanaPage \|\| isRobinhoodPage\s*\? false/);
+  assert.match(page, /const isUniswapTradingActive =\s*isRobinhoodPage &&/);
+  assert.match(page, /const rhGraduatedTrade = isRobinhoodPage && \(contractGraduated \|\| isUniswapTradingActive\);/);
+  assert.match(page, /const bnbGraduatedImportTrade = !isSolanaPage && !isRobinhoodPage && isDexStage/);
+  assert.match(page, /\) : isRobinhoodPage && \(contractGraduated \|\| isUniswapTradingActive\) \? \(/);
+  assert.match(page, /enabled: hasValidCampaignAddress && contractGraduatedEarly && !isSolanaPage && !isRobinhoodPage,/);
+  assert.match(page, /if \(isRobinhoodPage && contractGraduatedEarly\) \{\s*const indexed = Number\(unifiedMarket\.summary\?\.last_price_bnb\);/);
+  // gen8State is gen-8's own dependency (release/evm-gen8, merged in 126ffbc8b); the order is gen-8's.
+  assert.match(page, /contractGraduatedEarly,\s*gen8State,\s*isRobinhoodPage,\s*isSolanaPage,\s*metrics\?\.currentPrice,/);
+  assert.match(page, /if \(isRobinhoodPage && unifiedNative\) \{/);
+  assert.match(page, /if \(isRobinhoodPage && isDexStage\) return "—";/);
   assert.equal((page.match(/evmBuyGasReserveWeiForChain\(chainIdForStorage\)/g) || []).length, 3);
   assert.doesNotMatch(page, /evmBuyGasReserveWei\(/);
   // the Robinhood USD-raise line is untouched (evmGen7Wiring pin)
@@ -349,72 +351,24 @@ test("buy gas reserve: 0.01 DOGE on 6281971 (L2 gas + L1 data fee); Robinhood an
   assert.equal(r.evmBuyGasReserveWei(false), r.BNB_BUY_GAS_RESERVE_WEI);
 });
 
-// ---------------------------------------------------------------- MuchFi post-graduation trade
+// ---------------------------------------------------------------- post-graduation trade (gen-7/MuchFi removed, B8)
 
-test("DogeOS trade: route on the MuchFi SmartRouter, QuoterV2 quote and S1 swap at fee 10000", async () => {
-  const { v3Trade } = await fullHarness();
-  const venue = dogeosVenue();
-  serveMarket(dogeosMarket());
-  const route = await v3Trade.resolveRobinhoodV3Route({ provider: venue.provider, campaignAddress: CAMPAIGN, chainId: DOGEOS, expectedTokenAddress: TOKEN });
-  assert.equal(route.fee, MUCHFI_POOL_FEE);
-  assert.equal(route.routerAddress, MUCHFI.SMART_ROUTER);
-  assert.equal(route.factoryAddress, MUCHFI.FACTORY);
-  assert.equal(route.wrappedNativeAddress, MUCHFI.WDOGE);
-  assert.equal(route.executionAdapterAddress, DOGEOS_S1_ADAPTER);
-  assert.equal(route.routeKind, "DIRECT_NATIVE");
-
-  const quote = await v3Trade.quoteRobinhoodV3Buy(venue.provider, route, 10n ** 18n, 100);
-  assert.equal(quote.amountOutRaw, 2n * 10n ** 18n);
-  const quoterCalls = venue.calls.filter((c) => c.to === MUCHFI.QUOTER_V2);
-  assert.equal(quoterCalls.length, 1);
-  const [params] = QUOTER_V2_IFACE.decodeFunctionData("quoteExactInputSingle", quoterCalls[0].data);
-  assert.equal(Number(params.fee), MUCHFI_POOL_FEE);
-  assert.equal(params.tokenIn, MUCHFI.WDOGE);
-  assert.equal(params.tokenOut, TOKEN);
-  assert.ok(!venue.calls.some((c) => Object.values(RH).includes(c.to)), "no Robinhood address is ever called");
-
-  const { signer, sent } = fakeSigner(venue.provider);
-  await v3Trade.executeRobinhoodV3Buy({ signer, quote });
-  assert.equal(sent.length, 1);
-  assert.equal(ethers.getAddress(sent[0].to), DOGEOS_S1_ADAPTER);
-  const buy = ADAPTER_IFACE.decodeFunctionData("buyExactNativeIn", sent[0].data);
-  assert.equal(Number(buy.fee), MUCHFI_POOL_FEE);
-  assert.equal(BigInt(sent[0].value), 10n ** 18n);
-
-  const sellQuote = await v3Trade.quoteRobinhoodV3Sell(venue.provider, route, 5n, 100);
-  const sold = fakeSigner(venue.provider);
-  await v3Trade.executeRobinhoodV3Sell({ signer: sold.signer, quote: sellQuote });
-  assert.equal(Number(ADAPTER_IFACE.decodeFunctionData("sellExactTokenIn", sold.sent[0].data).fee), MUCHFI_POOL_FEE);
-});
-
-test("DogeOS trade: fee 10000 whatever fee_bps the market row carries", async () => {
-  const { v3Trade } = await fullHarness();
-  for (const feeBps of [null, 0, 30, 100, 10000]) {
-    serveMarket(dogeosMarket({ feeBps }));
-    const route = await v3Trade.resolveRobinhoodV3Route({ provider: dogeosVenue().provider, campaignAddress: CAMPAIGN, chainId: DOGEOS });
-    assert.equal(route.fee, MUCHFI_POOL_FEE, `feeBps ${feeBps}`);
+test("the Robinhood V3 trade library refuses 6281971: no MuchFi fee-10000 route, whatever the env or market row", async () => {
+  // Even with a DogeOS V3 env and a served MuchFi market row (fee_bps 100 or 10000), DogeOS gets no route and no chain
+  // call is made: the gen-7 DogeOS trade path is gone, so it can neither trade at fee 10000 nor borrow Robinhood's env.
+  for (const harness of [fullHarness, robinhoodOnlyHarness]) {
+    const { v3Trade } = await harness();
+    for (const feeBps of [null, 100, 10000]) {
+      const venue = dogeosVenue();
+      serveMarket(dogeosMarket({ feeBps }));
+      await assert.rejects(
+        v3Trade.resolveRobinhoodV3Route({ provider: venue.provider, campaignAddress: CAMPAIGN, chainId: DOGEOS, expectedTokenAddress: TOKEN }),
+        /Robinhood V3 route requested for a non-Robinhood chain\./,
+        `feeBps ${feeBps}`,
+      );
+      assert.deepEqual(venue.calls, [], "no MuchFi or Robinhood contract is read for 6281971");
+    }
   }
-});
-
-test("V3 trade env for 6281971 reads only the _6281971 names, never the unsuffixed Robinhood ones", async () => {
-  // A market row without router/factory/wrapped-native falls back to this build's env.
-  serveMarket(dogeosMarket({ router: null, factory: null, wrappedNative: null }));
-  const full = await fullHarness();
-  const route = await full.v3Trade.resolveRobinhoodV3Route({ provider: dogeosVenue().provider, campaignAddress: CAMPAIGN, chainId: DOGEOS });
-  assert.equal(route.routerAddress, MUCHFI.SMART_ROUTER);
-  assert.equal(route.factoryAddress, MUCHFI.FACTORY);
-  assert.equal(route.wrappedNativeAddress, MUCHFI.WDOGE);
-
-  // Only the unsuffixed (Robinhood) names set: DogeOS refuses instead of borrowing them.
-  const rhOnly = await robinhoodOnlyHarness();
-  await assert.rejects(
-    rhOnly.v3Trade.resolveRobinhoodV3Route({ provider: dogeosVenue().provider, campaignAddress: CAMPAIGN, chainId: DOGEOS }),
-    /Invalid Robinhood V3 router/,
-  );
-  // Stock routing stays off for DogeOS even with the unsuffixed flag on; 46630 keeps its own rule.
-  assert.equal(full.v3Trade.robinhoodV3TradeInternals.stockEthRoutingEnabled(DOGEOS), false);
-  assert.equal(full.v3Trade.robinhoodV3TradeInternals.stockEthRoutingEnabled(RH_TESTNET), true);
-  assert.equal(full.v3Trade.robinhoodV3TradeInternals.stockEthRoutingEnabled(4663), true);
 });
 
 test("Robinhood 46630 trade is unchanged: fee 3000 from fee_bps 30 or none, unsuffixed env still read", async () => {
