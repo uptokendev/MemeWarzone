@@ -42,7 +42,7 @@ export function keeperWallet(chainId: number, env: NodeJS.ProcessEnv = process.e
   const raw = String(env[`EVM_GRADUATION_KEEPER_PRIVATE_KEY_${chainId}`] || env.EVM_GRADUATION_KEEPER_PRIVATE_KEY || "").trim();
   if (!raw) return null;
   const wallet = new ethers.Wallet(raw.startsWith("0x") ? raw : `0x${raw}`);
-  assertKeeperKeyAllowed(wallet.address, env);
+  assertKeeperKeyAllowed(wallet.address, env, chainId);
   return wallet;
 }
 

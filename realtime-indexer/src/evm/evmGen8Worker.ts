@@ -2,7 +2,8 @@
  * Starts every gen-8 loop (ingest, holder census, side-pool watcher, fee routing). Nothing starts, and no RPC or DB
  * call is made, unless EVM_GEN8_LAUNCHER_<id> and EVM_GEN8_HOOK_<id> are set for at least one chain, or, on the
  * Barkswap venue (DogeOS 6281971), EVM_GEN8_LAUNCHER_<id> and EVM_GEN8_PLUGIN_<id>. A Barkswap chain gets the ingest
- * (evmGen8Bark.ts) and the holder census here; its side-pool watch and fee routing are the DogeOS keepers' (t19, t20).
+ * (evmGen8Bark.ts) and the holder census here; its side-pool watch, fee routing and the other DogeOS keepers start in
+ * dogeosBarkKeepers.ts (every lane off by default; flags and keys there).
  *   EVM_GEN8_RPC_<id>             optional RPC for gen-8 (default: the chain's indexer RPC, BSC_RPC_HTTP_<id> / ROBINHOOD_RPC_HTTP_<id>)
  *   EVM_GEN8_POLL_MS              ingest interval (60000; floor 60000 — launcher, hook and splitter)
  *   EVM_GEN8_DISPLAY_HEAD_TAG(_<id>)  what the UI rows follow: latest (Robinhood) / finalized (BNB); rolled back on a reorg
@@ -26,6 +27,7 @@ import { startEvmGen8BarkIndexer } from "./evmGen8Bark.js";
 import { startEvmGen8FeeRoutingWorker } from "./evmGen8FeeRouting.js";
 import { runGen8HolderCensusOnce } from "./evmGen8Holders.js";
 import { GEN8_SIDE_ALERT_TYPE, runGen8SidePoolWatcherOnce } from "./evmGen8SidePools.js";
+import { startDogeosBarkKeepers } from "./dogeosBarkKeepers.js";
 
 const providers = new Map<number, ethers.JsonRpcProvider>();
 
@@ -71,7 +73,12 @@ export function startEvmGen8Workers(env: NodeJS.ProcessEnv = process.env) {
     startEvmGen8Indexer({ db: pool, providerFor: (id) => gen8Provider(id, env), env });
     startEvmGen8FeeRoutingWorker({ db: pool, providerFor: (id) => gen8Provider(id, env), env });
   }
-  if (barkChains.length) startEvmGen8BarkIndexer({ db: pool, providerFor: (id) => gen8Provider(id, env), env });
+  if (barkChains.length) {
+    startEvmGen8BarkIndexer({ db: pool, providerFor: (id) => gen8Provider(id, env), env });
+    // DogeOS keepers (6281971): collect / convert, graduation-fee fallback, reserve release, admin-change watch + restore
+    // (keeper key), side-pool watch, route worker and choice-vault buyback (operator key). Each lane is off by default.
+    startDogeosBarkKeepers({ db: pool, cfgs: barkChains, providerFor: (id) => gen8Provider(id, env), env });
+  }
   void (async () => {
     const { ensureTokenHolderSchema } = await import("../tokenHolders.js");
     await ensureTokenHolderSchema();

@@ -150,6 +150,23 @@ const envOf = (block) => Object.fromEntries(block.vars);
 /** The API reader returns checksummed addresses; compare them case-insensitively. */
 const lowerAddresses = (cfg) => Object.fromEntries(Object.entries(cfg).map(([k, v]) => [k, typeof v === "string" && /^0x[0-9a-fA-F]{40}$/.test(v) ? v.toLowerCase() : v]));
 
+/**
+ * The DogeOS keeper lanes (realtime-indexer/src/evm/dogeosBarkKeepers.ts BARK_LANE_FLAG, plan t20) and the send switch:
+ * each is printed, and printed "false" (every lane off, dry run) until the founder's go.
+ */
+const KEEPERS_SOURCE = readFileSync(join(ROOT, "realtime-indexer/src/evm/dogeosBarkKeepers.ts"), "utf8");
+const KEEPER_FLAG_NAMES = [
+  "DOGEOS_BARK_COLLECT_ENABLED_6281971",
+  "DOGEOS_BARK_GRAD_FEE_ENABLED_6281971",
+  "DOGEOS_BARK_RESERVE_ENABLED_6281971",
+  "DOGEOS_BARK_ADMIN_WATCH_ENABLED_6281971",
+  "DOGEOS_BARK_SIDE_POOLS_ENABLED_6281971",
+  "DOGEOS_BARK_ROUTE_ENABLED_6281971",
+  "EVM_CREATOR_CHOICE_ENABLED_6281971",
+  "DOGEOS_BARK_SEND_6281971",
+];
+const KEEPER_FLAGS_OFF = Object.fromEntries(KEEPER_FLAG_NAMES.map((name) => [name, "false"]));
+
 const EXPECTED = {
   frontend: {
     VITE_PUBLIC_RPC_6281971: "https://rpc.testnet.dogeos.com",
@@ -185,7 +202,11 @@ const EXPECTED = {
     EVM_GEN8_CHOICE_VAULT_6281971: FIX.choiceVault,
     EVM_GEN8_RESERVE_LOCK_6281971: FIX.reserveLock,
     EVM_GEN8_ESCROW_6281971: FIX.escrow,
+    EVM_GEN8_LENS_6281971: FIX.lens,
     DOGEOS_OPERATOR_ADDRESS: ROLES.operator,
+    ...KEEPER_FLAGS_OFF,
+    DOGEOS_BARK_KEEPER_PRIVATE_KEY_6281971: "<paste DOGEOS_TESTNET_GRADUATION_KEEPER_PRIVATE_KEY from config/dogeos.local>",
+    EVM_GEN8_OPERATOR_KEY_6281971: "<paste DOGEOS_TESTNET_OPERATOR_PRIVATE_KEY from config/dogeos.local>",
     DOGEOS_NATIVE_USD_ORACLE_ADDRESS_6281971: FIX.dogeUsd,
     DOGEOS_ORACLE_PUSH_ENABLED: "false",
     DOGEOS_TESTNET_ORACLE_UPDATER_PRIVATE_KEY: "<paste DOGEOS_TESTNET_ORACLE_UPDATER_PRIVATE_KEY from config/dogeos.local>",
@@ -307,33 +328,57 @@ test("no removed gen-7 / MuchFi name and no Uniswap V4 name appears in the outpu
   assert.ok(!/muchfi/i.test(text), "output mentions MuchFi");
 });
 
-test("the operator is only ever the public DOGEOS_OPERATOR_ADDRESS, never in a key slot", () => {
+test("the operator address is only ever the public DOGEOS_OPERATOR_ADDRESS; its key has one slot, the indexer's EVM_GEN8_OPERATOR_KEY_6281971", () => {
   const text = render();
   const blocks = parseBlocks(text);
   const occurrences = text.toLowerCase().split(ROLES.operator.toLowerCase()).length - 1;
   assert.equal(occurrences, 1, "the operator address appears once, as DOGEOS_OPERATOR_ADDRESS");
   assert.equal(blocks.indexer.vars.get("DOGEOS_OPERATOR_ADDRESS"), ROLES.operator);
   assert.ok(!blocks.api.vars.has("DOGEOS_OPERATOR_ADDRESS"));
-  for (const block of Object.values(blocks)) {
+  const operatorSlots = [];
+  for (const [blockName, block] of Object.entries(blocks)) {
     for (const [name, value] of block.vars) {
       if (!/KEY|_PK$/.test(name)) continue;
-      assert.ok(!/OPERATOR/i.test(value), `${name} points at an operator key: ${value}`);
       assert.ok(!value.toLowerCase().includes(ROLES.operator.toLowerCase()), `${name} carries the operator address`);
+      if (/OPERATOR/i.test(value)) operatorSlots.push(`${blockName}:${name}=${value}`);
     }
   }
+  // B9 / plan t20: the route worker and the choice-vault buyback sign with the operator key, on the TEST indexer only
+  assert.deepEqual(operatorSlots, ["indexer:EVM_GEN8_OPERATOR_KEY_6281971=<paste DOGEOS_TESTNET_OPERATOR_PRIVATE_KEY from config/dogeos.local>"]);
+  // the keeper slot never names the operator key
+  assert.doesNotMatch(blocks.indexer.vars.get("DOGEOS_BARK_KEEPER_PRIVATE_KEY_6281971"), /OPERATOR/i);
 });
 
-test("key values are always the config/dogeos.local paste placeholder (route authority on the API, updater on the indexer)", () => {
+test("the DogeOS keeper lanes are printed off, with the flag and key names the indexer reads (dogeosBarkKeepers.ts)", () => {
+  const { indexer } = parseBlocks(render());
+  for (const name of KEEPER_FLAG_NAMES) {
+    assert.ok(KEEPERS_SOURCE.includes(`"${name}"`), `dogeosBarkKeepers.ts does not read ${name}`);
+    assert.equal(indexer.vars.get(name), "false", name);
+  }
+  const flagged = [...KEEPERS_SOURCE.matchAll(/"((?:DOGEOS_BARK|EVM_CREATOR_CHOICE)_[A-Z_]*ENABLED_6281971)"/g)].map((m) => m[1]);
+  assert.deepEqual([...new Set(flagged)].sort(), KEEPER_FLAG_NAMES.filter((n) => n.includes("ENABLED")).sort(), "every lane flag of the keepers is printed");
+  assert.ok(KEEPERS_SOURCE.includes('BARK_KEEPER_KEY_ENV = "DOGEOS_BARK_KEEPER_PRIVATE_KEY_6281971"'));
+  assert.ok(KEEPERS_SOURCE.includes('BARK_OPERATOR_KEY_ENV = "EVM_GEN8_OPERATOR_KEY_6281971"'));
+  assert.ok(KEEPERS_SOURCE.includes('BARK_LENS_ENV = "EVM_GEN8_LENS_6281971"'));
+  assert.equal(indexer.vars.get("EVM_GEN8_LENS_6281971"), FIX.lens);
+});
+
+test("key values are always the config/dogeos.local paste placeholder (route authority on the API; updater, keeper and operator on the indexer)", () => {
   const blocks = parseBlocks(render());
   const keys = [];
   for (const [blockName, block] of Object.entries(blocks)) {
     for (const [name, value] of block.vars) {
-      if (!/PRIVATE_KEY|_PK$/.test(name)) continue;
+      if (!/PRIVATE_KEY|_KEY_\d+$|_PK$/.test(name)) continue;
       keys.push(`${blockName}:${name}`);
-      assert.match(value, /^<paste DOGEOS_TESTNET_(ROUTE_AUTHORITY|ORACLE_UPDATER)_PRIVATE_KEY from config\/dogeos\.local>$/, name);
+      assert.match(value, /^<paste DOGEOS_TESTNET_(ROUTE_AUTHORITY|ORACLE_UPDATER|GRADUATION_KEEPER|OPERATOR)_PRIVATE_KEY from config\/dogeos\.local>$/, name);
     }
   }
-  assert.deepEqual(keys.sort(), ["api:ROUTE_AUTHORITY_PRIVATE_KEY", "indexer:DOGEOS_TESTNET_ORACLE_UPDATER_PRIVATE_KEY"]);
+  assert.deepEqual(keys.sort(), [
+    "api:ROUTE_AUTHORITY_PRIVATE_KEY",
+    "indexer:DOGEOS_BARK_KEEPER_PRIVATE_KEY_6281971",
+    "indexer:DOGEOS_TESTNET_ORACLE_UPDATER_PRIVATE_KEY",
+    "indexer:EVM_GEN8_OPERATOR_KEY_6281971",
+  ]);
 });
 
 test("optional knobs are shown commented out only", () => {
@@ -430,6 +475,17 @@ test("refuses a manifest deployed against another Barkswap (the app trades throu
   const manifest = fixtureManifest();
   manifest.barkswap.swapRouter = ADDR(0x5e);
   assert.throws(() => render(manifest), /barkswap\.swapRouter/);
+});
+
+test("every pinned Barkswap address is checked, the factory the side-pool watch reads included", () => {
+  for (const key of Object.keys(BARKSWAP)) {
+    const manifest = fixtureManifest();
+    manifest.barkswap[key] = ADDR(0x5e);
+    assert.throws(() => render(manifest), new RegExp(`barkswap\\.${key}`), key);
+    const missing = fixtureManifest();
+    delete missing.barkswap[key];
+    assert.throws(() => render(missing), new RegExp(`barkswap\\.${key}`), key);
+  }
 });
 
 function mockFs(files) {

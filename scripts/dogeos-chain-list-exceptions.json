@@ -57,7 +57,6 @@
     { "file": "frontend/api/lib/financeImportSwapFees.js", "pattern": "46630", "category": "imports-and-jobs", "reason": "Import swap-fee ledger chains." },
     { "file": "frontend/scripts/check-project-import-server-mount.mjs", "pattern": "for (const unsupported of [97, 102, 46630])", "category": "imports-and-jobs", "reason": "Unsupported import chains check." },
     { "file": "frontend/src/components/postgrad/WarRoomImportRow.tsx", "pattern": "46630", "category": "imports-and-jobs", "reason": "DEX name on an imported-coin row." },
-    { "file": "realtime-indexer/src/evm/evmCreatorChoiceConfig.ts", "pattern": "46630", "category": "imports-and-jobs", "reason": "Creator-choice chains and defaults." },
     { "file": "realtime-indexer/src/evm/payoutWatchdogConfig.ts", "pattern": "WATCHDOG_CHAINS", "category": "imports-and-jobs", "reason": "Payout watchdog chains." },
     { "file": "realtime-indexer/src/importCreatorFeeEvmWorker.ts", "pattern": "chainId === 46630", "category": "imports-and-jobs", "reason": "Import-fee worker RPC." },
     { "file": "realtime-indexer/src/importCreatorFeesEvm.ts", "pattern": "46630", "category": "imports-and-jobs", "reason": "Import-fee chains and defaults." },

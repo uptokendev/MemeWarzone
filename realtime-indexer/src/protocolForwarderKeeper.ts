@@ -24,7 +24,7 @@
  * trade loop (separate timer, own provider, every await bounded by the tick timeout).
  */
 import { ethers } from "ethers";
-import { FORBIDDEN_KEEPER_ADDRESSES, assertKeeperKeyAllowed } from "./evm/evmGraduationKeeper.js";
+import { assertKeeperKeyAllowed } from "./evm/evmGraduationKeeper.js";
 
 export const EVM_DEPLOYER = "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714";
 export const SAFE = "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7";
@@ -102,7 +102,6 @@ export function forwarderKeeperWallet(mode: KeeperMode, env: NodeJS.ProcessEnv =
   if (!raw) throw new Error("PROTOCOL_FORWARDER_KEEPER=send needs PROTOCOL_FORWARDER_KEEPER_PK (no fallback to any other key)");
   const wallet = new ethers.Wallet(raw.startsWith("0x") ? raw : `0x${raw}`);
   if (wallet.address.toLowerCase() === EVM_DEPLOYER.toLowerCase()) throw new Error(`PROTOCOL_FORWARDER_KEEPER_PK is the EVM deployer ${EVM_DEPLOYER}; the deployer never signs recurring operations`);
-  if (FORBIDDEN_KEEPER_ADDRESSES.includes(wallet.address.toLowerCase())) throw new Error(`PROTOCOL_FORWARDER_KEEPER_PK ${wallet.address} is a forbidden (deployer) address`);
   assertKeeperKeyAllowed(wallet.address, env);
   return wallet;
 }

@@ -131,10 +131,30 @@ test("keeperWallet on 6281971 refuses the operator's key", () => {
   assert.throws(() => keeperWallet(DOGEOS, { ...env, DOGEOS_OPERATOR_ADDRESS: operator.address }), /refuses key/);
 });
 
-test("a malformed DOGEOS_OPERATOR_ADDRESS fails closed: no keeper key passes the guard", () => {
+test("a malformed DOGEOS_OPERATOR_ADDRESS fails closed on 6281971: no DogeOS keeper key passes the guard", () => {
   const keeper = ethers.Wallet.createRandom();
   for (const bad of ["0x1234", "not-an-address", `${keeper.address}00`]) {
-    assert.throws(() => assertKeeperKeyAllowed(keeper.address, { DOGEOS_OPERATOR_ADDRESS: bad }), /DOGEOS_OPERATOR_ADDRESS/, bad);
+    assert.throws(() => assertKeeperKeyAllowed(keeper.address, { DOGEOS_OPERATOR_ADDRESS: bad }, DOGEOS), /DOGEOS_OPERATOR_ADDRESS/, bad);
+    assert.throws(() => forbiddenKeeperAddresses({ DOGEOS_OPERATOR_ADDRESS: bad }, DOGEOS), /DOGEOS_OPERATOR_ADDRESS/, bad);
+  }
+});
+
+// t20 review: the DogeOS operator address only concerns DogeOS keepers. A malformed value stops the 6281971 keepers and
+// leaves every other chain's keeper (gen-7 graduation keeper on 56/97/4663/46630, the protocol forwarder keeper) as is.
+test("a malformed DOGEOS_OPERATOR_ADDRESS does not stop the BNB / Robinhood keepers", () => {
+  const keeper = ethers.Wallet.createRandom();
+  const env = { DOGEOS_OPERATOR_ADDRESS: "0x1234" };
+  for (const chainId of [56, 97, 4663, 46630, undefined]) {
+    assert.doesNotThrow(() => assertKeeperKeyAllowed(keeper.address, env, chainId), String(chainId));
+    assert.deepEqual(forbiddenKeeperAddresses(env, chainId), FORBIDDEN_KEEPER_ADDRESSES, String(chainId));
+  }
+  assert.equal(keeperWallet(97, { ...env, EVM_GRADUATION_KEEPER_PRIVATE_KEY_97: keeper.privateKey })?.address, keeper.address);
+  // a deployer stays refused on every chain
+  assert.throws(() => assertKeeperKeyAllowed(DOGEOS_DEPLOYER, env, 56), /refuses key/);
+  // a well-formed operator is refused as a keeper on every chain
+  const operator = ethers.Wallet.createRandom();
+  for (const chainId of [56, 4663, DOGEOS, undefined]) {
+    assert.throws(() => assertKeeperKeyAllowed(operator.address, { DOGEOS_OPERATOR_ADDRESS: operator.address }, chainId), /refuses key/, String(chainId));
   }
 });
 

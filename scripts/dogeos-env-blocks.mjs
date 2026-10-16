@@ -8,28 +8,34 @@
 // dogeos-testnet-bark, the dogeosBarkManifestRecord shape in scripts/lib/dogeosBarkStack.ts). The env names are the
 // gen-8 ones with the Barkswap venue, exactly as the readers take them: frontend/api/lib/evmGen8Config.js
 // (evmGen8ApiConfig), realtime-indexer/src/evm/evmGen8Config.ts (evmGen8BarkConfig) and the app's VITE_EVM_GEN8_*
-// (frontend/src/lib/evmGen8Client.mjs); plus the DogeOS RPC, the reused vaults, the oracle push and
-// DOGEOS_OPERATOR_ADDRESS (the keeper guards refuse that address as a keeper key, B9).
+// (frontend/src/lib/evmGen8Client.mjs); plus the DogeOS RPC, the reused vaults, the oracle push,
+// DOGEOS_OPERATOR_ADDRESS (the keeper guards refuse that address as a keeper key, B9) and the DogeOS keepers
+// (realtime-indexer/src/evm/dogeosBarkKeepers.ts, plan t20), every lane printed off.
 //
-// Keys: every *_PRIVATE_KEY value is the literal `<paste NAME from config/dogeos.local>`. This script reads only the
-// manifest it is given and refuses config/dogeos.local or any .env file as input. The operator appears only as its
-// public address. VITE_ALLOWED_CHAIN_IDS is an append instruction, never a full value.
+// Keys: every key value (*_PRIVATE_KEY, EVM_GEN8_OPERATOR_KEY_6281971) is the literal `<paste NAME from
+// config/dogeos.local>`. This script reads only the manifest it is given and refuses config/dogeos.local or any .env
+// file as input. The operator's address appears only as DOGEOS_OPERATOR_ADDRESS. VITE_ALLOWED_CHAIN_IDS is an append
+// instruction, never a full value.
 
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { BARKSWAP_EXTERNAL_ADDRESSES } from "./lib/dogeosTestnetDeployGuards.mjs";
+import { BARKSWAP_EXTERNAL_ADDRESSES, DOGEOS_BARK_MANIFEST_KIND, DOGEOS_MANIFEST_PATH } from "./lib/dogeosTestnetDeployGuards.mjs";
 
 export const DOGEOS_CHAIN_ID = 6281971;
 export const DOGEOS_PUBLIC_RPC = "https://rpc.testnet.dogeos.com";
-export const DEFAULT_MANIFEST = "deployments/dogeos/testnet.bark.json";
-export const DOGEOS_BARK_MANIFEST_KIND = "dogeos-testnet-bark";
+export const DEFAULT_MANIFEST = DOGEOS_MANIFEST_PATH;
+export { DOGEOS_BARK_MANIFEST_KIND };
 /** Spec section 4: the money head on Chikyu is 20 blocks below `latest` (evmGen8Config.ts GEN8_MONEY_DEPTH). */
 const MONEY_DEPTH_BLOCKS = 20;
 
-/** The Barkswap periphery the app trades through (its defaults in frontend/src/lib/barkswapSwap.mjs); must match. */
-const PINNED_BARKSWAP = ["swapRouter", "quoterV2", "wdoge", "customPoolEntryPoint"];
+/**
+ * Every Barkswap address the stack depends on must be the pinned one: the periphery the app trades through (its defaults
+ * in frontend/src/lib/barkswapSwap.mjs), the entry point and pool deployer our launcher uses, and the factory the
+ * DogeOS side-pool watch reads (realtime-indexer/src/evm/evmGen8SidePools.ts DOGEOS_SIDE_FACTORIES).
+ */
+const PINNED_BARKSWAP = Object.keys(BARKSWAP_EXTERNAL_ADDRESSES);
 
 const KEY_SHAPE = /0x[0-9a-fA-F]{64}/;
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
@@ -175,15 +181,34 @@ function indexerBlock(m) {
     "Gen-8 on the Barkswap venue (realtime-indexer/src/evm/evmGen8Config.ts evmGen8BarkConfig): trades from the launcher",
     "and the plugin, scanned from the deploy's first block. Inert until launcher and plugin are both set.",
   );
-  gen8BarkNames(b, m, { lens: false });
+  gen8BarkNames(b, m, { lens: true });
   b.note(`Money head: ${MONEY_DEPTH_BLOCKS} blocks below latest by default; the env is clamped to 17 (Chikyu's max reorg) or more.`);
   b.note(`EVM_GEN8_MONEY_DEPTH_6281971=${MONEY_DEPTH_BLOCKS}`);
   b.note(
     "The DogeOS operator's PUBLIC address (spec B9: splitter, router-claim and choice-vault operator). The keeper",
-    "guards refuse it as a keeper key. Its key is never set here; the DogeOS keepers come with their own off-by-default",
-    "flags (plan t20).",
+    "guards refuse it as a keeper key, and the operator key below must be this address's key.",
   );
   b.set("DOGEOS_OPERATOR_ADDRESS", m.operator);
+  b.note(
+    "DogeOS keepers (realtime-indexer/src/evm/dogeosBarkKeepers.ts; spec section 4 Keepers, B9). Every lane stays false",
+    "and the keepers dry-run (simulate and log, nothing signed) until DOGEOS_BARK_SEND_6281971=true; each switch needs",
+    "the founder's go. Keeper key: collect / convert / pull, graduation-fee fallback, reserve release, admin-change",
+    "watch + restore. Operator key: route worker (claimRouter, splitter route) and choice-vault buyback. The side-pool",
+    "watch only reads. The buyback lane also needs EVM_BUYBACK_SEED_SECRET (shared, set where the creator-choice",
+    "operator runs).",
+  );
+  b.set("DOGEOS_BARK_COLLECT_ENABLED_6281971", "false");
+  b.set("DOGEOS_BARK_GRAD_FEE_ENABLED_6281971", "false");
+  b.set("DOGEOS_BARK_RESERVE_ENABLED_6281971", "false");
+  b.set("DOGEOS_BARK_ADMIN_WATCH_ENABLED_6281971", "false");
+  b.set("DOGEOS_BARK_SIDE_POOLS_ENABLED_6281971", "false");
+  b.set("DOGEOS_BARK_ROUTE_ENABLED_6281971", "false");
+  b.set("EVM_CREATOR_CHOICE_ENABLED_6281971", "false");
+  b.set("DOGEOS_BARK_SEND_6281971", "false");
+  b.note("Keeper key: holds no contract role; refused if it is the operator, a deployer, the updater or the route authority.");
+  b.set("DOGEOS_BARK_KEEPER_PRIVATE_KEY_6281971", keyPlaceholder("DOGEOS_TESTNET_GRADUATION_KEEPER_PRIVATE_KEY"));
+  b.note("Operator key: refused unless it is DOGEOS_OPERATOR_ADDRESS's key (never the keeper's).");
+  b.set("EVM_GEN8_OPERATOR_KEY_6281971", keyPlaceholder("DOGEOS_TESTNET_OPERATOR_PRIVATE_KEY"));
   b.note(
     "DOGE/USD oracle push, TEST indexer only. DOGEOS_ORACLE_PUSH_ENABLED stays false until the founder's go:",
     "the push sends real transactions with the updater key. Interval and deviation are optional.",

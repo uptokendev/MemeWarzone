@@ -15,16 +15,18 @@
  * evm_gen8_holder_exclusions (V4 and Infinity CL pools hold their coins in the PoolManager / Vault).
  * Volume = coins moved (raw) per swap, summed per hour. Alerts: a new side pool (warning), and side volume over 24 h of
  * at least EVM_GEN8_SIDE_ALERT_SHARE_BPS of our pool's 24 h coin volume and at least EVM_GEN8_SIDE_ALERT_MIN_COINS.
+ * DogeOS (Barkswap venue, 6281971) has its own pass at the end of this file (runBarkSidePoolWatcherOnce): Barkswap's
+ * Algebra factory and MuchFi's V3 factory, same tables and alerts; the V4 pass above is unchanged.
  */
 import { ethers } from "ethers";
-import { gen8DisplayHead, intEnv, type Gen8ChainConfig } from "./evmGen8Config.js";
+import { GEN8_BARK_MAX_LOG_SPAN, gen8DisplayHead, intEnv, type Gen8BarkChainConfig, type Gen8ChainConfig } from "./evmGen8Config.js";
 import { GEN8_TOPICS, V4_DYNAMIC_FEE_FLAG, V4_POOL_MANAGER_IFACE } from "./evmGen8Abi.js";
 import type { Queryable } from "./evmGen8Store.js";
 
 export const GEN8_SIDE_ALERT_TYPE = "gen8_side_pool";
 
-export type SideVenue = "v2" | "v3" | "v3_pancake" | "solidly" | "v4" | "infinity_cl";
-export type SideFactory = { venue: Exclude<SideVenue, "v4">; address: string };
+export type SideVenue = "v2" | "v3" | "v3_pancake" | "solidly" | "v4" | "infinity_cl" | "algebra";
+export type SideFactory = { venue: Exclude<SideVenue, "v4" | "algebra">; address: string };
 
 export const SIDE_IFACE = new ethers.Interface([
   "event PairCreated(address indexed token0, address indexed token1, address pair, uint256)",
@@ -287,7 +289,7 @@ export async function runGen8SidePoolWatcherOnce(opts: {
   return { from, to, created, swaps };
 }
 
-export async function checkSideVolumeAlerts(db: Queryable, cfg: Gen8ChainConfig, env: NodeJS.ProcessEnv, alert: (a: any) => Promise<unknown>) {
+export async function checkSideVolumeAlerts(db: Queryable, cfg: Pick<Gen8ChainConfig, "chainId">, env: NodeJS.ProcessEnv, alert: (a: any) => Promise<unknown>) {
   const shareBps = BigInt(intEnv(env.EVM_GEN8_SIDE_ALERT_SHARE_BPS, 1_000, 1, 1_000_000));
   const minCoins = BigInt(intEnv(env.EVM_GEN8_SIDE_ALERT_MIN_COINS, 1_000_000, 0)) * 10n ** 18n;
   const r = await db.query(
@@ -320,4 +322,195 @@ export async function checkSideVolumeAlerts(db: Queryable, cfg: Gen8ChainConfig,
       });
     }
   }
+}
+
+// ------------------------------------------------------------------ DogeOS (Barkswap venue, 6281971; barkswap plan t20)
+
+/**
+ * Side pools of our DogeOS coins (spec section 4 Keepers "side-pool watch", B3; founder 2026-10-14: the coin stays a plain
+ * ERC20, side pools are accepted and alerted, no token guard). Sources on Chikyu:
+ *   - Barkswap's Algebra factory: `Pool` (a default pool, anyone may create one for any pair) and `CustomPool` (a custom
+ *     pool by any deployer contract through the entry point) with one of our coins as token0 or token1. Our own pools
+ *     are the factory's CustomPool events whose deployer is our launcher; they are skipped. Venue "algebra"; the custom
+ *     deployer is kept in the `hooks` column (null for a default pool).
+ *   - MuchFi's V3 factory (a PancakeSwap V3 fork, the other DEX on Chikyu; 2026-10-10 foundation spec): PoolCreated,
+ *     venue "v3_pancake". EVM_GEN8_SIDE_FACTORIES_6281971 replaces this list (same format as the V4 chains).
+ * The creation queries are the four topic filters proven on a Chikyu fork in test/dogeos/barkswap/BarkAdmin.fork.spec.ts
+ * (sidePoolsOf), with our coins OR-ed in the coin's topic (50 per query). Rows, holder exclusions, volume and alerts are
+ * the V4 watcher's (evm_gen8_side_pools / _volume, reward_type gen8_side_pool); the cursor is keyed by the plugin.
+ */
+export const DOGEOS_SIDE_FACTORIES: Readonly<{ barkswap: string; others: readonly SideFactory[] }> = Object.freeze({
+  barkswap: "0xf3961157f56c983316657f0267b4c04460bee43f", // Barkswap AlgebraFactory (docs/dogeos/barkswap-facts.md)
+  others: Object.freeze([{ venue: "v3_pancake", address: "0x7d175e06570cafa1cfdf060850b84e0ca23eff0b" }]) as readonly SideFactory[], // MuchFi V3 factory
+});
+
+/** Algebra Integral 1.2.1 factory and pool events (vendored contracts/dogeos/barkswap/interfaces/core). */
+export const BARK_SIDE_ALGEBRA_TOPICS = Object.freeze({
+  pool: topicOf("Pool(address,address,address)"),
+  customPool: topicOf("CustomPool(address,address,address,address)"),
+  swap: topicOf("Swap(address,address,int256,int256,uint160,uint128,int24,uint24,uint24)"),
+});
+
+const BARK_SIDE_COINS_PER_QUERY = 50;
+
+/** The side-pool factories on 6281971: Barkswap's (fixed) and the others (env override or MuchFi). */
+export function barkSideFactories(env: NodeJS.ProcessEnv = process.env): { barkswap: string; others: SideFactory[] } {
+  const raw = String(env.EVM_GEN8_SIDE_FACTORIES_6281971 || "").trim();
+  return { barkswap: DOGEOS_SIDE_FACTORIES.barkswap, others: raw ? sideFactories(6281971, env) : [...DOGEOS_SIDE_FACTORIES.others] };
+}
+
+/** Pure: BarkAdmin's four creation filters per chunk of coins: Pool with the coin as token0 / token1, CustomPool likewise. */
+export function barkSidePoolCreationFilters(factory: string, coins: string[]): Array<{ address: string; topics: Array<string | string[] | null> }> {
+  const out: Array<{ address: string; topics: Array<string | string[] | null> }> = [];
+  const address = factory.toLowerCase();
+  for (let i = 0; i < coins.length; i += BARK_SIDE_COINS_PER_QUERY) {
+    const set = coins.slice(i, i + BARK_SIDE_COINS_PER_QUERY).map((c) => ethers.zeroPadValue(c, 32).toLowerCase());
+    out.push(
+      { address, topics: [BARK_SIDE_ALGEBRA_TOPICS.pool, set] },
+      { address, topics: [BARK_SIDE_ALGEBRA_TOPICS.pool, null, set] },
+      { address, topics: [BARK_SIDE_ALGEBRA_TOPICS.customPool, null, set] },
+      { address, topics: [BARK_SIDE_ALGEBRA_TOPICS.customPool, null, null, set] },
+    );
+  }
+  return out;
+}
+
+/** Pure: side pools in DogeOS creation logs (Barkswap Pool / CustomPool, then the other factories); ours skipped, one row per pool. */
+export function findBarkSidePools(logs: L[], input: { tokens: Set<string>; launcher: string; factory: string; others: readonly SideFactory[] }): SidePoolFound[] {
+  const factory = input.factory.toLowerCase();
+  const launcher = input.launcher.toLowerCase();
+  const seen = new Set<string>();
+  const out: SidePoolFound[] = [];
+  const word = (t: string | undefined) => ethers.getAddress(ethers.dataSlice(t!, 12)).toLowerCase();
+  for (const log of logs) {
+    const address = String(log.address).toLowerCase();
+    const t0 = String(log.topics[0]).toLowerCase();
+    let found: SidePoolFound | null = null;
+    if (address === factory && (t0 === BARK_SIDE_ALGEBRA_TOPICS.pool || t0 === BARK_SIDE_ALGEBRA_TOPICS.customPool)) {
+      const custom = t0 === BARK_SIDE_ALGEBRA_TOPICS.customPool;
+      const deployer = custom ? word(log.topics[1]) : null;
+      if (deployer === launcher) continue; // our own pool
+      const token0 = word(log.topics[custom ? 2 : 1]);
+      const token1 = word(log.topics[custom ? 3 : 2]);
+      const token = input.tokens.has(token0) ? token0 : input.tokens.has(token1) ? token1 : null;
+      if (!token) continue;
+      const [pool] = ethers.AbiCoder.defaultAbiCoder().decode(["address"], log.data);
+      found = { poolKey: String(pool).toLowerCase(), token, venue: "algebra", factory, other: token === token0 ? token1 : token0, fee: null, hooks: deployer, block: Number(log.blockNumber), tx: String(log.transactionHash).toLowerCase() };
+    } else if (input.others.some((f) => f.address === address)) {
+      found = findSidePools([log], { tokens: input.tokens, factories: [...input.others], poolManager: "", hook: "" })[0] ?? null;
+    }
+    if (!found || seen.has(found.poolKey)) continue;
+    seen.add(found.poolKey);
+    out.push(found);
+  }
+  return out;
+}
+
+/** Pure: coins moved by one DogeOS side-pool swap (Algebra Swap: amount0 / amount1 are the first two data words). */
+export function barkSideSwapCoinVolume(log: L, pool: { venue: SideVenue; coinIsToken0: boolean }): bigint {
+  if (String(log.topics[0]).toLowerCase() !== BARK_SIDE_ALGEBRA_TOPICS.swap) return sideSwapCoinVolume(log, pool);
+  const [a0, a1] = ethers.AbiCoder.defaultAbiCoder().decode(["int256", "int256"], ethers.dataSlice(log.data, 0, 64)).map((x) => BigInt(x));
+  const v = pool.coinIsToken0 ? a0! : a1!;
+  return v < 0n ? -v : v;
+}
+
+/** Venues whose pool contract holds the coins (holder exclusion) and whose swaps come from the pool address. */
+const BARK_SIDE_POOL_CONTRACTS = new Set<SideVenue>(["algebra", "v2", "v3", "v3_pancake", "solidly"]);
+
+/** One pass of the DogeOS side-pool watch (read only; the keepers' `sidePools` lane, off by default). */
+export async function runBarkSidePoolWatcherOnce(opts: {
+  db: Queryable; cfg: Gen8BarkChainConfig; provider: SideProvider; env?: NodeJS.ProcessEnv;
+  alert: (a: { severity: "critical" | "warning" | "info"; kind: string; chainId: number; subject?: string; title: string; message: string; extra?: Record<string, unknown> }) => Promise<unknown>;
+}): Promise<{ from: number; to: number; created: number; swaps: number } | null> {
+  const { db, cfg, provider } = opts;
+  const env = opts.env || process.env;
+  const plugin = cfg.plugin.address;
+  const cursor = `gen8-side:${plugin}`;
+  const cur = await db.query(`select last_indexed_block from public.indexer_state where chain_id = $1 and cursor = $2`, [cfg.chainId, cursor]);
+  const head = await gen8DisplayHead(provider, cfg.chainId, env);
+  const from = Math.max(Number(cur.rows[0]?.last_indexed_block || 0), cfg.startBlock);
+  if (from > head) return null;
+  const span = Math.min(intEnv(env.EVM_GEN8_SIDE_CHUNK, 2_000, 1, 50_000), GEN8_BARK_MAX_LOG_SPAN);
+  const to = Math.min(head, from + span - 1);
+  const tokensRes = await db.query(`select token_address from public.evm_gen8_pools where chain_id = $1 and hook_address = $2`, [cfg.chainId, plugin]);
+  const tokens = new Set<string>(tokensRes.rows.map((r) => String(r.token_address).toLowerCase()));
+  const { barkswap, others } = barkSideFactories(env);
+  let created = 0;
+  let swaps = 0;
+  if (tokens.size) {
+    const creation: L[] = [];
+    for (const f of barkSidePoolCreationFilters(barkswap, [...tokens])) creation.push(...(await provider.getLogs({ ...f, fromBlock: from, toBlock: to })));
+    if (others.length) {
+      creation.push(...(await provider.getLogs({ address: others.map((f) => f.address), topics: [[SIDE_TOPICS.pairCreated, SIDE_TOPICS.v3PoolCreated, SIDE_TOPICS.solidlyPoolCreated, SIDE_TOPICS.infinityInitialize]], fromBlock: from, toBlock: to })));
+    }
+    creation.sort((a, b) => Number(a.blockNumber) - Number(b.blockNumber));
+    for (const p of findBarkSidePools(creation, { tokens, launcher: cfg.launcher.address, factory: barkswap, others })) {
+      const ins = await db.query(
+        `insert into public.evm_gen8_side_pools(chain_id, pool_key, token_address, venue, factory_address, other_token, fee, hooks, created_block, created_tx)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) on conflict (chain_id, pool_key) do nothing returning 1`,
+        [cfg.chainId, p.poolKey, p.token, p.venue, p.factory, p.other, p.fee, p.hooks, p.block, p.tx],
+      );
+      if (BARK_SIDE_POOL_CONTRACTS.has(p.venue)) {
+        await db.query(
+          `insert into public.evm_gen8_holder_exclusions(chain_id, wallet, reason) values ($1,$2,$3) on conflict (chain_id, wallet) do nothing`,
+          [cfg.chainId, p.poolKey, `side_pool_${p.venue}`],
+        );
+      }
+      if (ins.rows.length) {
+        created += 1;
+        const kind = p.venue === "algebra" ? (p.hooks ? `Barkswap custom pool (deployer ${p.hooks})` : "Barkswap default pool") : `${p.venue} pool`;
+        await opts.alert({
+          severity: "warning", kind: "gen8_side_pool_created", chainId: cfg.chainId, subject: p.poolKey,
+          title: `Side pool for a DogeOS coin on chain ${cfg.chainId}`,
+          message: `${kind} ${p.poolKey} (factory ${p.factory}) pairs ${p.token} with ${p.other}, created in ${p.tx}. Not our plugin: no fee, not counted. Accepted (no token guard).`,
+          extra: { token: p.token, venue: p.venue, other: p.other, deployer: p.hooks },
+        });
+      }
+    }
+    const side = await db.query(`select pool_key, token_address, venue, other_token, factory_address from public.evm_gen8_side_pools where chain_id = $1`, [cfg.chainId]);
+    const pools = new Map<string, { venue: SideVenue; coinIsToken0: boolean }>();
+    for (const r of side.rows) {
+      const venue = r.venue as SideVenue;
+      if (!BARK_SIDE_POOL_CONTRACTS.has(venue)) continue;
+      const token = String(r.token_address);
+      const other = String(r.other_token || "");
+      pools.set(String(r.pool_key), { venue, coinIsToken0: BigInt(token) < BigInt(other || "0x" + "f".repeat(40)) });
+    }
+    const keys = [...pools.keys()];
+    const times = new Map<number, number>();
+    for (let i = 0; i < keys.length; i += 100) {
+      const logs = await provider.getLogs({ address: keys.slice(i, i + 100), topics: [[BARK_SIDE_ALGEBRA_TOPICS.swap, SIDE_TOPICS.v2Swap, SIDE_TOPICS.v3Swap, SIDE_TOPICS.pancakeV3Swap]], fromBlock: from, toBlock: to });
+      for (const log of logs) {
+        const key = String(log.address).toLowerCase();
+        const p = pools.get(key);
+        if (!p) continue;
+        const vol = barkSideSwapCoinVolume(log, p);
+        let ts = times.get(log.blockNumber);
+        if (ts === undefined) {
+          ts = Number((await provider.getBlock(log.blockNumber))?.timestamp ?? 0);
+          times.set(log.blockNumber, ts);
+        }
+        const hour = new Date(Math.floor(ts / 3600) * 3600 * 1000);
+        await db.query(
+          `insert into public.evm_gen8_side_pool_volume(chain_id, pool_key, hour, coin_volume_raw, swaps) values ($1,$2,$3,$4,1)
+           on conflict (chain_id, pool_key, hour) do update set coin_volume_raw = public.evm_gen8_side_pool_volume.coin_volume_raw + excluded.coin_volume_raw, swaps = public.evm_gen8_side_pool_volume.swaps + 1`,
+          [cfg.chainId, key, hour, vol.toString()],
+        );
+        await db.query(
+          `update public.evm_gen8_side_pools set coin_volume_raw_total = coin_volume_raw_total + $3, swaps_total = swaps_total + 1,
+                  last_swap_block = greatest(coalesce(last_swap_block, 0), $4), last_swap_at = greatest(coalesce(last_swap_at, to_timestamp(0)), to_timestamp($5)), updated_at = now()
+            where chain_id = $1 and pool_key = $2`,
+          [cfg.chainId, key, vol.toString(), log.blockNumber, ts],
+        );
+        swaps += 1;
+      }
+    }
+    if (swaps) await checkSideVolumeAlerts(db, cfg, env, opts.alert);
+  }
+  await db.query(
+    `insert into public.indexer_state(chain_id, cursor, last_indexed_block) values ($1,$2,$3)
+     on conflict (chain_id, cursor) do update set last_indexed_block = greatest(public.indexer_state.last_indexed_block, excluded.last_indexed_block), updated_at = now()`,
+    [cfg.chainId, cursor, to + 1],
+  );
+  return { from, to, created, swaps };
 }

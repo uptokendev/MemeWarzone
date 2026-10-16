@@ -28,7 +28,9 @@ function perChain(env: NodeJS.ProcessEnv, name: string, chainId: number): string
 }
 
 export function enabledChoiceChains(env: NodeJS.ProcessEnv = process.env): number[] {
-  return [56, 4663, 97, 46630].filter((id) => truthy(env[`EVM_CREATOR_CHOICE_ENABLED_${id}`]));
+  // 6281971 (DogeOS, Barkswap venue): the flag turns on the DogeOS choice-vault buyback lane (dogeosBarkKeepers.ts), not
+  // the CreatorRewardsVaultV2 operator (evmCreatorChoiceWorker.ts skips Barkswap chains)
+  return [56, 4663, 97, 46630, 6281971].filter((id) => truthy(env[`EVM_CREATOR_CHOICE_ENABLED_${id}`]));
 }
 
 export function operatorWallet(chainId: number, env: NodeJS.ProcessEnv = process.env): ethers.Wallet | null {
@@ -63,8 +65,9 @@ export function operatedVaults(chainId: number, env: NodeJS.ProcessEnv = process
   return out;
 }
 
-const DEFAULT_MIN_SPEND: Record<number, bigint> = { 56: 3_000_000_000_000_000n, 97: 3_000_000_000_000_000n, 4663: 1_000_000_000_000_000n, 46630: 1_000_000_000_000_000n };
-const DEFAULT_MIN_PAYOUT: Record<number, bigint> = { 56: 1_300_000_000_000_000n, 97: 1_300_000_000_000_000n, 4663: 370_000_000_000_000n, 46630: 370_000_000_000_000n };
+/** 6281971: DOGE testnet defaults (1 DOGE buyback, 0.5 DOGE payout); small enough for the $150 test tier's fee flow. */
+const DEFAULT_MIN_SPEND: Record<number, bigint> = { 56: 3_000_000_000_000_000n, 97: 3_000_000_000_000_000n, 4663: 1_000_000_000_000_000n, 46630: 1_000_000_000_000_000n, 6281971: 1_000_000_000_000_000_000n };
+const DEFAULT_MIN_PAYOUT: Record<number, bigint> = { 56: 1_300_000_000_000_000n, 97: 1_300_000_000_000_000n, 4663: 370_000_000_000_000n, 46630: 370_000_000_000_000n, 6281971: 500_000_000_000_000_000n };
 
 function uintEnv(raw: string, fallback: bigint): bigint {
   return /^\d+$/.test(raw) ? BigInt(raw) : fallback;
