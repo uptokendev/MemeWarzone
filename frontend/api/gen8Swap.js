@@ -13,8 +13,8 @@
  *   GET  /api/widget/swap/gen8/token?chainId&token          the coin (name, symbol, image, phase, fee now)
  *   GET  /api/widget/swap/gen8/balances?chainId&wallet&token native and coin balance (the widget needs no RPC)
  *   POST /api/widget/swap/gen8/quote                         V4Quoter quote, exact input, with the fee split
- *   POST /api/widget/swap/gen8/build                         router call { to, data, value }; a sell first answers
- *                                                            needsPermit with the approval and the Permit2 typed data
+ *   POST /api/widget/swap/gen8/build                         router call { to, data, value }; a sell without a standing
+ *                                                            allowance answers needsAllowance with the setup transactions
  *   GET  /api/widget/swap/gen8/status?chainId&txHash          receipt status of the wallet-sent swap
  * Configured per chain by the API's EVM_GEN8_* env (evmGen8Config.js) plus EVM_GEN8_UNIVERSAL_ROUTER_<id> /
  * EVM_GEN8_V4_QUOTER_<id> (defaults on 56 / 4663, shared/evmGen8Swap.mjs). Nothing here signs or holds money.
@@ -41,6 +41,7 @@ import {
   gen8ReferenceAmount,
   gen8RouterFor,
   gen8SellFeeSplit,
+  gen8SellSetup,
   gen8SizedSlippageBps,
   permitFromJson,
 } from "../shared/evmGen8Swap.mjs";
@@ -62,7 +63,6 @@ const ERC20_ABI = [
   "function name() view returns (string)",
   "function symbol() view returns (string)",
 ];
-const ERC20_IFACE = new ethers.Interface(["function approve(address spender, uint256 value) returns (bool)"]);
 const NATIVE_SYMBOL = { 56: "BNB", 97: "tBNB", 4663: "ETH", 46630: "ETH", 31337: "ETH" };
 
 export class Gen8SwapError extends Error {
@@ -265,9 +265,10 @@ export function assertGen8SellPermit(permit, { chainId, token, amountIn, router,
 }
 
 /**
- * The widget's swap: re-quotes, builds the router call, records the partner fingerprint. A sell without a permit
- * answers { needsPermit, approval, permitTypedData } instead (approval = the exact ERC20 approval to Permit2 when the
- * current one is short); the widget sends the approval, signs the typed data and calls build again with the permit.
+ * The widget's swap: re-quotes, builds the router call, records the partner fingerprint. A sell without a permit,
+ * and without a standing allowance that covers it, answers { needsAllowance, approval, permit2Approval } instead.
+ * The widget sends those transactions and calls build again. A caller that still sends a permit gets it checked and
+ * encoded. The allowance answer records no partner fingerprint. The swap build does.
  */
 export async function gen8SwapBuildCore(input, deps = {}) {
   const env = deps.env || process.env;
@@ -284,37 +285,21 @@ export async function gen8SwapBuildCore(input, deps = {}) {
   const nowSec = Number(deps.nowSec ?? block.timestamp);
 
   let permit = null;
-  if (quote.side === "sell") {
-    if (!input.permit) {
-      const coin = new ethers.Contract(token, ERC20_ABI, provider);
-      const [allowance, p2] = await Promise.all([
-        coin.allowance(wallet, PERMIT2_ADDRESS),
-        new ethers.Contract(PERMIT2_ADDRESS, PERMIT2_ABI, provider).allowance(wallet, token, router),
-      ]);
-      const typed = gen8PermitTypedData({ chainId, token, amount: amountIn, nonce: p2[2] ?? p2.nonce, spender: router, nowSec });
-      return {
-        chainId,
-        needsPermit: true,
-        approval: BigInt(allowance) < amountIn ? { to: token, data: ERC20_IFACE.encodeFunctionData("approve", [PERMIT2_ADDRESS, amountIn]), value: "0" } : null,
-        permitTypedData: {
-          domain: typed.domain,
-          types: typed.types,
-          primaryType: typed.primaryType,
-          message: {
-            details: { token: typed.message.details.token, amount: typed.message.details.amount.toString(), expiration: typed.message.details.expiration.toString(), nonce: typed.message.details.nonce.toString() },
-            spender: typed.message.spender,
-            sigDeadline: typed.message.sigDeadline.toString(),
-          },
-        },
-        quote,
-      };
-    }
+  if (quote.side === "sell" && input.permit) {
     try {
       permit = permitFromJson(input.permit);
     } catch {
       throw new Gen8SwapError(400, "GEN8_PERMIT_INVALID", "The permit is incomplete.");
     }
     assertGen8SellPermit(permit, { chainId, token, amountIn, router, wallet, nowSec });
+  } else if (quote.side === "sell") {
+    const coin = new ethers.Contract(token, ERC20_ABI, provider);
+    const [erc20Allowance, permit2Allowance] = await Promise.all([
+      coin.allowance(wallet, PERMIT2_ADDRESS),
+      new ethers.Contract(PERMIT2_ADDRESS, PERMIT2_ABI, provider).allowance(wallet, token, router),
+    ]);
+    const sellSetup = gen8SellSetup({ token, router, erc20Allowance, permit2Allowance, amountIn, nowSec });
+    if (sellSetup) return { chainId, needsAllowance: true, approval: sellSetup.approval, permit2Approval: sellSetup.permit2Approval, quote };
   }
 
   const call = buildGen8RouterCall({

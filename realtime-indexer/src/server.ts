@@ -594,6 +594,14 @@ app.post("/internal/indexer/run", wrap(async (req, res) => {
   res.status(status).json(result);
 }));
 
+/** A posted gen-8 fill wakes the display poll. It does not run the gen-7 campaign scanner. */
+async function wakeIfGen8Campaign(chainId: number, campaign: string, txHash: string): Promise<boolean> {
+  const { wakeGen8Campaign } = await import("./evm/evmGen8Pool.js");
+  const woke = await wakeGen8Campaign(pool, chainId, campaign);
+  if (woke) console.log("[gen8] fast poll", { chainId, campaign, txHash });
+  return woke;
+}
+
 app.post("/api/token/:campaign/ingest-tx", wrap(async (req, res) => {
   const chainId = Number(req.query.chainId || req.body?.chainId || ENV.DEFAULT_EVM_CHAIN_ID);
   const identity = await resolveMarketIdentityOrPassthrough(chainId, String(req.params.campaign || ""));
@@ -616,6 +624,9 @@ app.post("/api/token/:campaign/ingest-tx", wrap(async (req, res) => {
     return res.json(result);
   }
   const evmHash = txHash.toLowerCase();
+  if (/^0x[a-f0-9]{40}$/.test(campaign) && /^0x[a-f0-9]{64}$/.test(evmHash) && await wakeIfGen8Campaign(chainId, campaign, evmHash)) {
+    return res.json({ ok: true, skipped: "gen8_fast" });
+  }
   if (!Number.isFinite(chainId) || (chainId !== 56 && chainId !== 97)) {
     return res.status(400).json({ ok: false, error: "Invalid chainId" });
   }
@@ -644,6 +655,9 @@ app.post("/internal/indexer/ingest-tx", wrap(async (req, res) => {
   }
   if (!/^0x[a-f0-9]{64}$/.test(txHash)) {
     return res.status(400).json({ ok: false, error: "Invalid tx hash" });
+  }
+  if (await wakeIfGen8Campaign(chainId, campaign, txHash)) {
+    return res.json({ ok: true, skipped: "gen8_fast" });
   }
 
   const result = await ingestCampaignTransaction({ chainId, campaignAddress: campaign, txHash });

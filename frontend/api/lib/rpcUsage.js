@@ -9,6 +9,8 @@
 // Exposed on the API's GET /health (rpcUsage) and logged every
 // RPC_USAGE_LOG_MINUTES minutes (default 15; 0 = off) as one line:
 //   [rpc-usage] {"windowMin":15,"total":123,"byChain":{"56":{"eth_call":100,...}}}
+// byCaller is the raw cumulative count per caller, per chain, every caller and
+// each method. bySourcePerDay stays the top 60 per-day rates. URLs are never stored.
 // Cron scripts log their totals once at exit (logRpcUsageOnExit).
 
 import { ethers } from "ethers";
@@ -29,8 +31,8 @@ function bump(chain, method, n = 1) {
   byMethod.set(name, (byMethod.get(name) || 0) + n);
 }
 
-// Which of our functions sent each request, as "file:function" (first stack frame in this package
-// outside the RPC plumbing). /health shows the cost per caller instead of only per method.
+// Which of our functions sent each request, as "chain file:function" -> method -> raw count.
+// /health shows every caller. bySourcePerDay is still only the top 60 rates.
 const bySource = new Map();
 const PACKAGE_DIR = (() => {
   try {
@@ -69,9 +71,17 @@ export function rpcCallSource(stack, packageDir = PACKAGE_DIR) {
   return `${head}<${parent.name === first.name ? parent.fn : `${parent.name}:${parent.fn}`}`.slice(0, 120);
 }
 
-/** Attribute requests to their caller. Never throws. */
+function methodOf(item) {
+  if (typeof item === "string") return item.slice(0, 64) || "unknown";
+  if (item && typeof item === "object" && typeof item.method === "string") return item.method.slice(0, 64) || "unknown";
+  return "unknown";
+}
+
+/** Attribute each request to its caller, keeping the method. A string payload is one method name. Never throws. */
 export function attributeRpcRequest(chain, payload) {
   try {
+    const items = Array.isArray(payload) ? payload : [payload];
+    if (!items.length) return;
     const limit = Error.stackTraceLimit;
     Error.stackTraceLimit = 60;
     let stack;
@@ -80,9 +90,16 @@ export function attributeRpcRequest(chain, payload) {
     } finally {
       Error.stackTraceLimit = limit;
     }
-    const n = Array.isArray(payload) ? payload.length : 1;
     const key = `${String(chain ?? "unknown")} ${rpcCallSource(stack)}`;
-    bySource.set(key, (bySource.get(key) || 0) + n);
+    let methods = bySource.get(key);
+    if (!methods) {
+      methods = new Map();
+      bySource.set(key, methods);
+    }
+    for (const item of items) {
+      const name = methodOf(item);
+      methods.set(name, (methods.get(name) || 0) + 1);
+    }
   } catch {
     // attribution must never break a request
   }
@@ -118,11 +135,33 @@ export function rpcUsageSnapshot() {
   const { total, byChain } = plain();
   const perDay = {};
   for (const [chain, value] of Object.entries(byChain)) perDay[chain] = Math.round((value.total / uptimeSec) * 86_400);
+  const ranked = [...bySource].map(([key, methods]) => {
+    let callerTotal = 0;
+    for (const n of methods.values()) callerTotal += n;
+    return { key, callerTotal, methods };
+  }).sort((a, b) => b.callerTotal - a.callerTotal);
   const bySourcePerDay = {};
-  for (const [key, n] of [...bySource].sort((a, b) => b[1] - a[1]).slice(0, 60)) {
-    bySourcePerDay[key] = Math.round((n / uptimeSec) * 86_400);
+  for (const row of ranked.slice(0, 60)) {
+    bySourcePerDay[row.key] = Math.round((row.callerTotal / uptimeSec) * 86_400);
   }
-  return { since: new Date(startedAt).toISOString(), uptimeSec, total, byChain, estimatedPerDay: perDay, bySourcePerDay };
+  const grouped = new Map();
+  for (const row of ranked) {
+    const space = row.key.indexOf(" ");
+    const chain = space < 0 ? "unknown" : row.key.slice(0, space);
+    const caller = space < 0 ? row.key : row.key.slice(space + 1);
+    const methods = {};
+    for (const [method, n] of [...row.methods].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))) methods[method] = n;
+    const list = grouped.get(chain) ?? [];
+    list.push({ caller, total: row.callerTotal, methods });
+    grouped.set(chain, list);
+  }
+  const byCaller = {};
+  for (const chain of [...grouped.keys()].sort((a, b) => a.localeCompare(b, "en", { numeric: true }))) {
+    const callers = {};
+    for (const row of grouped.get(chain)) callers[row.caller] = { total: row.total, methods: row.methods };
+    byCaller[chain] = callers;
+  }
+  return { since: new Date(startedAt).toISOString(), uptimeSec, total, byChain, estimatedPerDay: perDay, bySourcePerDay, byCaller };
 }
 
 function clone() {

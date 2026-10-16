@@ -5,7 +5,9 @@
  * (evmGen8Bark.ts) and the holder census here; its side-pool watch, fee routing and the other DogeOS keepers start in
  * dogeosBarkKeepers.ts (every lane off by default; flags and keys there).
  *   EVM_GEN8_RPC_<id>             optional RPC for gen-8 (default: the chain's indexer RPC, BSC_RPC_HTTP_<id> / ROBINHOOD_RPC_HTTP_<id>)
- *   EVM_GEN8_POLL_MS              ingest interval (60000; floor 60000 — launcher, hook and splitter)
+ *   EVM_GEN8_POLL_MS              display fast poll (4000; floor 4000). One head read per tick. A higher value slows it.
+ *   EVM_GEN8_IDLE_POLL_MS         after 20 ticks with no gen-8 log (15000; never faster than the fast poll)
+ *   EVM_GEN8_MONEY_POLL_MS        money lane (60000; floor 60000). Safe on Robinhood, finalized on BNB. Not every tick.
  *   EVM_GEN8_DISPLAY_HEAD_TAG(_<id>)  what the UI rows follow: latest (Robinhood) / finalized (BNB); rolled back on a reorg
  *   EVM_GEN8_MONEY_HEAD_TAG(_<id>)    what the money rows wait for: safe (Robinhood) / finalized (BNB); never rolled back
  *   EVM_GEN8_MONEY_DEPTH_<id>     DogeOS (6281971): the money head is latest - 20 blocks (founder 2026-10-15; never

@@ -911,6 +911,7 @@ export function registerMarketContinuityRoutes(app: Express) {
           matchedBy: "campaign",
           campaignAddress: address,
           tokenAddress: null,
+          factoryGeneration: null,
           publicUrlAddress: address,
           marketKey: address,
           hint: "No campaigns row yet; treating address as provisional campaign key.",
@@ -924,6 +925,7 @@ export function registerMarketContinuityRoutes(app: Express) {
         matchedBy: identity.matchedBy,
         campaignAddress: identity.campaignAddress,
         tokenAddress: identity.tokenAddress || null,
+        factoryGeneration: identity.factoryGeneration ?? null,
         publicUrlAddress: identity.tokenAddress || identity.campaignAddress,
         marketKey: identity.campaignAddress,
       });

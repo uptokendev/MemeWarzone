@@ -53,7 +53,7 @@ test("latch-back sell restates token_stats and joins the trade list; other coins
 
     const { upsertGen8Pool, insertGen8Swap, insertGen8CurveTrade, insertGen8DexTrade } = await import("../evm/evmGen8Store.js");
     const { repairGen8TokenStatsFromSwaps } = await import("../evm/evmGen8Pool.js");
-    const { CURVE_TRADE_LIST_SQL, queryTokenTrades } = await import("../tokenTradeList.js");
+    const { CURVE_TRADE_LIST_SQL, GEN8_POOL_LOOKUP_SQL, queryTokenTrades } = await import("../tokenTradeList.js");
 
     await upsertGen8Pool(pg.pool, {
       chainId: 46630, poolId: `0x${"ab".repeat(32)}`, token, hook, launcher: hook, poolManager: hook, creator: wallet,
@@ -74,6 +74,30 @@ test("latch-back sell restates token_stats and joins the trade list; other coins
        values (46630, $1, 999, 850000000, 999, 0)`,
       [token],
     );
+
+    await pg.pool.query(
+      `insert into public.evm_gen8_pools (
+         chain_id, pool_id, token_address, hook_address, launcher_address, pool_manager_address, creator_address,
+         tick_start, tick_grad, liq_a, liq_b, launch_tx, launch_block
+       )
+       select 46630,
+         '0x' || lpad(to_hex(g), 64, '0'),
+         '0x' || lpad(to_hex(g), 40, '0'),
+         '0x' || lpad(to_hex(100000 + g), 40, '0'),
+         $1, $1, $1,
+         -200000, -230000, 1, 1,
+         '0x' || lpad(to_hex(1), 64, '0'),
+         1
+       from generate_series(1, 5000) g`,
+      [hook],
+    );
+    await pg.pool.query(`analyze public.evm_gen8_pools`);
+    const plan = await pg.pool.query(`explain ${GEN8_POOL_LOOKUP_SQL}`, [46630, token]);
+    const planText = plan.rows.map((row: { "QUERY PLAN": string }) => row["QUERY PLAN"]).join("\n");
+    assert.match(planText, /Index Only Scan using evm_gen8_pools_token_uidx/);
+    assert.match(planText, /token_address/);
+    console.log(`EXPLAIN gen-8 pool lookup:\n${planText}`);
+    await pg.pool.query(`delete from public.evm_gen8_pools where token_address <> $1`, [token]);
 
     assert.equal(await repairGen8TokenStatsFromSwaps(pg.pool, [46630]), 1);
     const stats = (await pg.pool.query(`select last_price_bnb, sold_tokens, marketcap_bnb, change_5m from public.token_stats where chain_id = 46630`)).rows[0];
@@ -101,6 +125,9 @@ test("latch-back sell restates token_stats and joins the trade list; other coins
       [token, hook, `0x${"f1".repeat(32)}`, `0x${"ff".repeat(32)}`, wallet],
     );
 
+    process.env.EVM_GEN8_LAUNCHER_46630 = `${hook}@1`;
+    process.env.EVM_GEN8_HOOK_46630 = `${hook}@1`;
+    process.env.EVM_GEN8_POOL_MANAGER_46630 = hook;
     const listed = await queryTokenTrades(pg.pool, 46630, token, 50);
     const hashes = listed.rows.map((r: { tx_hash: string }) => r.tx_hash);
     assert.deepEqual(hashes, [dexHash, curveHash]);

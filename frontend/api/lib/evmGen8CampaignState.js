@@ -93,6 +93,97 @@ async function settle(promise) {
   }
 }
 
+// Canonical Multicall3. One aggregate3 replaces the six view calls below. pools() and getBlock stay outside:
+// pools() is the recognition read, and the block time is not a contract view. Choice vault, reserve and escrow
+// stay their own calls (they run only for some coins). allowFailure keeps one reverted view from blanking the rest.
+export const GEN8_MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11";
+const MULTICALL3_ABI = [
+  "function aggregate3((address target, bool allowFailure, bytes callData)[] calls) payable returns ((bool success, bytes returnData)[] returnData)",
+];
+const HOOK_VIEW_ABI = [
+  "function creatorOwed(bytes32) view returns (uint256)",
+  "function pendingCreator(bytes32) view returns (address)",
+  "function displayPair(bytes32) view returns (address)",
+];
+const multicallIface = new ethers.Interface(MULTICALL3_ABI);
+const hookViewIface = new ethers.Interface(HOOK_VIEW_ABI);
+const pmViewIface = new ethers.Interface(POOL_MANAGER_ABI);
+const lensViewIface = new ethers.Interface(LENS_ABI);
+const multicallCode = new Map();
+
+function unwrapCall(decoded) {
+  if (decoded && typeof decoded.length === "number" && decoded.length === 1) {
+    const inner = decoded[0];
+    if (inner !== null && typeof inner === "object") return inner;
+    return inner;
+  }
+  return decoded;
+}
+
+function decodeRow(iface, name, row) {
+  if (!row?.success || !row.returnData || row.returnData === "0x") return { ok: false };
+  try {
+    return { ok: true, value: unwrapCall(iface.decodeFunctionResult(name, row.returnData)) };
+  } catch {
+    return { ok: false };
+  }
+}
+
+async function hasMulticall3(provider, chainId) {
+  const id = Number(chainId);
+  if (!Number.isFinite(id) || id <= 0) return false;
+  if (multicallCode.has(id)) return multicallCode.get(id);
+  try {
+    const code = await provider.getCode(GEN8_MULTICALL3);
+    const ok = typeof code === "string" && code !== "0x" && code.length > 2;
+    multicallCode.set(id, ok);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The six view reads, as one Multicall3 aggregate3 when that contract has code on the chain. No code, or a throw
+ * from the batch itself, runs the same six reads in parallel. A failed inner call is `{ ok: false }` on its own;
+ * the others still settle. `slotR.value` is `{ sqrtPriceX96, tick }`, matching readSqrtPrice.
+ */
+export async function readGen8ViewBatch({ provider, cfg, pool, lens = null }) {
+  const parallel = () => Promise.all([
+    settle(pool.hook.creatorOwed(pool.poolId)),
+    settle(pool.hook.pendingCreator(pool.poolId)),
+    settle(pool.hook.displayPair(pool.poolId)),
+    settle(readSqrtPrice({ provider, cfg, poolId: pool.poolId })),
+    lens ? settle(lens.progress(pool.poolId)) : Promise.resolve({ ok: false }),
+    lens ? settle(lens.tradingOpen(pool.poolId)) : Promise.resolve({ ok: false }),
+  ]);
+  if (!(await hasMulticall3(provider, cfg?.chainId))) return parallel();
+  const calls = [
+    { target: cfg.hook, allowFailure: true, callData: hookViewIface.encodeFunctionData("creatorOwed", [pool.poolId]) },
+    { target: cfg.hook, allowFailure: true, callData: hookViewIface.encodeFunctionData("pendingCreator", [pool.poolId]) },
+    { target: cfg.hook, allowFailure: true, callData: hookViewIface.encodeFunctionData("displayPair", [pool.poolId]) },
+    { target: cfg.poolManager, allowFailure: true, callData: pmViewIface.encodeFunctionData("extsload", [poolStateSlot(pool.poolId)]) },
+  ];
+  if (lens && cfg.lens) {
+    calls.push({ target: cfg.lens, allowFailure: true, callData: lensViewIface.encodeFunctionData("progress", [pool.poolId]) });
+    calls.push({ target: cfg.lens, allowFailure: true, callData: lensViewIface.encodeFunctionData("tradingOpen", [pool.poolId]) });
+  }
+  try {
+    const raw = await provider.call({ to: GEN8_MULTICALL3, data: multicallIface.encodeFunctionData("aggregate3", [calls]) });
+    const [rows] = multicallIface.decodeFunctionResult("aggregate3", raw);
+    const owedR = decodeRow(hookViewIface, "creatorOwed", rows[0]);
+    const pendingR = decodeRow(hookViewIface, "pendingCreator", rows[1]);
+    const displayR = decodeRow(hookViewIface, "displayPair", rows[2]);
+    const word = decodeRow(pmViewIface, "extsload", rows[3]);
+    const slotR = word.ok ? { ok: true, value: decodeSlot0(word.value) } : { ok: false };
+    const lensR = lens && cfg.lens ? decodeRow(lensViewIface, "progress", rows[4]) : { ok: false };
+    const openR = lens && cfg.lens ? decodeRow(lensViewIface, "tradingOpen", rows[5]) : { ok: false };
+    return [owedR, pendingR, displayR, slotR, lensR, openR];
+  } catch {
+    return parallel();
+  }
+}
+
 const addr = (v) => (v && v !== ZERO ? ethers.getAddress(v) : null);
 
 /** StateLibrary._getPoolStateSlot(id): keccak256(abi.encodePacked(id, POOLS_SLOT)). */
@@ -204,14 +295,7 @@ export async function readGen8CampaignState({ provider, cfg, token, wallet = nul
   const now = Number(block.timestamp);
   const lens = cfg.lens ? new ethers.Contract(cfg.lens, LENS_ABI, provider) : null;
 
-  const [owedR, pendingR, displayR, slotR, lensR, openR] = await Promise.all([
-    settle(p.hook.creatorOwed(p.poolId)),
-    settle(p.hook.pendingCreator(p.poolId)),
-    settle(p.hook.displayPair(p.poolId)),
-    settle(readSqrtPrice({ provider, cfg, poolId: p.poolId })),
-    lens ? settle(lens.progress(p.poolId)) : Promise.resolve({ ok: false }),
-    lens ? settle(lens.tradingOpen(p.poolId)) : Promise.resolve({ ok: false }),
-  ]);
+  const [owedR, pendingR, displayR, slotR, lensR, openR] = await readGen8ViewBatch({ provider, cfg, pool: p, lens });
   const sqrtPriceX96 = slotR.ok ? slotR.value.sqrtPriceX96 : lensR.ok ? BigInt(lensR.value.sqrtPriceX96) : null;
   // F1: the phase from the price (the lens rule); else the lens's own postPhase; else the indexer's last_phase.
   let postPhase = gen8PostPhase(sqrtPriceX96, p.tickGrad);

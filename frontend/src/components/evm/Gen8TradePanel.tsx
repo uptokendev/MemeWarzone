@@ -14,18 +14,22 @@ import {
   assertGen8PoolMatches,
   executeGen8EscrowBuy,
   executeGen8Trade,
+  GEN8_FIRST_SELL_NOTE,
+  GEN8_WAITING_CONFIRMATION,
   gen8AntiSniperCountdown,
   gen8AppConfig,
   gen8ErrorMessage,
   gen8FeeLine,
   gen8MaxSellable,
   gen8PoolVenueLabel,
+  gen8StepLabel,
   gen8TradingOpensLine,
   isGen8BarkAppConfig,
   quoteGen8Trade,
+  readGen8SellSetup,
 } from "@/lib/evmGen8Client.mjs";
 import { barkRecordFromState } from "@/lib/barkswapSwap.mjs";
-import { gen8FormatPriceImpact, gen8UsesSizedSlippage } from "../../../shared/evmGen8Swap.mjs";
+import { gen8FormatAmount, gen8FormatPriceImpact, gen8UsesSizedSlippage } from "../../../shared/evmGen8Swap.mjs";
 import {
   BSC_PROTECTED_RPC_DEFAULT,
   addProtectedBscRpc,
@@ -34,6 +38,7 @@ import {
   rememberProtectedRpcChoice,
 } from "@/lib/bscProtectedRpc.mjs";
 import { GEN8_COIN_POLL_MS, useNowSeconds, type Gen8CoinState } from "@/hooks/useGen8Coin";
+import { notifyIndexerFills } from "@/lib/indexerTradeIngest";
 import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 type Quote = {
@@ -71,8 +76,6 @@ function parseUnitsSafe(text: string, decimals: number): bigint | null {
 const BNB_SLIPPAGE_CHOICES: Array<typeof GEN8_AUTO_SLIPPAGE | number> = [GEN8_AUTO_SLIPPAGE, 50, 100, 300];
 /** Price impact from which the panel shows it in red. */
 const HIGH_IMPACT_BPS = 1000;
-
-const fmt = (raw: bigint | string, digits: number) => Number(ethers.formatUnits(raw, 18)).toLocaleString(undefined, { maximumFractionDigits: digits });
 
 /**
  * The trade box for an EVM generation 8 coin, before and after graduation (design 6.2): one Uniswap V4 pool, quoted
@@ -122,6 +125,8 @@ export function Gen8TradePanel({
   const [quote, setQuote] = useState<Quote | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState<{ index: number; total: number; kind: string; phase: "sign" | "pending" } | null>(null);
+  const [twoApprovals, setTwoApprovals] = useState(false);
   const sizedSlippage = gen8UsesSizedSlippage(chainId);
   const [slippageChoice, setSlippageChoice] = useState<typeof GEN8_AUTO_SLIPPAGE | number>(sizedSlippage ? GEN8_AUTO_SLIPPAGE : GEN8_DEFAULT_SLIPPAGE_BPS);
   const slippageArg = sizedSlippage ? slippageChoice : GEN8_DEFAULT_SLIPPAGE_BPS;
@@ -189,6 +194,30 @@ export function Gen8TradePanel({
   // On Barkswap the sell's start-price limit cuts an oversized sell (the quote shows what fills), so it is not refused.
   const overSellCap = Boolean(!bark && side === "sell" && amountRaw && maxSellable != null && amountRaw > maxSellable);
 
+  // Before the first prompt: a first sell of this coin still needs both one-time approvals.
+  // Read once per quoted amount. The sell itself does not read the allowance again between transactions.
+  useEffect(() => {
+    // Barkswap (DogeOS) sells approve Barkswap's router, not Permit2: the two-approval note is V4 only.
+    if (bark || side !== "sell" || !account || !readProvider || !cfg?.router || !amountRaw || !tradingOpen) {
+      setTwoApprovals(false);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      readGen8SellSetup({ provider: readProvider, owner: account, token, amountIn: amountRaw, router: cfg.router.address })
+        .then((setup) => {
+          if (!cancelled) setTwoApprovals(Boolean(setup?.approval && setup?.permit2Approval));
+        })
+        .catch(() => {
+          if (!cancelled) setTwoApprovals(false);
+        });
+    }, 400);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [bark, side, account, readProvider, cfg, amountRaw, token, tradingOpen, spotKey]);
+
   // Live quote (exact input): what you receive, the price impact, the minimum at the slippage (sized from the impact on
   // BNB Chain, 1% on Robinhood), the fee and the creator's part.
   useEffect(() => {
@@ -250,6 +279,7 @@ export function Gen8TradePanel({
       return;
     }
     setBusy(true);
+    setStep(null);
     try {
       if (!wallet.signer || !wallet.account) throw new Error(`Connect the ${native} wallet first.`);
       let signer = wallet.signer as any;
@@ -258,19 +288,32 @@ export function Gen8TradePanel({
         if (Number(switched?.chainId) !== Number(chainId) || !switched?.signer) throw new Error("The wallet did not switch chains.");
         signer = switched.signer;
       }
+      const onStep = (next: { index: number; total: number; kind: string; phase: "sign" | "pending" }) => setStep(next);
+      // Runs inside the trade, the moment the swap receipt is in, before the toast.
+      const onReceipt = (receipt: { hash?: string } | null) => {
+        const txHash = receipt?.hash ?? null;
+        // The token is the gen-8 campaign. This post wakes the indexer; the approval transactions are not this hash.
+        if (txHash) notifyIndexerFills({ chainId, campaignAddress: token, txHashes: [txHash] });
+        if (!txHash || typeof window === "undefined") return;
+        window.dispatchEvent(new CustomEvent("memewarzone:txConfirmed", {
+          detail: { kind: side, campaignAddress: token, chainId, txHash },
+        }));
+      };
       const result =
         side === "buy" && escrowBuy
-          ? await executeGen8EscrowBuy({ signer, chainId, cfg, token, amountIn: amountRaw, slippageBps: slippageArg, readProvider })
-          : await executeGen8Trade({ signer, chainId, cfg, token, side, amountIn: amountRaw, slippageBps: slippageArg, readProvider });
+          ? await executeGen8EscrowBuy({ signer, chainId, cfg, token, amountIn: amountRaw, slippageBps: slippageArg, readProvider, onReceipt })
+          : await executeGen8Trade({ signer, chainId, cfg, token, side, amountIn: amountRaw, slippageBps: slippageArg, readProvider, onStep, onReceipt });
+      const txHash = result.receipt?.hash ?? null;
       toast.success(`${side === "buy" ? "Buy" : "Sell"} confirmed: ${String(result.receipt?.hash || "").slice(0, 10)}…`);
       setAmount("");
       setQuote(null);
       setBalanceTick((n) => n + 1);
-      onTraded?.({ side, txHash: result.receipt?.hash ?? null });
+      onTraded?.({ side, txHash });
     } catch (error) {
       toast.error(gen8ErrorMessage(error) || String((error as Error)?.message || "Trade failed."));
     } finally {
       setBusy(false);
+      setStep(null);
     }
   }
 
@@ -366,11 +409,11 @@ export function Gen8TradePanel({
         <div className={`${cp.inset} mt-3 flex flex-col gap-1.5 p-3 text-sm`} data-gen8-quote={quote ? "true" : undefined}>
           <div className={row}>
             <span className="text-mw-muted">Balance</span>
-            <span className="font-mw-mono text-mw-text">{balances ? (side === "buy" ? `${fmt(balances.nativeRaw, 6)} ${native}` : `${fmt(balances.tokenRaw, 2)} ${symbol || "tokens"}`) : "—"}</span>
+            <span className="font-mw-mono text-mw-text">{balances ? (side === "buy" ? `${gen8FormatAmount(balances.nativeRaw)} ${native}` : `${gen8FormatAmount(balances.tokenRaw)} ${symbol || "tokens"}`) : "—"}</span>
           </div>
           <div className={row}>
             <span className="text-mw-muted">Receive</span>
-            <span className="font-mw-mono font-bold text-mw-text">{quote ? (side === "buy" ? `${fmt(quote.amountOut, 4)} ${symbol || "tokens"}` : `${fmt(quote.amountOut, 8)} ${native}`) : "—"}</span>
+            <span className="font-mw-mono font-bold text-mw-text">{quote ? (side === "buy" ? `${gen8FormatAmount(quote.amountOut)} ${symbol || "tokens"}` : `${gen8FormatAmount(quote.amountOut)} ${native}`) : "—"}</span>
           </div>
           <div className={row} data-gen8-price-impact={quote?.priceImpactBps ?? undefined}>
             <span className="text-mw-muted">Price impact</span>
@@ -378,16 +421,16 @@ export function Gen8TradePanel({
           </div>
           <div className={row}>
             <span className="text-mw-muted">At least{quote ? ` (${quote.slippageBps / 100}% slippage)` : ""}</span>
-            <span className="font-mw-mono text-mw-muted">{quote ? (side === "buy" ? `${fmt(quote.minOut, 4)} ${symbol || "tokens"}` : `${fmt(quote.minOut, 8)} ${native}`) : "—"}</span>
+            <span className="font-mw-mono text-mw-muted">{quote ? (side === "buy" ? `${gen8FormatAmount(quote.minOut)} ${symbol || "tokens"}` : `${gen8FormatAmount(quote.minOut)} ${native}`) : "—"}</span>
           </div>
           <div className={row}>
             <span className="text-mw-muted">Fee {(feeBps / 100).toFixed(feeBps % 100 ? 2 : 0)}%</span>
-            <span className="font-mw-mono text-mw-muted">{quote ? `${fmt(quote.feeWei, 8)} ${native}` : "—"}</span>
+            <span className="font-mw-mono text-mw-muted">{quote ? `${gen8FormatAmount(quote.feeWei)} ${native}` : "—"}</span>
           </div>
           {quote && quote.creatorShareWei > 0n ? (
             <div className={row}>
               <span className="text-mw-muted">Of which to the coin&apos;s creator</span>
-              <span className="font-mw-mono text-mw-muted">{fmt(quote.creatorShareWei, 8)} {native}</span>
+              <span className="font-mw-mono text-mw-muted">{gen8FormatAmount(quote.creatorShareWei)} {native}</span>
             </div>
           ) : null}
         </div>
@@ -403,12 +446,12 @@ export function Gen8TradePanel({
         ) : null}
         {quote?.partial && quote.amountInUsed != null ? (
           <p className="mt-2 text-center text-xs text-[#FF9A4D]" data-gen8-partial-sell="true">
-            Only {fmt(quote.amountInUsed, 2)} {symbol || "tokens"} can be sold before the launch price. The rest stays in your wallet.
+            Only {gen8FormatAmount(quote.amountInUsed)} {symbol || "tokens"} can be sold before the launch price. The rest stays in your wallet.
           </p>
         ) : null}
         {side === "sell" && maxSellable != null ? (
           <p className="mt-2 text-center text-[11px] text-mw-muted" data-gen8-max-sellable="true">
-            Max sellable {fmt(maxSellable, 2)} {symbol || "tokens"}
+            Max sellable {gen8FormatAmount(maxSellable)} {symbol || "tokens"}
           </p>
         ) : null}
         <p className="mt-2 text-center text-[11px] text-mw-muted">{gen8FeeLine({ graduated, feeBps: graduated ? state.tradeFee?.postGraduationBps ?? 100 : state.tradeFee?.bondingBps ?? 200 })}</p>
@@ -437,6 +480,12 @@ export function Gen8TradePanel({
         {quoteError && !quote ? <p className="mt-2 text-center text-xs text-mw-down">{quoteError}</p> : null}
         {overSellCap ? <p className="mt-2 text-center text-xs text-mw-down">This sell is larger than the bonding range can take back. Sell a smaller amount.</p> : null}
         {overBalance ? <p className="mt-2 text-center text-xs text-mw-down">{side === "buy" ? `Not enough ${native} (about ${ethers.formatEther(gasReserve)} ${native} stays for gas).` : "Amount is above your balance."}</p> : null}
+        {twoApprovals ? (
+          <p className="mt-2 text-center text-xs text-mw-muted" data-gen8-first-sell="true">{GEN8_FIRST_SELL_NOTE}</p>
+        ) : null}
+        {busy && step ? (
+          <p className="mt-2 text-center text-xs text-mw-text" data-gen8-step={step.phase}>{gen8StepLabel(step)}</p>
+        ) : null}
       </div>
       <Button
         className={`min-h-12 w-full rounded-[10px] font-mw-body text-base font-bold disabled:opacity-50 ${side === "buy" ? "border border-mw-buy bg-mw-buy text-[#04140A] hover:bg-[#15913F]" : "border border-mw-sell bg-mw-sell text-[#FFF1F3] hover:bg-[#C81A40]"}`}
@@ -453,7 +502,7 @@ export function Gen8TradePanel({
           void trade();
         }}
       >
-        {!account ? `Connect ${dogeos ? "DogeOS" : robinhood ? "Robinhood" : "BNB"} wallet` : !tradingOpen ? "Trading not open yet" : busy ? (side === "sell" ? "Approve and sign in your wallet..." : "Confirm in your wallet...") : `${side === "buy" ? "Buy" : "Sell"} ${symbol ? `$${symbol}` : ""}`.trim()}
+        {!account ? `Connect ${dogeos ? "DogeOS" : robinhood ? "Robinhood" : "BNB"} wallet` : !tradingOpen ? "Trading not open yet" : busy ? (step?.phase === "pending" ? GEN8_WAITING_CONFIRMATION : step ? gen8StepLabel(step) : "Preparing the trade...") : `${side === "buy" ? "Buy" : "Sell"} ${symbol ? `$${symbol}` : ""}`.trim()}
       </Button>
     </div>
   );

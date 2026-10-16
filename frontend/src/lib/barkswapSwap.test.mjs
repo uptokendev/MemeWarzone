@@ -139,6 +139,9 @@ function fakeChain({ quote = null, progress = null, feeBps = 200, allowance = 0n
       throw new Error(`unexpected RPC ${method}`);
     },
     call,
+    // sendGen8Tx (release/evm-gen8 04b9f8b7f / efba85c63) estimates on, and polls the receipt from, the read provider.
+    async estimateGas() { return 300_000n; },
+    async getTransactionReceipt(hash) { return { status: 1, hash, logs: [] }; },
   };
   const signer = {
     provider,
@@ -495,10 +498,12 @@ test("create: the launcher call is built from the API's Barkswap answer exactly,
   const launched = fixture.logs.find((l) => l.event === "Launched");
   const meta = fixture.logs.find((l) => l.event === "LaunchMetadata");
   const chain = fakeChain();
-  chain.signer.estimateGas = async () => 6_293_026n;
+  const launchReceipt = { status: 1, hash: launched.transactionHash, logs: [meta, launched].map((l) => ({ address: l.address, topics: l.topics, data: l.data })) };
+  chain.provider.estimateGas = async () => 6_293_026n;
+  chain.provider.getTransactionReceipt = async (hash) => (hash === launched.transactionHash ? launchReceipt : null);
   chain.signer.sendTransaction = async (tx) => {
     chain.sent.push(tx);
-    return { hash: launched.transactionHash, async wait() { return { status: 1, hash: launched.transactionHash, logs: [meta, launched].map((l) => ({ address: l.address, topics: l.topics, data: l.data })) }; } };
+    return { hash: launched.transactionHash, async wait() { return launchReceipt; } };
   };
   const c = cfg();
   const { launched: out } = await client.launchGen8Coin({ signer: chain.signer, chainId: DOGE, launcher: LAUNCHER, authorization: barkCreateAnswer(), firstBuyValueWei: 5n * WAD, cfg: c });
@@ -617,6 +622,44 @@ test("trades through the gen-8 client on 6281971 go to Barkswap's router; a sell
   assert.equal(eb.name, "buy");
   assert.equal(eb.args[0], COIN);
   assertOnlyDogeos(esc.calls, esc.sent);
+});
+
+test("a Barkswap trade reports its steps and its swap receipt like a V4 trade (panel label, fill wake)", async () => {
+  const rec = swapsOf("router buy (bonding)");
+  const quote = (p) => [p.tokenIn === WDOGE ? BigInt(rec.coinAmount) : p.amountIn / 20_000_000n, p.amountIn, 1n, 0, 1n, 0];
+  const c = cfg();
+
+  const sell = fakeChain({ quote, allowance: 0n });
+  const steps = [];
+  const receipts = [];
+  await client.executeGen8Trade({
+    signer: sell.signer, chainId: DOGE, cfg: c, token: COIN, side: "sell", amountIn: 10n ** 24n, readProvider: sell.provider,
+    onStep: (s) => steps.push(s), onReceipt: (r) => receipts.push(r),
+  });
+  assert.deepEqual(steps, [
+    { index: 1, total: 2, kind: "barkApprove", phase: "sign" },
+    { index: 1, total: 2, kind: "barkApprove", phase: "pending" },
+    { index: 2, total: 2, kind: "sell", phase: "sign" },
+    { index: 2, total: 2, kind: "sell", phase: "pending" },
+  ]);
+  assert.equal(client.gen8StepLabel(steps[0]), "Step 1 of 2: approve the coin for Barkswap");
+  assert.equal(receipts.length, 1, "only the swap receipt, not the approval");
+  assert.equal(receipts[0].hash, `0x${"2".padStart(64, "0")}`);
+
+  const buy = fakeChain({ quote });
+  const buySteps = [];
+  const buyReceipts = [];
+  await client.executeGen8Trade({
+    signer: buy.signer, chainId: DOGE, cfg: c, token: COIN, side: "buy", amountIn: WAD, readProvider: buy.provider,
+    onStep: (s) => buySteps.push(s), onReceipt: (r) => buyReceipts.push(r),
+  });
+  assert.deepEqual(buySteps.map((s) => `${s.index}/${s.total} ${s.kind} ${s.phase}`), ["1/1 buy sign", "1/1 buy pending"]);
+  assert.equal(buyReceipts.length, 1);
+
+  const esc = fakeChain({ quote });
+  const escReceipts = [];
+  await client.executeGen8EscrowBuy({ signer: esc.signer, chainId: DOGE, cfg: c, token: COIN, amountIn: WAD, readProvider: esc.provider, onReceipt: (r) => escReceipts.push(r) });
+  assert.equal(escReceipts.length, 1);
 });
 
 test("creator hand-over encodes with the ABI of the contract it is sent to (launcher or choice vault)", async () => {

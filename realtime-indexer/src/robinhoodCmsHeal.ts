@@ -2,6 +2,7 @@ import { ethers } from "ethers";
 import { LAUNCH_CAMPAIGN_ABI } from "./abis.js";
 import { pool } from "./db.js";
 import { GEN5_GRADUATED_TOPIC } from "./evm/evmGen5Handoff.js";
+import { isGen8Campaign } from "./evm/evmGen8Guard.js";
 import { skipBondingRecheck } from "./robinhoodCmsHealThrottle.js";
 
 const ZERO = ethers.ZeroAddress.toLowerCase();
@@ -195,6 +196,12 @@ export async function healRobinhoodGraduatedCms(
   if (chainId !== 46630 && chainId !== 4663) return { healed: false, reason: "not_robinhood_chain" };
   const camp = campaign.toLowerCase();
   if (!ethers.isAddress(camp)) return { healed: false, reason: "bad_campaign_address" };
+
+  // Gen-8 coins have no campaign contract. Callers already skip factory_generation = 8.
+  // This is the last gate, so a direct call returns before launched() or any other RPC.
+  if (await isGen8Campaign(pool, chainId, camp)) {
+    return { healed: false, reason: "gen8" };
+  }
 
   // Runs for every Robinhood campaign on every indexer pass (~29k RPC calls/day measured on
   // 2026-10-14). A graduated coin's on-chain state is final, so once the database already holds

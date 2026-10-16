@@ -35,7 +35,7 @@ if (chromium) {
 }
 const skip = !fs.existsSync(WIDGET) || !gen8ArtifactsAvailable() || !RPC || !chromiumOk ? "built widget, artifacts, anvil, a runnable Chromium or BSC_MAINNET_RPC missing" : false;
 
-test("gen-8 widget in a browser: connect, buy, sell (approval + Permit2 permit) against the API's builds", { skip, timeout: 600_000 }, async () => {
+test("gen-8 widget in a browser: connect, buy, sell (one-time allowance, then the swap) against the API's builds", { skip, timeout: 600_000 }, async () => {
   const chainId = 56;
   const fork = await startAnvilFork({ rpc: RPC, port: 8793, chainId });
   const provider = fork.provider();
@@ -133,7 +133,7 @@ test("gen-8 widget in a browser: connect, buy, sell (approval + Permit2 permit) 
     await box.locator('[data-k="out"]').filter({ hasText: "BNB" }).waitFor({ timeout: 30_000 });
     await box.locator('[data-k="go"]').click();
     await box.locator('[data-k="msg"]').filter({ hasText: "Swap confirmed" }).waitFor({ timeout: 120_000 });
-    assert.equal(BigInt(await coin.balanceOf(trader.address)), bought - bought / 2n, "the widget sell landed (approval + permit + swap)");
+    assert.equal(BigInt(await coin.balanceOf(trader.address)), bought - bought / 2n, "the widget sell landed (allowance, then the swap)");
     assert.equal(recorded.length, 2);
   } finally {
     if (browser) await browser.close().catch(() => {});

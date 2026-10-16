@@ -1,8 +1,9 @@
 /**
  * EVM generation 8 swaps through Uniswap's UniversalRouter (design 6.2): one V4_SWAP command with the actions
  * SWAP_EXACT_IN_SINGLE (or SWAP_EXACT_OUT_SINGLE) + SETTLE_ALL + TAKE_ALL in the coin's own pool (native vs coin, our
- * hook). Native in for buys; sells pull the coin through Permit2 (an exact ERC20 approval to Permit2 once, then a signed
- * permit for exactly this sell inside the same transaction, as the Robinhood import route does).
+ * hook). Native in for buys. A sell pulls the coin through Permit2: the first sell of a coin approves Permit2 for the
+ * maximum and sets one allowance for our router; every later sell is only the swap. A signed exact permit still
+ * encodes, for a caller that already has one.
  *
  * One encoder for the app (it builds its own trades) and the API (it builds the swap widget's trades and records the
  * partner fingerprint of what it built). Plain ESM, ethers only, no network.
@@ -59,6 +60,9 @@ export const GEN8_LAYOUTS = Object.freeze(["v2.0", "v2.1"]);
 export const GEN8_SWAP_DEADLINE_SECONDS = 20 * 60;
 /** Permit2 permit for a sell: valid 30 minutes, for exactly the sell amount (robinhoodImportSwap.mjs). */
 export const GEN8_PERMIT_SECONDS = 30 * 60;
+/** Standing Permit2 allowance the app and the widget set for our router. One year, then one refresh. */
+export const GEN8_ROUTER_ALLOWANCE_SECONDS = 365 * 24 * 60 * 60;
+const MAX_U256 = (1n << 256n) - 1n;
 
 /**
  * hookData = one 32-byte word the hook emits as HookFee.referrer (analytics only, never money). The app tags its own
@@ -92,7 +96,49 @@ export const V4_QUOTER_ABI = Object.freeze([
 
 export const PERMIT2_ABI = Object.freeze([
   "function allowance(address owner, address token, address spender) view returns (uint160 amount, uint48 expiration, uint48 nonce)",
+  "function approve(address token, address spender, uint160 amount, uint48 expiration)",
 ]);
+const ERC20_APPROVE_IFACE = new Interface(["function approve(address spender, uint256 value) returns (bool)"]);
+const PERMIT2_IFACE = new Interface(PERMIT2_ABI);
+
+function permit2Parts(allowance) {
+  if (allowance == null) return { amount: 0n, expiration: 0n };
+  const amount = allowance.amount ?? allowance[0] ?? 0n;
+  const expiration = allowance.expiration ?? allowance[1] ?? 0n;
+  return { amount: BigInt(amount), expiration: BigInt(expiration) };
+}
+
+/**
+ * True when the router's Permit2 allowance can pay this sell, and still will at the swap deadline.
+ * `allowance` is Permit2.allowance(owner, token, router): { amount, expiration } or the ethers Result.
+ */
+export function gen8RouterAllowanceCovers(allowance, amountIn, nowSec) {
+  const { amount, expiration } = permit2Parts(allowance);
+  return amount >= BigInt(amountIn) && expiration > BigInt(nowSec) + BigInt(GEN8_SWAP_DEADLINE_SECONDS);
+}
+
+/**
+ * The transactions that make the next sells of this coin one signature, or null when the swap can be sent alone.
+ * `approval` is ERC20 approve(Permit2, max). `permit2Approval` is Permit2.approve(router) for one year at the uint160 max.
+ * Nothing here is a signature. The swap itself is built separately, with no permit, after these are mined.
+ */
+export function gen8SellSetup({ token, router, erc20Allowance, permit2Allowance, amountIn, nowSec }) {
+  const coin = getAddress(token);
+  const spender = getAddress(router);
+  const now = BigInt(nowSec);
+  const approval = BigInt(erc20Allowance) === MAX_U256 ? null : {
+    to: coin,
+    data: ERC20_APPROVE_IFACE.encodeFunctionData("approve", [PERMIT2_ADDRESS, MAX_U256]),
+    value: "0",
+  };
+  const permit2Approval = gen8RouterAllowanceCovers(permit2Allowance, amountIn, nowSec) ? null : {
+    to: PERMIT2_ADDRESS,
+    data: PERMIT2_IFACE.encodeFunctionData("approve", [coin, spender, MAX_U160, now + BigInt(GEN8_ROUTER_ALLOWANCE_SECONDS)]),
+    value: "0",
+  };
+  if (!approval && !permit2Approval) return null;
+  return { approval, permit2Approval };
+}
 
 function envValue(env, name) {
   const v = env?.[`VITE_${name}`] ?? env?.[name];
@@ -433,12 +479,17 @@ export function gen8PriceImpactBps({ amountIn, amountOut, refIn, refOut }) {
   const rIn = BigInt(refIn);
   const rOut = BigInt(refOut);
   if (aIn <= 0n || rIn <= 0n || rOut <= 0n) return null;
+  if (aOut <= 0n) return 10_000;
+  // Under 10,000 wei, one wei is coarser than 1 bp. A ~60 wei reference made a 0.001 sell look like 1.65%.
+  if (aOut < 10_000n || rOut < 10_000n) return 0;
   // execution rate / reference rate, in bps (rounded down)
   const ratioBps = (aOut * rIn * 10_000n) / (rOut * aIn);
   const impact = 10_000n - ratioBps;
   if (impact <= 0n) return 0;
   return Number(impact > 10_000n ? 10_000n : impact);
 }
+
+export { gen8FormatAmount } from "./gen8FormatAmount.mjs";
 
 /** "2.45%" for the panel and the widget; "<0.01%" under one bp; "-" when unknown. */
 export function gen8FormatPriceImpact(bps) {

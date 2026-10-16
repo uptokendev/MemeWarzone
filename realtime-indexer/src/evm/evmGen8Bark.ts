@@ -43,7 +43,7 @@
  */
 import { ethers } from "ethers";
 import { GEN8_SPLITTER_EVENTS } from "./evmGen8Abi.js";
-import { GEN8_BARK_MAX_LOG_SPAN, configuredGen8BarkChains, gen8IngestPollMs, gen8LinkPolicy, gen8WrappedNative, intEnv, type Gen8BarkChainConfig, type Gen8LinkPolicy } from "./evmGen8Config.js";
+import { GEN8_BARK_MAX_LOG_SPAN, configuredGen8BarkChains, gen8DelayForEmptyTicks, gen8LinkPolicy, gen8WrappedNative, intEnv, type Gen8BarkChainConfig, type Gen8LinkPolicy } from "./evmGen8Config.js";
 import { decodeGen8Log, groupByTx, type Gen8Event, type HookFeeEvent, type JoinedSwap, type LogLike, type SwapEvent } from "./evmGen8Decode.js";
 import { applyBarkAttributionAt, barkMoneyLogFromEvent, ensureBarkAttributionBackfill, insertBarkGraduationCredit, insertBarkSellFee } from "./evmGen8BarkAttribution.js";
 import { gen8GraduationSlices, gen8RouterBaseSlices } from "./evmGen8Fees.js";
@@ -53,7 +53,9 @@ import {
   applyGen8GraduationDisplay,
   applyGen8TradeDisplay,
   argsOf,
+  consumeGen8FastPoll,
   defaultGen8Sinks,
+  gen8FastPollPending,
   gen8LinkedProfile,
   normLog,
   repairGen8TokenStatsFromSwaps,
@@ -61,11 +63,15 @@ import {
   restateGen8DexTokenStats,
   restateGen8MarketStats,
   runGen8ChainOnce,
+  runGen8ChainTick,
+  setGen8FastPollWaker,
   syncGen8MarketStage,
   type Gen8Ctx,
   type Gen8IngestMode,
   type Gen8Provider,
   type Gen8RangeResult,
+  type Gen8ScheduleState,
+  type Gen8TickOutcome,
   type Gen8VenueOps,
   type TxInfo,
 } from "./evmGen8Pool.js";
@@ -817,6 +823,17 @@ export async function runGen8BarkChainOnce(ctx: Gen8BarkCtx, opts: { maxBlocks?:
   return runGen8ChainOnce({ ...ctx, ops: GEN8_BARK_OPS, activityFromBlock } as Gen8BarkCtx, { maxBlocks: span, ingest: ingestGen8BarkRange });
 }
 
+/**
+ * One scheduler tick (evmGen8Pool.ts runGen8ChainTick, the V4 cadence: one display-head read per tick, 4 s fast /
+ * 15 s idle, the reorg check when the tick ingests and at least once a minute, the money lane on its own 60 s
+ * cadence) with the Barkswap ingest, maths and log span.
+ */
+export async function runGen8BarkChainTick(ctx: Gen8BarkCtx, state: Gen8ScheduleState, now: number): Promise<Gen8TickOutcome> {
+  const activityFromBlock = await ensureBarkAttributionBackfill(ctx.db, barkConfig(ctx));
+  const span = Math.min(GEN8_BARK_MAX_LOG_SPAN, gen8BarkLogSpan(ctx.env));
+  return runGen8ChainTick({ ...ctx, ops: GEN8_BARK_OPS, activityFromBlock } as Gen8BarkCtx, state, now, { maxBlocks: span, ingest: ingestGen8BarkRange });
+}
+
 let started = false;
 
 export function startEvmGen8BarkIndexer(opts: { db: Queryable; providerFor: (chainId: number) => Gen8Provider | null; env?: NodeJS.ProcessEnv }) {
@@ -825,7 +842,6 @@ export function startEvmGen8BarkIndexer(opts: { db: Queryable; providerFor: (cha
   const env = opts.env || process.env;
   const chains = configuredGen8BarkChains(env);
   if (!chains.length) return;
-  const intervalMs = gen8IngestPollMs(env);
   void (async () => {
     const sinks = await defaultGen8Sinks(opts.db);
     try {
@@ -841,28 +857,45 @@ export function startEvmGen8BarkIndexer(opts: { db: Queryable; providerFor: (cha
         continue;
       }
       console.log("[gen8-bark] indexer on", { chainId: cfg.chainId, launcher: cfg.launcher.address, plugin: cfg.plugin.address, splitter: cfg.splitter?.address ?? null, startBlock: cfg.startBlock });
+      // Same scheduler as the V4 loop (evmGen8Pool.ts startEvmGen8Indexer): a fill wake (wakeGen8Campaign) runs the
+      // next tick now and on the fast poll.
+      const state: Gen8ScheduleState = { emptyTicks: 0, lastMoneyAt: null, lastReorgAt: null };
       let running = false;
+      let pending: ReturnType<typeof setTimeout> | null = null;
+      const arm = (delay: number) => {
+        const ms = gen8FastPollPending(cfg.chainId) ? 0 : delay;
+        if (pending) clearTimeout(pending);
+        pending = setTimeout(() => void tick(), ms);
+        pending.unref?.();
+      };
       const tick = async () => {
         if (running) return;
         running = true;
+        let delay = gen8DelayForEmptyTicks(state.emptyTicks, env);
         try {
-          for (let i = 0; i < 20; i += 1) {
-            const r = await runGen8BarkChainOnce({ cfg, db: opts.db, provider, sinks, env });
-            if (!r) break;
-            if (r.reorg) console.warn("[gen8-bark] reorg", { chainId: cfg.chainId, ...r.reorg });
-            if (r.display && (r.display.result.trades || r.display.result.launches || r.display.result.graduations)) console.log("[gen8-bark] display range", { chainId: cfg.chainId, from: r.display.from, to: r.display.to, ...r.display.result });
-            if (r.money && r.money.result.trades) console.log("[gen8-bark] money range", { chainId: cfg.chainId, from: r.money.from, to: r.money.to, ...r.money.result });
+          if (consumeGen8FastPoll(cfg.chainId)) state.emptyTicks = 0;
+          const out = await runGen8BarkChainTick({ cfg, db: opts.db, provider, sinks, env }, state, Date.now());
+          if (out.reorg) console.warn("[gen8-bark] reorg", { chainId: cfg.chainId, ...out.reorg });
+          for (const d of out.displays) {
+            if (d.result.trades || d.result.launches || d.result.graduations) console.log("[gen8-bark] display range", { chainId: cfg.chainId, from: d.from, to: d.to, ...d.result });
           }
+          for (const m of out.moneys) {
+            if (m.result.trades) console.log("[gen8-bark] money range", { chainId: cfg.chainId, from: m.from, to: m.to, ...m.result });
+          }
+          delay = out.delayMs;
         } catch (error) {
           console.error("[gen8-bark] pass failed", { chainId: cfg.chainId, error: error instanceof Error ? error.message : String(error) });
+          delay = gen8DelayForEmptyTicks(0, env);
         } finally {
           running = false;
+          arm(delay);
         }
       };
+      setGen8FastPollWaker(cfg.chainId, () => {
+        if (running) return;
+        arm(0);
+      });
       void tick();
-      const timer = setInterval(() => void tick(), intervalMs);
-      timer.unref?.();
     }
   })().catch((error) => console.error("[gen8-bark] start failed", error));
 }
-

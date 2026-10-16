@@ -151,11 +151,13 @@ const LIVE_BASE = "cedff5be";
  * Upstream's own later edits, accepted by re-pinning to the upstream commit that made them (both are on
  * release/evm-gen8, merged into feat/dogeos-testnet as 126ffbc8b):
  * - 9fd750fb2 "fix(robinhood): gas price headroom ..." changed lib/evmGasHeadroom.mjs after LIVE_BASE.
- * - 594a9e585 "fix(gen8): refresh chain reads on a trade ..." is the last upstream (gen-8 / live) commit on
- *   pages/TokenDetails.tsx; gen-8 reworked the page, so the LIVE_BASE pin no longer applies there.
+ * - 594a9e585 "fix(gen8): refresh chain reads on a trade ..." was the last upstream (gen-8 / live) commit on
+ *   pages/TokenDetails.tsx at that merge; gen-8 reworked the page, so the LIVE_BASE pin no longer applies there.
+ * - 296459392 "fix(gen8): skip gen-6 and gen-7 campaign reads on a gen-8 coin" (after 6bdb53595, the fill wake) is the
+ *   last upstream commit on pages/TokenDetails.tsx since the second release/evm-gen8 merge (efba85c63): re-pinned there.
  */
 const GAS_HEADROOM_PIN = "9fd750fb2";
-const TOKEN_PAGE_PIN = "594a9e585";
+const TOKEN_PAGE_PIN = "296459392";
 /**
  * The reviewed DogeOS (6281971) commits per file (plan t12 / t13). Every line a file lost or gained since its pin must
  * be a line one of these commits itself removed or added in that file; anything else is an unreviewed edit and fails.

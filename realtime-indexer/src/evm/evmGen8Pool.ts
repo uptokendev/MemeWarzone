@@ -20,19 +20,24 @@
  * on a reorg; the money pass (cursor gen8-money:<hook>) writes accruals, reward_events and route runs only up to the
  * money head (gen8MoneyHead: safe on Robinhood, finalized on BNB, latest - 20 on DogeOS) and never past the display
  * cursor. See Gen8IngestMode.
+ * Cadence: a display tick reads the head once (4 s, or 15 s after 20 ticks with no gen-8 log) and catches up to
+ * that frozen head. The reorg check runs when that tick ingests new blocks, and at least once a minute. The money
+ * pass has its own 60 s cadence. Launcher, hook, splitter and the choice vault stay one getLogs.
  *
  * Venues (barkswap spec section 4, B7): the steps above are the Uniswap V4 venue. The Barkswap venue (DogeOS 6281971,
  * evmGen8Bark.ts) has its own range ingest (launcher + plugin logs, one BarkSwap event per swap) and reuses the shared
  * steps exported here: the display writes of a trade (applyGen8TradeDisplay), contract events (applyGen8Event), the
- * graduation display (applyGen8GraduationDisplay), the reorg rollback and the two-cursor pass (runGen8ChainOnce), with
- * its own price maths through Gen8VenueOps. The V4 path writes exactly what it wrote before (evmGen8Bark.test.ts).
+ * graduation display (applyGen8GraduationDisplay), the reorg rollback, the two-cursor pass (runGen8ChainOnce) and the
+ * scheduler tick (runGen8ChainTick), with its own price maths through Gen8VenueOps. The V4 path writes exactly what it
+ * wrote before (evmGen8Bark.test.ts).
  *
  * Inert without EVM_GEN8_LAUNCHER_<id> + EVM_GEN8_HOOK_<id> (evmGen8Config.ts).
  */
 import { ethers } from "ethers";
-import { configuredGen8Chains, gen8CoreAddress, gen8DisplayHead, gen8IngestPollMs, gen8LeagueExcluded, gen8LinkCheck, gen8LinkPolicy, gen8MoneyHead, intEnv, type Gen8AnyChainConfig, type Gen8ChainConfig, type Gen8LinkPolicy } from "./evmGen8Config.js";
+import { configuredGen8Chains, evmGen8BarkConfig, evmGen8Config, gen8CoreAddress, gen8DelayForEmptyTicks, gen8DisplayHead, gen8LeagueExcluded, gen8LinkCheck, gen8LinkPolicy, gen8MoneyHead, gen8MoneyPollMs, intEnv, type Gen8AnyChainConfig, type Gen8ChainConfig, type Gen8LinkPolicy } from "./evmGen8Config.js";
 export { gen8CoreAddress, type Gen8AnyChainConfig } from "./evmGen8Config.js";
 export { gen8LeagueExcluded } from "./evmGen8Config.js";
+import { isGen8Campaign } from "./evmGen8Guard.js";
 import { GEN8_TOPICS, gen8PoolId } from "./evmGen8Abi.js";
 import { decodeGen8Log, groupByTx, joinSwapsWithFees, traderNative, type Gen8Event, type JoinedSwap, type LogLike } from "./evmGen8Decode.js";
 import { gen8GraduationSlices, gen8TradeSlices } from "./evmGen8Fees.js";
@@ -994,60 +999,200 @@ async function rebuildGen8Candles(ctx: Ctx, pool: Gen8PoolRow, since: Date) {
 
 export type Gen8PassResult = { from: number; to: number; result: Gen8RangeResult };
 
-/**
- * One pass of both cursors: the display pass (reorg check at its tip, then one chunk up to the display head), then
- * the money pass (one chunk up to the money head, never past the display cursor). Null when neither had a block.
- */
 /** One range ingest of a venue: ingestGen8Range (V4) or evmGen8Bark.ts ingestGen8BarkRange. */
 export type Gen8RangeIngest = (ctx: Gen8Ctx, fromBlock: number, toBlock: number, mode: Gen8IngestMode, blockHashOut?: Map<number, string>) => Promise<Gen8RangeResult>;
 
-export async function runGen8ChainOnce(ctx: Ctx, opts: { maxBlocks?: number; ingest?: Gen8RangeIngest } = {}): Promise<(Gen8PassResult & { display: Gen8PassResult | null; money: Gen8PassResult | null; reorg: Gen8Reorg | null }) | null> {
+/**
+ * Blocks the money pass may write. Never past the money head (safe on Robinhood, finalized on BNB) and never
+ * past the display cursor. `displayNext` is the first block the display pass has not read.
+ */
+export function gen8MoneyReadRange(mFrom: number, moneyHead: number, displayNext: number, span: number): { from: number; to: number } | null {
+  const cap = Math.min(moneyHead, displayNext - 1);
+  if (mFrom > cap) return null;
+  const to = Math.min(cap, mFrom + span - 1);
+  if (to < mFrom) return null;
+  return { from: mFrom, to };
+}
+
+/** A tick is empty when the ranges it wrote contained no gen-8 log. Head movement alone is not a log. */
+export function gen8RangeHadLogs(result: Gen8RangeResult | null | undefined): boolean {
+  if (!result) return false;
+  return result.launches + result.trades + result.graduations + result.orphans + result.events > 0;
+}
+
+const EMPTY_RANGE: Gen8RangeResult = { launches: 0, trades: 0, curveTrades: 0, dexTrades: 0, graduations: 0, orphans: 0, events: 0 };
+
+/**
+ * One pass. Defaults keep the old shape: read the display head, check the tip, ingest one display chunk, then one
+ * money chunk up to the money head. The scheduler passes a frozen head and turns money and the reorg check off for
+ * the chunks that must not repeat them. Null when nothing was ingested and no reorg was found.
+ */
+export async function runGen8ChainOnce(ctx: Ctx, opts: {
+  maxBlocks?: number;
+  /** Frozen display head. Omit to read it. Ignored when `display` is false. */
+  displayHead?: number;
+  /** Ingest the display cursor. Default true. */
+  display?: boolean;
+  /** Ingest the money cursor. Default true. */
+  money?: boolean;
+  /** Frozen money head. Omit to read it. Ignored when `money` is false. */
+  moneyHead?: number;
+  /** Compare the stored display tip before ingesting. Default true. Ignored when `display` is false. */
+  reorg?: boolean;
+  /** The venue's range ingest. Default ingestGen8Range (V4); evmGen8Bark.ts passes ingestGen8BarkRange. */
+  ingest?: Gen8RangeIngest;
+} = {}): Promise<(Gen8PassResult & { display: Gen8PassResult | null; money: Gen8PassResult | null; reorg: Gen8Reorg | null }) | null> {
   const ingest = opts.ingest ?? ingestGen8Range;
   const { cfg, db, provider, env } = ctx;
   const span = opts.maxBlocks ?? intEnv(env.EVM_GEN8_LOG_CHUNK, 2_000, 1, 50_000);
+  const doDisplay = opts.display !== false;
+  const doMoney = opts.money !== false;
+  const doReorg = doDisplay && opts.reorg !== false;
   const displayCursor = gen8Cursor(cfg);
   const moneyCursor = gen8MoneyCursor(cfg);
 
-  // ---- display
   let display: Gen8PassResult | null = null;
   let reorg: Gen8Reorg | null = null;
-  const displayHead = await gen8DisplayHead(provider, cfg.chainId, env);
   const stored = await getCursor(db, cfg.chainId, displayCursor);
   let from = Math.max(stored, cfg.startBlock);
-  if (stored > cfg.startBlock) {
-    reorg = await detectGen8Reorg(ctx, stored - 1);
-    if (reorg) {
-      await rollbackGen8Display(ctx, reorg);
-      from = reorg.ancestor + 1;
-      await setCursor(db, cfg.chainId, displayCursor, from);
+  if (doDisplay) {
+    const displayHead = opts.displayHead ?? await gen8DisplayHead(provider, cfg.chainId, env);
+    if (doReorg && stored > cfg.startBlock) {
+      reorg = await detectGen8Reorg(ctx, stored - 1);
+      if (reorg) {
+        await rollbackGen8Display(ctx, reorg);
+        from = reorg.ancestor + 1;
+        await setCursor(db, cfg.chainId, displayCursor, from);
+      }
+    }
+    if (from <= displayHead) {
+      const to = Math.min(displayHead, from + span - 1);
+      const hashes = new Map<number, string>();
+      const result = await ingest(ctx, from, to, "display", hashes);
+      const tip = await provider.getBlock(to);
+      if (tip?.hash) hashes.set(to, String(tip.hash).toLowerCase());
+      await storeGen8DisplayBlocks(db, cfg.chainId, gen8CoreAddress(cfg), hashes);
+      await setCursorMax(db, cfg.chainId, displayCursor, to + 1);
+      display = { from, to, result };
     }
   }
-  if (from <= displayHead) {
-    const to = Math.min(displayHead, from + span - 1);
-    const hashes = new Map<number, string>();
-    const result = await ingest(ctx, from, to, "display", hashes);
-    const tip = await provider.getBlock(to);
-    if (tip?.hash) hashes.set(to, String(tip.hash).toLowerCase());
-    await storeGen8DisplayBlocks(db, cfg.chainId, gen8CoreAddress(cfg), hashes);
-    await setCursorMax(db, cfg.chainId, displayCursor, to + 1);
-    display = { from, to, result };
-  }
 
-  // ---- money: only blocks the display pass has read, and only up to the money tag
+  // Money: only blocks the display pass has read, and only up to the money tag.
   let money: Gen8PassResult | null = null;
-  const displayNext = display ? display.to + 1 : from;
-  const moneyHead = Math.min(await gen8MoneyHead(provider, cfg.chainId, env), displayNext - 1);
-  const mFrom = Math.max(await getCursor(db, cfg.chainId, moneyCursor), cfg.startBlock);
-  if (mFrom <= moneyHead) {
-    const to = Math.min(moneyHead, mFrom + span - 1);
-    const result = await ingest(ctx, mFrom, to, "money");
-    await setCursorMax(db, cfg.chainId, moneyCursor, to + 1);
-    await pruneGen8DisplayBlocks(db, cfg.chainId, gen8CoreAddress(cfg), to);
-    money = { from: mFrom, to, result };
+  if (doMoney) {
+    const displayNext = display ? display.to + 1 : from;
+    const rawMoney = opts.moneyHead ?? await gen8MoneyHead(provider, cfg.chainId, env);
+    const mFrom = Math.max(await getCursor(db, cfg.chainId, moneyCursor), cfg.startBlock);
+    const range = gen8MoneyReadRange(mFrom, rawMoney, displayNext, span);
+    if (range) {
+      const result = await ingest(ctx, range.from, range.to, "money");
+      await setCursorMax(db, cfg.chainId, moneyCursor, range.to + 1);
+      await pruneGen8DisplayBlocks(db, cfg.chainId, gen8CoreAddress(cfg), range.to);
+      money = { from: range.from, to: range.to, result };
+    }
   }
-  if (!display && !money) return null;
+  if (!display && !money) {
+    if (!reorg) return null;
+    return { from, to: Math.max(from - 1, 0), result: EMPTY_RANGE, display, money, reorg };
+  }
   const main = display ?? money!;
   return { ...main, display, money, reorg };
+}
+
+/** One reorg comparison on a quiet chain, even when the head did not move. */
+export const GEN8_REORG_CHECK_MS = 60_000;
+const GEN8_CATCHUP_CHUNKS = 20;
+
+export type Gen8ScheduleState = { emptyTicks: number; lastMoneyAt: number | null; lastReorgAt: number | null };
+
+/** Passed through to every runGen8ChainOnce of a tick. V4 passes nothing; evmGen8Bark.ts its ingest and log span. */
+export type Gen8TickPassOptions = { maxBlocks?: number; ingest?: Gen8RangeIngest };
+
+export type Gen8TickOutcome = {
+  hadLogs: boolean;
+  emptyTicks: number;
+  delayMs: number;
+  reorg: Gen8Reorg | null;
+  displays: Gen8PassResult[];
+  moneys: Gen8PassResult[];
+};
+
+/**
+ * One scheduler tick. One display-head read, then up to 20 chunks against that frozen head. The reorg check runs
+ * when this tick will ingest, and at least once a minute. The money head is read only on the money cadence, then
+ * caught up against that frozen head. `now` is injectable so the cadence can be tested without sleeping.
+ */
+export async function runGen8ChainTick(ctx: Ctx, state: Gen8ScheduleState, now: number, pass: Gen8TickPassOptions = {}): Promise<Gen8TickOutcome> {
+  const { cfg, db, provider, env } = ctx;
+  const displayHead = await gen8DisplayHead(provider, cfg.chainId, env);
+  const stored = await getCursor(db, cfg.chainId, gen8Cursor(cfg));
+  const from0 = Math.max(stored, cfg.startBlock);
+  const willIngest = from0 <= displayHead;
+  const reorgDue = willIngest || state.lastReorgAt === null || now - state.lastReorgAt >= GEN8_REORG_CHECK_MS;
+  let reorg: Gen8Reorg | null = null;
+  const displays: Gen8PassResult[] = [];
+  const moneys: Gen8PassResult[] = [];
+  const ranges: Gen8RangeResult[] = [];
+  if (willIngest || reorgDue) {
+    let checked = false;
+    for (let i = 0; i < GEN8_CATCHUP_CHUNKS; i += 1) {
+      const r = await runGen8ChainOnce(ctx, { ...pass, displayHead, display: true, money: false, reorg: reorgDue && !checked });
+      checked = true;
+      if (r?.reorg) reorg = r.reorg;
+      if (!r?.display) break;
+      displays.push(r.display);
+      ranges.push(r.display.result);
+    }
+    if (reorgDue) state.lastReorgAt = now;
+  }
+  if (state.lastMoneyAt === null || now - state.lastMoneyAt >= gen8MoneyPollMs(env)) {
+    state.lastMoneyAt = now;
+    const moneyHead = await gen8MoneyHead(provider, cfg.chainId, env);
+    for (let i = 0; i < GEN8_CATCHUP_CHUNKS; i += 1) {
+      const r = await runGen8ChainOnce(ctx, { ...pass, display: false, money: true, moneyHead, reorg: false });
+      if (!r?.money) break;
+      moneys.push(r.money);
+      ranges.push(r.money.result);
+    }
+  }
+  const hadLogs = ranges.some((r) => gen8RangeHadLogs(r));
+  state.emptyTicks = hadLogs ? 0 : state.emptyTicks + 1;
+  return { hadLogs, emptyTicks: state.emptyTicks, delayMs: gen8DelayForEmptyTicks(state.emptyTicks, env), reorg, displays, moneys };
+}
+
+const fastPollChains = new Set<number>();
+const fastPollWakers = new Map<number, () => void>();
+
+/** The page reported a fill. The next display tick runs on the fast poll, and a waiting idle tick wakes now. */
+export function requestGen8FastPoll(chainId: number): void {
+  if (!Number.isFinite(chainId)) return;
+  fastPollChains.add(chainId);
+  fastPollWakers.get(chainId)?.();
+}
+
+export function consumeGen8FastPoll(chainId: number): boolean {
+  return fastPollChains.delete(chainId);
+}
+
+export function gen8FastPollPending(chainId: number): boolean {
+  return fastPollChains.has(chainId);
+}
+
+/** The Barkswap loop (evmGen8Bark.ts) registers its waker here. The V4 loop below sets its own. */
+export function setGen8FastPollWaker(chainId: number, waker: () => void): void {
+  fastPollWakers.set(chainId, waker);
+}
+
+/**
+ * True when this address is a gen-8 coin on a chain that has a launcher configured. The caller skips the gen-7
+ * scanner: gen-8 logs are read by this loop, and the post only brings the poll back to the fast rate.
+ */
+export async function wakeGen8Campaign(db: Queryable, chainId: number, campaign: string, env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
+  // A Barkswap chain (DogeOS) has no V4 config; its loop (evmGen8Bark.ts) registers the same waker.
+  if (!evmGen8Config(chainId, env).config && !evmGen8BarkConfig(chainId, env).config) return false;
+  if (!(await isGen8Campaign(db, chainId, campaign))) return false;
+  requestGen8FastPoll(chainId);
+  return true;
 }
 
 let started = false;
@@ -1061,7 +1206,6 @@ export function startEvmGen8Indexer(opts: { db: Queryable; providerFor: (chainId
     console.log("[gen8] indexer off (set EVM_GEN8_LAUNCHER_<chainId> and EVM_GEN8_HOOK_<chainId>)");
     return;
   }
-  const intervalMs = gen8IngestPollMs(env);
   void (async () => {
     const sinks = await defaultGen8Sinks(opts.db);
     try {
@@ -1077,28 +1221,44 @@ export function startEvmGen8Indexer(opts: { db: Queryable; providerFor: (chainId
         continue;
       }
       console.log("[gen8] indexer on", { chainId: cfg.chainId, launcher: cfg.launcher.address, hook: cfg.hook.address, poolManager: cfg.poolManager, splitter: cfg.splitter?.address ?? null, startBlock: cfg.startBlock });
+      const state: Gen8ScheduleState = { emptyTicks: 0, lastMoneyAt: null, lastReorgAt: null };
       let running = false;
+      let pending: ReturnType<typeof setTimeout> | null = null;
+      const arm = (delay: number) => {
+        // A fill that arrived while this tick ran is still in the set: wake on the next turn, not after the idle gap.
+        const ms = gen8FastPollPending(cfg.chainId) ? 0 : delay;
+        if (pending) clearTimeout(pending);
+        pending = setTimeout(() => void tick(), ms);
+        pending.unref?.();
+      };
       const tick = async () => {
         if (running) return;
         running = true;
+        let delay = gen8DelayForEmptyTicks(state.emptyTicks, env);
         try {
-          // Catch up in chunks; a pass ends at the head.
-          for (let i = 0; i < 20; i += 1) {
-            const r = await runGen8ChainOnce({ cfg, db: opts.db, provider, sinks, env });
-            if (!r) break;
-            if (r.reorg) console.warn("[gen8] reorg", { chainId: cfg.chainId, ...r.reorg });
-            if (r.display && (r.display.result.trades || r.display.result.launches || r.display.result.graduations)) console.log("[gen8] display range", { chainId: cfg.chainId, from: r.display.from, to: r.display.to, ...r.display.result });
-            if (r.money && (r.money.result.trades || r.money.result.graduations)) console.log("[gen8] money range", { chainId: cfg.chainId, from: r.money.from, to: r.money.to, ...r.money.result });
+          if (consumeGen8FastPoll(cfg.chainId)) state.emptyTicks = 0;
+          const out = await runGen8ChainTick({ cfg, db: opts.db, provider, sinks, env }, state, Date.now());
+          if (out.reorg) console.warn("[gen8] reorg", { chainId: cfg.chainId, ...out.reorg });
+          for (const d of out.displays) {
+            if (d.result.trades || d.result.launches || d.result.graduations) console.log("[gen8] display range", { chainId: cfg.chainId, from: d.from, to: d.to, ...d.result });
           }
+          for (const m of out.moneys) {
+            if (m.result.trades || m.result.graduations) console.log("[gen8] money range", { chainId: cfg.chainId, from: m.from, to: m.to, ...m.result });
+          }
+          delay = out.delayMs;
         } catch (error) {
           console.error("[gen8] pass failed", { chainId: cfg.chainId, error: error instanceof Error ? error.message : String(error) });
+          delay = gen8DelayForEmptyTicks(0, env);
         } finally {
           running = false;
+          arm(delay);
         }
       };
+      fastPollWakers.set(cfg.chainId, () => {
+        if (running) return;
+        arm(0);
+      });
       void tick();
-      const timer = setInterval(() => void tick(), intervalMs);
-      timer.unref?.();
     }
   })().catch((error) => console.error("[gen8] start failed", error));
 }

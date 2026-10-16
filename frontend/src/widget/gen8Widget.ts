@@ -7,8 +7,11 @@
  * the coin's own Uniswap V4 pool, so a partner's builds carry the partner fingerprint the API records. The fee is the
  * pool's own (2% before graduation, 1% after, half of it to the coin's creator), taken on chain. The widget talks to
  * the page's EVM wallet through EIP-1193 only (no ethers, no RPC of its own): eth_requestAccounts,
- * wallet_switchEthereumChain, eth_sendTransaction, and eth_signTypedData_v4 for a sell's Permit2 permit.
+ * wallet_switchEthereumChain, and eth_sendTransaction. The first sell of a coin approves Permit2 and sets one
+ * allowance for our router. Every later sell is only the swap.
  */
+import { gen8FormatAmount } from "../../shared/gen8FormatAmount.mjs";
+import { pollGen8Receipt } from "../../shared/gen8ReceiptPoll.mjs";
 import { STYLE, fromRaw, toRaw } from "./widgetShared";
 import { addProtectedBscRpc, offersProtectedRpc, readProtectedRpcChoice, rememberProtectedRpcChoice } from "../lib/bscProtectedRpc.mjs";
 
@@ -47,7 +50,9 @@ type TokenInfo = {
 };
 type Quote = { amountIn: string; amountOut: string; minAmountOut: string; slippageBps: number; slippageAuto?: boolean; priceImpactBps?: number | null; feeBps: number; feeNativeRaw: string; creatorShareNativeRaw: string; phase: string };
 type Built = { to: string; data: string; value: string; quote: Quote };
-type NeedsPermit = { needsPermit: true; approval: { to: string; data: string; value: string } | null; permitTypedData: { domain: Record<string, unknown>; types: Record<string, Array<{ name: string; type: string }>>; primaryType: string; message: Record<string, unknown> }; quote: Quote };
+type TxStep = { to: string; data: string; value: string };
+type NeedsAllowance = { needsAllowance: true; approval: TxStep | null; permit2Approval: TxStep | null; quote: Quote };
+type PermitTypedData = { domain: Record<string, unknown>; types: Record<string, Array<{ name: string; type: string }>>; primaryType: string; message: Record<string, unknown> };
 
 const DEFAULT_API = "https://api.memewar.zone";
 const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
@@ -60,8 +65,8 @@ export function hexValue(value: string | bigint): string {
   return `0x${BigInt(value).toString(16)}`;
 }
 
-/** The EIP-712 JSON eth_signTypedData_v4 takes (the EIP712Domain type added from the domain's fields). */
-export function typedDataJson(t: NeedsPermit["permitTypedData"]): string {
+/** EIP-712 JSON for a Permit2 permit (the EIP712Domain type added from the domain's fields). The sell path does not ask for one. */
+export function typedDataJson(t: PermitTypedData): string {
   const domainTypes = [
     { name: "name", type: "string" },
     { name: "chainId", type: "uint256" },
@@ -231,7 +236,7 @@ export class Gen8SwapWidget {
       return;
     }
     const raw = this.side === "buy" ? this.balances.nativeRaw : this.balances.tokenRaw;
-    this.el.balance.textContent = `Balance ${fromRaw(raw, 18, 4)} ${this.side === "buy" ? this.native() : this.symbol()}`;
+    this.el.balance.textContent = `Balance ${gen8FormatAmount(raw)} ${this.side === "buy" ? this.native() : this.symbol()}`;
     this.el.max.hidden = this.side !== "sell" || raw === 0n;
   }
 
@@ -280,16 +285,16 @@ export class Gen8SwapWidget {
   private paintQuote() {
     const q = this.quote;
     const outUnit = this.side === "buy" ? this.symbol() : this.native();
-    this.el.out.textContent = q ? `${fromRaw(q.amountOut, 18)} ${outUnit}` : "-";
-    this.el.min.textContent = q ? `${fromRaw(q.minAmountOut, 18)} ${outUnit}` : "-";
+    this.el.out.textContent = q ? `${gen8FormatAmount(q.amountOut)} ${outUnit}` : "-";
+    this.el.min.textContent = q ? `${gen8FormatAmount(q.minAmountOut)} ${outUnit}` : "-";
     this.el.impact.textContent = q ? formatPriceImpact(q.priceImpactBps) : "-";
     this.el.minLabel.textContent = q && Number.isFinite(Number(q.slippageBps)) ? `At least (${Number(q.slippageBps) / 100}% slippage)` : "At least";
     const feeBps = q?.feeBps ?? this.token?.feeBps ?? null;
     this.el.feeLabel.textContent = feeBps ? `Fee ${Number((feeBps / 100).toFixed(2))}%` : "Fee";
-    this.el.fee.textContent = q ? `${fromRaw(q.feeNativeRaw, 18, 8)} ${this.native()}` : "-";
+    this.el.fee.textContent = q ? `${gen8FormatAmount(q.feeNativeRaw)} ${this.native()}` : "-";
     const creatorRaw = q ? BigInt(q.creatorShareNativeRaw || "0") : 0n;
     this.el.creatorRow.hidden = creatorRaw === 0n;
-    this.el.creator.textContent = `${fromRaw(creatorRaw, 18, 8)} ${this.native()}`;
+    this.el.creator.textContent = `${gen8FormatAmount(creatorRaw)} ${this.native()}`;
     this.paintButton();
   }
 
@@ -409,6 +414,7 @@ export class Gen8SwapWidget {
   private async send(wallet: Eip1193, tx: { to: string; data: string; value: string }): Promise<string> {
     const hash = String(await wallet.request({ method: "eth_sendTransaction", params: [{ from: this.account, to: tx.to, data: tx.data, value: hexValue(tx.value || "0") }] }));
     if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) throw new Error("The wallet returned no transaction hash.");
+    this.say("Waiting for confirmation");
     await this.waitFor(hash);
     return hash;
   }
@@ -426,7 +432,7 @@ export class Gen8SwapWidget {
     }
     const reserve = GAS_RESERVE[this.token.chainId] ?? 0n;
     if (this.balances && (this.side === "buy" ? raw + reserve > this.balances.nativeRaw : raw > this.balances.tokenRaw)) {
-      this.say(this.side === "buy" ? `Keep about ${fromRaw(reserve, 18)} ${this.native()} for gas: lower the amount.` : "Amount is above your balance.", "err");
+      this.say(this.side === "buy" ? `Keep about ${gen8FormatAmount(reserve)} ${this.native()} for gas: lower the amount.` : "Amount is above your balance.", "err");
       return;
     }
     this.busy = true;
@@ -435,19 +441,29 @@ export class Gen8SwapWidget {
       await this.ensureChain(wallet);
       const body = { chainId: this.token.chainId, token: this.token.token, side: this.side, wallet: this.account, amountRaw: raw.toString(), ...slippageRequest(this.options), ...(this.options.partner ? { partner: this.options.partner } : {}) };
       this.say("Getting the latest price...");
-      let built = await this.call<Built | NeedsPermit>("/api/widget/swap/gen8/build", { method: "POST", body: JSON.stringify(body) });
-      if ((built as NeedsPermit).needsPermit) {
-        const step = built as NeedsPermit;
+      let built = await this.call<Built | NeedsAllowance>("/api/widget/swap/gen8/build", { method: "POST", body: JSON.stringify(body) });
+      let stepIndex = 1;
+      let stepTotal = 1;
+      if ((built as NeedsAllowance).needsAllowance) {
+        const step = built as NeedsAllowance;
+        const approvals = (step.approval ? 1 : 0) + (step.permit2Approval ? 1 : 0);
+        stepTotal = approvals + 1;
+        const note = step.approval && step.permit2Approval ? "The first sell of a coin needs two one-time approvals. " : "";
         if (step.approval) {
-          this.say("Approve the token in your wallet (one time for this amount)...");
+          this.say(`${note}Step ${stepIndex} of ${stepTotal}: approve the coin (one time)`);
           await this.send(wallet, step.approval);
+          stepIndex += 1;
         }
-        this.say("Sign the permit for this sell in your wallet (no gas)...");
-        const signature = String(await wallet.request({ method: "eth_signTypedData_v4", params: [this.account, typedDataJson(step.permitTypedData)] }));
-        built = await this.call<Built>("/api/widget/swap/gen8/build", { method: "POST", body: JSON.stringify({ ...body, permit: { permitSingle: step.permitTypedData.message, signature } }) });
+        if (step.permit2Approval) {
+          this.say(`Step ${stepIndex} of ${stepTotal}: allow the Uniswap router (one time)`);
+          await this.send(wallet, step.permit2Approval);
+          stepIndex += 1;
+        }
+        built = await this.call<Built | NeedsAllowance>("/api/widget/swap/gen8/build", { method: "POST", body: JSON.stringify(body) });
+        if ((built as NeedsAllowance).needsAllowance) throw new Error("The allowance is not visible yet. Try the sell again.");
       }
       const tx = built as Built;
-      this.say("Confirm the swap in your wallet...");
+      this.say(`Step ${stepIndex} of ${stepTotal}: ${this.side === "buy" ? "buy" : "sell"}`);
       const hash = await this.send(wallet, tx);
       this.say(`Swap confirmed (${hash.slice(0, 10)}...).`, "ok");
       (this.el.amount as HTMLInputElement).value = "";
@@ -466,13 +482,22 @@ export class Gen8SwapWidget {
   }
 
   private async waitFor(hash: string) {
-    const until = Date.now() + 120_000;
-    while (Date.now() < until) {
-      const status = await this.call<{ status: string }>(`/api/widget/swap/gen8/status?chainId=${this.token?.chainId}&txHash=${hash}`).catch(() => null);
-      if (status?.status === "failed") throw new Error("The transaction failed on chain.");
-      if (status?.status === "success") return;
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+    let status: { status?: string } | null;
+    try {
+      status = await pollGen8Receipt(
+        (signal: AbortSignal) => this.call<{ status: string }>(`/api/widget/swap/gen8/status?chainId=${this.token?.chainId}&txHash=${hash}`, { signal }).catch(() => null),
+        {
+          timeoutMs: 120_000,
+          intervalMs: 250,
+          isDone: (row: { status?: string } | null) => row?.status === "success" || row?.status === "failed",
+        },
+      );
+    } catch (error) {
+      if ((error as { code?: string })?.code === "GEN8_RECEIPT_TIMEOUT") {
+        throw new Error(`Not confirmed yet. Check ${hash.slice(0, 10)}... in your wallet.`);
+      }
+      throw error;
     }
-    throw new Error(`Not confirmed yet. Check ${hash.slice(0, 10)}... in your wallet.`);
+    if (status?.status === "failed") throw new Error("The transaction failed on chain.");
   }
 }

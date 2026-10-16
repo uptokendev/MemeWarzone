@@ -1,8 +1,8 @@
 /**
  * The app's client for EVM generation 8 coins (docs/evm-launch/EVM_GEN8_V4_DESIGN.md on build/evm-gen8, sections 4 and
  * 6): create (signed create authorization, then MwzV4Launcher.launch exactly as the API returned it), trades in the
- * coin's own Uniswap V4 pool before and after graduation (V4Quoter quotes, UniversalRouter V4_SWAP execution, Permit2
- * for sells), the creator's escrowed buys (MwzCreatorEscrow, D5) and the creator panel's claims.
+ * coin's own Uniswap V4 pool before and after graduation (V4Quoter quotes, UniversalRouter V4_SWAP execution, a
+ * one-time Permit2 allowance for sells), the creator's escrowed buys (MwzCreatorEscrow, D5) and the creator panel's claims.
  *
  * Plain ESM over ethers, no React and no app globals, so the node tests run exactly this code against a local chain
  * with the real gen-8 contracts. Every function takes its provider / signer and addresses explicitly.
@@ -65,14 +65,15 @@ import {
   gen8CreatorShareWei,
   gen8HookData,
   gen8MinOut,
-  gen8PermitTypedData,
   gen8PriceImpactBps,
+  gen8SellSetup,
   gen8QuoterFor,
   gen8ReferenceAmount,
   gen8RouterFor,
   gen8SellFeeSplit,
   gen8SizedSlippageBps,
 } from "../../shared/evmGen8Swap.mjs";
+import { pollGen8Receipt } from "../../shared/gen8ReceiptPoll.mjs";
 import { gasWithHeadroom, legacyGasPriceFor } from "./evmGasHeadroom.mjs";
 import {
   BARK_BUY_NOT_FILLED,
@@ -451,16 +452,65 @@ export async function sendGen8Call({ signer, chainId, contract, method, args = [
   return receipt;
 }
 
-/** Sends a raw { to, data, value } with the same gas rules. */
-export async function sendGen8Tx({ signer, chainId, tx, floor = null }) {
-  const provider = signer.provider;
-  const overrides = await gen8GasOverrides(provider, chainId);
-  const req = { to: tx.to, data: tx.data, value: BigInt(tx.value || 0n), ...overrides };
-  const gasLimit = await gasWithHeadroom(() => signer.estimateGas(req), floor);
-  const sent = await signer.sendTransaction({ ...req, ...(gasLimit ? { gasLimit } : {}) });
-  const receipt = await sent.wait();
-  if (!receipt || Number(receipt.status) !== 1) throw new Error("The transaction reverted.");
+/**
+ * How often a gen-8 send asks the read provider for the receipt. The wallet's own wait() is not used:
+ * ethers waits for one confirmation by polling the signer's provider for new blocks every 4000 ms, and that
+ * call has no timeout. On the G8WAIT sell (46630, 2026-10-15) the public RPC returned receipts in about 170 ms,
+ * while the wallet provider left 148 s and 106 s between the three nonces with no prompt open.
+ */
+export const GEN8_RECEIPT_POLL_MS = 250;
+/** Shown on the button while a gen-8 transaction is in a block and the next prompt is not open yet. */
+export const GEN8_WAITING_CONFIRMATION = "Waiting for confirmation";
+/** Shown before the first of the two one-time approvals. */
+export const GEN8_FIRST_SELL_NOTE = "The first sell of a coin needs two one-time approvals.";
+
+const GEN8_STEP_ACTION = Object.freeze({
+  erc20: "approve the coin (one time)",
+  permit2: "allow the Uniswap router (one time)",
+  sell: "sell",
+  buy: "buy",
+  // Barkswap (DogeOS): the exact approval of this sell to Barkswap's router, sent only when the allowance is short.
+  barkApprove: "approve the coin for Barkswap",
+});
+
+/** "Step 1 of 3: approve the coin (one time)" and the same shape for the router allowance and the swap. */
+export function gen8StepLabel({ index, total, kind }) {
+  const action = GEN8_STEP_ACTION[kind];
+  if (!action) throw new Error("Unknown trade step.");
+  return `Step ${index} of ${total}: ${action}`;
+}
+
+/**
+ * One confirmation from `provider` (the HTTP read provider, not the wallet).
+ * Returns on the first receipt and does not poll again. A read that never returns loses to `timeoutMs`
+ * (180 s): the timer is cleared and no later receipt read is started.
+ */
+export async function waitGen8Receipt(provider, hash, { timeoutMs = 180_000, intervalMs = GEN8_RECEIPT_POLL_MS, sleep = null } = {}) {
+  const receipt = await pollGen8Receipt(() => provider.getTransactionReceipt(hash), {
+    timeoutMs,
+    intervalMs,
+    sleep,
+    isDone: (found) => Boolean(found),
+  });
+  if (Number(receipt.status) !== 1) throw new Error("The transaction reverted.");
   return receipt;
+}
+
+/**
+ * Sends a raw { to, data, value } with the same gas rules.
+ * Gas price and the estimate go to `readProvider` (the app's HTTP provider). The wallet is asked only to sign.
+ * The receipt is polled on that same read provider, so the next prompt is not waiting on the wallet's block poll.
+ */
+export async function sendGen8Tx({ signer, chainId, tx, floor = null, readProvider = null, onPhase = null, sleep = null }) {
+  const reads = readProvider || signer.provider;
+  const from = await signer.getAddress();
+  const overrides = await gen8GasOverrides(reads, chainId);
+  const req = { to: tx.to, data: tx.data, value: BigInt(tx.value || 0n), ...overrides };
+  const gasLimit = await gasWithHeadroom(() => reads.estimateGas({ ...req, from }), floor);
+  onPhase?.("sign");
+  const sent = await signer.sendTransaction({ ...req, ...(gasLimit ? { gasLimit } : {}) });
+  onPhase?.("pending");
+  return waitGen8Receipt(reads, sent.hash, sleep ? { sleep } : {});
 }
 
 /** launcher.launch(...) exactly as authorized; returns { receipt, launched }. */
@@ -662,35 +712,74 @@ export function buildGen8TradeCall({ cfg, quote, deadline, permit = null, referr
 }
 
 /**
- * Sells pull the coin through Permit2: an exact ERC20 approval to Permit2 when the current one is short (one
- * transaction), then a signed permit for exactly this sell to the router, valid 30 minutes (no transaction).
+ * Sells pull the coin through Permit2. The first sell of a coin sends ERC20 approve(Permit2, max) when that allowance
+ * is not already the max, then Permit2.approve for our router (uint160 max, one year) when the standing allowance
+ * does not cover this sell through the swap deadline. Later sells send nothing here. These are transactions. There
+ * is no typed-data signature. Returns the setup that was sent, or null when the swap can go alone.
  */
-export async function prepareGen8SellPermit({ signer, chainId, token, amountIn, router, nowSec = null }) {
-  const owner = await signer.getAddress();
-  const erc20 = new Contract(token, ERC20_ABI, signer);
-  if (BigInt(await erc20.allowance(owner, PERMIT2_ADDRESS)) < BigInt(amountIn)) {
-    await sendGen8Call({ signer, chainId, contract: erc20, method: "approve", args: [PERMIT2_ADDRESS, BigInt(amountIn)] });
+/** The one-time sell setup, read from `provider`. Null when this sell needs no approval. Does not send anything. */
+export async function readGen8SellSetup({ provider, owner, token, amountIn, router, nowSec = null }) {
+  const now = nowSec ?? Number((await provider.getBlock("latest")).timestamp);
+  const [erc20Allowance, permit2Allowance] = await Promise.all([
+    new Contract(token, ERC20_ABI, provider).allowance(owner, PERMIT2_ADDRESS),
+    new Contract(PERMIT2_ADDRESS, PERMIT2_ABI, provider).allowance(owner, token, router),
+  ]);
+  return gen8SellSetup({ token, router, erc20Allowance, permit2Allowance, amountIn, nowSec: now });
+}
+
+export async function ensureGen8SellAllowance({ signer, chainId, token, amountIn, router, nowSec = null, readProvider = null, setup = undefined, total = null, onStep = null }) {
+  const reads = readProvider || signer.provider;
+  const resolved = setup !== undefined
+    ? setup
+    : await readGen8SellSetup({ provider: reads, owner: await signer.getAddress(), token, amountIn, router, nowSec });
+  if (!resolved) return null;
+  // Both approvals are decided once, here. Nothing re-reads the allowance or the quote between them.
+  const steps = [];
+  if (resolved.approval) steps.push(["erc20", resolved.approval]);
+  if (resolved.permit2Approval) steps.push(["permit2", resolved.permit2Approval]);
+  const totalSteps = total ?? steps.length;
+  for (let i = 0; i < steps.length; i += 1) {
+    const [kind, tx] = steps[i];
+    await sendGen8Tx({
+      signer,
+      chainId,
+      tx,
+      readProvider: reads,
+      onPhase: (phase) => onStep?.({ index: i + 1, total: totalSteps, kind, phase }),
+    });
   }
-  const permit2 = new Contract(PERMIT2_ADDRESS, PERMIT2_ABI, signer);
-  const [, , nonce] = await permit2.allowance(owner, token, router);
-  const now = nowSec ?? Number((await signer.provider.getBlock("latest")).timestamp);
-  const typed = gen8PermitTypedData({ chainId, token, amount: amountIn, nonce, spender: router, nowSec: now });
-  const signature = await signer.signTypedData(typed.domain, typed.types, typed.message);
-  return { permitSingle: typed.message, signature };
+  return resolved;
 }
 
 /**
- * One trade in the coin's pool from the app: re-quotes, then (sell) the Permit2 steps, then the router call with gas
- * headroom. Returns { receipt, quote, call }.
+ * One trade in the coin's pool from the app: re-quotes, then (sell) the one-time Permit2 allowance, then the router
+ * call with gas headroom and no permit. Returns { receipt, quote, call }.
  */
-export async function executeGen8Trade({ signer, chainId, cfg, token, side, amountIn, slippageBps = GEN8_DEFAULT_SLIPPAGE_BPS, readProvider = null, quote = null }) {
-  if (isGen8BarkAppConfig(cfg)) return executeBarkTrade({ signer, chainId, cfg, token, side, amountIn, slippageBps, readProvider, quote });
+export async function executeGen8Trade({ signer, chainId, cfg, token, side, amountIn, slippageBps = GEN8_DEFAULT_SLIPPAGE_BPS, readProvider = null, quote = null, onStep = null, onReceipt = null }) {
+  if (isGen8BarkAppConfig(cfg)) return executeBarkTrade({ signer, chainId, cfg, token, side, amountIn, slippageBps, readProvider, quote, onStep, onReceipt });
   const reads = readProvider || signer.provider;
   const q = quote || (await quoteGen8Trade({ provider: reads, cfg, token, side, amountIn, slippageBps }));
   const now = Number((await reads.getBlock("latest")).timestamp);
-  const permit = side === "sell" ? await prepareGen8SellPermit({ signer, chainId, token, amountIn: q.amountIn, router: cfg.router.address, nowSec: now }) : null;
-  const call = buildGen8TradeCall({ cfg, quote: q, deadline: BigInt(now + GEN8_SWAP_DEADLINE_SECONDS), permit });
-  const receipt = await sendGen8Tx({ signer, chainId, tx: call, floor: 400_000n });
+  const setup = side === "sell"
+    ? await readGen8SellSetup({ provider: reads, owner: await signer.getAddress(), token, amountIn: q.amountIn, router: cfg.router.address, nowSec: now })
+    : null;
+  const prelude = (setup?.approval ? 1 : 0) + (setup?.permit2Approval ? 1 : 0);
+  const total = prelude + 1;
+  if (side === "sell" && setup) {
+    await ensureGen8SellAllowance({ signer, chainId, token, amountIn: q.amountIn, router: cfg.router.address, nowSec: now, readProvider: reads, setup, total, onStep });
+  }
+  const swapNow = side === "sell" ? Number((await reads.getBlock("latest")).timestamp) : now;
+  const call = buildGen8TradeCall({ cfg, quote: q, deadline: BigInt(swapNow + GEN8_SWAP_DEADLINE_SECONDS), permit: null });
+  const receipt = await sendGen8Tx({
+    signer,
+    chainId,
+    tx: call,
+    floor: 400_000n,
+    readProvider: reads,
+    onPhase: (phase) => onStep?.({ index: total, total, kind: side === "buy" ? "buy" : "sell", phase }),
+  });
+  // The fill wake runs here, before this function returns to the toast and the page refresh.
+  if (onReceipt) onReceipt(receipt);
   return { receipt, quote: q, call };
 }
 
@@ -707,37 +796,57 @@ async function sendBarkCall({ signer, chainId, to, abi, method, args = [], value
 
 /**
  * executeGen8Trade on Barkswap: re-quotes, approves Barkswap's router for exactly this sell when the allowance is short
- * (one transaction), then the router call built from the quote (barkswapSwap.mjs buildBarkTradeCall).
+ * (one transaction), then the router call built from the quote (barkswapSwap.mjs buildBarkTradeCall). Steps and the
+ * receipt callback as on V4: `onStep` per transaction (sign, then pending), `onReceipt` once the swap receipt is in.
  */
-async function executeBarkTrade({ signer, chainId, cfg, token, side, amountIn, slippageBps, readProvider, quote }) {
+async function executeBarkTrade({ signer, chainId, cfg, token, side, amountIn, slippageBps, readProvider, quote, onStep = null, onReceipt = null }) {
   const reads = readProvider || signer.provider;
   if (!cfg?.router?.address || !cfg?.quoter) throw new Error("Trading on Barkswap is not set up on this chain yet.");
   const q = quote || (await quoteGen8Trade({ provider: reads, cfg, token, side, amountIn, slippageBps }));
   const account = ethers.getAddress(await signer.getAddress());
+  let approve = false;
   if (side === "sell") {
     const coin = new Contract(q.coin, ERC20_ABI, reads);
-    if (BigInt(await coin.allowance(account, cfg.router.address)) < q.amountIn) {
-      await sendGen8Tx({ signer, chainId, tx: { to: q.coin, data: ERC20_IFACE.encodeFunctionData("approve", [cfg.router.address, q.amountIn]), value: 0n } });
-    }
+    approve = BigInt(await coin.allowance(account, cfg.router.address)) < q.amountIn;
+  }
+  const total = approve ? 2 : 1;
+  if (approve) {
+    await sendGen8Tx({
+      signer,
+      chainId,
+      tx: { to: q.coin, data: ERC20_IFACE.encodeFunctionData("approve", [cfg.router.address, q.amountIn]), value: 0n },
+      readProvider: reads,
+      onPhase: (phase) => onStep?.({ index: 1, total, kind: "barkApprove", phase }),
+    });
   }
   const now = Number((await reads.getBlock("latest")).timestamp);
   const call = buildBarkTradeCall({ cfg, quote: q, account, deadline: BigInt(now + GEN8_SWAP_DEADLINE_SECONDS) });
-  const receipt = await sendGen8Tx({ signer, chainId, tx: call, floor: BARK_TRADE_GAS_FLOOR });
+  const receipt = await sendGen8Tx({
+    signer,
+    chainId,
+    tx: call,
+    floor: BARK_TRADE_GAS_FLOOR,
+    readProvider: reads,
+    onPhase: (phase) => onStep?.({ index: total, total, kind: side === "buy" ? "buy" : "sell", phase }),
+  });
+  if (onReceipt) onReceipt(receipt);
   return { receipt, quote: q, call };
 }
 
 /** The creator's own buy in the app (D5): through MwzCreatorEscrow, coins held on the gen-7 schedule. */
-export async function executeGen8EscrowBuy({ signer, chainId, cfg, token, amountIn, slippageBps = GEN8_DEFAULT_SLIPPAGE_BPS, readProvider = null }) {
+export async function executeGen8EscrowBuy({ signer, chainId, cfg, token, amountIn, slippageBps = GEN8_DEFAULT_SLIPPAGE_BPS, readProvider = null, onReceipt = null }) {
   if (!cfg?.escrow) throw new Error("Creator buys are not set up on this chain yet.");
   const reads = readProvider || signer.provider;
   const q = await quoteGen8Trade({ provider: reads, cfg, token, side: "buy", amountIn, slippageBps, sender: cfg.escrow });
   if (isGen8BarkAppConfig(cfg)) {
     // MwzBarkCreatorEscrow keeps gen-8's buy(token, minOut) and swaps in the coin's Barkswap pool itself.
     const receipt = await sendBarkCall({ signer, chainId, to: cfg.escrow, abi: GEN8_ESCROW_ABI, method: "buy", args: [ethers.getAddress(token), q.minOut], value: q.amountIn, floor: BARK_TRADE_GAS_FLOOR });
+    if (onReceipt) onReceipt(receipt);
     return { receipt, quote: q };
   }
   const escrow = new Contract(cfg.escrow, GEN8_ESCROW_ABI, signer);
   const receipt = await sendGen8Call({ signer, chainId, contract: escrow, method: "buy", args: [token, q.minOut], value: q.amountIn, floor: 400_000n });
+  if (onReceipt) onReceipt(receipt);
   return { receipt, quote: q };
 }
 

@@ -624,6 +624,7 @@ import { Gen8TradePanel } from "@/components/evm/Gen8TradePanel";
 import { Gen8CoinStatus, Gen8CreatorPanel } from "@/components/evm/Gen8CoinPanels";
 import { useGen8Coin } from "@/hooks/useGen8Coin";
 import { gen8AppConfig, readGen8PoolRecord } from "@/lib/evmGen8Client.mjs";
+import { isGen8CoinPage, shouldReadLegacyCampaign } from "@/lib/gen8LegacyCampaignReads.mjs";
 import { evmCreatorBadge } from "@/lib/evmGen6.mjs";
 
 type TokenDetailsProps = { dbcLive?: Record<string, any> | null };
@@ -1404,57 +1405,76 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
         if (isEvmAddress) {
           pinTokenDetailsChainId(loadChainId);
           const loadProvider = getReadProvider(loadChainId);
+          const gen8Configured = Boolean(gen8AppConfig(loadChainId));
+          let pageIdentity: Awaited<ReturnType<typeof resolveMarketIdentity>> = null;
+          let directAsCampaign: CampaignInfo | null = null;
 
-          // Parallel: prefer page chain resolve + treat param as campaign contract.
-          const [pageIdentity, directAsCampaign] = await Promise.all([
-            resolveMarketIdentity({ address: param, chainId: loadChainId }).catch(() => null),
-            buildCampaignFromAddress(param, loadProvider, loadChainId).catch(() => null),
-          ]);
-
-          if (pageIdentity?.campaignAddress && !pageIdentity.provisional) {
-            resolvedCampaignFromIndexer = pageIdentity.campaignAddress;
-            match =
-              directAsCampaign &&
-              String(directAsCampaign.campaign).toLowerCase() === pageIdentity.campaignAddress.toLowerCase()
-                ? directAsCampaign
-                : await buildCampaignFromAddress(pageIdentity.campaignAddress, loadProvider, loadChainId);
-            if (match && pageIdentity.tokenAddress) {
-              match = { ...match, token: pageIdentity.tokenAddress };
-            }
-          } else if (directAsCampaign) {
-            match = directAsCampaign;
-          } else {
-            // Token URL on another EVM chain (rare) — only then scan 56.
-            try {
-              const identity = await resolveMarketIdentityAcrossEvm({ address: param });
-              if (identity?.campaignAddress) {
-                const nextChain = identity.chainId as SupportedChainId;
-                resolvedCampaignFromIndexer = identity.campaignAddress;
-                pinTokenDetailsChainId(nextChain);
-                if (nextChain !== pageChainId) {
-                  setPageChainId(nextChain);
-                  setLoading(false);
-                  return;
-                }
-                loadChainId = nextChain;
-                match = await buildCampaignFromAddress(
-                  identity.campaignAddress,
-                  getReadProvider(loadChainId),
-                  loadChainId,
-                );
-              }
-            } catch (resolveErr) {
-              console.warn("[TokenDetails] cross-chain resolve failed; using page chain", resolveErr);
+          // A known gen-8 coin never calls the campaign contract. Other coins still do.
+          // On a chain with no gen-8 hook configured, the identity and the campaign read stay in parallel.
+          if (gen8Configured) {
+            pageIdentity = await resolveMarketIdentity({ address: param, chainId: loadChainId }).catch(() => null);
+            if (!shouldReadLegacyCampaign(pageIdentity)) {
+              match = await buildGen8CampaignFromToken(param, loadProvider, loadChainId).catch(() => null);
             }
           }
 
-          // Generation 8: the address is a coin in a V4 pool of our hook, not a campaign contract.
           if (!match) {
-            match = await buildGen8CampaignFromToken(param, loadProvider, loadChainId).catch(() => null);
+            if (!gen8Configured) {
+              [pageIdentity, directAsCampaign] = await Promise.all([
+                resolveMarketIdentity({ address: param, chainId: loadChainId }).catch(() => null),
+                buildCampaignFromAddress(param, loadProvider, loadChainId).catch(() => null),
+              ]);
+            } else if (shouldReadLegacyCampaign(pageIdentity)) {
+              directAsCampaign = await buildCampaignFromAddress(param, loadProvider, loadChainId).catch(() => null);
+            }
+
+            if (shouldReadLegacyCampaign(pageIdentity) && pageIdentity?.campaignAddress && !pageIdentity.provisional) {
+              resolvedCampaignFromIndexer = pageIdentity.campaignAddress;
+              match =
+                directAsCampaign &&
+                String(directAsCampaign.campaign).toLowerCase() === pageIdentity.campaignAddress.toLowerCase()
+                  ? directAsCampaign
+                  : await buildCampaignFromAddress(pageIdentity.campaignAddress, loadProvider, loadChainId);
+              if (match && pageIdentity.tokenAddress) {
+                match = { ...match, token: pageIdentity.tokenAddress };
+              }
+            } else if (directAsCampaign) {
+              match = directAsCampaign;
+            } else if (shouldReadLegacyCampaign(pageIdentity)) {
+              // Token URL on another EVM chain (rare) — only then scan 56.
+              try {
+                const identity = await resolveMarketIdentityAcrossEvm({ address: param });
+                if (identity?.campaignAddress) {
+                  const nextChain = identity.chainId as SupportedChainId;
+                  resolvedCampaignFromIndexer = identity.campaignAddress;
+                  pinTokenDetailsChainId(nextChain);
+                  if (nextChain !== pageChainId) {
+                    setPageChainId(nextChain);
+                    setLoading(false);
+                    return;
+                  }
+                  loadChainId = nextChain;
+                  if (shouldReadLegacyCampaign(identity)) {
+                    match = await buildCampaignFromAddress(
+                      identity.campaignAddress,
+                      getReadProvider(loadChainId),
+                      loadChainId,
+                    );
+                  }
+                }
+              } catch (resolveErr) {
+                console.warn("[TokenDetails] cross-chain resolve failed; using page chain", resolveErr);
+              }
+            }
+
+            // Generation 8: the address is a coin in a V4 pool of our hook, not a campaign contract.
+            if (!match) {
+              match = await buildGen8CampaignFromToken(param, loadProvider, loadChainId).catch(() => null);
+            }
           }
 
           // Last resort: small factory inventory (only when campaign not direct-readable).
-          if (!match) {
+          if (!match && shouldReadLegacyCampaign(pageIdentity)) {
             try {
               const page = await fetchOnChainCampaignPage(loadChainId, { limit: 24 });
               const needle = param.toLowerCase();
@@ -1517,37 +1537,42 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
         const loadProvider = getReadProvider(loadChainId);
 
         // Metrics + cosmetic hydrates in parallel (do not serialize RPC).
+        // A gen-8 coin has no campaign contract. Metadata is an HTTP read and stays.
+        const legacyPage = !isGen8CoinPage(match);
+        const emptySummary = {
+          ok: false as const,
+          s: {
+            campaign: match,
+            metrics: null,
+            stats: { holders: "—", volume: "—", marketCap: "—" },
+          } as CampaignSummary,
+        };
         const [summaryResult, withCreator, withMeta, withCreated, displayImage] = await Promise.all([
-          fetchCampaignSummary(match)
-            .then((s) => ({ ok: true as const, s }))
-            .catch(async (summaryErr) => {
-              console.warn("[TokenDetails] summary fetch failed; trying direct metrics", summaryErr);
-              try {
-                const directMetrics = await fetchCampaignMetrics(match.campaign);
-                return {
-                  ok: false as const,
-                  s: {
-                    campaign: match,
-                    metrics: directMetrics,
-                    stats: { holders: "—", volume: "—", marketCap: "—" },
-                  } as CampaignSummary,
-                };
-              } catch (metricsErr) {
-                console.warn("[TokenDetails] direct metrics also failed", metricsErr);
-                return {
-                  ok: false as const,
-                  s: {
-                    campaign: match,
-                    metrics: null,
-                    stats: { holders: "—", volume: "—", marketCap: "—" },
-                  } as CampaignSummary,
-                };
-              }
-            }),
-          hydrateCampaignCreatorFromContract(displayMatch, loadProvider),
+          legacyPage
+            ? fetchCampaignSummary(match)
+                .then((s) => ({ ok: true as const, s }))
+                .catch(async (summaryErr) => {
+                  console.warn("[TokenDetails] summary fetch failed; trying direct metrics", summaryErr);
+                  try {
+                    const directMetrics = await fetchCampaignMetrics(match.campaign);
+                    return {
+                      ok: false as const,
+                      s: {
+                        campaign: match,
+                        metrics: directMetrics,
+                        stats: { holders: "—", volume: "—", marketCap: "—" },
+                      } as CampaignSummary,
+                    };
+                  } catch (metricsErr) {
+                    console.warn("[TokenDetails] direct metrics also failed", metricsErr);
+                    return emptySummary;
+                  }
+                })
+            : Promise.resolve(emptySummary),
+          legacyPage ? hydrateCampaignCreatorFromContract(displayMatch, loadProvider) : Promise.resolve(displayMatch),
           hydrateCampaignMetadata(displayMatch, loadChainId),
-          hydrateCampaignCreatedAtFromFactory(displayMatch, loadChainId),
-          resolveCampaignDisplayImage(displayMatch, loadChainId, fetchCampaignLogoURI).catch(() => null),
+          legacyPage ? hydrateCampaignCreatedAtFromFactory(displayMatch, loadChainId) : Promise.resolve(displayMatch),
+          resolveCampaignDisplayImage(displayMatch, loadChainId, legacyPage ? fetchCampaignLogoURI : async () => null).catch(() => null),
         ]);
 
         displayMatch = {
@@ -2022,7 +2047,8 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
   useEffect(() => {
     let cancelled = false;
     const addr = resolvedCampaignAddress;
-    if (!hasValidCampaignAddress || !addr || isSolanaPage) {
+    // Gen-8 has no launched() or dex pair on a campaign contract. Leave Topaz off.
+    if (!hasValidCampaignAddress || !addr || isSolanaPage || isGen8CoinPage(campaign)) {
       setOnChainLaunched(false);
       setOnChainPair("");
       return;
@@ -2052,7 +2078,7 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     return () => {
       cancelled = true;
     };
-  }, [hasValidCampaignAddress, resolvedCampaignAddress, chainIdForStorage, isSolanaPage]);
+  }, [hasValidCampaignAddress, resolvedCampaignAddress, chainIdForStorage, isSolanaPage, campaign?.generation]);
 
   // Early graduation flag so Topaz market data can load before the full stage UI block.
   // Solana P1 shell is always bonding — never treat as graduated.
@@ -3090,7 +3116,7 @@ const toSeconds = (ts: number): number => {
 
     const loadReserve = async () => {
       try {
-        if (!campaign?.campaign || !readProvider || isSolanaPage) {
+        if (!campaign?.campaign || !readProvider || isSolanaPage || isGen8CoinPage(campaign)) {
           setCurveReserveWei(null);
           return;
         }
@@ -3110,11 +3136,11 @@ const toSeconds = (ts: number): number => {
       cancelled = true;
       stopPolling?.();
     };
-  }, [readProvider, campaign?.campaign, isSolanaPage, evmTradeKey]);
+  }, [readProvider, campaign?.campaign, campaign?.generation, isSolanaPage, evmTradeKey]);
 
   // Bonding headline (price / sold / mcap) must move while the page is open.
   useEffect(() => {
-    if (!campaign?.campaign || isSolanaPage) return;
+    if (!campaign?.campaign || isSolanaPage || isGen8CoinPage(campaign)) return;
     let cancelled = false;
     const loadMetrics = async () => {
       try {
@@ -3132,7 +3158,7 @@ const toSeconds = (ts: number): number => {
       cancelled = true;
       stopPolling();
     };
-  }, [campaign?.campaign, fetchCampaignMetrics, isSolanaPage, evmTradeKey]);
+  }, [campaign?.campaign, campaign?.generation, fetchCampaignMetrics, isSolanaPage, evmTradeKey]);
 
   // Campaign activity counters (buy/sell volume, buyers). Used for Flywheel and related panels.
   useEffect(() => {
@@ -3140,8 +3166,9 @@ const toSeconds = (ts: number): number => {
 
     const loadActivity = async () => {
       try {
-        if (!campaign?.campaign || isSolanaPage) {
+        if (!campaign?.campaign || isSolanaPage || isGen8CoinPage(campaign)) {
           // Solana Campaign carries native counters; never interpret EVM activity ABI data as SOL.
+          // Gen-8 has no buyersCount / totalBuyVolumeWei / totalSellVolumeWei, and no log scan.
           setActivity(null);
           return;
         }
@@ -3160,7 +3187,7 @@ const toSeconds = (ts: number): number => {
       cancelled = true;
       stopPolling();
     };
-  }, [campaign?.campaign, fetchCampaignActivity, isSolanaPage]);
+  }, [campaign?.campaign, campaign?.generation, fetchCampaignActivity, isSolanaPage]);
 
   // Solana: SOL/USD for $ graduation → native remaining (mirrors BNB oracle target).
   useEffect(() => {
@@ -3883,6 +3910,10 @@ const toSeconds = (ts: number): number => {
     let cancelled = false;
 
     const loadQuote = async () => {
+      if (isGen8CoinPage(campaign)) {
+        if (!cancelled) setQuoteLoading(false);
+        return;
+      }
       try {
         setQuoteError(null);
 
@@ -4503,9 +4534,10 @@ const toSeconds = (ts: number): number => {
       cancelled = true;
       clearTimeout(t);
     };
-  }, [readProvider, campaign?.campaign, campaign?.token, chainIdForStorage, metrics?.currentPrice, tradeTab, tradeAmount, tradeInputDenom, tokenBalanceWei, isDexStage, isTopazTradingActive, onChainLaunched, topazSlippageBps, unifiedMarket.state?.lastError, unifiedMarket.summary?.last_price_bnb, isSolanaPage, solanaCurve, contractGraduated, solanaCurveClosed, effectiveBnbWei, effectiveTokenWei, isDbcPage, dbcPool, dbcMint, dbcMigrated, dbcMigratedPool, dbcActivationUnix]);
+  }, [readProvider, campaign?.campaign, campaign?.token, campaign?.generation, chainIdForStorage, metrics?.currentPrice, tradeTab, tradeAmount, tradeInputDenom, tokenBalanceWei, isDexStage, isTopazTradingActive, onChainLaunched, topazSlippageBps, unifiedMarket.state?.lastError, unifiedMarket.summary?.last_price_bnb, isSolanaPage, solanaCurve, contractGraduated, solanaCurveClosed, effectiveBnbWei, effectiveTokenWei, isDbcPage, dbcPool, dbcMint, dbcMigrated, dbcMigratedPool, dbcActivationUnix]);
 
   const handlePlaceTrade = async () => {
+    if (isGen8CoinPage(campaign)) return;
     if (!campaign?.campaign) return;
     if (!walletMatchesCampaign) {
       toast({
@@ -6652,7 +6684,7 @@ const toSeconds = (ts: number): number => {
             className="absolute inset-x-0 bottom-0 flex max-h-[92dvh] flex-col gap-4 overflow-y-auto rounded-t-2xl border border-border/70 bg-background p-4"
             style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
           >
-            <Gen8TradePanel key={tradeTab} chainId={Number(chainIdForStorage)} state={gen8State} symbol={tokenData.ticker} initialSide={tradeTab} onTraded={() => gen8.refresh()} />
+            <Gen8TradePanel key={tradeTab} chainId={Number(chainIdForStorage)} state={gen8State} symbol={tokenData.ticker} initialSide={tradeTab} onTraded={() => { gen8.refresh(); void unifiedMarket.refresh().catch(() => undefined); }} />
             <Gen8CoinStatus chainId={Number(chainIdForStorage)} state={gen8State} explorerBase={getExplorerBase(chainIdForStorage)} nativeUsd={nativeUsd ?? null} />
             <Gen8CreatorPanel chainId={Number(chainIdForStorage)} state={gen8State} onDone={() => gen8.refresh()} />
           </div>

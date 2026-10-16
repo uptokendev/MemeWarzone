@@ -79,7 +79,51 @@ test("ethers hook attributes provider.send to the calling function", async () =>
   // Answer from _send without any network I/O.
   (provider as any)._send = async (payload: any) => [{ id: payload.id, jsonrpc: "2.0", result: "0x10" }];
   assert.equal(await evmLikeCaller(provider), "0x10");
-  const keys = Object.keys(rpcUsageSnapshot().bySourcePerDay);
+  const snap = rpcUsageSnapshot();
+  const keys = Object.keys(snap.bySourcePerDay);
   assert.ok(keys.some((k) => k.startsWith("56 rpcUsageAttribution.test.ts:evmLikeCaller")), JSON.stringify(keys));
+  const row = Object.entries(snap.byCaller["56"] ?? {}).find(([key]) => key.startsWith("rpcUsageAttribution.test.ts:evmLikeCaller"));
+  assert.ok(row, JSON.stringify(snap.byCaller));
+  assert.equal(row[1].total, 1);
+  assert.equal(row[1].methods.eth_blockNumber, 1);
+  assert.ok(!JSON.stringify(snap).includes("http"));
   provider.destroy();
+});
+
+test("byCaller is the raw count for every caller, and bySourcePerDay stays the top 60 rates", async () => {
+  resetRpcUsage();
+  const counted = countingSolanaFetch((async () => new Response("{}")) as typeof fetch);
+  for (let i = 0; i < 61; i += 1) {
+    const fn = async function callOnce(fetchImpl: typeof fetch) {
+      await fetchImpl("https://rpc.invalid", {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getSlot", params: [] }),
+      });
+    };
+    Object.defineProperty(fn, "name", { value: `caller${String(i).padStart(2, "0")}` });
+    await fn(counted);
+  }
+  const again = async function caller00(fetchImpl: typeof fetch) {
+    await fetchImpl("https://rpc.invalid", {
+      method: "POST",
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getSlot", params: [] }),
+    });
+  };
+  await again(counted);
+  const snap = rpcUsageSnapshot();
+  const callers = snap.byCaller.solana;
+  const top = Object.entries(callers).find(([key]) => key.startsWith("rpcUsageAttribution.test.ts:caller00"));
+  assert.ok(top, JSON.stringify(Object.keys(callers)));
+  assert.equal(top[1].total, 2);
+  assert.equal(top[1].methods.getSlot, 2);
+  assert.equal(Object.keys(callers).length, 61);
+  const rates = Object.keys(snap.bySourcePerDay);
+  assert.equal(rates.length, 60);
+  assert.equal(rates.some((key) => key.includes("caller60")), false);
+  assert.equal(Object.keys(callers).some((key) => key.startsWith("rpcUsageAttribution.test.ts:caller60")), true);
+  const rateKey = rates.find((key) => key.includes("caller00"));
+  assert.ok(rateKey);
+  assert.equal(snap.bySourcePerDay[rateKey], Math.round((2 / snap.uptimeSec) * 86_400));
+  assert.equal(Object.keys(callers)[0].startsWith("rpcUsageAttribution.test.ts:caller00"), true);
+  assert.ok(!JSON.stringify(snap).includes("http"));
 });

@@ -9,7 +9,7 @@ import { ethers } from "ethers";
 import fx from "./fixtures/gen8-logs.json" with { type: "json" };
 import { GEN8_TOPICS, gen8PoolId, V4_POOL_MANAGER_IFACE, GEN8_HOOK_IFACE } from "../evm/evmGen8Abi.js";
 import { decodeGen8Log, gen8TradeTable, groupByTx, joinSwapsWithFees, traderNative, type Gen8Event } from "../evm/evmGen8Decode.js";
-import { configuredGen8Chains, evmGen8Config, gen8HolderPollMs, gen8IngestPollMs, gen8SidePollMs } from "../evm/evmGen8Config.js";
+import { configuredGen8Chains, evmGen8Config, gen8DelayForEmptyTicks, gen8HolderPollMs, gen8IngestIdlePollMs, gen8IngestPollMs, gen8MoneyPollMs, gen8SidePollMs } from "../evm/evmGen8Config.js";
 import { gen8DisplayStats, gen8PoolHoldings, gen8Progress, marketCapWei, nativePerCoin, nativePerCoinWei, sqrtAtTick, Q96, WAD } from "../evm/evmGen8Math.js";
 import { transferDeltas, TRANSFER_TOPIC, gen8HolderExclusions, DEAD } from "../evm/evmGen8Holders.js";
 import { findSidePools, sideSwapCoinVolume, sideFactories, SIDE_TOPICS } from "../evm/evmGen8SidePools.js";
@@ -192,10 +192,17 @@ test("a latch-back price restates sold from the spot, not from the latched 850M"
   assert.equal(stillPost.soldRaw, gen8Progress({ liqA: pl.liqA, tickStart: pl.tickStart, tickGrad: pl.tickGrad, sqrtPriceX96: sqrtGrad, graduated: true }).soldRaw);
 });
 
-test("gen-8 polls stay at 60s: a shorter env cannot bring back a 4s, 5s or 15s loop", () => {
-  assert.equal(gen8IngestPollMs({} as NodeJS.ProcessEnv), 60_000);
-  assert.equal(gen8IngestPollMs({ EVM_GEN8_POLL_MS: "4000" } as NodeJS.ProcessEnv), 60_000);
+test("gen-8 display poll is 4s and idles at 15s; a slower env wins; holders and side stay at 60s; money stays at 60s", () => {
+  assert.equal(gen8IngestPollMs({} as NodeJS.ProcessEnv), 4_000);
+  assert.equal(gen8IngestPollMs({ EVM_GEN8_POLL_MS: "4000" } as NodeJS.ProcessEnv), 4_000);
+  assert.equal(gen8IngestPollMs({ EVM_GEN8_POLL_MS: "1000" } as NodeJS.ProcessEnv), 4_000, "the fast poll cannot go under 4s");
   assert.equal(gen8IngestPollMs({ EVM_GEN8_POLL_MS: "120000" } as NodeJS.ProcessEnv), 120_000);
+  assert.equal(gen8IngestIdlePollMs({} as NodeJS.ProcessEnv), 15_000);
+  assert.equal(gen8IngestIdlePollMs({ EVM_GEN8_POLL_MS: "120000" } as NodeJS.ProcessEnv), 120_000, "idle is never faster than the fast poll");
+  assert.equal(gen8DelayForEmptyTicks(19, {} as NodeJS.ProcessEnv), 4_000);
+  assert.equal(gen8DelayForEmptyTicks(20, {} as NodeJS.ProcessEnv), 15_000);
+  assert.equal(gen8MoneyPollMs({} as NodeJS.ProcessEnv), 60_000);
+  assert.equal(gen8MoneyPollMs({ EVM_GEN8_MONEY_POLL_MS: "1000" } as NodeJS.ProcessEnv), 60_000);
   assert.equal(gen8HolderPollMs({} as NodeJS.ProcessEnv), 60_000);
   assert.equal(gen8HolderPollMs({ EVM_GEN8_HOLDERS_POLL_MS: "15000" } as NodeJS.ProcessEnv), 60_000);
   assert.equal(gen8SidePollMs({ EVM_GEN8_SIDE_POLL_MS: "5000" } as NodeJS.ProcessEnv), 60_000);
