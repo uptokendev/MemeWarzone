@@ -704,3 +704,70 @@ test("the panel shows the Barkswap refusals in their own words (gen8ErrorMessage
   }
   assert.equal(client.gen8ErrorMessage(new Error("something else entirely")), null);
 });
+
+// Gate 2 I1: a 6.3M-gas Bark launch can take longer than the wallet's block poll, so every Bark send (launch, claims,
+// hand-over, escrow buy) estimates on and polls its receipt from the app's read provider, never the wallet's.
+function walletAndReadProviders({ launchReceipt = null } = {}) {
+  const chain = fakeChain();
+  const reads = { estimate: 0, receipt: 0 };
+  const walletUse = [];
+  const readProvider = {
+    ...chain.provider,
+    async estimateGas() { reads.estimate += 1; return 6_293_026n; },
+    async getTransactionReceipt(hash) { reads.receipt += 1; return launchReceipt || { status: 1, hash, logs: [] }; },
+  };
+  chain.signer.provider = {
+    async getNetwork() { return { chainId: BigInt(DOGE) }; },
+    async send(method) { walletUse.push(method); throw new Error(`wallet provider used for ${method}`); },
+    async estimateGas() { walletUse.push("estimateGas"); throw new Error("wallet provider used for estimateGas"); },
+    async getTransactionReceipt() { walletUse.push("getTransactionReceipt"); throw new Error("wallet provider used for the receipt"); },
+  };
+  chain.signer.sendTransaction = async (tx) => {
+    chain.sent.push(tx);
+    const hash = launchReceipt?.hash || `0x${String(chain.sent.length).padStart(64, "0")}`;
+    return { hash, async wait() { walletUse.push("wait"); throw new Error("wallet wait() used"); } };
+  };
+  return { chain, readProvider, reads, walletUse };
+}
+
+test("Bark launch, creator claims, hand-over and escrow buy estimate and poll the receipt on the read provider", async () => {
+  const c = cfg();
+  const launched = fixture.logs.find((l) => l.event === "Launched");
+  const meta = fixture.logs.find((l) => l.event === "LaunchMetadata");
+  const launchReceipt = { status: 1, hash: launched.transactionHash, logs: [meta, launched].map((l) => ({ address: l.address, topics: l.topics, data: l.data })) };
+
+  const L = walletAndReadProviders({ launchReceipt });
+  const { launched: out } = await client.launchGen8Coin({ signer: L.chain.signer, chainId: DOGE, launcher: LAUNCHER, authorization: barkCreateAnswer(), firstBuyValueWei: 5n * WAD, cfg: c, readProvider: L.readProvider });
+  assert.equal(out.token, A(fixture.signedCreate.coin));
+  assert.deepEqual([L.reads.estimate, L.reads.receipt], [1, 1]);
+  assert.equal(BigInt(L.chain.sent[0].gasLimit), (6_293_026n * 125n) / 100n + 50_000n, "the gas limit comes from the read provider's estimate");
+  assert.deepEqual(L.walletUse, []);
+
+  const calls = [
+    (s, rp) => client.claimGen8HookCreatorFees({ signer: s, chainId: DOGE, cfg: c, poolId: COIN, to: TRADER, readProvider: rp }),
+    (s, rp) => client.pullGen8VaultFees({ signer: s, chainId: DOGE, cfg: c, poolId: COIN, readProvider: rp }),
+    (s, rp) => client.claimGen8VaultCreatorFees({ signer: s, chainId: DOGE, cfg: c, poolId: COIN, to: TRADER, readProvider: rp }),
+    (s, rp) => client.releaseGen8Reserve({ signer: s, chainId: DOGE, cfg: c, poolId: COIN, readProvider: rp }),
+    (s, rp) => client.claimGen8Escrow({ signer: s, chainId: DOGE, cfg: c, token: COIN, readProvider: rp }),
+    (s, rp) => client.proposeGen8Creator({ signer: s, chainId: DOGE, target: LAUNCHER, poolId: COIN, next: TRADER, cfg: c, readProvider: rp }),
+    (s, rp) => client.acceptGen8Creator({ signer: s, chainId: DOGE, target: VAULT, poolId: COIN, cfg: c, readProvider: rp }),
+  ];
+  for (const send of calls) {
+    const P = walletAndReadProviders();
+    await send(P.chain.signer, P.readProvider);
+    assert.equal(P.chain.sent.length, 1);
+    assert.deepEqual([P.reads.estimate, P.reads.receipt], [1, 1], String(send));
+    assert.deepEqual(P.walletUse, [], String(send));
+    assertOnlyDogeos([], P.chain.sent);
+  }
+
+  const rec = swapsOf("router buy (bonding)");
+  const E = walletAndReadProviders();
+  const quoteFn = (p) => [p.tokenIn === WDOGE ? BigInt(rec.coinAmount) : p.amountIn / 20_000_000n, p.amountIn, 1n, 0, 1n, 0];
+  const answers = fakeChain({ quote: quoteFn });
+  E.readProvider.call = answers.provider.call;
+  await client.executeGen8EscrowBuy({ signer: E.chain.signer, chainId: DOGE, cfg: c, token: COIN, amountIn: WAD, readProvider: E.readProvider });
+  assert.equal(ethers.getAddress(E.chain.sent[0].to), ESCROW);
+  assert.deepEqual([E.reads.estimate, E.reads.receipt], [1, 1]);
+  assert.deepEqual(E.walletUse, []);
+});

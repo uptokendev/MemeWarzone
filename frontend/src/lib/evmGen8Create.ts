@@ -11,6 +11,19 @@ import { runCatalogAction } from "@/lib/analytics/actions";
 import { fetchLaunchpadCreatePreflight } from "@/lib/recruiterApi";
 import { assertWalletOnChain } from "@/lib/walletChainGuard.mjs";
 import { gen8CreateAuthorizationBody, gen8ErrorMessage, launchGen8Coin } from "@/lib/evmGen8Client.mjs";
+import { getReadProvider } from "@/lib/readProvider";
+import type { SupportedChainId } from "@/lib/chainConfig";
+import { GEN8_VENUE_BARKSWAP, gen8VenueFor } from "../../shared/evmGen8.mjs";
+
+/** The app's read provider for a Barkswap launch; null on the V4 chains (unchanged) or when the chain has no RPC. */
+function barkReadProvider(chainId: number) {
+  if (gen8VenueFor(chainId) !== GEN8_VENUE_BARKSWAP) return null;
+  try {
+    return getReadProvider(chainId as SupportedChainId);
+  } catch {
+    return null;
+  }
+}
 
 export type Gen8CreateInput = {
   signer: Signer;
@@ -129,6 +142,9 @@ export async function createGen8Campaign(input: Gen8CreateInput) {
           launcher: input.launcher,
           authorization,
           firstBuyValueWei: input.firstBuyValueWei,
+          // Barkswap (DogeOS): the 6.3M-gas launch is estimated and its receipt polled on the app's read provider,
+          // not the wallet's block poll. The V4 launch ignores it.
+          readProvider: barkReadProvider(input.chainId),
         }));
       } catch (error) {
         const words = gen8ErrorMessage(error);

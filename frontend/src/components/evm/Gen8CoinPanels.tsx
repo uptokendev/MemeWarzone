@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { cp } from "@/components/token/coinPageStyles";
 import { useWallet } from "@/contexts/WalletContext";
 import { getNativeSymbol, type SupportedChainId } from "@/lib/chainConfig";
+import { getReadProvider } from "@/lib/readProvider";
 import { evmFeeChoiceLine } from "@/lib/evmGen6.mjs";
 import {
   acceptGen8Creator,
@@ -119,6 +120,15 @@ export function Gen8CreatorPanel({ chainId, state, onDone }: { chainId: number; 
   const escrowTotal = claims.escrow?.totalTokens ? BigInt(claims.escrow.totalTokens) : 0n;
   if (!isHookCreator && !isHumanCreator && !canAccept && escrowTotal === 0n) return null;
 
+  // Barkswap: every creator send is estimated and its receipt polled on the app's read provider (V4 ignores it).
+  const readProvider = (() => {
+    if (!bark) return null;
+    try {
+      return getReadProvider(chainId as SupportedChainId);
+    } catch {
+      return null;
+    }
+  })();
   const payTo = to.trim() || account;
   const toValid = ethers.isAddress(payTo);
   const signerFor = async () => {
@@ -153,7 +163,7 @@ export function Gen8CreatorPanel({ chainId, state, onDone }: { chainId: number; 
       amount: `${fmtNative(owed)} ${native}`,
       disabled: owed <= 0n || !toValid,
       button: "Claim",
-      run: () => run("hook", (signer) => claimGen8HookCreatorFees({ signer, chainId, cfg, poolId, to: payTo }), "Fees claimed."),
+      run: () => run("hook", (signer) => claimGen8HookCreatorFees({ signer, chainId, cfg, poolId, to: payTo, readProvider }), "Fees claimed."),
     });
   }
   if (vaultCoin && isHumanCreator) {
@@ -164,7 +174,7 @@ export function Gen8CreatorPanel({ chainId, state, onDone }: { chainId: number; 
         detail: "Moves them into the fee vault, split by your fee choice.",
         amount: `${fmtNative(owed)} ${native}`,
         button: "Move",
-        run: () => run("pull", (signer) => pullGen8VaultFees({ signer, chainId, cfg, poolId }), "Fees moved into the vault."),
+        run: () => run("pull", (signer) => pullGen8VaultFees({ signer, chainId, cfg, poolId, readProvider }), "Fees moved into the vault."),
       });
     }
     const vaultClaimable = claims.vault?.creatorClaimableWei ? BigInt(claims.vault.creatorClaimableWei) : 0n;
@@ -176,7 +186,7 @@ export function Gen8CreatorPanel({ chainId, state, onDone }: { chainId: number; 
         amount: `${fmtNative(vaultClaimable)} ${native}`,
         disabled: vaultClaimable <= 0n || !toValid,
         button: "Claim",
-        run: () => run("vault", (signer) => claimGen8VaultCreatorFees({ signer, chainId, cfg, poolId, to: payTo }), "Fees claimed."),
+        run: () => run("vault", (signer) => claimGen8VaultCreatorFees({ signer, chainId, cfg, poolId, to: payTo, readProvider }), "Fees claimed."),
       });
     }
   }
@@ -199,7 +209,7 @@ export function Gen8CreatorPanel({ chainId, state, onDone }: { chainId: number; 
       amount: `${fmtTokens(claims.reserve.amount)} tokens`,
       disabled: !releasable,
       button: "Release",
-      run: () => run("reserve", (signer) => releaseGen8Reserve({ signer, chainId, cfg, poolId }), "Reserve released."),
+      run: () => run("reserve", (signer) => releaseGen8Reserve({ signer, chainId, cfg, poolId, readProvider }), "Reserve released."),
     });
   }
   if (escrowTotal > 0n) {
@@ -210,7 +220,7 @@ export function Gen8CreatorPanel({ chainId, state, onDone }: { chainId: number; 
       amount: `${fmtTokens(escrowClaimable)} tokens unlocked`,
       disabled: escrowClaimable <= 0n,
       button: "Claim",
-      run: () => run("escrow", (signer) => claimGen8Escrow({ signer, chainId, cfg, token: state.token }), "Unlocked tokens claimed."),
+      run: () => run("escrow", (signer) => claimGen8Escrow({ signer, chainId, cfg, token: state.token, readProvider }), "Unlocked tokens claimed."),
     });
   }
 
@@ -253,13 +263,13 @@ export function Gen8CreatorPanel({ chainId, state, onDone }: { chainId: number; 
               size="sm"
               variant="outline"
               disabled={Boolean(busy) || !ethers.isAddress(next.trim())}
-              onClick={() => void run("propose", (signer) => proposeGen8Creator({ signer, chainId, target: transferTarget, poolId, next: next.trim() }), "Proposed. The new wallet must accept.")}
+              onClick={() => void run("propose", (signer) => proposeGen8Creator({ signer, chainId, target: transferTarget, poolId, next: next.trim(), readProvider }), "Proposed. The new wallet must accept.")}
             >
               {busy === "propose" ? "…" : "Propose"}
             </Button>
           </div>
           {pending ? (
-            <Button type="button" size="sm" variant="ghost" className={cp.smallButton} disabled={Boolean(busy)} onClick={() => void run("cancel", (signer) => proposeGen8Creator({ signer, chainId, target: transferTarget, poolId, next: null }), "Proposal cancelled.")}>
+            <Button type="button" size="sm" variant="ghost" className={cp.smallButton} disabled={Boolean(busy)} onClick={() => void run("cancel", (signer) => proposeGen8Creator({ signer, chainId, target: transferTarget, poolId, next: null, readProvider }), "Proposal cancelled.")}>
               Cancel the proposal
             </Button>
           ) : null}
@@ -272,7 +282,7 @@ export function Gen8CreatorPanel({ chainId, state, onDone }: { chainId: number; 
             type="button"
             size="sm"
             disabled={Boolean(busy)}
-            onClick={() => void run("accept", (signer) => acceptGen8Creator({ signer, chainId, target: pendingVault && same(account, pendingVault) ? cfg.choiceVault : creatorLedger, poolId }), "You are now the coin's creator.")}
+            onClick={() => void run("accept", (signer) => acceptGen8Creator({ signer, chainId, target: pendingVault && same(account, pendingVault) ? cfg.choiceVault : creatorLedger, poolId, readProvider }), "You are now the coin's creator.")}
           >
             {busy === "accept" ? "…" : "Accept"}
           </Button>

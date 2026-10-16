@@ -514,8 +514,9 @@ export async function sendGen8Tx({ signer, chainId, tx, floor = null, readProvid
 }
 
 /** launcher.launch(...) exactly as authorized; returns { receipt, launched }. */
-export async function launchGen8Coin({ signer, chainId, launcher, authorization, firstBuyValueWei = null, cfg = null }) {
-  if (gen8VenueFor(chainId) === GEN8_VENUE_BARKSWAP) return launchBarkCoin({ signer, chainId, launcher, authorization, firstBuyValueWei, cfg: cfg || gen8AppConfig(chainId) });
+export async function launchGen8Coin({ signer, chainId, launcher, authorization, firstBuyValueWei = null, cfg = null, readProvider = null }) {
+  // readProvider: Barkswap only (estimate and receipt poll on the app's read provider); the V4 launch ignores it.
+  if (gen8VenueFor(chainId) === GEN8_VENUE_BARKSWAP) return launchBarkCoin({ signer, chainId, launcher, authorization, firstBuyValueWei, cfg: cfg || gen8AppConfig(chainId), readProvider });
   const args = gen8LaunchArgs(authorization, { chainId, launcher, firstBuyValueWei });
   const c = new Contract(launcher, GEN8_LAUNCHER_ABI, signer);
   // Launch measured at 1.67M gas on BSC and 1.10M on Robinhood (design 1): the floor keeps a failed estimate from
@@ -541,11 +542,11 @@ const BARK_LAUNCH_GAS_FLOOR = 7_000_000n;
 const BARK_LAUNCHER_IFACE = new ethers.Interface(BARK_LAUNCHER_APP_ABI);
 
 /** MwzBarkLauncher.launch(...) exactly as authorized (Barkswap venue of launchGen8Coin); returns { receipt, launched }. */
-async function launchBarkCoin({ signer, chainId, launcher, authorization, firstBuyValueWei, cfg }) {
+async function launchBarkCoin({ signer, chainId, launcher, authorization, firstBuyValueWei, cfg, readProvider = null }) {
   if (!isGen8BarkAppConfig(cfg) || !launcher || ethers.getAddress(launcher) !== cfg.launcher) throw new Error("The create authorization names another launcher.");
   const args = barkLaunchArgs(authorization, { chainId, cfg, firstBuyValueWei });
   const data = BARK_LAUNCHER_IFACE.encodeFunctionData("launch", [args.req, args.auth]);
-  const receipt = await sendGen8Tx({ signer, chainId, tx: { to: cfg.launcher, data, value: args.value }, floor: BARK_LAUNCH_GAS_FLOOR });
+  const receipt = await sendGen8Tx({ signer, chainId, tx: { to: cfg.launcher, data, value: args.value }, floor: BARK_LAUNCH_GAS_FLOOR, readProvider });
   const launched = parseBarkLaunch(receipt, cfg.launcher);
   if (!launched) throw new Error("The launch landed but its coin could not be read from the receipt.");
   return { receipt, launched };
@@ -788,10 +789,13 @@ export async function executeGen8Trade({ signer, chainId, cfg, token, side, amou
 const BARK_TRADE_GAS_FLOOR = 1_000_000n;
 const ERC20_IFACE = new ethers.Interface(ERC20_ABI);
 
-/** One Bark contract call sent as a raw transaction with the gen-8 gas rules (sendGen8Tx). */
-async function sendBarkCall({ signer, chainId, to, abi, method, args = [], value = 0n, floor = null }) {
+/**
+ * One Bark contract call sent as a raw transaction with the gen-8 gas rules (sendGen8Tx). The estimate and the receipt
+ * poll go to `readProvider` (the app's HTTP provider) when given, else to the wallet's provider.
+ */
+async function sendBarkCall({ signer, chainId, to, abi, method, args = [], value = 0n, floor = null, readProvider = null }) {
   const data = new ethers.Interface(abi).encodeFunctionData(method, args);
-  return sendGen8Tx({ signer, chainId, tx: { to, data, value }, floor });
+  return sendGen8Tx({ signer, chainId, tx: { to, data, value }, floor, readProvider });
 }
 
 /**
@@ -840,7 +844,7 @@ export async function executeGen8EscrowBuy({ signer, chainId, cfg, token, amount
   const q = await quoteGen8Trade({ provider: reads, cfg, token, side: "buy", amountIn, slippageBps, sender: cfg.escrow });
   if (isGen8BarkAppConfig(cfg)) {
     // MwzBarkCreatorEscrow keeps gen-8's buy(token, minOut) and swaps in the coin's Barkswap pool itself.
-    const receipt = await sendBarkCall({ signer, chainId, to: cfg.escrow, abi: GEN8_ESCROW_ABI, method: "buy", args: [ethers.getAddress(token), q.minOut], value: q.amountIn, floor: BARK_TRADE_GAS_FLOOR });
+    const receipt = await sendBarkCall({ signer, chainId, to: cfg.escrow, abi: GEN8_ESCROW_ABI, method: "buy", args: [ethers.getAddress(token), q.minOut], value: q.amountIn, floor: BARK_TRADE_GAS_FLOOR, readProvider: reads });
     if (onReceipt) onReceipt(receipt);
     return { receipt, quote: q };
   }
@@ -853,9 +857,9 @@ export async function executeGen8EscrowBuy({ signer, chainId, cfg, token, amount
 // ------------------------------------------------------------------ creator panel (4)
 
 /** hook.claimCreator(id, to): the whole hook ledger to any address (keep coins; the hook creator only). */
-export async function claimGen8HookCreatorFees({ signer, chainId, cfg, poolId, to }) {
-  // Barkswap: MwzBarkLauncher.claimCreator(coin, to); `poolId` is the coin there.
-  if (isGen8BarkAppConfig(cfg)) return sendBarkCall({ signer, chainId, to: cfg.launcher, abi: BARK_LAUNCHER_APP_ABI, method: "claimCreator", args: [ethers.getAddress(poolId), ethers.getAddress(to)] });
+export async function claimGen8HookCreatorFees({ signer, chainId, cfg, poolId, to, readProvider = null }) {
+  // Barkswap: MwzBarkLauncher.claimCreator(coin, to); `poolId` is the coin there. readProvider: Barkswap only.
+  if (isGen8BarkAppConfig(cfg)) return sendBarkCall({ signer, chainId, to: cfg.launcher, abi: BARK_LAUNCHER_APP_ABI, method: "claimCreator", args: [ethers.getAddress(poolId), ethers.getAddress(to)], readProvider });
   const hook = new Contract(cfg.hook, GEN8_HOOK_ABI, signer);
   return sendGen8Call({ signer, chainId, contract: hook, method: "claimCreator", args: [poolId, ethers.getAddress(to)] });
 }
@@ -869,49 +873,49 @@ function barkCreatorTargetAbi(cfg, target) {
 }
 
 /** Two-step creator transfer: on the hook for keep coins, in the choice vault for holders / split / buyback coins. */
-export async function proposeGen8Creator({ signer, chainId, target, poolId, next, cfg = null }) {
+export async function proposeGen8Creator({ signer, chainId, target, poolId, next, cfg = null, readProvider = null }) {
   // Barkswap: the launcher (keep coins) or the Bark choice vault, both keyed by the coin (`poolId`).
   if (gen8VenueFor(chainId) === GEN8_VENUE_BARKSWAP) {
     const abi = barkCreatorTargetAbi(cfg || gen8AppConfig(chainId), target);
-    return sendBarkCall({ signer, chainId, to: target, abi, method: "proposeCreator", args: [ethers.getAddress(poolId), next ? ethers.getAddress(next) : ethers.ZeroAddress] });
+    return sendBarkCall({ signer, chainId, to: target, abi, method: "proposeCreator", args: [ethers.getAddress(poolId), next ? ethers.getAddress(next) : ethers.ZeroAddress], readProvider });
   }
   const c = new Contract(target, ["function proposeCreator(bytes32 id, address next)"], signer);
   return sendGen8Call({ signer, chainId, contract: c, method: "proposeCreator", args: [poolId, next ? ethers.getAddress(next) : ethers.ZeroAddress] });
 }
 
-export async function acceptGen8Creator({ signer, chainId, target, poolId, cfg = null }) {
+export async function acceptGen8Creator({ signer, chainId, target, poolId, cfg = null, readProvider = null }) {
   if (gen8VenueFor(chainId) === GEN8_VENUE_BARKSWAP) {
     const abi = barkCreatorTargetAbi(cfg || gen8AppConfig(chainId), target);
-    return sendBarkCall({ signer, chainId, to: target, abi, method: "acceptCreator", args: [ethers.getAddress(poolId)] });
+    return sendBarkCall({ signer, chainId, to: target, abi, method: "acceptCreator", args: [ethers.getAddress(poolId)], readProvider });
   }
   const c = new Contract(target, ["function acceptCreator(bytes32 id)"], signer);
   return sendGen8Call({ signer, chainId, contract: c, method: "acceptCreator", args: [poolId] });
 }
 
 /** vault.pull(id): permissionless, moves the hook ledger into the vault and credits it by the coin's fee choice. */
-export async function pullGen8VaultFees({ signer, chainId, cfg, poolId }) {
-  if (isGen8BarkAppConfig(cfg)) return sendBarkCall({ signer, chainId, to: cfg.choiceVault, abi: BARK_CHOICE_VAULT_APP_ABI, method: "pull", args: [ethers.getAddress(poolId)] });
+export async function pullGen8VaultFees({ signer, chainId, cfg, poolId, readProvider = null }) {
+  if (isGen8BarkAppConfig(cfg)) return sendBarkCall({ signer, chainId, to: cfg.choiceVault, abi: BARK_CHOICE_VAULT_APP_ABI, method: "pull", args: [ethers.getAddress(poolId)], readProvider });
   const v = new Contract(cfg.choiceVault, GEN8_CHOICE_VAULT_ABI, signer);
   return sendGen8Call({ signer, chainId, contract: v, method: "pull", args: [poolId] });
 }
 
 /** vault.claimCreatorFees(id, to): the split coin's creator part, to any address. */
-export async function claimGen8VaultCreatorFees({ signer, chainId, cfg, poolId, to }) {
-  if (isGen8BarkAppConfig(cfg)) return sendBarkCall({ signer, chainId, to: cfg.choiceVault, abi: BARK_CHOICE_VAULT_APP_ABI, method: "claimCreatorFees", args: [ethers.getAddress(poolId), ethers.getAddress(to)] });
+export async function claimGen8VaultCreatorFees({ signer, chainId, cfg, poolId, to, readProvider = null }) {
+  if (isGen8BarkAppConfig(cfg)) return sendBarkCall({ signer, chainId, to: cfg.choiceVault, abi: BARK_CHOICE_VAULT_APP_ABI, method: "claimCreatorFees", args: [ethers.getAddress(poolId), ethers.getAddress(to)], readProvider });
   const v = new Contract(cfg.choiceVault, GEN8_CHOICE_VAULT_ABI, signer);
   return sendGen8Call({ signer, chainId, contract: v, method: "claimCreatorFees", args: [poolId, ethers.getAddress(to)] });
 }
 
 /** reserveLock.release(id): permissionless once graduated; pays the coin's current creator. */
-export async function releaseGen8Reserve({ signer, chainId, cfg, poolId }) {
-  if (isGen8BarkAppConfig(cfg)) return sendBarkCall({ signer, chainId, to: cfg.reserveLock, abi: BARK_RESERVE_LOCK_APP_ABI, method: "release", args: [ethers.getAddress(poolId)] });
+export async function releaseGen8Reserve({ signer, chainId, cfg, poolId, readProvider = null }) {
+  if (isGen8BarkAppConfig(cfg)) return sendBarkCall({ signer, chainId, to: cfg.reserveLock, abi: BARK_RESERVE_LOCK_APP_ABI, method: "release", args: [ethers.getAddress(poolId)], readProvider });
   const r = new Contract(cfg.reserveLock, GEN8_RESERVE_LOCK_ABI, signer);
   return sendGen8Call({ signer, chainId, contract: r, method: "release", args: [poolId] });
 }
 
 /** escrow.claim(token): what is released of the caller's escrowed buys. */
-export async function claimGen8Escrow({ signer, chainId, cfg, token }) {
-  if (isGen8BarkAppConfig(cfg)) return sendBarkCall({ signer, chainId, to: cfg.escrow, abi: GEN8_ESCROW_ABI, method: "claim", args: [ethers.getAddress(token)] });
+export async function claimGen8Escrow({ signer, chainId, cfg, token, readProvider = null }) {
+  if (isGen8BarkAppConfig(cfg)) return sendBarkCall({ signer, chainId, to: cfg.escrow, abi: GEN8_ESCROW_ABI, method: "claim", args: [ethers.getAddress(token)], readProvider });
   const e = new Contract(cfg.escrow, GEN8_ESCROW_ABI, signer);
   return sendGen8Call({ signer, chainId, contract: e, method: "claim", args: [token] });
 }
