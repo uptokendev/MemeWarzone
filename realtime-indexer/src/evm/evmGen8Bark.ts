@@ -32,10 +32,11 @@
  *     Escrow buys (2) and choice-vault buybacks (3) are written as gen-8 writes them, league excluded.
  *   - D14: BarkSwap.phase is the fee phase by the start price (0 bonding, the crossing swap included; 1 post), so
  *     curve_trades up to and including the crossing, dex_trades after, exactly as HookFee.graduated on V4.
- *   - money (latest - 20 on 6281971, gen8MoneyHead): buy accruals are final at the swap, on the NET fee (B11: the
- *     router bucket is credited after Barkswap's cut) with the creator amount computed on the gross fee (B10); the
- *     graduation fee from GraduationFeeTaken (inline or the fallback). Sell accruals (coin fees, valued per conversion)
- *     and route runs are t19 (evmGen8BarkAttribution.ts / evmGen8FeeRouting.ts); nothing here writes them.
+ *   - money (latest - 20 on 6281971, gen8MoneyHead): buy accruals are final at the swap (fee = the NET fee, after
+ *     Barkswap's cut; the creator amount on the gross fee, B10; slices on the router part net - creator, B11,
+ *     evmGen8Fees.ts gen8RouterBaseSlices); the graduation fee from GraduationFeeTaken (inline or the fallback). A sell
+ *     writes its coin-fee row (evm_gen8_bark_sell_fees) at the swap; FeesCollected / CoinFeesConverted / GraduationFeeTaken
+ *     write the router-bucket credits the route runs read (evmGen8BarkAttribution.ts, the "Attribution for D1" rules).
  *   - market_stats USD columns from the DOGE/USD testnet oracle (dogeosNativeUsdOracle.ts), best effort.
  *
  * Inert without EVM_GEN8_LAUNCHER_6281971 + EVM_GEN8_PLUGIN_6281971 (evmGen8Config.ts evmGen8BarkConfig).
@@ -44,7 +45,8 @@ import { ethers } from "ethers";
 import { GEN8_SPLITTER_EVENTS } from "./evmGen8Abi.js";
 import { GEN8_BARK_MAX_LOG_SPAN, configuredGen8BarkChains, gen8IngestPollMs, gen8LinkPolicy, gen8WrappedNative, intEnv, type Gen8BarkChainConfig, type Gen8LinkPolicy } from "./evmGen8Config.js";
 import { decodeGen8Log, groupByTx, type Gen8Event, type HookFeeEvent, type JoinedSwap, type LogLike, type SwapEvent } from "./evmGen8Decode.js";
-import { gen8GraduationSlices, gen8TradeSlices } from "./evmGen8Fees.js";
+import { applyBarkAttributionAt, barkMoneyLogFromEvent, ensureBarkAttributionBackfill, insertBarkGraduationCredit, insertBarkSellFee } from "./evmGen8BarkAttribution.js";
+import { gen8GraduationSlices, gen8RouterBaseSlices } from "./evmGen8Fees.js";
 import { GEN8_TOTAL_SUPPLY, MAX_TICK, MIN_TICK, Q192, WAD, positionHoldings, rawToDecimal, sqrtAtTick } from "./evmGen8Math.js";
 import {
   applyGen8Event,
@@ -631,14 +633,21 @@ async function applyBarkSwap(ctx: Gen8BarkCtx, pool: Gen8PoolRow, e: BarkSwapEve
   const j = barkJoinedSwap(e, pool, wrappedNative);
   const isBuyback = e.swapKind === BARK_SWAP_KIND.buyback;
   if (mode === "money") {
-    // D1: a buy's accrual is final at the swap (its WDOGE fee is known). Sells (coin fees) are attributed per
-    // conversion (spec section 3 "Attribution for D1"), which is t19's: no sell accrual is written here.
+    // D1: a buy's accrual is final at the swap (its WDOGE fee is known). A sell's row holds its coin fee and an
+    // expected value; it becomes DOGE per conversion (spec section 3 "Attribution for D1", evmGen8BarkAttribution.ts).
+    const phase = e.phase === BARK_PHASE_POST ? "post" : "bonding";
+    const profile = phase === "bonding" ? (isBuyback ? "standard_unlinked" : await gen8LinkedProfile(db, cfg, policy, tx, e.sender, blockTime)) : null;
     if (e.buy) {
-      const phase = e.phase === BARK_PHASE_POST ? "post" : "bonding";
-      const profile = phase === "bonding" ? (isBuyback ? "standard_unlinked" : await gen8LinkedProfile(db, cfg, policy, tx, e.sender, blockTime)) : null;
       const accrual = barkBuyAccrual(cfg, pool, e, tx.from, blockTime, profile);
       await insertGen8Accrual(db, accrual);
       if (phase === "bonding" && accrual.slices.fee > 0n) await upsertGen8RewardEvent(db, accrual);
+    } else {
+      const routerCoins = e.netFee > e.creatorAmount ? e.netFee - e.creatorAmount : 0n;
+      await insertBarkSellFee(db, {
+        chainId: cfg.chainId, hook: cfg.plugin.address, txHash: e.txHash, logIndex: e.logIndex, poolId: pool.poolId, token: pool.token, blockNumber: e.blockNumber, blockTime,
+        phase, trader: tx.from, swapSender: e.sender, profile, grossFeeCoins: e.grossFee, netFeeCoins: e.netFee, creatorCoins: e.creatorAmount < e.netFee ? e.creatorAmount : e.netFee,
+        routerCoins, expectedNative: barkCoinsAtFill(routerCoins, e),
+      });
     }
     if (!isBuyback) {
       try {
@@ -662,7 +671,10 @@ async function applyBarkSwap(ctx: Gen8BarkCtx, pool: Gen8PoolRow, e: BarkSwapEve
   return wrote;
 }
 
-/** The accrual row of a Barkswap buy: gen-8 slices on the net fee (B11), the creator amount on the gross fee (B10). */
+/**
+ * The accrual row of a Barkswap buy: fee = the net fee, the creator amount on the gross fee (B10), gen-8's slices of the
+ * router part net - creator (B11, gen8RouterBaseSlices: the base the splitter's bands use on Barkswap).
+ */
 export function barkBuyAccrual(cfg: Gen8BarkChainConfig, pool: Pick<Gen8PoolRow, "poolId" | "token">, e: BarkSwapEvent, trader: string, blockTime: Date, profile: Gen8AccrualRow["profile"]): Gen8AccrualRow {
   const graduated = e.phase === BARK_PHASE_POST;
   // B10: if an admin raised the cut so far that the net fee is below the creator amount, the creator is paid first
@@ -672,7 +684,7 @@ export function barkBuyAccrual(cfg: Gen8BarkChainConfig, pool: Pick<Gen8PoolRow,
     chainId: cfg.chainId, hook: cfg.plugin.address, poolId: pool.poolId, token: pool.token, txHash: e.txHash, logIndex: e.logIndex, swapLogIndex: e.logIndex,
     blockNumber: e.blockNumber, blockTime, kind: "trade", phase: graduated ? "post" : "bonding", trader, swapSender: e.sender, referrer: null, side: "buy",
     profile, curveAmount: e.curveAmount, feeBps: e.rateBps,
-    slices: gen8TradeSlices({ fee: e.netFee, creatorShare, graduated, profile: profile || "standard_unlinked" }),
+    slices: gen8RouterBaseSlices({ fee: e.netFee, creatorShare, graduated, profile: profile || "standard_unlinked" }),
   };
 }
 
@@ -753,8 +765,18 @@ async function applyBarkEvent(ctx: Gen8BarkCtx, e: BarkEvent, byToken: Map<strin
       };
       await insertGen8Accrual(db, accrual);
       if (g.amount > 0n) await upsertGen8RewardEvent(db, accrual);
+      // the router bucket's graduation book is credited by this log: the route runs' credit (B11 base = the amount)
+      await insertBarkGraduationCredit(db, cfg, pool, g, at, profile);
       return false;
     }
+    case "FeesCollected":
+    case "CoinFeesConverted":
+      // the router-bucket credits of this log (money mode only: rows at or below the money head)
+      if (pool && !display) {
+        const log = barkMoneyLogFromEvent(e.kind, e as BarkOtherEvent, { txHash: e.txHash, logIndex: e.logIndex, blockNumber: e.blockNumber, blockTime: at });
+        if (log) await applyBarkAttributionAt(db, cfg, pool, log, (a) => sinks.raiseAlert(a));
+      }
+      return false;
     case "GraduationFeeInline":
       if (fresh && (e as BarkOtherEvent).ok === false) await sinks.raiseAlert({ severity: "warning", kind: "gen8_bark_grad_fee_inline_failed", chainId: cfg.chainId, subject: e.txHash, title: `Barkswap graduation fee not taken inline on chain ${cfg.chainId}`, message: `GraduationFeeInline(${String((e as BarkOtherEvent).pool)}, false) in ${e.txHash}: the graduation-fee fallback keeper must take it.` });
       return false;
@@ -765,7 +787,7 @@ async function applyBarkEvent(ctx: Gen8BarkCtx, e: BarkEvent, byToken: Map<strin
       if (fresh) await sinks.raiseAlert({ severity: "critical", kind: "gen8_bark_foreign_plugin_fee", chainId: cfg.chainId, subject: e.txHash, title: `Barkswap pool charged a foreign plugin fee on chain ${cfg.chainId}`, message: `ForeignPluginFee(${String((e as BarkOtherEvent).pool)}) in ${e.txHash}.` });
       return false;
     default:
-      // FeesCollected, CoinFeesConverted (t19 attribution reads them from evm_campaign_events), choice-vault money events.
+      // choice-vault money events: recorded only.
       return false;
   }
 }
@@ -778,7 +800,9 @@ export function gen8BarkLogSpan(env: NodeJS.ProcessEnv = process.env): number {
 }
 
 /** One display + money pass (evmGen8Pool.ts runGen8ChainOnce) with the Barkswap ingest and maths. */
-export function runGen8BarkChainOnce(ctx: Gen8BarkCtx, opts: { maxBlocks?: number } = {}) {
+export async function runGen8BarkChainOnce(ctx: Gen8BarkCtx, opts: { maxBlocks?: number } = {}) {
+  // t19: once, the money cursor goes back to the start block so sells t18's money pass passed get their rows
+  await ensureBarkAttributionBackfill(ctx.db, barkConfig(ctx));
   const span = Math.min(GEN8_BARK_MAX_LOG_SPAN, opts.maxBlocks ?? gen8BarkLogSpan(ctx.env));
   return runGen8ChainOnce({ ...ctx, ops: GEN8_BARK_OPS }, { maxBlocks: span, ingest: ingestGen8BarkRange });
 }

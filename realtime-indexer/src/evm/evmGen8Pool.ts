@@ -694,8 +694,8 @@ async function applyEvent(ctx: Ctx, e: Gen8Event, pools: Map<string, Gen8PoolRow
 /**
  * A contract event of either venue (decoded into the gen-8 shape): recorded in evm_campaign_events (the hook's or
  * plugin's events as gen8_hook) and acted on (creator hand-over, control-event alerts, holder-batch alerts). On
- * Barkswap the caller handles Graduated itself (evmGen8Bark.ts) and Routed is not reconciled here (t19: the route
- * worker reads the launcher, not a hook).
+ * Barkswap the caller handles Graduated itself (evmGen8Bark.ts); Routed is reconciled on both venues (recordRoutedRun
+ * reads the hook's accruals on V4, the launcher's router credits on Barkswap).
  */
 export async function applyGen8Event(ctx: Gen8Ctx, e: Gen8Event, pools: Map<string, Gen8PoolRow>, at: Date, txOf?: (tx: string) => Promise<TxInfo>, txEvents: Gen8Event[] = [], mode: Gen8IngestMode = "display"): Promise<boolean> {
   const { cfg, db, sinks } = ctx;
@@ -733,7 +733,7 @@ export async function applyGen8Event(ctx: Gen8Ctx, e: Gen8Event, pools: Map<stri
     }
     case "Routed": {
       // Money: the run and its rows are confirmed only at or below the money head.
-      if (mode === "money" && cfg.venue !== "barkswap") await recordRoutedRun(db, cfg, e, at, (a) => sinks.raiseAlert({ ...a, kind: a.kind }), ctx.env);
+      if (mode === "money") await recordRoutedRun(db, cfg, e, at, (a) => sinks.raiseAlert({ ...a, kind: a.kind }), ctx.env);
       return false;
     }
     case "RouterProposed":

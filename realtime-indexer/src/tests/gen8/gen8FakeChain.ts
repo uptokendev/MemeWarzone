@@ -3,7 +3,8 @@
  * ingest code without Postgres or an RPC:
  *   - FakeGen8Db implements Queryable.query (evmGen8Store.ts): every statement is logged (whitespace-normalised SQL
  *     and its parameters) and the few tables the ingest reads back (indexer_state, evm_gen8_pools,
- *     campaign_market_state, evm_gen8_swaps, the census token list, the idempotent inserts) are emulated; every other statement returns no rows.
+ *     campaign_market_state, evm_gen8_swaps, the census token list, the idempotent inserts, and the rows the Barkswap
+ *     attribution replay reads: accruals, sell fees, launcher money logs) are emulated; every other statement returns no rows.
  *   - FakeGen8Provider implements Gen8Provider (evmGen8Pool.ts) over a list of recorded logs.
  *   - fakeGen8Sinks implements Gen8Sinks (evmGen8Pool.ts) and records every call.
  * The write log is what the tests compare: the V4 path against its recorded snapshot, a Barkswap swap against a V4 swap.
@@ -38,6 +39,8 @@ export class FakeGen8Db implements Queryable {
   stages = new Map<string, string>();
   /** evm_gen8_swaps (the display swap ledger), for lastGen8Swap / loadGen8SwapsSince. */
   swaps: Array<Record<string, any>> = [];
+  /** What the Barkswap attribution replay reads back (evmGen8BarkAttribution.ts): buy accruals, sell fees, launcher money logs. */
+  barkReplay = { accruals: [] as Array<Record<string, any>>, sells: [] as Array<Record<string, any>>, events: [] as Array<Record<string, any>> };
   private keys = new Set<string>();
 
   async query(sqlIn: string, params: unknown[] = []): Promise<{ rows: any[]; rowCount?: number | null }> {
@@ -111,6 +114,24 @@ export class FakeGen8Db implements Queryable {
     if (sql.startsWith("update public.campaign_market_state set market_stage")) {
       this.stages.set(`${p[0]}:${p[1]}`, String(p[2]));
       return done([]);
+    }
+    const upTo = (r: Record<string, any>, incl: boolean) => Number(r.block_number) < Number(p[3]) || (Number(r.block_number) === Number(p[3]) && (incl ? Number(r.log_index) <= Number(p[4]) : Number(r.log_index) < Number(p[4])));
+    const inOrder = (a: Record<string, any>, b: Record<string, any>) => Number(a.block_number) - Number(b.block_number) || Number(a.log_index) - Number(b.log_index);
+    const seen = (rows: Array<Record<string, any>>, tx: unknown, li: unknown) => rows.some((r) => r.tx_hash === tx && r.log_index === li);
+    const columns = () => Object.fromEntries(sql.slice(sql.indexOf("(") + 1, sql.indexOf(")")).split(",").map((c, i) => [c.trim(), p[i]]));
+    if (sql.startsWith("insert into public.evm_gen8_fee_accruals(") && !seen(this.barkReplay.accruals, p[4], p[5])) this.barkReplay.accruals.push({ ...columns(), run_id: null });
+    if (sql.startsWith("insert into public.evm_gen8_bark_sell_fees(") && !seen(this.barkReplay.sells, p[2], p[3])) this.barkReplay.sells.push({ ...columns(), booked_coins: null, converted_coins: "0", converted_native: "0" });
+    if (sql.startsWith("insert into public.evm_campaign_events(") && !seen(this.barkReplay.events, p[5], p[6])) {
+      this.barkReplay.events.push({ chain_id: p[0], contract_address: p[1], campaign_address: p[3], event_name: p[4], tx_hash: p[5], log_index: p[6], block_number: p[7], block_time: p[8], args: JSON.parse(String(p[9])) });
+    }
+    if (sql.startsWith("select tx_hash, log_index, block_number, phase, trader, swap_sender, profile, router_amount, creator_share from public.evm_gen8_fee_accruals")) {
+      return done(this.barkReplay.accruals.filter((r) => r.chain_id === p[0] && r.hook_address === p[1] && r.token_address === p[2] && r.kind === "trade" && r.side === "buy" && upTo(r, false)).sort(inOrder));
+    }
+    if (sql.startsWith("select tx_hash, log_index, block_number, phase, trader, swap_sender, profile, router_coins, creator_coins from public.evm_gen8_bark_sell_fees")) {
+      return done(this.barkReplay.sells.filter((r) => r.chain_id === p[0] && r.hook_address === p[1] && r.token_address === p[2] && upTo(r, false)).sort(inOrder));
+    }
+    if (sql.startsWith("select tx_hash, log_index, block_number, block_time, event_name, args from public.evm_campaign_events")) {
+      return done(this.barkReplay.events.filter((r) => r.chain_id === p[0] && r.contract_address === p[1] && r.campaign_address === p[2] && ["FeesCollected", "CoinFeesConverted"].includes(r.event_name) && upTo(r, true)).sort(inOrder));
     }
     if (sql.includes("on conflict (chain_id, tx_hash, log_index) do nothing returning 1")) {
       const table = sql.slice("insert into public.".length).split(/[ (]/)[0];

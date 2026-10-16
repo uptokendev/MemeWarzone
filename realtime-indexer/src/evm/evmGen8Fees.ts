@@ -7,7 +7,8 @@
  *   creator = HookFee.creatorShare (560 bps, kept in the hook, never routed), protocol = the router part minus the rest.
  * After graduation the router part (fee - creatorShare) is protocol in full (audit 10.2). Graduation fee G: recruiter /
  * squad / airdrop 1500 / 250 / 0 (linked), 1750 / 250 / 0 (OG), 0 / 0 / 1750 (unlinked), by the creator's profile
- * stored at launch; protocol the rest.
+ * stored at launch; protocol the rest. Barkswap (6281971) takes the same bps of the router part instead (B11,
+ * gen8RouterBaseSlices; its route runs read evmGen8BarkAttribution.ts credits).
  *
  * Per run (money): MwzFeeSplitter.route(runId, recruiter, squad, airdrop, root) checks
  *   rsaMin <= recruiter + squad + airdrop <= rsaMax and squad <= squadMax, from bands(B, G) of the run totals.
@@ -69,6 +70,22 @@ export function gen8TradeSlices(input: { fee: bigint; creatorShare: bigint; grad
   const protocol = routerAmount - league - recruiter - squad - airdrop;
   if (protocol < 0n) throw new Error("gen-8 HookFee: slices exceed the router part");
   return { fee, creatorShare, routerAmount, leagueWeekly, leagueMonthly, recruiter, squad, airdrop, protocol };
+}
+
+/**
+ * Barkswap (DogeOS 6281971, barkswap spec B11): gen-8's percentages apply to the NET DOGE credited to the router
+ * bucket, i.e. the net fee (after Barkswap's community cut) minus the creator's amount (B10, on the gross fee), not to
+ * the whole fee as on V4. MwzBarkFeeSplitter.bands(B, G) take B = the launcher's router bonding book (that same router
+ * part), so per-trade slices on this base and the run bands share one base and a run built from the rows reconciles to
+ * routerPaid to the wei. The row keeps fee = the net fee and creatorShare = the creator's amount (what reached our
+ * positions and how it splits); every slice is of routerAmount = fee - creatorShare.
+ */
+export function gen8RouterBaseSlices(input: { fee: bigint; creatorShare: bigint; graduated: boolean; profile: Gen8Profile }): Gen8Slices {
+  const fee = BigInt(input.fee);
+  const creatorShare = BigInt(input.creatorShare);
+  if (creatorShare > fee || fee < 0n) throw new Error("gen-8 Bark fee: creator amount above the net fee");
+  const s = gen8TradeSlices({ fee: fee - creatorShare, creatorShare: 0n, graduated: input.graduated, profile: input.profile });
+  return { ...s, fee, creatorShare };
 }
 
 /** One Graduated event (gradFeeNative goes to the router bucket in full; no league share). */
