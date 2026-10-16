@@ -1,9 +1,29 @@
 -- DogeOS Barkswap (gen-8 on Algebra, chain 6281971): staging schema for the Barkswap rows.
 -- docs/templar/specs/2026-10-14-dogeos-barkswap-launch-design.md section 3 "Money flow" / "Attribution for D1", section 4 Database.
 --
--- Started by plan task t19 (the two conversion-bookkeeping tables below). Plan task t23 completes this file (side-pool
--- venue value, event kinds, the header note on 20261010) and its staging apply script. Idempotent; not run anywhere yet.
+-- Plan tasks t19 (the two conversion-bookkeeping tables) and t23 (the rest). Additive and idempotent (safe to run
+-- twice): create ... if not exists, drop constraint if exists before every add. Staging only, applied with
+-- database/staging_apply_dogeos_barkswap.sh; production SQL is handed to the founder at the port. Nothing here moves money.
 --
+-- 20261010_000020_dogeos_chain_launch_path.sql stays as is (docs/dogeos/barkswap-plan-inventory.md section C6: nothing
+-- in it is MuchFi-specific; it widens the draft launch-options chain list and the $150 graduation tier by 6281971).
+-- The spec's "the 2026-10-10 DogeOS migration is revised" is therefore this file, applied after it by the same script.
+--
+-- What the Barkswap rows need beyond gen-8's migrations (20261011_000010, 20261012_000011/12):
+--   - Row identity (plan global constraint): Bark rows keep execution_source 'gen8_v4', venue 'gen8',
+--     factory_generation 8, so there is no new market_trades_v label and no change to any chain's market rows.
+--   - The gen-8 tables have no chain-id CHECK; 6281971 passes them as is.
+--   - Event kinds: the only kind CHECK on a table the Bark indexer writes events into is evm_campaign_events_kind_check
+--     (contract_kind). Bark events go through recordGen8Event (realtime-indexer/src/evm/evmGen8Store.ts), whose kind
+--     is one of gen8_hook / gen8_launcher / gen8_splitter / gen8_choice_vault, all allowed since 20261011; unchanged
+--     here. Bark accruals use kind trade / graduation and reward_events route_kind trade / finalize, as gen-8. Alerts
+--     go to reward_alerts with the kind in metadata (jsonb) and reward_type unchecked (frontend/sql/reward-ledger-
+--     foundation.sql), so the new kinds and the 'dogeos_bark_keeper' reward type need no DDL.
+--   - market_stats USD (evmGen8Bark.ts barkMarketStatsUsd): the columns come from 20260903_000101; valuation_source
+--     has no check. indexer_state cursors (gen8-money:*, gen8-bark-attribution-v1:*) need no DDL.
+--   - Below: the Bark conversion bookkeeping (t19), the side-pool venue 'algebra', the attribution replay's accrual index.
+begin;
+
 -- ---------------------------------------------------------------------------------------------------------- t19
 -- Rows keep the gen-8 identity (plan global constraint "Row identity"): buys and the graduation fee are ordinary
 -- evm_gen8_fee_accruals rows (hook_address = the plugin). Two things gen-8's V4 tables cannot hold:
@@ -42,7 +62,7 @@ create table if not exists public.evm_gen8_bark_sell_fees (
   converted_native numeric(78,0) not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (chain_id, tx_hash, log_index),
+  constraint evm_gen8_bark_sell_fees_tx_log_key unique (chain_id, tx_hash, log_index),     -- insertBarkSellFee on conflict
   constraint evm_gen8_bark_sell_fees_phase_chk check (phase in ('bonding', 'post')),
   constraint evm_gen8_bark_sell_fees_profile_chk check (profile is null or profile in ('standard_linked', 'standard_unlinked', 'og_linked')),
   constraint evm_gen8_bark_sell_fees_nonneg_chk check (
@@ -89,7 +109,7 @@ create table if not exists public.evm_gen8_bark_credits (
   protocol numeric(78,0) not null default 0,
   run_id bigint,                             -- the MwzBarkFeeSplitter run
   created_at timestamptz not null default now(),
-  unique (chain_id, tx_hash, log_index, book, source_tx_hash, source_log_index),
+  constraint evm_gen8_bark_credits_credit_key unique (chain_id, tx_hash, log_index, book, source_tx_hash, source_log_index), -- insertCredit on conflict
   constraint evm_gen8_bark_credits_kind_chk check (credit_kind in ('collect', 'convert', 'graduation') and kind in ('trade', 'graduation')),
   constraint evm_gen8_bark_credits_book_chk check (book in ('router_bonding', 'router_post', 'graduation')),
   constraint evm_gen8_bark_credits_phase_chk check (phase in ('bonding', 'post')),
@@ -105,3 +125,23 @@ create index if not exists evm_gen8_bark_credits_unrouted_idx
 create index if not exists evm_gen8_bark_credits_run_idx on public.evm_gen8_bark_credits (chain_id, hook_address, run_id);
 create index if not exists evm_gen8_bark_credits_source_idx on public.evm_gen8_bark_credits (chain_id, source_tx_hash, source_log_index);
 -- ---------------------------------------------------------------------------------------------------------- end t19
+
+-- The attribution replay (evmGen8BarkAttribution.ts applyBarkAttributionAt) reads a coin's buy accruals before a log:
+-- where chain_id, hook_address, token_address, kind = 'trade', side = 'buy', (block_number, log_index) before the log,
+-- order by block_number, log_index. Once per FeesCollected / CoinFeesConverted, over the coin's whole history.
+create index if not exists evm_gen8_fee_accruals_bark_replay_idx
+  on public.evm_gen8_fee_accruals (chain_id, hook_address, token_address, kind, side, block_number, log_index);
+
+-- Side pools: the Bark watch (evmGen8SidePools.ts runBarkSidePoolWatcherOnce) writes venue 'algebra' for Barkswap
+-- Pool / CustomPool pools of our coins (MuchFi V3 pools keep 'v3_pancake'). Latest definition: 20261011_000010
+-- (create table, inline); every value kept, 'algebra' added.
+alter table public.evm_gen8_side_pools drop constraint if exists evm_gen8_side_pools_venue_chk;
+alter table public.evm_gen8_side_pools add constraint evm_gen8_side_pools_venue_chk check (venue in ('v2', 'v3', 'v3_pancake', 'solidly', 'v4', 'infinity_cl', 'algebra'));
+
+-- As the gen-8 tables: RLS on, no policies (indexer and API run as the table owner).
+alter table public.evm_gen8_bark_sell_fees enable row level security;
+alter table public.evm_gen8_bark_credits enable row level security;
+revoke all on public.evm_gen8_bark_sell_fees from anon, authenticated;
+revoke all on public.evm_gen8_bark_credits from anon, authenticated;
+
+commit;
