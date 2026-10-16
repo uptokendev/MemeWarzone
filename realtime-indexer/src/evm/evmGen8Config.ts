@@ -159,6 +159,9 @@ export type Gen8BarkChainConfig = {
 
 export type Gen8BarkConfigResult = { config: Gen8BarkChainConfig | null; invalid: string[]; reason: string | null };
 
+/** The DogeOS getLogs window (foundation spec: Chikyu RPCs cap a getLogs range at 10,000 blocks): ingest and census. */
+export const GEN8_BARK_MAX_LOG_SPAN = 10_000;
+
 /** Either venue's chain config. */
 export type Gen8AnyChainConfig = Gen8ChainConfig | Gen8BarkChainConfig;
 

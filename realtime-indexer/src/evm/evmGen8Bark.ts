@@ -24,7 +24,11 @@
  *   - fees are input-side: a buy pays WDOGE (fee_raw = grossFee), a sell pays coins (fee_raw = the coin fee valued at
  *     the swap's own fill price, grossFee x curve / (coins in - grossFee)). curve = BarkSwap.curveAmount (gen-7 volume).
  *   - swap kinds: a conversion (kind 1, the launcher selling coin fees at 0 fee) writes no trade, accrual or activity
- *     row and no swap-ledger row; its price moves the pool price, candles (price only, no trade, no volume) and stats.
+ *     row and no swap-ledger row; its price moves the pool price, candles (price only, no trade, no volume) and
+ *     token_stats / market_stats price, mcap and liquidity, never market_stats.last_trade_* (the last real swap).
+ *     Not in the evm_gen8_swaps ledger: the ledger has no kind column (a schema change) and its replay
+ *     (rebuildGen8Candles, lastGen8Swap, the rollback trade count) treats every row as a trade, which is V4 behaviour;
+ *     so a reorg rebuild restores candles from trades only and the next swap or conversion sets the price again.
  *     Escrow buys (2) and choice-vault buybacks (3) are written as gen-8 writes them, league excluded.
  *   - D14: BarkSwap.phase is the fee phase by the start price (0 bonding, the crossing swap included; 1 post), so
  *     curve_trades up to and including the crossing, dex_trades after, exactly as HookFee.graduated on V4.
@@ -38,7 +42,7 @@
  */
 import { ethers } from "ethers";
 import { GEN8_SPLITTER_EVENTS } from "./evmGen8Abi.js";
-import { configuredGen8BarkChains, gen8IngestPollMs, gen8LinkPolicy, gen8WrappedNative, intEnv, type Gen8BarkChainConfig, type Gen8LinkPolicy } from "./evmGen8Config.js";
+import { GEN8_BARK_MAX_LOG_SPAN, configuredGen8BarkChains, gen8IngestPollMs, gen8LinkPolicy, gen8WrappedNative, intEnv, type Gen8BarkChainConfig, type Gen8LinkPolicy } from "./evmGen8Config.js";
 import { decodeGen8Log, groupByTx, type Gen8Event, type HookFeeEvent, type JoinedSwap, type LogLike, type SwapEvent } from "./evmGen8Decode.js";
 import { gen8GraduationSlices, gen8TradeSlices } from "./evmGen8Fees.js";
 import { GEN8_TOTAL_SUPPLY, MAX_TICK, MIN_TICK, Q192, WAD, positionHoldings, rawToDecimal, sqrtAtTick } from "./evmGen8Math.js";
@@ -65,6 +69,7 @@ import {
 } from "./evmGen8Pool.js";
 import {
   insertGen8Accrual,
+  lastGen8Swap,
   loadGen8Pool,
   loadGen8Pools,
   markGen8Campaign,
@@ -158,8 +163,7 @@ export const BARK_SWAP_KIND = { trade: 0, conversion: 1, escrowBuy: 2, buyback: 
 /** BarkSwap.phase (MwzBarkPlugin PHASE_*). */
 export const BARK_PHASE_POST = 1;
 
-/** The DogeOS getLogs window (foundation: Chikyu RPCs cap a getLogs range at 10,000 blocks). */
-export const GEN8_BARK_MAX_LOG_SPAN = 10_000;
+export { GEN8_BARK_MAX_LOG_SPAN };
 
 /** MwzBarkPlugin.feeConfig(): compile-time, equal to gen-8's PoolLaunched.fees. */
 export const BARK_FEES = Object.freeze({ bondingBps: 200, postBps: 100, creatorPostBps: 50, sniperStartBps: 9000, creatorBondingBps: 560 });
@@ -615,6 +619,8 @@ async function applyBarkLaunches(ctx: Gen8BarkCtx, events: BarkEvent[], timeOf: 
   return n;
 }
 
+const kindSenderAlerted = new Set<string>();
+
 async function applyBarkSwap(ctx: Gen8BarkCtx, pool: Gen8PoolRow, e: BarkSwapEvent, tx: TxInfo, policy: Gen8LinkPolicy, blockTime: Date, blockHash: string | null, mode: Gen8IngestMode, wrappedNative: string): Promise<"curve_trades" | "dex_trades" | null> {
   const { db, sinks } = ctx;
   const cfg = barkConfig(ctx);
@@ -644,7 +650,10 @@ async function applyBarkSwap(ctx: Gen8BarkCtx, pool: Gen8PoolRow, e: BarkSwapEve
     return null;
   }
   const expected = e.swapKind === BARK_SWAP_KIND.escrowBuy ? cfg.escrow : isBuyback ? cfg.choiceVault : null;
-  if ((e.swapKind === BARK_SWAP_KIND.escrowBuy || isBuyback) && e.sender !== expected) {
+  const mismatch = `${cfg.chainId}:${e.swapKind}:${e.sender}:${expected ?? "unset"}`;
+  if ((e.swapKind === BARK_SWAP_KIND.escrowBuy || isBuyback) && e.sender !== expected && !kindSenderAlerted.has(mismatch)) {
+    // Once per (kind, sender, configured address) per process: a missing EVM_GEN8_ESCROW_<id> must not alert per swap.
+    kindSenderAlerted.add(mismatch);
     await sinks.raiseAlert({ severity: "warning", kind: "gen8_bark_swap_kind_sender", chainId: cfg.chainId, subject: `${e.txHash}:${e.logIndex}`, title: "Barkswap swap kind and sender disagree", message: `BarkSwap kind ${e.swapKind} from ${e.sender}, configured ${e.swapKind === BARK_SWAP_KIND.escrowBuy ? "escrow" : "choice vault"} ${expected ?? "(unset)"}. Written league excluded.` });
   }
   const opts = e.swapKind === BARK_SWAP_KIND.escrowBuy ? { creatorBuyKind: e.buy ? ("escrow" as const) : null, leagueExcluded: true, poolLiquidity: null } : isBuyback ? { leagueExcluded: true, poolLiquidity: null } : { poolLiquidity: null };
@@ -695,8 +704,11 @@ async function applyBarkConversion(ctx: Gen8BarkCtx, pool: Gen8PoolRow, e: BarkS
     await restateGen8BondingStats(ctx, pool, { price: state.price, soldRaw: state.progress.soldRaw, mcap: state.mcap, raisedDelta: null });
     return;
   }
-  // market_stats follows the pool; its last_trade_* move to the conversion block (the pool changed), volumes do not.
-  await restateGen8MarketStats(ctx, pool, { sqrtPriceX96: e.sqrtPriceAfter, price: state.price, mcap: state.mcap, lastTradeBlock: e.blockNumber, lastTradeAt: blockTime });
+  // market_stats follows the pool price, but a conversion is fee movement, not a trade (spec section 4): last_trade_*
+  // stay at the last real swap (the evm_gen8_swaps ledger holds trades only), so a coin nobody trades never looks
+  // active because the keeper converts its fees. No ledger row yet: price and token_stats only.
+  const lastTrade = await lastGen8Swap(db, cfg.chainId, pool.token);
+  if (lastTrade) await restateGen8MarketStats(ctx, pool, { sqrtPriceX96: e.sqrtPriceAfter, price: state.price, mcap: state.mcap, lastTradeBlock: lastTrade.blockNumber, lastTradeAt: lastTrade.blockTime });
   await restateGen8DexTokenStats(ctx, pool, e.sqrtPriceAfter);
   await barkMarketStatsUsd(ctx, pool.token);
 }

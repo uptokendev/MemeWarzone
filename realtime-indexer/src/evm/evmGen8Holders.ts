@@ -12,7 +12,7 @@
  * (it receives the community fee of every sell in coins) and each coin's own pool (evm_gen8_pools.pool_manager_address).
  */
 import { ethers } from "ethers";
-import { gen8CoreAddress, gen8MoneyHead, intEnv, type Gen8AnyChainConfig } from "./evmGen8Config.js";
+import { GEN8_BARK_MAX_LOG_SPAN, gen8CoreAddress, gen8MoneyHead, intEnv, type Gen8AnyChainConfig } from "./evmGen8Config.js";
 import type { Queryable } from "./evmGen8Store.js";
 import { INFINITY_VAULT } from "./evmGen8SidePools.js";
 
@@ -145,7 +145,9 @@ export async function runGen8HolderCensusOnce(opts: { db: DbWithConnect; cfg: Ge
   );
   if (!tokensRes.rows.length) return { tokens: 0, applied: 0, to: null };
   const head = await gen8MoneyHead(provider, cfg.chainId, env); // F10: the census feeds payouts: the money head (gen8MoneyHead)
-  const span = intEnv(env.EVM_GEN8_HOLDER_CHUNK, 2_000, 1, 50_000);
+  const chunk = intEnv(env.EVM_GEN8_HOLDER_CHUNK, 2_000, 1, 50_000);
+  // DogeOS: the Chikyu getLogs window, whatever EVM_GEN8_HOLDER_CHUNK says.
+  const span = cfg.venue === "barkswap" ? Math.min(chunk, GEN8_BARK_MAX_LOG_SPAN) : chunk;
   const perCall = intEnv(env.EVM_GEN8_HOLDER_ADDRESSES_PER_CALL, 100, 1, 1_000);
   // next block per token: one past its cursor, or its launch block (the mint to the launcher is in the launch tx).
   const next = new Map<string, number>();

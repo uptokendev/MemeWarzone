@@ -7,6 +7,8 @@
  *   EVM_GEN8_POLL_MS              ingest interval (60000; floor 60000 — launcher, hook and splitter)
  *   EVM_GEN8_DISPLAY_HEAD_TAG(_<id>)  what the UI rows follow: latest (Robinhood) / finalized (BNB); rolled back on a reorg
  *   EVM_GEN8_MONEY_HEAD_TAG(_<id>)    what the money rows wait for: safe (Robinhood) / finalized (BNB); never rolled back
+ *   EVM_GEN8_MONEY_DEPTH_<id>     DogeOS (6281971): the money head is latest - 20 blocks (founder 2026-10-15; never
+ *                                 below Chikyu's max reorg of 17), the display head latest (evmGen8Config.ts gen8MoneyHead)
  *   EVM_GEN8_CONFIRMATIONS        blocks behind head for a `latest` tag (1)
  *   EVM_GEN8_LINK_ROUTERS_<id> / EVM_GEN8_LINK_DENY(_<id>) / EVM_GEN8_LINK_MAX_SWAP_SENDERS: link eligibility (evmGen8Config.ts)
  *   EVM_GEN8_ROUTER_CLAIMERS_<id>: wallets besides the splitter operator allowed to claimRouter() without an alert

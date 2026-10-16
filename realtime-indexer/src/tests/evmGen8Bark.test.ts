@@ -358,3 +358,38 @@ test("DOGE/USD: market_stats USD columns of a graduated coin from the DogeOS ora
   for (const q of usd) assert.deepEqual(q.params.slice(2), [0.25, at.toISOString(), true, null]);
   assert.ok(usd.every((q) => q.params[1] === COIN));
 });
+
+test("a conversion moves the price, never market_stats.last_trade_*: they stay at the last real swap", async () => {
+  const { db } = await runBark();
+  const conv = barkLog("convert (coin fees to DOGE)", "BarkSwap");
+  const lastReal = barkLog("router sell (post-graduation)", "BarkSwap");
+  const i = db.log.findIndex((q) => q.sql.startsWith("update public.evm_gen8_pools set last_sqrt_price_x96") && q.params[2] === conv.args.sqrtPriceAfter);
+  assert.ok(i > 0, "the conversion moved the pool price");
+  const after = db.log.slice(i).find((q) => q.sql.startsWith("insert into public.market_stats("));
+  assert.ok(after, "market_stats restated after the conversion (price / mcap / liquidity)");
+  assert.deepEqual([after!.params[18], after!.params[19]], [lastReal.blockNumber, new Date(Number(lastReal.blockTimestamp) * 1000).toISOString()], "last_trade_* = the last real swap");
+  assert.ok(db.writes("insert into public.market_stats(").every((q) => q.params[18] !== conv.blockNumber), "no market_stats write ever names the conversion block");
+});
+
+test("holder census on 6281971: getLogs span capped at 10,000 blocks whatever EVM_GEN8_HOLDER_CHUNK says", async () => {
+  const { db, cfg } = await runBark();
+  const { runGen8HolderCensusOnce } = await import("../evm/evmGen8Holders.js");
+  const calls: Array<{ fromBlock: number; toBlock: number }> = [];
+  const head = BARK_START + 60_000;
+  const r = await runGen8HolderCensusOnce({
+    db, cfg, env: { EVM_GEN8_HOLDER_CHUNK: "50000" },
+    provider: { getBlockNumber: async () => head, getBlock: async () => ({ number: head }), getLogs: async (f) => (calls.push(f), []) },
+  });
+  assert.ok(calls.length > 0);
+  for (const c of calls) assert.ok(c.toBlock - c.fromBlock + 1 <= 10_000, `${c.fromBlock}..${c.toBlock}`);
+  assert.equal(r.to, BARK_START + 9_999, "one 10,000-block window from the launch block");
+});
+
+test("swap kind / sender mismatch (escrow unset) alerts once per configuration, not per swap", async () => {
+  const esc = (barkFx.logs as any[]).find((l) => l.step === "escrow buy (creator)" && l.event === "BarkSwap");
+  const twice: RecordedLog[] = [...barkLogs(), { address: esc.address, topics: esc.topics, data: esc.data, blockNumber: Number(esc.blockNumber), transactionHash: esc.transactionHash, index: Number(esc.logIndex) + 100 }];
+  const { calls, db } = await runBark({ env: { EVM_GEN8_ESCROW_6281971: "" }, logs: twice });
+  const alerts = calls.filter((c) => c.name === "raiseAlert" && (c.args[0] as any).kind === "gen8_bark_swap_kind_sender");
+  assert.equal(alerts.length, 1);
+  assert.equal(db.writes("insert into public.dex_trades(").filter((q) => q.params[3] === lc(esc.transactionHash)).length, 2, "both escrow swaps still written");
+});

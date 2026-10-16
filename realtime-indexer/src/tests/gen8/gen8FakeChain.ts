@@ -3,7 +3,7 @@
  * ingest code without Postgres or an RPC:
  *   - FakeGen8Db implements Queryable.query (evmGen8Store.ts): every statement is logged (whitespace-normalised SQL
  *     and its parameters) and the few tables the ingest reads back (indexer_state, evm_gen8_pools,
- *     campaign_market_state, the idempotent inserts) are emulated; every other statement returns no rows.
+ *     campaign_market_state, evm_gen8_swaps, the census token list, the idempotent inserts) are emulated; every other statement returns no rows.
  *   - FakeGen8Provider implements Gen8Provider (evmGen8Pool.ts) over a list of recorded logs.
  *   - fakeGen8Sinks implements Gen8Sinks (evmGen8Pool.ts) and records every call.
  * The write log is what the tests compare: the V4 path against its recorded snapshot, a Barkswap swap against a V4 swap.
@@ -36,6 +36,8 @@ export class FakeGen8Db implements Queryable {
   cursors = new Map<string, number>();
   pools = new Map<string, Record<string, any>>();
   stages = new Map<string, string>();
+  /** evm_gen8_swaps (the display swap ledger), for lastGen8Swap / loadGen8SwapsSince. */
+  swaps: Array<Record<string, any>> = [];
   private keys = new Set<string>();
 
   async query(sqlIn: string, params: unknown[] = []): Promise<{ rows: any[]; rowCount?: number | null }> {
@@ -77,6 +79,25 @@ export class FakeGen8Db implements Queryable {
       const r = this.pools.get(String(p[1]));
       if (r && r.graduated_block === null) Object.assign(r, { graduated_block: p[2] });
       return done([]);
+    }
+    if (sql.startsWith("insert into public.evm_gen8_swaps(")) {
+      const key = `${p[0]}:${p[4]}:${p[5]}`;
+      if (!this.swaps.some((r) => r.key === key)) {
+        this.swaps.push({ key, chain_id: p[0], hook_address: p[1], pool_id: p[2], token_address: p[3], tx_hash: p[4], log_index: p[5], block_number: p[6], block_time: p[7], phase: p[8], side: p[9], sqrt_price_x96: p[10], price: p[11], mcap: p[12], volume: p[13], sold_raw: p[14] });
+      }
+      return done([]);
+    }
+    if (sql.startsWith("select max(block_time) as t from public.evm_gen8_swaps")) {
+      const times = this.swaps.filter((r) => r.chain_id === p[0] && r.token_address === p[1]).map((r) => (r.block_time as Date).getTime());
+      return done([{ t: times.length ? new Date(Math.max(...times)) : null }]);
+    }
+    if (sql.startsWith("select * from public.evm_gen8_swaps where chain_id = $1 and token_address = $2 and block_time >= $3")) {
+      const since = (p[2] as Date).getTime();
+      return done(this.swaps.filter((r) => r.chain_id === p[0] && r.token_address === p[1] && (r.block_time as Date).getTime() >= since)
+        .sort((a, b) => a.block_number - b.block_number || a.log_index - b.log_index));
+    }
+    if (sql.startsWith("select p.token_address, p.launch_block, s.last_block from public.evm_gen8_pools p")) {
+      return done([...this.pools.values()].filter((r) => r.chain_id === p[0] && r.hook_address === p[1]).map((r) => ({ token_address: r.token_address, launch_block: r.launch_block, last_block: null })));
     }
     if (sql.startsWith("select market_stage from public.campaign_market_state")) {
       const s = this.stages.get(`${p[0]}:${p[1]}`);
