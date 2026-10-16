@@ -154,7 +154,7 @@ const TokenDetailsEntry = () => {
   useEffect(() => {
     if (!routeId) return;
     analytics.track("token_page_viewed", {
-      chain: isSolanaRoute ? "solana" : robinhoodRoute ? "robinhood" : "bnb",
+      chain: isSolanaRoute ? "solana" : isDogeosChainId(effectiveEvmChainId) ? "dogeos" : robinhoodRoute ? "robinhood" : "bnb",
       chainId: isSolanaRoute ? SOLANA_CHAIN_ID : effectiveEvmChainId,
     });
   }, [effectiveEvmChainId, isSolanaRoute, robinhoodRoute, routeId]);

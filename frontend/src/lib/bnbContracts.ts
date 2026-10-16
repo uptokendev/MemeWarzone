@@ -13,7 +13,8 @@ import TreasuryVaultV2Artifact from "@/abi/TreasuryVaultV2.json";
 import UPVoteTreasuryArtifact from "@/abi/UPVoteTreasury.json";
 import PermanentLpLockerArtifact from "@/abi/PermanentLpLocker.json";
 import type { SupportedChainId } from "@/lib/chainConfig";
-import { BNB_CHAIN_ID, BNB_TESTNET_CHAIN_ID, isDogeosChainId, isEvmChainId } from "@/lib/chainConfig";
+import { BNB_CHAIN_ID, BNB_TESTNET_CHAIN_ID, DOGEOS_TESTNET_CHAIN_ID, isDogeosChainId, isEvmChainId } from "@/lib/chainConfig";
+import { gen8AppConfig } from "@/lib/evmGen8Client.mjs";
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 export const OBSOLETE_BSC_TESTNET_FACTORY = "0xe0FbBa4533513110Cec7e78aa3e48EC45301B5E6";
@@ -162,14 +163,22 @@ const bnbOnlyRequiredContracts = new Set<BnbContractKey>([
   "topazWbnb",
 ]);
 
-// DogeOS (6281971) has no CreatorRegistry (founder decision 2026-10-10: open creator rules) and no vote
-// treasury until sub-project 3. Neither is required there; every other chain keeps the common set.
-const dogeosNotRequiredContracts = new Set<BnbContractKey>([
-  "creatorRegistry",
-  "voteTreasury",
-]);
+// DogeOS (6281971) launches on gen-8 only, on Barkswap (barkswap spec section 4; B8 removed its gen-7 factory,
+// campaign, router, vaults and LP locker). Its launch contract is the gen-8 MwzBarkLauncher from the app's gen-8
+// Barkswap config (VITE_EVM_GEN8_LAUNCHER_6281971 + VITE_EVM_GEN8_PLUGIN_6281971, evmGen8Client.mjs gen8AppConfig),
+// shown as launchFactory; it is the only contract required there, and no gen-7 env name is read for 6281971.
+// Every other chain keeps the gen-7 set below.
+const DOGEOS_LAUNCHER_LABEL = "MwzBarkLauncher (gen-8, Barkswap)";
+
+function dogeosGen8Launcher(): string {
+  return gen8AppConfig(DOGEOS_TESTNET_CHAIN_ID)?.launcher || "";
+}
 
 export function getBnbContractAddresses(chainId: SupportedChainId): BnbContractAddresses {
+  if (isDogeosChainId(chainId)) {
+    const none = Object.fromEntries((Object.keys(contractLabels) as BnbContractKey[]).map((key) => [key, ""])) as BnbContractAddresses;
+    return { ...none, launchFactory: dogeosGen8Launcher() };
+  }
   return {
     launchFactory: readCreationFactory(chainId),
     launchCampaignImplementation: readAddress(chainId, "VITE_CAMPAIGN_IMPLEMENTATION_ADDRESS"),
@@ -192,13 +201,14 @@ export function getBnbContractAddresses(chainId: SupportedChainId): BnbContractA
 export function getBnbContractReadiness(chainId: SupportedChainId): BnbContractReadiness {
   const addresses = getBnbContractAddresses(chainId);
   const items = (Object.keys(addresses) as BnbContractKey[]).map((key) => {
-    const commonRequired =
-      commonRequiredContracts.has(key) && !(isDogeosChainId(chainId) && dogeosNotRequiredContracts.has(key));
-    const required = commonRequired || (isBnbChain(chainId) && bnbOnlyRequiredContracts.has(key));
+    const dogeos = isDogeosChainId(chainId);
+    const required = dogeos
+      ? key === "launchFactory"
+      : commonRequiredContracts.has(key) || (isBnbChain(chainId) && bnbOnlyRequiredContracts.has(key));
     const address = addresses[key];
     return {
       key,
-      label: contractLabels[key],
+      label: dogeos && key === "launchFactory" ? DOGEOS_LAUNCHER_LABEL : contractLabels[key],
       required,
       address,
       ready: Boolean(address),

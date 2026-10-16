@@ -14,9 +14,10 @@ import { DOGEOS_DEX_LABEL } from "./dogeosPresentation.mjs";
 // DogeOS Chikyu testnet (6281971) launches on gen-8 only (Barkswap venue). Its gen-7 / Robinhood V3 family
 // branches are removed (plan t12 and t33, spec section 4 "Removed (B8)"): the V3 trade library refuses 6281971,
 // the token page's graduated-trade gates, the gen-7 buy switch, USD-target read, launch options and LP harvest are
-// Robinhood-only again, and the launchpad safety adapter for 6281971 is the gen-8 Barkswap one, which fails closed
-// until the Bark client is wired (t22). What stays is chain identity: 6281971 never falls back to 46630, 56 or 97.
-// Robinhood 46630 is asserted next to it so the existing behaviour stays pinned.
+// Robinhood-only again, and the launchpad safety adapter for 6281971 is the gen-8 Barkswap one (the Bark client,
+// plan t22), which fails closed without the app's Barkswap config. Create readiness on 6281971 is gen-8's: the Bark
+// launcher. What stays is chain identity: 6281971 never falls back to 46630, 56 or 97. Robinhood 46630 is asserted
+// next to it so the existing behaviour stays pinned.
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const srcRoot = path.resolve(dir, "..");
@@ -26,12 +27,17 @@ const read = (rel) => readFileSync(path.join(srcRoot, rel), "utf8");
 const DOGEOS = 6281971;
 const RH_TESTNET = 46630;
 
-// MuchFi on Chikyu (the removed gen-7 venue): the refusal test serves its addresses so a DogeOS row is realistic.
-const MUCHFI = {
-  FACTORY: "0x7d175e06570CaFA1cfDF060850b84E0Ca23EfF0B",
-  SMART_ROUTER: "0x54f7D7f6FeDf4E930eFd6b4742Ba0B9E8a6dC1CB",
-  QUOTER_V2: "0x5DE1Ea595653419f295511DEb781b98387a77cc2",
-  WDOGE: "0xF6BDB158A5ddF77F1B83bC9074F6a472c58D78aE",
+// DogeOS's venue on Chikyu, from the t8 fork recording (test/fixtures/dogeos/barkSwapEvent.json): Barkswap's
+// SwapRouter / QuoterV2 / factory and WDOGE, and our Bark launcher and plugin. The V3 refusal test serves them as a
+// DogeOS V3 env and market row (the shape the removed gen-7 path read), so the refusal is checked on realistic input.
+const BARK_FIXTURE = JSON.parse(readFileSync(path.resolve(frontendRoot, "..", "test/fixtures/dogeos/barkSwapEvent.json"), "utf8")).contracts;
+const BARK = {
+  FACTORY: ethers.getAddress(BARK_FIXTURE.AlgebraFactory.toLowerCase()),
+  SMART_ROUTER: ethers.getAddress(BARK_FIXTURE.SwapRouter.toLowerCase()),
+  QUOTER_V2: ethers.getAddress(BARK_FIXTURE.QuoterV2.toLowerCase()),
+  WDOGE: ethers.getAddress(BARK_FIXTURE.WDOGE.toLowerCase()),
+  LAUNCHER: ethers.getAddress(BARK_FIXTURE.MwzBarkLauncher.toLowerCase()),
+  PLUGIN: ethers.getAddress(BARK_FIXTURE.MwzBarkPlugin.toLowerCase()),
 };
 
 const addr = (n) => ethers.getAddress(`0x${n.toString(16).padStart(40, "0")}`);
@@ -61,11 +67,16 @@ const BASE_ENV = {
   VITE_ROBINHOOD_STOCK_ETH_ROUTING: "1",
 };
 const DOGEOS_ENV = {
-  VITE_ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_6281971: MUCHFI.SMART_ROUTER,
-  VITE_ROBINHOOD_V3_FACTORY_ADDRESS_6281971: MUCHFI.FACTORY,
-  VITE_ROBINHOOD_V3_QUOTER_ADDRESS_6281971: MUCHFI.QUOTER_V2,
-  VITE_WRAPPED_NATIVE_ADDRESS_6281971: MUCHFI.WDOGE,
+  VITE_ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_6281971: BARK.SMART_ROUTER,
+  VITE_ROBINHOOD_V3_FACTORY_ADDRESS_6281971: BARK.FACTORY,
+  VITE_ROBINHOOD_V3_QUOTER_ADDRESS_6281971: BARK.QUOTER_V2,
+  VITE_WRAPPED_NATIVE_ADDRESS_6281971: BARK.WDOGE,
   VITE_ROBINHOOD_V3_NATIVE_SWAP_ADAPTER_V2_ADDRESS_6281971: DOGEOS_S1_ADAPTER,
+};
+// The app's gen-8 Barkswap config (evmGen8Client.mjs gen8AppConfig): launcher + plugin.
+const BARK_APP_ENV = {
+  VITE_EVM_GEN8_LAUNCHER_6281971: `${BARK.LAUNCHER}@8578734`,
+  VITE_EVM_GEN8_PLUGIN_6281971: `${BARK.PLUGIN}@8578734`,
 };
 
 // fetchMarketRoute is the network edge of resolveRobinhoodV3Route; the stub serves the test's market rows.
@@ -126,6 +137,7 @@ async function loadHarness(name, env, contents = LAUNCH_PATH_ENTRY) {
 
 const fullHarness = () => loadHarness("dogeos-launch-path-full", { ...BASE_ENV, ...DOGEOS_ENV });
 const robinhoodOnlyHarness = () => loadHarness("dogeos-launch-path-rh-only", BASE_ENV);
+const barkHarness = () => loadHarness("dogeos-launch-path-bark", { ...BASE_ENV, ...DOGEOS_ENV, ...BARK_APP_ENV });
 
 // ---------------------------------------------------------------- chain fakes (ethers Provider / Signer surface)
 
@@ -219,13 +231,13 @@ function serveMarket(row) {
   globalThis.__mwzMarketRoute = async (campaign, chainId) => ({ ...row, chainId });
 }
 
-// What the V3 pool indexer stores for a 1% MuchFi pool: fee_bps = feePpm / 100 = 100.
+// A DogeOS market row naming Barkswap's router (fee_bps as the removed V3 pool indexer stored a 1% pool: 100).
 const dogeosMarket = (overrides = {}) =>
-  marketRow({ router: MUCHFI.SMART_ROUTER, factory: MUCHFI.FACTORY, wrappedNative: MUCHFI.WDOGE, quoteToken: MUCHFI.WDOGE, feeBps: 100, ...overrides });
+  marketRow({ router: BARK.SMART_ROUTER, factory: BARK.FACTORY, wrappedNative: BARK.WDOGE, quoteToken: BARK.WDOGE, feeBps: 100, ...overrides });
 const robinhoodMarket = (overrides = {}) =>
   marketRow({ router: RH.ROUTER, factory: RH.FACTORY, wrappedNative: RH.WETH, quoteToken: RH.WETH, feeBps: 30, ...overrides });
 const dogeosVenue = () =>
-  fakeVenue({ chainId: DOGEOS, router: MUCHFI.SMART_ROUTER, factory: MUCHFI.FACTORY, wrapped: MUCHFI.WDOGE, adapter: DOGEOS_S1_ADAPTER, quoter: MUCHFI.QUOTER_V2 });
+  fakeVenue({ chainId: DOGEOS, router: BARK.SMART_ROUTER, factory: BARK.FACTORY, wrapped: BARK.WDOGE, adapter: DOGEOS_S1_ADAPTER, quoter: BARK.QUOTER_V2 });
 const robinhoodVenue = () =>
   fakeVenue({ chainId: RH_TESTNET, router: RH.ROUTER, factory: RH.FACTORY, wrapped: RH.WETH, adapter: RH.ADAPTER, quoter: RH.QUOTER });
 
@@ -268,7 +280,7 @@ test("6281971 resolves to the gen-8 Barkswap adapter, never to 46630, 56 or 97",
   assert.throws(() => robinhoodAdapter.resolveRobinhoodChainId(DOGEOS), /DogeOS/);
   assert.throws(() => robinhoodAdapter.resolveRobinhoodChainId(String(DOGEOS)), /DogeOS/);
 
-  // Fail closed until the Bark client is wired (t22): no route, no API call, a clear "not available yet".
+  // Without the app's Barkswap config the Bark client fails closed: no API call, a clear "not available yet".
   await withFetchRecorder(async (calls) => {
     const adapter = launchpadAdapter.getLaunchpadAdapter({ chainId: DOGEOS });
     const status = await adapter.getStatus();
@@ -310,6 +322,42 @@ test("6281971 resolves to the gen-8 Barkswap adapter, never to 46630, 56 or 97",
     }
   });
 
+  // With the Barkswap config (t22): live, no trade authorization to wait for, and the API's chain-free safety
+  // preflight is posted with 6281971 (never 46630), from the DogeOS adapter or via the Robinhood one.
+  const bark = await barkHarness();
+  assert.equal(bark.dogeosAdapter.isDogeosBarkswapReady(), true);
+  await withFetchRecorder(async (calls) => {
+    const adapter = bark.launchpadAdapter.getLaunchpadAdapter({ chainId: DOGEOS });
+    const status = await adapter.getStatus();
+    assert.equal(status.chain, "dogeos");
+    assert.equal(status.protocolLive, true);
+    assert.equal(status.routeAuthorizationReady, true);
+    assert.equal(status.message, bark.dogeosAdapter.DOGEOS_TRADE_READY);
+    assert.match(status.message, /Barkswap/);
+    for (const side of ["buy", "sell"]) {
+      const preflight = await adapter.preflightTrade({ side, walletAddress: USER, campaignAddress: CAMPAIGN, chainId: DOGEOS });
+      assert.equal(preflight.allowed, true, side);
+      assert.equal(preflight.chain, "dogeos");
+      assert.match(calls.at(-1).url, side === "buy" ? /\/api\/launchpad\/preflight-buy$/ : /\/api\/launchpad\/preflight-sell$/);
+      assert.equal(calls.at(-1).body.chainId, DOGEOS);
+      assert.equal(calls.at(-1).body.campaignAddress, CAMPAIGN.toLowerCase());
+      const viaRobinhood = await bark.robinhoodAdapter
+        .createRobinhoodLaunchpadAdapter()
+        .preflightTrade({ side, walletAddress: USER, campaignAddress: CAMPAIGN, chainId: DOGEOS });
+      assert.equal(viaRobinhood.chain, "dogeos");
+      assert.equal(calls.at(-1).body.chainId, DOGEOS);
+    }
+    // no wallet: campaign checks only, no wallet preflight posted; a bad campaign is refused without a call
+    const before = calls.length;
+    const anon = await adapter.preflightTrade({ side: "buy", walletAddress: null, campaignAddress: CAMPAIGN, chainId: DOGEOS });
+    assert.equal(anon.allowed, true);
+    assert.match(anon.warnings[0], /DogeOS wallet/);
+    const bad = await adapter.preflightTrade({ side: "buy", walletAddress: USER, campaignAddress: "0x12", chainId: DOGEOS });
+    assert.equal(bad.allowed, false);
+    assert.equal(calls.length, before);
+    assert.ok(calls.every((c) => c.body?.chainId === DOGEOS), "every DogeOS preflight names 6281971");
+  });
+
   // unchanged for the existing chains
   assert.equal(launchpadAdapter.getLaunchpadAdapter({ chainId: 46630 }).chain, "robinhood");
   assert.equal(launchpadAdapter.getLaunchpadAdapter({ chainId: 4663 }).chain, "robinhood");
@@ -330,7 +378,10 @@ test("the gen-7 USD graduation-target read and bonding buy switch are Robinhood-
   assert.match(client, /const isRobinhoodBuy = targetChainId === ROBINHOOD_CHAIN_ID \|\| targetChainId === ROBINHOOD_TESTNET_CHAIN_ID;/);
   assert.match(client, /throw new Error\(`Switch your EVM wallet to Robinhood chain \$\{targetChainId\} and try again\.`\);/);
   assert.match(client, /throw new Error\(`Wallet did not switch to Robinhood chain \$\{targetChainId\}\.`\);/);
-  assert.doesNotMatch(client, /buyChainName|isDogeosChainId\((evmReadChainId|targetChainId)\)/);
+  // The one DogeOS read-chain branch left (t22) keeps the gen-7 factory away from 6281971; no other may come back.
+  const GEN7_FACTORY_GUARD = 'const factoryAddress = isDogeosChainId(evmReadChainId) ? "" : bnbAddresses.launchFactory;';
+  assert.equal(client.split(GEN7_FACTORY_GUARD).length, 2);
+  assert.doesNotMatch(client.replace(GEN7_FACTORY_GUARD, ""), /buyChainName|isDogeosChainId\((evmReadChainId|targetChainId)\)/);
   // Chain identity stays: a wallet on 6281971 reads its own chain, never BNB.
   assert.match(
     client,
@@ -377,9 +428,10 @@ test("token page entry, war-room row and trade panel keep 6281971 instead of def
   assert.match(entry, /const robinhoodRoute = isOwnEvmProductChainId\(effectiveEvmChainId\);/);
   assert.match(entry, /: isOwnEvmProductChainId\(forcedChainId\) \|\| isBnbChainId\(forcedChainId\)\s*\? forcedChainId/);
   assert.match(row, /inferredChainId === ROBINHOOD_TESTNET_CHAIN_ID \|\| inferredChainId === DOGEOS_TESTNET_CHAIN_ID\s*\? inferredChainId/);
-  // B8 (t33): a DogeOS row is no Robinhood row; it gets its own fail-closed card (dogeosWarRoomRow.test.mjs renders it).
+  // B8 (t33): a DogeOS row is no Robinhood row; t22: it gets the gen-8 Bark trade card (dogeosWarRoomRow.test.mjs renders it).
   assert.match(row, /const isDogeosRow = isDogeosChainId\(rowChainId\);\s*const isRobinhoodRow = rowChainId === ROBINHOOD_CHAIN_ID \|\| rowChainId === ROBINHOOD_TESTNET_CHAIN_ID;/);
-  assert.match(row, /\{isDogeosRow \? \([^<]*<div[^>]*data-testid="war-room-dogeos-trade-unavailable"/);
+  assert.match(row, /\{isDogeosRow \? \([^<]*<DogeosWarRoomTradeCard campaign=\{campaign\} \/>/);
+  assert.match(row, /<Gen8TradePanel chainId=\{DOGEOS_TESTNET_CHAIN_ID\}/);
   assert.doesNotMatch(row, /This coin trades in DOGE on DogeOS/);
   assert.match(row, /rowChainId === ROBINHOOD_TESTNET_CHAIN_ID \|\|\s*rowChainId === DOGEOS_TESTNET_CHAIN_ID \|\|\s*rowChainId === 101\s*\) \{\s*setSelectedFeedChainId\(rowChainId\);/);
   // Token page: the gen-7/MuchFi V3 gate (isV3GraduatedTradePage) is removed (B8). Every graduated-trade site is
@@ -519,11 +571,12 @@ test("LP fee harvest refuses 6281971 before any read or send; Robinhood keeps it
   assert.doesNotMatch(lib, /MuchFi|isV3PositionLockerChainId/);
 });
 
-// ---------------------------------------------------------------- create readiness (t37)
+// ---------------------------------------------------------------- create readiness (t37, gen-8 since t22)
 
-// Spec section 1: no CreatorRegistry on DogeOS (founder decision 2026-10-10) and no vote treasury until
-// sub-project 3. For 6281971 neither is required; every other contract still is, and every other chain's
-// required set stays exactly as before.
+// DogeOS launches on gen-8 only, on Barkswap (B8: no gen-7 factory, campaign, router, vaults or LP locker). Its create
+// readiness is the app's gen-8 Barkswap config: launchFactory = the Bark launcher (VITE_EVM_GEN8_LAUNCHER_6281971 with
+// VITE_EVM_GEN8_PLUGIN_6281971), the only contract required there; gen-7 env names for 6281971 are not read. Every
+// other chain's required set stays exactly as before.
 const READINESS_ENTRY = `export * from "./bnbContracts.ts";`;
 const READINESS_ENV_NAMES = [
   "VITE_FACTORY_ADDRESS",
@@ -551,12 +604,10 @@ function readinessEnv() {
   }
   return env;
 }
-const readinessHarness = () => loadHarness("dogeos-readiness", readinessEnv(), READINESS_ENTRY);
-const readinessHarnessWithoutDogeosFactory = () => {
-  const env = readinessEnv();
-  delete env[`VITE_FACTORY_ADDRESS_${DOGEOS}`];
-  return loadHarness("dogeos-readiness-no-factory", env, READINESS_ENTRY);
-};
+const readinessHarness = () => loadHarness("dogeos-readiness", { ...readinessEnv(), ...BARK_APP_ENV }, READINESS_ENTRY);
+const readinessHarnessWithoutBarkPlugin = () =>
+  loadHarness("dogeos-readiness-no-plugin", { ...readinessEnv(), VITE_EVM_GEN8_LAUNCHER_6281971: BARK.LAUNCHER }, READINESS_ENTRY);
+const readinessHarnessGen7Only = () => loadHarness("dogeos-readiness-gen7-only", readinessEnv(), READINESS_ENTRY);
 
 // The required set every EVM chain had before t37, in item order.
 const COMMON_REQUIRED = [
@@ -574,33 +625,37 @@ const COMMON_REQUIRED = [
   "voteTreasury",
 ];
 const TOPAZ_REQUIRED = ["topazRouter", "topazFactory", "topazWbnb"];
-const DOGEOS_REQUIRED = COMMON_REQUIRED.filter((key) => key !== "creatorRegistry" && key !== "voteTreasury");
 const requiredKeys = (readiness) => readiness.items.filter((item) => item.required).map((item) => item.key);
 // The contract half of Create.tsx's direct-deploy gate (evmContractsConfigured), pinned against its source below.
 const directDeployContractsConfigured = (m, chainId) =>
   m.getBnbContractReadiness(chainId).ready && Boolean(m.getBnbContractAddresses(chainId).launchFactory);
 
-test("create readiness on 6281971: ready without a creator registry or vote treasury", async () => {
+test("create readiness on 6281971 is gen-8: the Bark launcher, nothing of gen-7", async () => {
   const m = await readinessHarness();
   const readiness = m.getBnbContractReadiness(DOGEOS);
   assert.deepEqual(readiness.missingRequired, []);
   assert.equal(readiness.ready, true);
-  assert.deepEqual(requiredKeys(readiness), DOGEOS_REQUIRED);
+  assert.deepEqual(requiredKeys(readiness), ["launchFactory"]);
   const byKey = Object.fromEntries(readiness.items.map((item) => [item.key, item]));
-  assert.equal(byKey.creatorRegistry.required, false);
-  assert.equal(byKey.voteTreasury.required, false);
-  assert.equal(byKey.creatorRegistry.address, "");
-  assert.equal(byKey.voteTreasury.address, "");
+  assert.equal(byKey.launchFactory.address, BARK.LAUNCHER);
+  assert.match(byKey.launchFactory.label, /MwzBarkLauncher/);
+  // the gen-7 env names set for 6281971 are not read: no gen-7 factory, campaign, router, vault or locker on DogeOS
+  const addresses = m.getBnbContractAddresses(DOGEOS);
+  assert.equal(addresses.launchFactory, BARK.LAUNCHER);
+  for (const [key, value] of Object.entries(addresses)) if (key !== "launchFactory") assert.equal(value, "", key);
   assert.equal(m.summarizeMissingBnbContracts(readiness), `All required EVM launchpad contracts are configured for chain ${DOGEOS}.`);
   assert.equal(directDeployContractsConfigured(m, DOGEOS), true);
 });
 
-test("create readiness on 6281971 still requires every other contract", async () => {
-  const m = await readinessHarnessWithoutDogeosFactory();
-  const readiness = m.getBnbContractReadiness(DOGEOS);
-  assert.equal(readiness.ready, false);
-  assert.deepEqual(readiness.missingRequired.map((item) => item.key), ["launchFactory"]);
-  assert.equal(directDeployContractsConfigured(m, DOGEOS), false);
+test("create readiness on 6281971 needs the complete Bark config; a gen-7 factory alone is not ready", async () => {
+  for (const harness of [readinessHarnessWithoutBarkPlugin, readinessHarnessGen7Only]) {
+    const m = await harness();
+    const readiness = m.getBnbContractReadiness(DOGEOS);
+    assert.equal(readiness.ready, false);
+    assert.deepEqual(readiness.missingRequired.map((item) => item.key), ["launchFactory"]);
+    assert.equal(m.getBnbContractAddresses(DOGEOS).launchFactory, "", "never the gen-7 VITE_FACTORY_ADDRESS_6281971");
+    assert.equal(directDeployContractsConfigured(m, DOGEOS), false);
+  }
 });
 
 test("create readiness on 56/97/4663/46630 still requires the creator registry and vote treasury", async () => {
@@ -621,8 +676,12 @@ test("Create's direct-deploy gate follows the bnbContracts readiness of the conf
   assert.match(create, /const evmAddresses = useMemo\(\s*\(\) => getBnbContractAddresses\(configuredEvmChainId\),/);
   assert.match(create, /const evmContractsConfigured = evmContractReadiness\.ready && Boolean\(evmAddresses\.launchFactory\);/);
   assert.match(create, /!isSolanaCreator && evmDirectDeployEnabled && evmContractsConfigured && walletOkForEvmDeploy;/);
-  // the exemption lives in the lib and is keyed on isDogeosChainId, never on the Robinhood sets
+  // the gen-8 readiness lives in the lib and is keyed on isDogeosChainId, never on the Robinhood sets
   const lib = read("lib/bnbContracts.ts");
   assert.match(lib, /isDogeosChainId\(chainId\)/);
+  assert.match(lib, /gen8AppConfig\(DOGEOS_TESTNET_CHAIN_ID\)\?\.launcher/);
   assert.doesNotMatch(lib, /isRobinhoodChainId/);
+  // the gen-7 client never reads or writes the Bark launcher as a gen-7 factory on DogeOS
+  const client = read("lib/launchpadClient.ts");
+  assert.match(client, /const factoryAddress = isDogeosChainId\(evmReadChainId\) \? "" : bnbAddresses\.launchFactory;/);
 });

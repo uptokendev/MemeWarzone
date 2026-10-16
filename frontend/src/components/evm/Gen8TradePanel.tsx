@@ -4,14 +4,14 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { cp } from "@/components/token/coinPageStyles";
 import { useWallet } from "@/contexts/WalletContext";
-import { getNativeSymbol, isRobinhoodChainId, type SupportedChainId } from "@/lib/chainConfig";
+import { getNativeSymbol, isDogeosChainId, isRobinhoodChainId, type SupportedChainId } from "@/lib/chainConfig";
 import { getReadProvider } from "@/lib/readProvider";
-import { evmBuyGasReserveWei } from "@/lib/tradeBalanceReserve";
+import { evmBuyGasReserveWei, evmBuyGasReserveWeiForChain } from "@/lib/tradeBalanceReserve";
 import { DBC_CREATOR_LOCK_COPY } from "../../../shared/dbcEconomics.mjs";
 import {
   GEN8_AUTO_SLIPPAGE,
   GEN8_DEFAULT_SLIPPAGE_BPS,
-  assertGen8HookMatches,
+  assertGen8PoolMatches,
   executeGen8EscrowBuy,
   executeGen8Trade,
   gen8AntiSniperCountdown,
@@ -19,7 +19,9 @@ import {
   gen8ErrorMessage,
   gen8FeeLine,
   gen8MaxSellable,
+  gen8PoolVenueLabel,
   gen8TradingOpensLine,
+  isGen8BarkAppConfig,
   quoteGen8Trade,
 } from "@/lib/evmGen8Client.mjs";
 import { gen8FormatPriceImpact, gen8UsesSizedSlippage } from "../../../shared/evmGen8Swap.mjs";
@@ -46,6 +48,9 @@ type Quote = {
   curveWei: bigint;
   creatorShareWei: bigint;
   graduated: boolean;
+  /** Barkswap (DogeOS): the coins the pool takes before the sell's start-price limit; `partial` when below amountIn. */
+  amountInUsed?: bigint;
+  partial?: boolean;
 };
 
 const ERC20_BALANCE = ["function balanceOf(address) view returns (uint256)"];
@@ -73,6 +78,11 @@ const fmt = (raw: bigint | string, digits: number) => Number(ethers.formatUnits(
  * with Uniswap's V4Quoter and executed through the chain's UniversalRouter. No trade signature from our API. The fee
  * line and the 60 s launch-fee countdown come from the API's tradeFee; the creator's own buys go through the escrow
  * (D5) and are held on the gen-7 schedule.
+ *
+ * DogeOS (6281971) is the Barkswap venue of the same panel (barkswap plan t22): the coin's Barkswap pool, quoted by
+ * Barkswap's QuoterV2 and executed through its SwapRouter (deployer = our launcher; evmGen8Client.mjs venue branch),
+ * the DOGE buy gas reserve, and sells limited at the start price, so a sell larger than the pool can take back is cut
+ * (shown before signing) instead of refused.
  */
 export function Gen8TradePanel({
   chainId,
@@ -90,16 +100,18 @@ export function Gen8TradePanel({
   const wallet = useWallet();
   const native = getNativeSymbol(chainId as SupportedChainId);
   const robinhood = isRobinhoodChainId(chainId);
+  const dogeos = isDogeosChainId(chainId);
   const cfg = useMemo(() => gen8AppConfig(chainId), [chainId]);
+  const bark = isGen8BarkAppConfig(cfg);
   const setupError = useMemo(() => {
     try {
-      assertGen8HookMatches(cfg, state.gen8?.hook);
+      assertGen8PoolMatches(cfg, state.gen8);
       if (!cfg?.router || !cfg?.quoter) return "Trading for this coin is not set up on this chain yet.";
       return null;
     } catch (error) {
       return String((error as Error)?.message || "Trading for this coin is not set up in this app yet.");
     }
-  }, [cfg, state.gen8?.hook]);
+  }, [cfg, state.gen8]);
   const token = state.token;
   const account = wallet.account ? String(wallet.account) : null;
   const viewerIsCreator = Boolean(account && state.creator && account.toLowerCase() === String(state.creator).toLowerCase());
@@ -154,12 +166,13 @@ export function Gen8TradePanel({
   }, [account, readProvider, token, balanceTick, spotKey]);
 
   useEffect(() => {
-    if (!readProvider || !cfg || !state.gen8?.poolId || state.gen8.tickStart == null) {
+    // Barkswap coins have no pool id: the cap comes from the lens by coin (null past graduation).
+    if (!readProvider || !cfg || (!state.gen8?.poolId && !bark) || state.gen8?.tickStart == null) {
       setMaxSellable(null);
       return;
     }
     let cancelled = false;
-    void gen8MaxSellable({ provider: readProvider, cfg, poolId: state.gen8.poolId, tickStart: state.gen8.tickStart })
+    void gen8MaxSellable({ provider: readProvider, cfg, poolId: state.gen8.poolId, tickStart: state.gen8.tickStart, token })
       .then((n) => {
         if (!cancelled) setMaxSellable(n);
       })
@@ -169,10 +182,11 @@ export function Gen8TradePanel({
     return () => {
       cancelled = true;
     };
-  }, [readProvider, cfg, state.gen8?.poolId, state.gen8?.tickStart, state.graduation?.phase, balanceTick, spotKey]);
+  }, [readProvider, cfg, bark, token, state.gen8?.poolId, state.gen8?.tickStart, state.graduation?.phase, balanceTick, spotKey]);
 
   const amountRaw = parseUnitsSafe(amount, 18);
-  const overSellCap = Boolean(side === "sell" && amountRaw && maxSellable != null && amountRaw > maxSellable);
+  // On Barkswap the sell's start-price limit cuts an oversized sell (the quote shows what fills), so it is not refused.
+  const overSellCap = Boolean(!bark && side === "sell" && amountRaw && maxSellable != null && amountRaw > maxSellable);
 
   // Live quote (exact input): what you receive, the price impact, the minimum at the slippage (sized from the impact on
   // BNB Chain, 1% on Robinhood), the fee and the creator's part.
@@ -206,7 +220,8 @@ export function Gen8TradePanel({
   // Safety read of the wallet balance and the sell cap. A new pool price refreshes them through spotKey.
   useEffect(() => setVisibleInterval(() => setBalanceTick((n) => n + 1), GEN8_COIN_POLL_MS), []);
 
-  const gasReserve = evmBuyGasReserveWei(robinhood);
+  // DogeOS pays gas in DOGE, with an L1 data fee on top (the foundation's DOGE reserve); other chains unchanged.
+  const gasReserve = dogeos ? evmBuyGasReserveWeiForChain(chainId) : evmBuyGasReserveWei(robinhood);
   const overBalance = Boolean(
     balances && amountRaw && (side === "buy" ? amountRaw + gasReserve > balances.nativeRaw : amountRaw > balances.tokenRaw),
   );
@@ -304,7 +319,7 @@ export function Gen8TradePanel({
       </div>
       <div>
         <div className="mb-2 flex items-center justify-between gap-2">
-          <span className="min-w-0 truncate text-xs text-mw-muted">Uniswap pool{graduated ? ", graduated" : ""}</span>
+          <span className="min-w-0 truncate text-xs text-mw-muted">{gen8PoolVenueLabel(chainId)} pool{graduated ? ", graduated" : ""}</span>
           <div className="flex items-center gap-2">
             {side === "sell" && balances && balances.tokenRaw > 0n ? (
               <Button
@@ -384,6 +399,11 @@ export function Gen8TradePanel({
             {countdown.line}
           </p>
         ) : null}
+        {quote?.partial && quote.amountInUsed != null ? (
+          <p className="mt-2 text-center text-xs text-[#FF9A4D]" data-gen8-partial-sell="true">
+            Only {fmt(quote.amountInUsed, 2)} {symbol || "tokens"} can be sold before the launch price. The rest stays in your wallet.
+          </p>
+        ) : null}
         {side === "sell" && maxSellable != null ? (
           <p className="mt-2 text-center text-[11px] text-mw-muted" data-gen8-max-sellable="true">
             Max sellable {fmt(maxSellable, 2)} {symbol || "tokens"}
@@ -431,7 +451,7 @@ export function Gen8TradePanel({
           void trade();
         }}
       >
-        {!account ? `Connect ${robinhood ? "Robinhood" : "BNB"} wallet` : !tradingOpen ? "Trading not open yet" : busy ? (side === "sell" ? "Approve and sign in your wallet..." : "Confirm in your wallet...") : `${side === "buy" ? "Buy" : "Sell"} ${symbol ? `$${symbol}` : ""}`.trim()}
+        {!account ? `Connect ${dogeos ? "DogeOS" : robinhood ? "Robinhood" : "BNB"} wallet` : !tradingOpen ? "Trading not open yet" : busy ? (side === "sell" ? "Approve and sign in your wallet..." : "Confirm in your wallet...") : `${side === "buy" ? "Buy" : "Sell"} ${symbol ? `$${symbol}` : ""}`.trim()}
       </Button>
     </div>
   );

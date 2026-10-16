@@ -14,6 +14,8 @@ import {
   claimGen8VaultCreatorFees,
   gen8AppConfig,
   gen8ErrorMessage,
+  gen8PoolVenueLabel,
+  isGen8BarkAppConfig,
   proposeGen8Creator,
   pullGen8VaultFees,
   releaseGen8Reserve,
@@ -59,7 +61,7 @@ export function Gen8CoinStatus({ chainId, state, explorerBase, nativeUsd = null 
           </div>
         </div>
       ) : (
-        <p className="text-xs text-emerald-300">Graduated. It keeps trading in the same Uniswap pool.</p>
+        <p className="text-xs text-emerald-300">Graduated. It keeps trading in the same {gen8PoolVenueLabel(chainId)} pool.</p>
       )}
       <div className="flex items-center justify-between gap-2">
         <span className="text-mw-muted">Market cap</span>
@@ -89,6 +91,9 @@ type Action = { key: string; title: string; detail: string; amount?: string; dis
  * vault (holders / split / buyback), both claimable to any address; the two-step creator transfer; the 2% reserve
  * released after graduation; the creator's escrowed app buys. Shown to the creator, a proposed new creator, and a
  * wallet with escrowed coins.
+ *
+ * Barkswap (DogeOS): the same actions keyed by the coin address; the creator ledger and the keep-coin transfer live in
+ * MwzBarkLauncher (the API's creatorClaims.claimContract), the rest in the Bark vault / reserve lock / escrow.
  */
 export function Gen8CreatorPanel({ chainId, state, onDone }: { chainId: number; state: Gen8CoinState; onDone?: () => void }) {
   const wallet = useWallet();
@@ -101,7 +106,9 @@ export function Gen8CreatorPanel({ chainId, state, onDone }: { chainId: number; 
   const [busy, setBusy] = useState<string | null>(null);
   if (!cfg || !account || !claims) return null;
 
-  const poolId = state.gen8.poolId;
+  const bark = isGen8BarkAppConfig(cfg);
+  // Bark contracts are keyed by the coin; the V4 ones by the pool id.
+  const poolId = bark ? state.token : state.gen8.poolId;
   const vaultCoin = Boolean(claims.vault && same(claims.hookCreator, claims.vault.address));
   const isHookCreator = same(account, claims.hookCreator);
   const isHumanCreator = same(account, state.creator);
@@ -208,7 +215,8 @@ export function Gen8CreatorPanel({ chainId, state, onDone }: { chainId: number; 
   }
 
   // Two-step transfer: on the hook for keep coins, in the vault for holders / split / buyback coins.
-  const transferTarget = vaultCoin ? cfg.choiceVault : cfg.hook;
+  const creatorLedger = bark ? cfg.launcher : cfg.hook;
+  const transferTarget = vaultCoin ? cfg.choiceVault : creatorLedger;
   const pending = vaultCoin ? pendingVault : pendingHook;
   const canPropose = vaultCoin ? isHumanCreator : isHookCreator;
 
@@ -264,7 +272,7 @@ export function Gen8CreatorPanel({ chainId, state, onDone }: { chainId: number; 
             type="button"
             size="sm"
             disabled={Boolean(busy)}
-            onClick={() => void run("accept", (signer) => acceptGen8Creator({ signer, chainId, target: pendingVault && same(account, pendingVault) ? cfg.choiceVault : cfg.hook, poolId }), "You are now the coin's creator.")}
+            onClick={() => void run("accept", (signer) => acceptGen8Creator({ signer, chainId, target: pendingVault && same(account, pendingVault) ? cfg.choiceVault : creatorLedger, poolId }), "You are now the coin's creator.")}
           >
             {busy === "accept" ? "…" : "Accept"}
           </Button>

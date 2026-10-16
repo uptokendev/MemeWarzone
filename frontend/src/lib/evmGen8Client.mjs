@@ -21,6 +21,17 @@
  *   VITE_EVM_GEN8_RESERVE_LOCK_<id>  MwzReserveLock: the creator's 2% reserve, released after graduation
  *   VITE_EVM_GEN8_UNIVERSAL_ROUTER_<id> (+ _LAYOUT_<id> for a router not in GEN8_KNOWN_ROUTERS), VITE_EVM_GEN8_V4_QUOTER_<id>:
  *                                    defaults on 56 / 4663 (shared/evmGen8Swap.mjs); testnets need them set
+ *
+ * Barkswap venue (DogeOS 6281971, GEN8_CHAIN_VENUE; barkswap plan t22, spec section 4 App): the same entry points branch
+ * to src/lib/barkswapSwap.mjs. The coin trades in its Barkswap custom pool through Barkswap's SwapRouter and QuoterV2
+ * (deployer = our launcher); everything Bark is keyed by the coin address (no pool id, no hook). App env:
+ *   VITE_EVM_GEN8_LAUNCHER_6281971   MwzBarkLauncher (create, launch records, the creator ledger)  } both required
+ *   VITE_EVM_GEN8_PLUGIN_6281971     MwzBarkPlugin (the pool plugin)                               }
+ *   VITE_EVM_GEN8_LENS_ / _ESCROW_ / _CHOICE_VAULT_ / _RESERVE_LOCK_6281971: the Bark variants (optional, as above)
+ *   VITE_EVM_GEN8_BARKSWAP_ROUTER_ / _BARKSWAP_QUOTER_ / _WNATIVE_6281971: overrides of Barkswap's SwapRouter, QuoterV2
+ *                                    and WDOGE (defaults in barkswapSwap.mjs BARKSWAP_PERIPHERY)
+ * Uniswap V4 names (HOOK / POOL_MANAGER / UNIVERSAL_ROUTER / V4_QUOTER) on 6281971 disable it, as in the API: a DogeOS
+ * coin is never traded or read through V4 or through another chain's contracts.
  */
 import { Contract, ethers } from "ethers";
 import {
@@ -37,6 +48,8 @@ import {
   gen8PoolId,
   gen8PoolKey,
   gen8RevertReason,
+  gen8VenueFor,
+  GEN8_VENUE_BARKSWAP,
   sqrtAtTick,
 } from "../../shared/evmGen8.mjs";
 import {
@@ -61,6 +74,22 @@ import {
   gen8SizedSlippageBps,
 } from "../../shared/evmGen8Swap.mjs";
 import { gasWithHeadroom, legacyGasPriceFor } from "./evmGasHeadroom.mjs";
+import {
+  BARK_CHOICE_VAULT_APP_ABI,
+  BARK_LAUNCHER_APP_ABI,
+  BARK_RESERVE_LOCK_APP_ABI,
+  assertBarkCreateAuthorization,
+  barkFirstBuyOnPlan,
+  barkMaxSellable,
+  barkswapPeripheryFor,
+  buildBarkTradeCall,
+  parseBarkLaunch,
+  quoteBarkTrade,
+  readBarkFeeBps,
+  readBarkLaunchPlan,
+  readBarkPoolRecord,
+} from "./barkswapSwap.mjs";
+import { DOGEOS_DEX_LABEL } from "./dogeosPresentation.mjs";
 
 export const GEN8_DEFAULT_SLIPPAGE_BPS = 100;
 /** Pass as slippageBps for the chain's default: sized from the price impact on BNB Chain (F13), 1% elsewhere. */
@@ -170,6 +199,7 @@ function envAddress(env, name) {
  */
 export function gen8AppConfig(chainId, env = moduleEnv()) {
   const id = Number(chainId);
+  if (gen8VenueFor(id) === GEN8_VENUE_BARKSWAP) return barkAppConfig(id, env);
   const hook = envAddress(env, `EVM_GEN8_HOOK_${id}`);
   if (!hook) return null;
   return {
@@ -183,6 +213,48 @@ export function gen8AppConfig(chainId, env = moduleEnv()) {
     router: gen8RouterFor(id, env),
     quoter: gen8QuoterFor(id, env),
   };
+}
+
+const V4_ONLY_ENV = ["EVM_GEN8_HOOK", "EVM_GEN8_POOL_MANAGER", "EVM_GEN8_UNIVERSAL_ROUTER", "EVM_GEN8_V4_QUOTER"];
+
+/**
+ * A Barkswap chain's app config (see the header), or null: launcher and plugin both required; any Uniswap V4 setting
+ * on the chain disables it. `router` / `quoter` / `wNative` are Barkswap's; a malformed override leaves the router or
+ * quoter null, so the panel shows "not set up" instead of trading anywhere else. No `hook`: Bark coins are keyed by
+ * their address.
+ */
+function barkAppConfig(id, env) {
+  if (V4_ONLY_ENV.some((base) => String(env?.[`VITE_${base}_${id}`] ?? env?.[`${base}_${id}`] ?? "").trim())) return null;
+  const launcher = envAddress(env, `EVM_GEN8_LAUNCHER_${id}`);
+  const plugin = envAddress(env, `EVM_GEN8_PLUGIN_${id}`);
+  if (!launcher || !plugin) return null;
+  const periphery = barkswapPeripheryFor(id, env);
+  const tradable = Boolean(periphery?.router && periphery?.wNative);
+  return {
+    chainId: id,
+    venue: GEN8_VENUE_BARKSWAP,
+    hook: null,
+    plugin,
+    launcher,
+    lens: envAddress(env, `EVM_GEN8_LENS_${id}`),
+    escrow: envAddress(env, `EVM_GEN8_ESCROW_${id}`),
+    choiceVault: envAddress(env, `EVM_GEN8_CHOICE_VAULT_${id}`),
+    reserveLock: envAddress(env, `EVM_GEN8_RESERVE_LOCK_${id}`),
+    router: tradable ? { address: periphery.router, layout: GEN8_VENUE_BARKSWAP, label: `${DOGEOS_DEX_LABEL} SwapRouter` } : null,
+    quoter: periphery?.quoter || null,
+    wNative: periphery?.wNative || null,
+  };
+}
+
+/** True for an app config on the Barkswap venue (gen8AppConfig of a Barkswap chain). */
+export function isGen8BarkAppConfig(cfg) {
+  return cfg?.venue === GEN8_VENUE_BARKSWAP;
+}
+
+/** The DEX the coin's pool lives in, for the panels' words: "Barkswap" on DogeOS, "Uniswap" on the V4 chains. */
+export function gen8PoolVenueLabel(cfgOrChainId) {
+  const bark = typeof cfgOrChainId === "object" && cfgOrChainId ? isGen8BarkAppConfig(cfgOrChainId) : gen8VenueFor(cfgOrChainId) === GEN8_VENUE_BARKSWAP;
+  return bark ? DOGEOS_DEX_LABEL : "Uniswap";
 }
 
 /** The launcher the create page uses on this chain, or null (launches stay on the chain's current generation). */
@@ -208,13 +280,27 @@ export function assertGen8HookMatches(cfg, apiHook) {
   if (apiHook && ethers.getAddress(apiHook) !== cfg.hook) throw new Error("This coin's pool does not match the app's setup. Trading is paused for it.");
 }
 
+/**
+ * assertGen8HookMatches for either venue, from the API's `gen8` block: on Barkswap the coin's state must name this
+ * app's plugin and launcher and no hook (a V4 answer for a DogeOS coin, or another plugin, is a different pool).
+ */
+export function assertGen8PoolMatches(cfg, gen8) {
+  if (!isGen8BarkAppConfig(cfg)) return assertGen8HookMatches(cfg, gen8?.hook);
+  const mismatch = () => new Error("This coin's pool does not match the app's setup. Trading is paused for it.");
+  if (gen8?.venue && gen8.venue !== GEN8_VENUE_BARKSWAP) throw mismatch();
+  if (gen8?.hook) throw mismatch();
+  if (gen8?.plugin && ethers.getAddress(gen8.plugin) !== cfg.plugin) throw mismatch();
+  if (gen8?.launcher && ethers.getAddress(gen8.launcher) !== cfg.launcher) throw mismatch();
+}
+
 // ------------------------------------------------------------------ create (6.1)
 
 /** The create page's graduation choices for a gen-8 launcher ($150 on testnets with the test tier on). */
 export function gen8GraduationTiers(chainId, { testTierEnabled = false } = {}) {
+  const venue = gen8PoolVenueLabel(chainId);
   const tiers = [
-    { id: "fast", label: "$30K MC", title: "Fast grad", description: "Graduates when the market cap reaches $30K. It keeps trading in the same Uniswap pool.", targetWei: GEN8_TARGET_FAST_USD },
-    { id: "normal", label: "$50K MC", title: "Normal", description: "Graduates when the market cap reaches $50K. It keeps trading in the same Uniswap pool.", targetWei: GEN8_TARGET_DEFAULT_USD },
+    { id: "fast", label: "$30K MC", title: "Fast grad", description: `Graduates when the market cap reaches $30K. It keeps trading in the same ${venue} pool.`, targetWei: GEN8_TARGET_FAST_USD },
+    { id: "normal", label: "$50K MC", title: "Normal", description: `Graduates when the market cap reaches $50K. It keeps trading in the same ${venue} pool.`, targetWei: GEN8_TARGET_DEFAULT_USD },
   ];
   if (testTierEnabled && GEN8_TEST_TARGET_CHAIN_IDS.includes(Number(chainId))) {
     tiers.unshift({ id: "test", label: "$150", title: "Testnet rehearsal", description: "Testnet only: graduates at a $150 market cap.", targetWei: GEN8_TARGET_TEST_USD, testOnly: true });
@@ -224,17 +310,27 @@ export function gen8GraduationTiers(chainId, { testTierEnabled = false } = {}) {
 
 export const GEN8_DEFAULT_GRADUATION_TARGET_WEI = GEN8_TARGET_DEFAULT_USD;
 
-/** launcher.plan(target): the curve the launcher would size in this block. Throws when the oracle cannot size it. */
-export async function readGen8LaunchPlan({ provider, launcher, targetUsd }) {
+/**
+ * launcher.plan(target): the curve the launcher would size in this block. Throws when the oracle cannot size it. On a
+ * Barkswap chain (chainId) MwzBarkLauncher.plan, whose plan also carries liqA / liqB and `venue: "barkswap"`.
+ */
+export async function readGen8LaunchPlan({ provider, launcher, targetUsd, chainId = null }) {
+  if (chainId != null && gen8VenueFor(chainId) === GEN8_VENUE_BARKSWAP) return readBarkLaunchPlan({ provider, launcher, targetUsd });
   const c = new Contract(launcher, GEN8_LAUNCHER_ABI, provider);
   const p = await c.plan(BigInt(targetUsd));
   return { marketCapNative: BigInt(p[0]), virtualNative: BigInt(p[1]), virtualToken: BigInt(p[2]), tickStart: Number(p[3]), tickGrad: Number(p[4]) };
 }
 
+/** The launch's own first-buy swap replayed on `plan`: V4 (gen8FirstBuyEstimate), or Algebra for a Barkswap plan. */
+function firstBuyEstimateOn(plan, valueWei) {
+  if (plan?.venue === GEN8_VENUE_BARKSWAP) return barkFirstBuyOnPlan({ valueWei, plan });
+  return gen8FirstBuyEstimate({ valueWei, tickStart: plan.tickStart, tickGrad: plan.tickGrad });
+}
+
 /** The first buy at `valueWei` on `plan`: coins out (the launch's V4 swap replayed), fee, supply share, cap check. */
 export function gen8FirstBuyPlan({ valueWei, plan }) {
   const value = BigInt(valueWei || 0n);
-  const est = gen8FirstBuyEstimate({ valueWei: value, tickStart: plan.tickStart, tickGrad: plan.tickGrad });
+  const est = firstBuyEstimateOn(plan, value);
   const supplyBps = Number((est.coinsOut * 10_000n) / GEN8_TOTAL_SUPPLY);
   return { valueWei: value, coinsOut: est.coinsOut, feeWei: est.feeWei, curveWei: est.costWei, supplyBps, exceedsCap: value > 0n && est.overCap };
 }
@@ -250,7 +346,7 @@ export function gen8MaxFirstBuyValue({ plan, headroomBps = GEN8_FIRST_BUY_MAX_HE
   // hi must be over the cap: A's whole native capacity bounds it well below 1e30 wei.
   while (lo < hi) {
     const mid = (lo + hi + 1n) / 2n;
-    const est = gen8FirstBuyEstimate({ valueWei: mid, tickStart: plan.tickStart, tickGrad: plan.tickGrad });
+    const est = firstBuyEstimateOn(plan, mid);
     if (!est.overCap && est.coinsOut <= capCoins) lo = mid;
     else hi = mid - 1n;
   }
@@ -366,7 +462,8 @@ export async function sendGen8Tx({ signer, chainId, tx, floor = null }) {
 }
 
 /** launcher.launch(...) exactly as authorized; returns { receipt, launched }. */
-export async function launchGen8Coin({ signer, chainId, launcher, authorization, firstBuyValueWei = null }) {
+export async function launchGen8Coin({ signer, chainId, launcher, authorization, firstBuyValueWei = null, cfg = null }) {
+  if (gen8VenueFor(chainId) === GEN8_VENUE_BARKSWAP) return launchBarkCoin({ signer, chainId, launcher, authorization, firstBuyValueWei, cfg: cfg || gen8AppConfig(chainId) });
   const args = gen8LaunchArgs(authorization, { chainId, launcher, firstBuyValueWei });
   const c = new Contract(launcher, GEN8_LAUNCHER_ABI, signer);
   // Launch measured at 1.67M gas on BSC and 1.10M on Robinhood (design 1): the floor keeps a failed estimate from
@@ -377,10 +474,37 @@ export async function launchGen8Coin({ signer, chainId, launcher, authorization,
   return { receipt, launched };
 }
 
+/**
+ * The Barkswap create answer as launch() arguments: gen8LaunchArgs' checks (chain, launcher, first buy) plus the Bark
+ * ones (venue, our plugin, a coin that sorts below WDOGE). MwzBarkLauncher.launch takes gen-8's request and auth.
+ */
+export function barkLaunchArgs(auth, { chainId, cfg, firstBuyValueWei = null }) {
+  if (!isGen8BarkAppConfig(cfg)) throw new Error("Launches on Barkswap are not set up in this app yet.");
+  const args = gen8LaunchArgs(auth, { chainId, launcher: cfg.launcher, firstBuyValueWei });
+  return { ...args, coin: assertBarkCreateAuthorization(auth, cfg) };
+}
+
+// The worst Bark launch measured 6,293,026 gas on the Chikyu fork (t8: buyback choice + first buy; gate 7M).
+const BARK_LAUNCH_GAS_FLOOR = 7_000_000n;
+const BARK_LAUNCHER_IFACE = new ethers.Interface(BARK_LAUNCHER_APP_ABI);
+
+/** MwzBarkLauncher.launch(...) exactly as authorized (Barkswap venue of launchGen8Coin); returns { receipt, launched }. */
+async function launchBarkCoin({ signer, chainId, launcher, authorization, firstBuyValueWei, cfg }) {
+  if (!isGen8BarkAppConfig(cfg) || !launcher || ethers.getAddress(launcher) !== cfg.launcher) throw new Error("The create authorization names another launcher.");
+  const args = barkLaunchArgs(authorization, { chainId, cfg, firstBuyValueWei });
+  const data = BARK_LAUNCHER_IFACE.encodeFunctionData("launch", [args.req, args.auth]);
+  const receipt = await sendGen8Tx({ signer, chainId, tx: { to: cfg.launcher, data, value: args.value }, floor: BARK_LAUNCH_GAS_FLOOR });
+  const launched = parseBarkLaunch(receipt, cfg.launcher);
+  if (!launched) throw new Error("The launch landed but its coin could not be read from the receipt.");
+  return { receipt, launched };
+}
+
 // ------------------------------------------------------------------ trade panel (6.2)
 
 /** The rate a swap through `sender` (the router, or the escrow) pays now: the lens, else the gen-7 formula from the hook. */
 export async function readGen8FeeBps({ provider, cfg, poolId, sender }) {
+  // Barkswap: keyed by the coin (pass it as poolId), MwzBarkLaunchLens.currentFeeBps(coin, sender).
+  if (isGen8BarkAppConfig(cfg)) return readBarkFeeBps({ provider, cfg, coin: poolId, sender });
   if (cfg.lens) {
     const lens = new Contract(cfg.lens, GEN8_LENS_ABI, provider);
     return Number(await lens.currentFeeBps(poolId, sender));
@@ -399,6 +523,8 @@ export async function readGen8FeeBps({ provider, cfg, poolId, sender }) {
 
 /** Reads the hook's record of the coin's pool (graduated flag and fee config), or null for a token that is not gen-8. */
 export async function readGen8PoolRecord({ provider, cfg, token }) {
+  // Barkswap: the launcher's and the plugin's record of the coin (poolId null, `pool` = its Algebra pool).
+  if (isGen8BarkAppConfig(cfg)) return readBarkPoolRecord({ provider, cfg, token });
   const poolId = gen8PoolId(token, cfg.hook);
   const hook = new Contract(cfg.hook, GEN8_HOOK_ABI, provider);
   const p = await hook.pools(poolId);
@@ -440,6 +566,8 @@ function quoterKey(poolKey) {
  * creatorShareWei, graduated, poolId, poolKey }.
  */
 export async function quoteGen8Trade({ provider, cfg, token, side, amountIn, slippageBps = GEN8_DEFAULT_SLIPPAGE_BPS, sender = null, record = null }) {
+  // Barkswap: QuoterV2 with deployer = our launcher; a sell is limited at the start price (barkswapSwap.mjs).
+  if (isGen8BarkAppConfig(cfg)) return quoteBarkTrade({ provider, cfg, token, side, amountIn, slippageBps, sender, record });
   if (!cfg?.quoter) throw new Error("No Uniswap quoter is configured for this chain.");
   const amount = BigInt(amountIn);
   if (amount <= 0n) throw new Error("Enter an amount.");
@@ -497,7 +625,9 @@ export async function previewGen8Fill({ provider, cfg, poolId, zeroForOne, amoun
  * Coins the pool will take back on an exact-input sell before the price would pass the start tick (F2 PriceAboveStart).
  * UniversalRouter V4 swaps carry no price limit, so the app clamps MAX and refuses a larger sell.
  */
-export async function gen8MaxSellable({ provider, cfg, poolId, tickStart }) {
+export async function gen8MaxSellable({ provider, cfg, poolId, tickStart, token = null }) {
+  // Barkswap: from the lens's progress (previewFill does not exist there); null = no cap (the sell's limit cuts it).
+  if (isGen8BarkAppConfig(cfg)) return barkMaxSellable({ provider, cfg, coin: token || poolId });
   if (tickStart == null || !Number.isFinite(Number(tickStart))) return 0n;
   return previewGen8Fill({
     provider,
@@ -552,6 +682,7 @@ export async function prepareGen8SellPermit({ signer, chainId, token, amountIn, 
  * headroom. Returns { receipt, quote, call }.
  */
 export async function executeGen8Trade({ signer, chainId, cfg, token, side, amountIn, slippageBps = GEN8_DEFAULT_SLIPPAGE_BPS, readProvider = null, quote = null }) {
+  if (isGen8BarkAppConfig(cfg)) return executeBarkTrade({ signer, chainId, cfg, token, side, amountIn, slippageBps, readProvider, quote });
   const reads = readProvider || signer.provider;
   const q = quote || (await quoteGen8Trade({ provider: reads, cfg, token, side, amountIn, slippageBps }));
   const now = Number((await reads.getBlock("latest")).timestamp);
@@ -561,11 +692,48 @@ export async function executeGen8Trade({ signer, chainId, cfg, token, side, amou
   return { receipt, quote: q, call };
 }
 
+// A Bark trade can cross graduation and take the 2% graduation fee inline (MwzBarkPlugin afterSwap calls the
+// launcher), more than a plain swap; the floor keeps a failed estimate from leaving the limit to a wallet default.
+const BARK_TRADE_GAS_FLOOR = 1_000_000n;
+const ERC20_IFACE = new ethers.Interface(ERC20_ABI);
+
+/** One Bark contract call sent as a raw transaction with the gen-8 gas rules (sendGen8Tx). */
+async function sendBarkCall({ signer, chainId, to, abi, method, args = [], value = 0n, floor = null }) {
+  const data = new ethers.Interface(abi).encodeFunctionData(method, args);
+  return sendGen8Tx({ signer, chainId, tx: { to, data, value }, floor });
+}
+
+/**
+ * executeGen8Trade on Barkswap: re-quotes, approves Barkswap's router for exactly this sell when the allowance is short
+ * (one transaction), then the router call built from the quote (barkswapSwap.mjs buildBarkTradeCall).
+ */
+async function executeBarkTrade({ signer, chainId, cfg, token, side, amountIn, slippageBps, readProvider, quote }) {
+  const reads = readProvider || signer.provider;
+  if (!cfg?.router?.address || !cfg?.quoter) throw new Error("Trading on Barkswap is not set up on this chain yet.");
+  const q = quote || (await quoteGen8Trade({ provider: reads, cfg, token, side, amountIn, slippageBps }));
+  const account = ethers.getAddress(await signer.getAddress());
+  if (side === "sell") {
+    const coin = new Contract(q.coin, ERC20_ABI, reads);
+    if (BigInt(await coin.allowance(account, cfg.router.address)) < q.amountIn) {
+      await sendGen8Tx({ signer, chainId, tx: { to: q.coin, data: ERC20_IFACE.encodeFunctionData("approve", [cfg.router.address, q.amountIn]), value: 0n } });
+    }
+  }
+  const now = Number((await reads.getBlock("latest")).timestamp);
+  const call = buildBarkTradeCall({ cfg, quote: q, account, deadline: BigInt(now + GEN8_SWAP_DEADLINE_SECONDS) });
+  const receipt = await sendGen8Tx({ signer, chainId, tx: call, floor: BARK_TRADE_GAS_FLOOR });
+  return { receipt, quote: q, call };
+}
+
 /** The creator's own buy in the app (D5): through MwzCreatorEscrow, coins held on the gen-7 schedule. */
 export async function executeGen8EscrowBuy({ signer, chainId, cfg, token, amountIn, slippageBps = GEN8_DEFAULT_SLIPPAGE_BPS, readProvider = null }) {
   if (!cfg?.escrow) throw new Error("Creator buys are not set up on this chain yet.");
   const reads = readProvider || signer.provider;
   const q = await quoteGen8Trade({ provider: reads, cfg, token, side: "buy", amountIn, slippageBps, sender: cfg.escrow });
+  if (isGen8BarkAppConfig(cfg)) {
+    // MwzBarkCreatorEscrow keeps gen-8's buy(token, minOut) and swaps in the coin's Barkswap pool itself.
+    const receipt = await sendBarkCall({ signer, chainId, to: cfg.escrow, abi: GEN8_ESCROW_ABI, method: "buy", args: [ethers.getAddress(token), q.minOut], value: q.amountIn, floor: BARK_TRADE_GAS_FLOOR });
+    return { receipt, quote: q };
+  }
   const escrow = new Contract(cfg.escrow, GEN8_ESCROW_ABI, signer);
   const receipt = await sendGen8Call({ signer, chainId, contract: escrow, method: "buy", args: [token, q.minOut], value: q.amountIn, floor: 400_000n });
   return { receipt, quote: q };
@@ -575,41 +743,52 @@ export async function executeGen8EscrowBuy({ signer, chainId, cfg, token, amount
 
 /** hook.claimCreator(id, to): the whole hook ledger to any address (keep coins; the hook creator only). */
 export async function claimGen8HookCreatorFees({ signer, chainId, cfg, poolId, to }) {
+  // Barkswap: MwzBarkLauncher.claimCreator(coin, to); `poolId` is the coin there.
+  if (isGen8BarkAppConfig(cfg)) return sendBarkCall({ signer, chainId, to: cfg.launcher, abi: BARK_LAUNCHER_APP_ABI, method: "claimCreator", args: [ethers.getAddress(poolId), ethers.getAddress(to)] });
   const hook = new Contract(cfg.hook, GEN8_HOOK_ABI, signer);
   return sendGen8Call({ signer, chainId, contract: hook, method: "claimCreator", args: [poolId, ethers.getAddress(to)] });
 }
 
 /** Two-step creator transfer: on the hook for keep coins, in the choice vault for holders / split / buyback coins. */
 export async function proposeGen8Creator({ signer, chainId, target, poolId, next }) {
+  // Barkswap: the launcher (keep coins) or the Bark choice vault, both keyed by the coin (`poolId`).
+  if (gen8VenueFor(chainId) === GEN8_VENUE_BARKSWAP) {
+    return sendBarkCall({ signer, chainId, to: target, abi: BARK_CHOICE_VAULT_APP_ABI, method: "proposeCreator", args: [ethers.getAddress(poolId), next ? ethers.getAddress(next) : ethers.ZeroAddress] });
+  }
   const c = new Contract(target, ["function proposeCreator(bytes32 id, address next)"], signer);
   return sendGen8Call({ signer, chainId, contract: c, method: "proposeCreator", args: [poolId, next ? ethers.getAddress(next) : ethers.ZeroAddress] });
 }
 
 export async function acceptGen8Creator({ signer, chainId, target, poolId }) {
+  if (gen8VenueFor(chainId) === GEN8_VENUE_BARKSWAP) return sendBarkCall({ signer, chainId, to: target, abi: BARK_CHOICE_VAULT_APP_ABI, method: "acceptCreator", args: [ethers.getAddress(poolId)] });
   const c = new Contract(target, ["function acceptCreator(bytes32 id)"], signer);
   return sendGen8Call({ signer, chainId, contract: c, method: "acceptCreator", args: [poolId] });
 }
 
 /** vault.pull(id): permissionless, moves the hook ledger into the vault and credits it by the coin's fee choice. */
 export async function pullGen8VaultFees({ signer, chainId, cfg, poolId }) {
+  if (isGen8BarkAppConfig(cfg)) return sendBarkCall({ signer, chainId, to: cfg.choiceVault, abi: BARK_CHOICE_VAULT_APP_ABI, method: "pull", args: [ethers.getAddress(poolId)] });
   const v = new Contract(cfg.choiceVault, GEN8_CHOICE_VAULT_ABI, signer);
   return sendGen8Call({ signer, chainId, contract: v, method: "pull", args: [poolId] });
 }
 
 /** vault.claimCreatorFees(id, to): the split coin's creator part, to any address. */
 export async function claimGen8VaultCreatorFees({ signer, chainId, cfg, poolId, to }) {
+  if (isGen8BarkAppConfig(cfg)) return sendBarkCall({ signer, chainId, to: cfg.choiceVault, abi: BARK_CHOICE_VAULT_APP_ABI, method: "claimCreatorFees", args: [ethers.getAddress(poolId), ethers.getAddress(to)] });
   const v = new Contract(cfg.choiceVault, GEN8_CHOICE_VAULT_ABI, signer);
   return sendGen8Call({ signer, chainId, contract: v, method: "claimCreatorFees", args: [poolId, ethers.getAddress(to)] });
 }
 
 /** reserveLock.release(id): permissionless once graduated; pays the coin's current creator. */
 export async function releaseGen8Reserve({ signer, chainId, cfg, poolId }) {
+  if (isGen8BarkAppConfig(cfg)) return sendBarkCall({ signer, chainId, to: cfg.reserveLock, abi: BARK_RESERVE_LOCK_APP_ABI, method: "release", args: [ethers.getAddress(poolId)] });
   const r = new Contract(cfg.reserveLock, GEN8_RESERVE_LOCK_ABI, signer);
   return sendGen8Call({ signer, chainId, contract: r, method: "release", args: [poolId] });
 }
 
 /** escrow.claim(token): what is released of the caller's escrowed buys. */
 export async function claimGen8Escrow({ signer, chainId, cfg, token }) {
+  if (isGen8BarkAppConfig(cfg)) return sendBarkCall({ signer, chainId, to: cfg.escrow, abi: GEN8_ESCROW_ABI, method: "claim", args: [ethers.getAddress(token)] });
   const e = new Contract(cfg.escrow, GEN8_ESCROW_ABI, signer);
   return sendGen8Call({ signer, chainId, contract: e, method: "claim", args: [token] });
 }

@@ -71,7 +71,7 @@ import { submitDbcCreateTransaction } from "@/lib/dbcCreateSubmit";
 import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
 import { isScheduleLocked } from "../../shared/dbcSchedule.mjs";
 import { EvmGen8LaunchOptions, assertEvmGen8LaunchBalance, freshEvmGen8FirstBuyCheck } from "@/components/create/EvmGen8LaunchOptions";
-import { GEN8_DEFAULT_GRADUATION_TARGET_WEI, gen8GraduationTiers, gen8LauncherFor } from "@/lib/evmGen8Client.mjs";
+import { GEN8_DEFAULT_GRADUATION_TARGET_WEI, gen8GraduationTiers, gen8LauncherFor, gen8PoolVenueLabel } from "@/lib/evmGen8Client.mjs";
 import { createGen8Campaign } from "@/lib/evmGen8Create";
 
 const DRAFT_PUSH_LIVE_ENABLED = ["1", "true", "yes", "on"].includes(
@@ -1108,7 +1108,7 @@ export default function PushDraftLive() {
           {...(gen8Tiers && !dbcDraft
             ? {
                 title: "Graduation market cap",
-                description: "The market cap at which the coin graduates. It keeps trading in the same Uniswap pool.",
+                description: `The market cap at which the coin graduates. It keeps trading in the same ${gen8PoolVenueLabel(Number(draft?.chainId || 0))} pool.`,
               }
             : {})}
           {...(evmGen7Tiers && !gen8Tiers && !dbcDraft

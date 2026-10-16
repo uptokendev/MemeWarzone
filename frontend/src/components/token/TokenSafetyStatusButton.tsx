@@ -9,7 +9,7 @@ import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import type { LaunchpadAdapterStatus, LaunchpadTradePreflight, TradeSide } from "@/features/launchpad/adapters";
 import { useLaunchpadAdapter } from "@/features/launchpad/useLaunchpadAdapter";
-import { isRobinhoodChainId, isSolanaChainId } from "@/lib/chainConfig";
+import { isDogeosChainId, isRobinhoodChainId, isSolanaChainId } from "@/lib/chainConfig";
 import { setVisibleInterval } from "@/lib/visibleInterval.mjs";
 
 
@@ -66,6 +66,7 @@ function safetyNetworkLabel(chainId?: number | string | null) {
   const id = Number(chainId);
   if (isSolanaChainId(id)) return "Solana";
   if (isRobinhoodChainId(id)) return "Robinhood";
+  if (isDogeosChainId(id)) return "DogeOS";
   return "BNB";
 }
 

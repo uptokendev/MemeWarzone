@@ -66,7 +66,7 @@ import {
 import { DBC_LAUNCH_FEE_NOTE } from "../../shared/dbcAntiSniper.mjs";
 import { readEvmLaunchGeneration, type EvmLaunchGeneration } from "@/lib/evmGen6Client";
 import { EvmGen8LaunchOptions, assertEvmGen8LaunchBalance, freshEvmGen8FirstBuyCheck } from "@/components/create/EvmGen8LaunchOptions";
-import { GEN8_DEFAULT_GRADUATION_TARGET_WEI, gen8GraduationTiers, gen8LauncherFor } from "@/lib/evmGen8Client.mjs";
+import { GEN8_DEFAULT_GRADUATION_TARGET_WEI, gen8GraduationTiers, gen8LauncherFor, gen8PoolVenueLabel } from "@/lib/evmGen8Client.mjs";
 import { createGen8Campaign } from "@/lib/evmGen8Create";
 import { getReadProvider } from "@/lib/readProvider";
 import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
@@ -381,7 +381,7 @@ const Create = () => {
     wallet.signer,
   ]);
   const isSolanaProtocolPending = launchpadSafetyStatus.protocolStatus === "protocol_pending";
-  // DogeOS shares the Robinhood gen-7 V3 launch family, and so its direct-deploy flag; never the BNB one.
+  // DogeOS (gen-8 on Barkswap only, B8) takes the Robinhood direct-deploy flag; never the BNB one.
   const robinhoodSelected = isRobinhoodChain(Number(configuredEvmChainId)) || isDogeosChainId(Number(configuredEvmChainId));
   const graduationMarketReady = Boolean(
     graduationQuoteAsset?.id && graduationQuoteAsset.newGraduationEligible === true,
@@ -1492,7 +1492,7 @@ const Create = () => {
                 left={<div className="flex w-full flex-col items-center gap-2">{preview}{selectedGraduation ? <p className="text-center text-xs text-mw-muted">Graduation: <span className="text-accent">{selectedGraduation.label}</span> · {selectedGraduation.title}</p> : null}</div>}
                 right={
                   <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto pr-1">
-                    <div><div className="text-sm font-semibold text-mw-text">{dbcLaunch || evmGen7 || evmGen8 ? "Graduation market cap" : "Graduation threshold"}</div><p className="mt-0.5 text-xs text-mw-muted">{dbcLaunch ? "The market cap at which the coin moves to a Meteora pool." : evmGen8 ? "The market cap at which the coin graduates. It keeps trading in the same Uniswap pool." : evmGen7 ? `The market cap at which the coin moves to a ${evmGen7DexName(chainId)} pool.` : "Bonding volume before DEX graduation."}</p></div>
+                    <div><div className="text-sm font-semibold text-mw-text">{dbcLaunch || evmGen7 || evmGen8 ? "Graduation market cap" : "Graduation threshold"}</div><p className="mt-0.5 text-xs text-mw-muted">{dbcLaunch ? "The market cap at which the coin moves to a Meteora pool." : evmGen8 ? `The market cap at which the coin graduates. It keeps trading in the same ${gen8PoolVenueLabel(Number(chainId))} pool.` : evmGen7 ? `The market cap at which the coin moves to a ${evmGen7DexName(chainId)} pool.` : "Bonding volume before DEX graduation."}</p></div>
                     <div className="grid grid-cols-2 gap-1.5">
                       {graduationOptions.map((option) => {
                         const selected = graduationTargetWei === option.targetWei;
