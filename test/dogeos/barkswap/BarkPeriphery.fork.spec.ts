@@ -12,24 +12,17 @@
 //   npx hardhat --config hardhat.dogeos-bark-fork.config.ts test test/dogeos/barkswap/BarkPeriphery.fork.spec.ts
 //
 // Needs the root build too (`npx hardhat compile`): the reused vaults deploy from artifacts/ (solc 0.8.24, the bytecode
-// BNB and Robinhood run). A small TEST-ONLY probe (BarkPoolProbe, source below) is compiled here with solc 0.8.26: it
-// calls pool.swap directly and records what it sees inside the swap callback. Nothing reaches Chikyu.
+// BNB and Robinhood run) through fixtures/rootVaults.ts. A small TEST-ONLY probe (BarkPoolProbe, source below) is
+// compiled inline with solc 0.8.26: it calls pool.swap directly and records what it sees inside the swap callback.
+// Nothing reaches Chikyu.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import fs from "node:fs";
-import path from "node:path";
 import { expect } from "chai";
-import hre, { ethers } from "hardhat";
+import { ethers } from "hardhat";
 import { loadFixture, time } from "@nomicfoundation/hardhat-toolbox/network-helpers";
-import {
-  TASK_COMPILE_SOLIDITY_GET_SOLC_BUILD,
-  TASK_COMPILE_SOLIDITY_RUN_SOLC,
-  TASK_COMPILE_SOLIDITY_RUN_SOLCJS,
-} from "hardhat/builtin-tasks/task-names";
 import {
   BARKSWAP,
   CREATOR_RESERVE,
   DEAD,
-  DEFAULT_DOGE_USD_ANSWER,
   Q96,
   WAD,
   algebraFeeUnits,
@@ -40,7 +33,6 @@ import {
   deployBarkStack,
   eventsOf,
   expectedRateBps,
-  foundationDogeUsdOracleArtifact,
   impersonate,
   launchCoin,
   poolState,
@@ -56,38 +48,14 @@ import {
   type C,
   type LaunchResult,
 } from "./fixtures/barkswap";
+import { DEFAULT_CHOICE_VAULT_CAPS as DEFAULT_CAPS, barkVaultsOf, compileInline, deployRealVaults, wireRealVaults, type RealVaults } from "./fixtures/rootVaults";
 
-const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
 const BPS = 10_000n;
 const DAY = 86_400n;
+const WEEK = 7n * DAY;
 const RESERVE_RELEASE_DELAY = 3_600n;
 const MAX_SQRT_PRICE = 1461446703485210103287273052203988822378723970342n;
 const LIVE_COMMUNITY_FEE = 30n;
-
-// ------------------------------------------------------------------------------------------------- root artifacts
-
-const ROOT_SOLC = "0.8.24";
-const checkedBuildInfo = new Set<string>();
-
-/** A reused contract from the root build (artifacts/, solc 0.8.24), the bytecode t15 deploys on Chikyu. */
-function rootArtifact(name: string): { abi: any[]; bytecode: string } {
-  const dir = path.join(REPO_ROOT, "artifacts", "contracts", `${name}.sol`);
-  const file = path.join(dir, `${name}.json`);
-  if (!fs.existsSync(file)) throw new Error(`no root artifact for ${name}: run \`npx hardhat compile\` first`);
-  const dbg = JSON.parse(fs.readFileSync(path.join(dir, `${name}.dbg.json`), "utf8"));
-  const buildInfo = path.resolve(dir, ...String(dbg.buildInfo).split(/[\\/]/));
-  if (!checkedBuildInfo.has(buildInfo)) {
-    const fd = fs.openSync(buildInfo, "r");
-    const head = Buffer.alloc(4096);
-    fs.readSync(fd, head, 0, head.length, 0);
-    fs.closeSync(fd);
-    const version = /"solcVersion":"([^"]+)"/.exec(head.toString("utf8"))?.[1];
-    if (version !== ROOT_SOLC) throw new Error(`${name}: root artifact built with solc ${version}, expected ${ROOT_SOLC}`);
-    checkedBuildInfo.add(buildInfo);
-  }
-  const art = JSON.parse(fs.readFileSync(file, "utf8"));
-  return { abi: art.abi, bytecode: art.bytecode };
-}
 
 // ------------------------------------------------------------------------------------------------- test-only probe
 
@@ -177,41 +145,8 @@ contract BarkPoolProbe {
 }
 `;
 
-let PROBE_ARTIFACT: { abi: any[]; bytecode: string } | undefined;
-
-async function probeArtifact(): Promise<{ abi: any[]; bytecode: string }> {
-  if (PROBE_ARTIFACT) return PROBE_ARTIFACT;
-  const solcVersion = "0.8.26";
-  const input = {
-    language: "Solidity",
-    sources: { "BarkPoolProbe.sol": { content: PROBE_SOURCE } },
-    settings: {
-      optimizer: { enabled: true, runs: 200 },
-      evmVersion: "cancun",
-      outputSelection: { "*": { "*": ["abi", "evm.bytecode.object"] } },
-    },
-  };
-  const build = await hre.run(TASK_COMPILE_SOLIDITY_GET_SOLC_BUILD, { quiet: true, solcVersion });
-  const output = build.isSolcJs
-    ? await hre.run(TASK_COMPILE_SOLIDITY_RUN_SOLCJS, { input, solcJsPath: build.compilerPath })
-    : await hre.run(TASK_COMPILE_SOLIDITY_RUN_SOLC, { input, solcPath: build.compilerPath, solcVersion });
-  const errors = (output.errors ?? []).filter((e: any) => e.severity === "error");
-  if (errors.length > 0) throw new Error(`BarkPoolProbe: ${errors.map((e: any) => e.formattedMessage).join("\n")}`);
-  const out = output.contracts["BarkPoolProbe.sol"].BarkPoolProbe;
-  PROBE_ARTIFACT = { abi: out.abi, bytecode: `0x${out.evm.bytecode.object}` };
-  return PROBE_ARTIFACT;
-}
 
 // ------------------------------------------------------------------------------------------------- fixture
-
-interface RealVaults {
-  weekly: C;
-  monthly: C;
-  recruiter: C;
-  protocol: C;
-  community: C;
-  holderDistributor: C;
-}
 
 interface Env {
   s: BarkStack;
@@ -219,61 +154,17 @@ interface Env {
   probe: C;
 }
 
-const DEFAULT_CAPS = { maxBuyPerTx: 1_000n * WAD, maxBuybackPerCoinWeek: 10_000n * WAD, minBuyInterval: 0n, maxImpactBps: 50n, maxHolderBatchPerWeek: 1_000n * WAD };
-
-/** The reused vaults from the root build (t15's order and constructor arguments; admin = the deployer key), then the
- *  Bark stack with the splitter pointed at them, then the wiring t15 does: CommunityRewardsVault router = splitter,
- *  choice vault distributor / operator / caps, holder distributor batch operator = choice vault. */
+/** The reused vaults from the root build, the Bark stack with the splitter pointed at them, t15's wiring, the probe. */
 async function peripheryFixture(): Promise<Env> {
   await readyFork();
-  const signers = await ethers.getSigners();
-  const deployer = signers[0];
-  const operator = signers[6];
-  const deployRoot = async (name: string, args: unknown[]): Promise<C> => {
-    const art = rootArtifact(name);
-    const c = await new ethers.ContractFactory(art.abi, art.bytecode, deployer).deploy(...args);
-    await c.waitForDeployment();
-    return c as unknown as C;
-  };
-  const oracleArt = await foundationDogeUsdOracleArtifact();
-  const feed = await new ethers.ContractFactory(oracleArt.abi, oracleArt.bytecode, deployer).deploy(deployer.address, DEFAULT_DOGE_USD_ANSWER, false);
-  await feed.waitForDeployment();
-  const gradOracle = await deployRoot("GraduationOracle", [await feed.getAddress(), 3600n]);
-  const weekly = await deployRoot("TreasuryVaultV2", [deployer.address, ethers.ZeroAddress, deployer.address]);
-  const charity = await deployRoot("CharityTreasury", [deployer.address]);
-  const monthly = await deployRoot("MonthlyLeagueTreasury", [
-    deployer.address,
-    deployer.address,
-    await gradOracle.getAddress(),
-    await charity.getAddress(),
-    1_500_000n * WAD,
-  ]);
-  const recruiter = await deployRoot("RecruiterRewardsVault", [deployer.address]);
-  const protocol = await deployRoot("ProtocolRevenueVault", [deployer.address]);
-  const community = await deployRoot("CommunityRewardsVault", [deployer.address, ethers.ZeroAddress]);
-  const holderDistributor = await deployRoot("RewardDistributor", [deployer.address]);
-
-  const s = await deployBarkStack({
-    vaults: {
-      weeklyLeagueVault: await weekly.getAddress(),
-      monthlyLeagueTreasury: await monthly.getAddress(),
-      recruiterRewardsVault: await recruiter.getAddress(),
-      communityRewardsVault: await community.getAddress(),
-      protocolRevenueVault: await protocol.getAddress(),
-    },
-  });
-  if (s.signers.operator.address !== operator.address) throw new Error("operator signer mismatch");
-  const vault = await s.choiceVault.getAddress();
-  await (await community.connect(deployer).setRouter(await s.splitter.getAddress())).wait();
-  await (await s.choiceVault.connect(deployer).setHolderDistributorOnce(await holderDistributor.getAddress())).wait();
-  await (await holderDistributor.connect(deployer).setBatchOperator(vault)).wait();
-  await (await s.choiceVault.connect(deployer).setOperator(operator.address, false)).wait();
-  const c = DEFAULT_CAPS;
-  await (await s.choiceVault.connect(deployer).setCaps(c.maxBuyPerTx, c.maxBuybackPerCoinWeek, c.minBuyInterval, c.maxImpactBps, c.maxHolderBatchPerWeek)).wait();
-  const pa = await probeArtifact();
+  const [deployer] = await ethers.getSigners();
+  const v = await deployRealVaults(deployer);
+  const s = await deployBarkStack({ vaults: await barkVaultsOf(v) });
+  await wireRealVaults(s, v);
+  const pa = await compileInline("BarkPoolProbe", PROBE_SOURCE);
   const probe = (await new ethers.ContractFactory(pa.abi, pa.bytecode, deployer).deploy()) as unknown as C;
   await probe.waitForDeployment();
-  return { s, v: { weekly, monthly, recruiter, protocol, community, holderDistributor }, probe };
+  return { s, v, probe };
 }
 
 // ------------------------------------------------------------------------------------------------- helpers
@@ -578,7 +469,7 @@ describe("Bark periphery on the Chikyu fork (t10)", function () {
       const keep = await launchCoin(s);
       expect((await s.launcher.launches(keep.coin)).feeCreator).to.equal(creator.address);
       expect((await s.choiceVault.cfg(keep.coin)).choice).to.equal(0n);
-      expect(eventsOf(keep.receipt, s.choiceVault)).to.have.length(0);
+      expect(keep.receipt.logs.filter((l) => l.address.toLowerCase() === vault.toLowerCase())).to.have.length(0);
       for (const [choice, pct] of [
         [2, 0],
         [3, 40],
@@ -687,12 +578,11 @@ describe("Bark periphery on the Chikyu fork (t10)", function () {
       const sb = await s.choiceVault.holderBalance(split.coin);
       const root = ethers.id("holders-root");
       const id1 = ethers.id("batch-1");
-      let t = BigInt(await time.latest()) + 10n;
       const delay = await s.choiceVault.holderBatchDelay();
-      const deadline = t + delay + 30n * DAY;
+      // a deadline valid for any of the refused proposals below (they fail on other checks, whenever they run)
+      const deadline = BigInt(await time.latest()) + delay + 60n * DAY;
       // weekly cap and the per-coin balances bound a proposal; only holders / split coins; operator only
       await (await s.choiceVault.connect(deployer).setCaps(DEFAULT_CAPS.maxBuyPerTx, DEFAULT_CAPS.maxBuybackPerCoinWeek, 0n, 50n, hb + sb - 1n)).wait();
-      await time.setNextBlockTimestamp(t);
       await expect(s.choiceVault.connect(operator).proposeHolderBatch(id1, root, deadline, [holders.coin, split.coin], [hb, sb])).to.be.revertedWithCustomError(
         s.choiceVault,
         "CapExceeded",
@@ -704,9 +594,10 @@ describe("Bark periphery on the Chikyu fork (t10)", function () {
         "Insufficient",
       );
       await expect(s.choiceVault.connect(outsider).proposeHolderBatch(id1, root, deadline, [holders.coin], [hb])).to.be.revertedWithCustomError(s.choiceVault, "OnlyOperator");
-      t = BigInt(await time.latest()) + 5n;
-      await time.setNextBlockTimestamp(t);
+      // the mined proposal: its block time pinned right before it is sent
+      let t = BigInt(await time.latest()) + 5n;
       const dl = t + delay + 30n * DAY;
+      await time.setNextBlockTimestamp(t);
       await expect(s.choiceVault.connect(operator).proposeHolderBatch(id1, root, dl, [holders.coin, split.coin], [hb, sb]))
         .to.emit(s.choiceVault, "HolderBatchProposed")
         .withArgs(id1, root, hb + sb, t + delay, dl);
@@ -788,16 +679,21 @@ describe("Bark periphery on the Chikyu fork (t10)", function () {
         const x = bal / 8n;
         await setCaps({ maxBuyPerTx: x, maxBuybackPerCoinWeek: (x * 3n) / 2n, minBuyInterval: 3_600n });
         await expect(s.choiceVault.connect(operator).buyback(L.coin, x + 1n)).to.be.revertedWithCustomError(s.choiceVault, "CapExceeded");
-        await (await s.choiceVault.connect(operator).buyback(L.coin, x, { gasLimit: 3_000_000n })).wait();
+        // pin the first buyback near the start of a week (block time / 1 week), so the next one an hour later is in it
+        const week0 = BigInt(await time.latest()) / WEEK + 1n;
+        const first = week0 * WEEK + 100n;
+        await time.setNextBlockTimestamp(first);
+        const rc0 = (await (await s.choiceVault.connect(operator).buyback(L.coin, x, { gasLimit: 3_000_000n })).wait())!;
+        expect(BigInt((await ethers.provider.getBlock(rc0.blockNumber))!.timestamp)).to.equal(first);
         expect(await s.choiceVault.buybackSpentInWeek(L.coin)).to.equal(x);
-        await expect(s.choiceVault.connect(operator).buyback(L.coin, 1n)).to.be.revertedWithCustomError(s.choiceVault, "TooSoon");
-        await time.increase(3_600);
-        const week = BigInt(await time.latest()) / (7n * DAY);
-        // the weekly cap (unless the week rolled over in between: then it starts again from 0)
-        if (BigInt(await time.latest()) / (7n * DAY) === week) {
-          await expect(s.choiceVault.connect(operator).buyback(L.coin, x)).to.be.revertedWithCustomError(s.choiceVault, "CapExceeded");
-        }
-        await time.increaseTo((week + 1n) * 7n * DAY + 1n);
+        await time.setNextBlockTimestamp(first + 3_599n);
+        await expect(s.choiceVault.connect(operator).buyback(L.coin, 1n, { gasLimit: 3_000_000n })).to.be.revertedWithCustomError(s.choiceVault, "TooSoon");
+        // the interval passed, same week: x + x > 1.5 x
+        await time.setNextBlockTimestamp(first + 3_600n);
+        await expect(s.choiceVault.connect(operator).buyback(L.coin, x, { gasLimit: 3_000_000n })).to.be.revertedWithCustomError(s.choiceVault, "CapExceeded");
+        expect(BigInt(await time.latest()) / WEEK).to.equal(week0);
+        // the next week starts again from 0
+        await time.setNextBlockTimestamp((week0 + 1n) * WEEK + 1n);
         await (await s.choiceVault.connect(operator).buyback(L.coin, x, { gasLimit: 3_000_000n })).wait();
         expect(await s.choiceVault.buybackSpentInWeek(L.coin)).to.equal(x);
         // a paused operator is no operator
@@ -848,9 +744,10 @@ describe("Bark periphery on the Chikyu fork (t10)", function () {
         const g0 = await poolState(L.pool);
         const limit = buybackLimit(g0.price, 50n);
         const liquidity = await L.poolContract.liquidity();
+        // Algebra's one step to the limit: curve input rounded up, fee = mulDivRoundingUp(curve, f, 1e6 - f) on top
         const curveNeeded = amount1Delta(g0.price, limit, liquidity, true);
         const feeUnits = BigInt(algebraFeeUnits(100, true));
-        const needed = (curveNeeded * 1_000_000n) / (1_000_000n - feeUnits);
+        const needed = curveNeeded + (curveNeeded * feeUnits + (1_000_000n - feeUnits) - 1n) / (1_000_000n - feeUnits);
         expect(bal, "the buyback balance must exceed what reaches the 50 bps limit").to.be.greaterThan(needed + needed / 10n);
         const rc = (await (await s.choiceVault.connect(operator).buyback(L.coin, bal, { gasLimit: 3_000_000n })).wait())!;
         recordGas("choice-vault buyback (partial fill at the impact limit)", rc.gasUsed);
@@ -862,7 +759,7 @@ describe("Bark periphery on the Chikyu fork (t10)", function () {
         // spent + refund == amountIn: the refund is back in the coin's buyback balance and still a liability
         const ev = eventsOf(rc, s.choiceVault, "Buyback")[0].args;
         expect(ev.nativeSpent + left).to.equal(bal);
-        expect(ev.nativeSpent).to.be.at.least(needed - needed / 1000n).and.at.most(needed + needed / 1000n);
+        expect(ev.nativeSpent).to.equal(needed); // exactly what the pool takes to reach the limit
         expect(await s.barkswap.wdoge.balanceOf(await s.choiceVault.getAddress())).to.equal(0n);
         await vaultLiabilitiesMatch();
       });
@@ -910,7 +807,7 @@ describe("Bark periphery on the Chikyu fork (t10)", function () {
         await vaultLiabilitiesMatch();
       });
 
-      it("the swap callback refuses direct calls and any pool but the one inside the buyback", async function () {
+      it("the swap callback refuses direct calls and calls from our pools while no buyback is in flight (active-pool slot cleared)", async function () {
         const { outsider } = s.signers;
         const L = await fundedBuybackCoin();
         const other = await openCoin({ feeChoice: 4 });
@@ -1028,7 +925,7 @@ describe("Bark periphery on the Chikyu fork (t10)", function () {
       expect([next.kind, next.phase, next.rateBps, next.crossing]).to.deep.equal([2n, 1n, 100n, false]);
     });
 
-    it("the swap callback refuses direct calls and any pool but the one inside the buy", async function () {
+    it("the swap callback refuses direct calls and calls from our pools while no buy is in flight (active-pool slot cleared)", async function () {
       const { outsider } = s.signers;
       const L = await openCoin();
       const other = await openCoin();
@@ -1056,18 +953,22 @@ describe("Bark periphery on the Chikyu fork (t10)", function () {
 
       await time.increaseTo(L.openAt + 61n);
       let sold = 0n;
-      for (const amt of [3n * WAD, 11n * WAD, 25n * WAD]) sold += barkSwapOf(s, await routerBuy(s, trader, L.coin, amt)).coinAmount as bigint;
+      const buys = [3n * WAD, 11n * WAD, 25n * WAD];
+      for (const amt of buys) sold += barkSwapOf(s, await routerBuy(s, trader, L.coin, amt)).coinAmount as bigint;
       await collect(L.coin);
       p = await lens.progress(L.coin);
       const g = await poolState(L.pool);
       expect(p.sqrtPriceX96).to.equal(g.price);
-      // the lens rounds the remainder down, the pool rounds outputs down: within a wei per swap
-      expect(p.coinsSoldFromA - sold).to.be.at.least(0n).and.at.most(4n);
+      // the lens rounds the remainder down, the pool rounds each output down: within a wei per swap
+      expect(p.coinsSoldFromA - sold).to.be.at.least(0n).and.at.most(BigInt(buys.length));
       expect(p.nativeInA).to.equal(amount1Delta(L.sqrtStart, g.price, L.liqA, false));
-      // on-chain truth: the pool's WDOGE after collect = A's WDOGE + Barkswap's pending cut + Algebra rounding dust
+      // on-chain truth: the pool's WDOGE after collect = A's WDOGE + Barkswap's pending cut + rounding dust, all in the
+      // pool's favour: <= 1 wei per swap step (curve input rounded up) + < 1 wei per step (fee growth floored to Q128) +
+      // < 1 wei per position per collect (owed fees floored) + 1 wei per lens amount (rounded down). Measured: 2 wei.
+      const dustBound = (steps: bigint, positionCollects: bigint, lensFloors: bigint) => 2n * steps + positionCollects + lensFloors;
       const [, pending1] = await L.poolContract.getCommunityFeePending();
       const poolWdoge = await s.barkswap.wdoge.balanceOf(L.pool);
-      expect(poolWdoge - pending1 - p.nativeInA).to.be.at.least(0n).and.at.most(1_000n);
+      expect(poolWdoge - pending1 - p.nativeInA).to.be.at.least(0n).and.at.most(dustBound(3n, 2n, 1n));
 
       // graduation: A is sold out, its WDOGE is 98% of the target after the one burn, B holds the rest
       await routerBuy(s, trader, L.coin, raiseOfA(L));
@@ -1082,7 +983,9 @@ describe("Bark periphery on the Chikyu fork (t10)", function () {
       const [, pending1b] = await L.poolContract.getCommunityFeePending();
       const inB = amount1Delta(L.sqrtGrad, g2.price, L.liqB, false);
       const poolWdoge2 = await s.barkswap.wdoge.balanceOf(L.pool);
-      expect(poolWdoge2 - pending1b - p.nativeInA - inB).to.be.at.least(0n).and.at.most(1_000n);
+      // 5 steps (the crossing buy is two: A, then B), 2 collects x 2 positions, 2 lens amounts, + 1 wei for the
+      // graduation burn's principal (rounded down to us). Measured: 6 wei.
+      expect(poolWdoge2 - pending1b - p.nativeInA - inB).to.be.at.least(0n).and.at.most(dustBound(5n, 4n, 2n) + 1n);
 
       // back below graduation: latched, but not the post phase
       await approveRouter(trader, L.coin);
@@ -1213,8 +1116,8 @@ describe("Bark periphery on the Chikyu fork (t10)", function () {
 
     it("every view refuses an unknown coin", async function () {
       const x = s.signers.outsider.address;
-      for (const call of [s.lens.progress(x), s.lens.owed(x), s.lens.poolState(x), s.lens.tradingOpen(x), s.lens.currentFeeBps(x, x)]) {
-        await expect(call).to.be.revertedWithCustomError(s.lens, "UnknownCoin");
+      for (const call of [() => s.lens.progress(x), () => s.lens.owed(x), () => s.lens.poolState(x), () => s.lens.tradingOpen(x), () => s.lens.currentFeeBps(x, x)]) {
+        await expect(call()).to.be.revertedWithCustomError(s.lens, "UnknownCoin");
       }
     });
   });

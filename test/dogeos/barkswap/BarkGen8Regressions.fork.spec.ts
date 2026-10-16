@@ -15,30 +15,21 @@
 //
 //   npx hardhat --config hardhat.dogeos-bark-fork.config.ts test test/dogeos/barkswap/BarkGen8Regressions.fork.spec.ts
 //
-// Needs the root build too (`npx hardhat compile`): the reused vaults deploy from artifacts/ (solc 0.8.24). A small
-// TEST-ONLY force graduator (BarkForceGraduator, source below; the Algebra counterpart of gen-8's ForceGraduator) is
-// compiled here with solc 0.8.26. Nothing reaches Chikyu.
+// Needs the root build too (`npx hardhat compile`): the reused vaults deploy from artifacts/ (solc 0.8.24) through
+// fixtures/rootVaults.ts. A small TEST-ONLY force graduator (BarkForceGraduator, source below; the Algebra counterpart
+// of gen-8's ForceGraduator) is compiled inline with solc 0.8.26. Nothing reaches Chikyu.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import fs from "node:fs";
-import path from "node:path";
 import { expect } from "chai";
-import hre, { ethers } from "hardhat";
+import { ethers } from "hardhat";
 import { loadFixture, takeSnapshot, time } from "@nomicfoundation/hardhat-toolbox/network-helpers";
-import {
-  TASK_COMPILE_SOLIDITY_GET_SOLC_BUILD,
-  TASK_COMPILE_SOLIDITY_RUN_SOLC,
-  TASK_COMPILE_SOLIDITY_RUN_SOLCJS,
-} from "hardhat/builtin-tasks/task-names";
 import {
   BARKSWAP,
   CREATOR_RESERVE,
-  DEFAULT_DOGE_USD_ANSWER,
   WAD,
   approveRouter,
   barkSwapOf,
   deployBarkStack,
   eventsOf,
-  foundationDogeUsdOracleArtifact,
   impersonate,
   launchCoin,
   poolState,
@@ -50,38 +41,13 @@ import {
   type C,
   type LaunchResult,
 } from "./fixtures/barkswap";
+import { barkVaultsOf, compileInline, deployRealVaults, wireRealVaults, type RealVaults } from "./fixtures/rootVaults";
 
-const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
 const DAY = 86_400n;
 const RESERVE_RELEASE_DELAY = 3_600n;
 const MIN_CLAIM_WINDOW = 7n * DAY;
 const MAX_CLAIM_WINDOW = 365n * DAY;
 const LIVE_COMMUNITY_FEE = 30n;
-
-// ------------------------------------------------------------------------------------------------- root artifacts
-
-const ROOT_SOLC = "0.8.24";
-const checkedBuildInfo = new Set<string>();
-
-/** A reused contract from the root build (artifacts/, solc 0.8.24), the bytecode t15 deploys on Chikyu. */
-function rootArtifact(name: string): { abi: any[]; bytecode: string } {
-  const dir = path.join(REPO_ROOT, "artifacts", "contracts", `${name}.sol`);
-  const file = path.join(dir, `${name}.json`);
-  if (!fs.existsSync(file)) throw new Error(`no root artifact for ${name}: run \`npx hardhat compile\` first`);
-  const dbg = JSON.parse(fs.readFileSync(path.join(dir, `${name}.dbg.json`), "utf8"));
-  const buildInfo = path.resolve(dir, ...String(dbg.buildInfo).split(/[\\/]/));
-  if (!checkedBuildInfo.has(buildInfo)) {
-    const fd = fs.openSync(buildInfo, "r");
-    const head = Buffer.alloc(4096);
-    fs.readSync(fd, head, 0, head.length, 0);
-    fs.closeSync(fd);
-    const version = /"solcVersion":"([^"]+)"/.exec(head.toString("utf8"))?.[1];
-    if (version !== ROOT_SOLC) throw new Error(`${name}: root artifact built with solc ${version}, expected ${ROOT_SOLC}`);
-    checkedBuildInfo.add(buildInfo);
-  }
-  const art = JSON.parse(fs.readFileSync(file, "utf8"));
-  return { abi: art.abi, bytecode: art.bytecode };
-}
 
 // ------------------------------------------------------------------------------------------------- test-only graduator
 
@@ -149,80 +115,26 @@ contract BarkForceGraduator {
 }
 `;
 
-let GRADUATOR_ARTIFACT: { abi: any[]; bytecode: string } | undefined;
-
-async function graduatorArtifact(): Promise<{ abi: any[]; bytecode: string }> {
-  if (GRADUATOR_ARTIFACT) return GRADUATOR_ARTIFACT;
-  const solcVersion = "0.8.26";
-  const input = {
-    language: "Solidity",
-    sources: { "BarkForceGraduator.sol": { content: GRADUATOR_SOURCE } },
-    settings: { optimizer: { enabled: true, runs: 200 }, evmVersion: "cancun", outputSelection: { "*": { "*": ["abi", "evm.bytecode.object"] } } },
-  };
-  const build = await hre.run(TASK_COMPILE_SOLIDITY_GET_SOLC_BUILD, { quiet: true, solcVersion });
-  const output = build.isSolcJs
-    ? await hre.run(TASK_COMPILE_SOLIDITY_RUN_SOLCJS, { input, solcJsPath: build.compilerPath })
-    : await hre.run(TASK_COMPILE_SOLIDITY_RUN_SOLC, { input, solcPath: build.compilerPath, solcVersion });
-  const errors = (output.errors ?? []).filter((e: any) => e.severity === "error");
-  if (errors.length > 0) throw new Error(`BarkForceGraduator: ${errors.map((e: any) => e.formattedMessage).join("\n")}`);
-  const out = output.contracts["BarkForceGraduator.sol"].BarkForceGraduator;
-  GRADUATOR_ARTIFACT = { abi: out.abi, bytecode: `0x${out.evm.bytecode.object}` };
-  return GRADUATOR_ARTIFACT;
-}
 
 // ------------------------------------------------------------------------------------------------- fixture
 
 interface Env {
   s: BarkStack;
-  community: C;
-  holderDistributor: C;
+  v: RealVaults;
   graduator: C;
 }
 
-const CAPS = [1_000n * WAD, 10_000n * WAD, 0n, 50n, 1_000n * WAD] as const;
-
-/** Reused vaults from the root build (t15's constructor arguments; admin = the deployer key), the Bark stack routed
- *  into them, t15's wiring (CommunityRewardsVault router = splitter; choice vault distributor / operator / caps;
- *  distributor batch operator = choice vault), and the test-only force graduator. */
+/** The reused vaults from the root build, the Bark stack routed into them, t15's wiring, the force graduator. */
 async function regressionsFixture(): Promise<Env> {
   await readyFork();
-  const [deployer, , , , , , operator] = await ethers.getSigners();
-  const deployRoot = async (name: string, args: unknown[]): Promise<C> => {
-    const art = rootArtifact(name);
-    const c = await new ethers.ContractFactory(art.abi, art.bytecode, deployer).deploy(...args);
-    await c.waitForDeployment();
-    return c as unknown as C;
-  };
-  const oracleArt = await foundationDogeUsdOracleArtifact();
-  const feed = await new ethers.ContractFactory(oracleArt.abi, oracleArt.bytecode, deployer).deploy(deployer.address, DEFAULT_DOGE_USD_ANSWER, false);
-  await feed.waitForDeployment();
-  const gradOracle = await deployRoot("GraduationOracle", [await feed.getAddress(), 3600n]);
-  const weekly = await deployRoot("TreasuryVaultV2", [deployer.address, ethers.ZeroAddress, deployer.address]);
-  const charity = await deployRoot("CharityTreasury", [deployer.address]);
-  const monthly = await deployRoot("MonthlyLeagueTreasury", [deployer.address, deployer.address, await gradOracle.getAddress(), await charity.getAddress(), 1_500_000n * WAD]);
-  const recruiter = await deployRoot("RecruiterRewardsVault", [deployer.address]);
-  const protocol = await deployRoot("ProtocolRevenueVault", [deployer.address]);
-  const community = await deployRoot("CommunityRewardsVault", [deployer.address, ethers.ZeroAddress]);
-  const holderDistributor = await deployRoot("RewardDistributor", [deployer.address]);
-  const s = await deployBarkStack({
-    vaults: {
-      weeklyLeagueVault: await weekly.getAddress(),
-      monthlyLeagueTreasury: await monthly.getAddress(),
-      recruiterRewardsVault: await recruiter.getAddress(),
-      communityRewardsVault: await community.getAddress(),
-      protocolRevenueVault: await protocol.getAddress(),
-    },
-  });
-  if (s.signers.operator.address !== operator.address) throw new Error("operator signer mismatch");
-  await (await community.connect(deployer).setRouter(await s.splitter.getAddress())).wait();
-  await (await s.choiceVault.connect(deployer).setHolderDistributorOnce(await holderDistributor.getAddress())).wait();
-  await (await holderDistributor.connect(deployer).setBatchOperator(await s.choiceVault.getAddress())).wait();
-  await (await s.choiceVault.connect(deployer).setOperator(operator.address, false)).wait();
-  await (await s.choiceVault.connect(deployer).setCaps(...CAPS)).wait();
-  const ga = await graduatorArtifact();
+  const [deployer] = await ethers.getSigners();
+  const v = await deployRealVaults(deployer);
+  const s = await deployBarkStack({ vaults: await barkVaultsOf(v) });
+  await wireRealVaults(s, v);
+  const ga = await compileInline("BarkForceGraduator", GRADUATOR_SOURCE);
   const graduator = (await new ethers.ContractFactory(ga.abi, ga.bytecode, deployer).deploy()) as unknown as C;
   await graduator.waitForDeployment();
-  return { s, community, holderDistributor, graduator };
+  return { s, v, graduator };
 }
 
 // ------------------------------------------------------------------------------------------------- helpers
@@ -464,7 +376,7 @@ describe("Bark gen-8 audit regressions on the Chikyu fork (t10)", function () {
   describe("F5: holder-batch claim deadline bounded, approved exactly, re-checked at execution", function () {
     it("0, too early and too late are refused at proposal; the bounds themselves pass; the approval names the deadline; a late execution is refused; a good batch reaches the real distributor and its unclaimed part is recoverable", async function () {
       const { trader, operator, deployer } = s.signers;
-      const { holderDistributor } = env;
+      const { holderDistributor } = env.v;
       const L = await openCoin({ feeChoice: 2 });
       await routerBuy(s, trader, L.coin, 30n * WAD);
       await collect(L.coin);
@@ -576,7 +488,9 @@ describe("Bark gen-8 audit regressions on the Chikyu fork (t10)", function () {
           expect(B).to.be.greaterThan(0n);
         }
         const b = await s.splitter.bands(B, G);
-        expect(b.weekly + b.monthly + b.rsaMax).to.be.at.most(total); // 0.55 B + 0.2 G <= B + G <= total
+        // the audit's B11 derivation on these numbers (0.55 B + 0.2 G <= B + G <= total); the invariant itself is that
+        // both band edges route below
+        expect(b.weekly + b.monthly + b.rsaMax).to.be.at.most(total);
         const snap = await takeSnapshot();
         const airdrop = b.rsaMax - b.squadMax;
         await (await s.splitter.connect(operator).route(1, paid.amount, 0n, b.squadMax, airdrop, ethers.id(`b11-${cf}-max`))).wait();
@@ -584,7 +498,7 @@ describe("Bark gen-8 audit regressions on the Chikyu fork (t10)", function () {
         await snap.restore();
         await (await s.splitter.connect(operator).route(1, paid.amount, b.rsaMin, 0n, 0n, ethers.id(`b11-${cf}-min`))).wait();
         expect(await balanceOf(splitter)).to.equal(0n);
-        expect(await env.community.squadPoolBalance()).to.equal(0n);
+        expect(await env.v.community.squadPoolBalance()).to.equal(0n);
       });
     }
   });
