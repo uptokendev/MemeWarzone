@@ -3,12 +3,10 @@
 // the Bark stack itself and is not touched here.
 //
 // Precondition: the root build is current (`npx hardhat compile`, solc 0.8.24). The vaults deploy from artifacts/ with
-// the bytecode BNB and Robinhood run, in t15's order and with t15's constructor arguments and wiring
-// (scripts/lib/dogeosBarkStack.ts). rootArtifact refuses an artifact built by another compiler, or one whose build
-// compiled any contracts/ source that differs from the working tree (the same guard as t15's loadStackArtifact).
+// the bytecode BNB and Robinhood run and with t15's constructor arguments (scripts/lib/dogeosBarkStack.ts), except that
+// the CommunityRewardsVault router is set afterwards (wireRealVaults) and no airdrop distributor is deployed or wired.
+// rootArtifact goes through t15's loadStackArtifact (compiler, settings and stale-source checks).
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import fs from "node:fs";
-import path from "node:path";
 import hre, { ethers } from "hardhat";
 import {
   TASK_COMPILE_SOLIDITY_GET_SOLC_BUILD,
@@ -16,34 +14,16 @@ import {
   TASK_COMPILE_SOLIDITY_RUN_SOLCJS,
 } from "hardhat/builtin-tasks/task-names";
 import type { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
+import { loadStackArtifact } from "../../../../scripts/lib/dogeosBarkStack";
 import { DEFAULT_DOGE_USD_ANSWER, WAD, foundationDogeUsdOracleArtifact, type BarkStack, type BarkVaults, type C } from "./barkswap";
 
-const REPO_ROOT = path.resolve(__dirname, "..", "..", "..", "..");
-const ROOT_SOLC = "0.8.24";
-const checkedBuildInfo = new Set<string>();
-
-/** A contract of the root build (artifacts/contracts/<name>.sol/<name>.json, solc 0.8.24). Refused if the build used
- *  another compiler or if any contracts/ source in its build-info differs from the working tree (recompile first). */
+/** A contract of the root build (artifacts/contracts/<name>.sol/<name>.json), through t15's loader
+ *  (scripts/lib/dogeosBarkStack.ts loadStackArtifact): refused unless built with solc 0.8.24 and the root settings
+ *  (runs 1, viaIR, paris, bytecodeHash none), and refused if any contracts/ source it was compiled from differs from the
+ *  working tree. */
 export function rootArtifact(name: string): { abi: any[]; bytecode: string } {
-  const dir = path.join(REPO_ROOT, "artifacts", "contracts", `${name}.sol`);
-  const file = path.join(dir, `${name}.json`);
-  if (!fs.existsSync(file)) throw new Error(`no root artifact for ${name}: run \`npx hardhat compile\` first`);
-  const dbg = JSON.parse(fs.readFileSync(path.join(dir, `${name}.dbg.json`), "utf8"));
-  const buildInfo = path.resolve(dir, ...String(dbg.buildInfo).split(/[\\/]/));
-  if (!checkedBuildInfo.has(buildInfo)) {
-    const info = JSON.parse(fs.readFileSync(buildInfo, "utf8"));
-    if (info.solcVersion !== ROOT_SOLC) throw new Error(`${name}: root artifact built with solc ${info.solcVersion}, expected ${ROOT_SOLC}`);
-    for (const [source, { content }] of Object.entries<any>(info.input.sources)) {
-      if (!source.startsWith("contracts/")) continue;
-      const onDisk = path.join(REPO_ROOT, ...source.split("/"));
-      if (fs.existsSync(onDisk) && fs.readFileSync(onDisk, "utf8") !== content) {
-        throw new Error(`artifacts/ is stale: ${source} changed since it was compiled; run \`npx hardhat compile\` first`);
-      }
-    }
-    checkedBuildInfo.add(buildInfo);
-  }
-  const art = JSON.parse(fs.readFileSync(file, "utf8"));
-  return { abi: art.abi, bytecode: art.bytecode };
+  const a = loadStackArtifact("root", `contracts/${name}.sol:${name}`);
+  return { abi: a.abi, bytecode: a.bytecode };
 }
 
 export interface RealVaults {
@@ -68,7 +48,7 @@ export async function barkVaultsOf(v: RealVaults): Promise<BarkVaults> {
   };
 }
 
-/** t15's reused vaults, admin = `deployer`: TreasuryVaultV2(A, 0, A), CharityTreasury(A), MonthlyLeagueTreasury(A, A,
+/** The reused vaults with t15's constructor arguments, admin = `deployer`: TreasuryVaultV2(A, 0, A), CharityTreasury(A), MonthlyLeagueTreasury(A, A,
  *  oracle, charity, $1.5M) on its own foundation feed + GraduationOracle (3600 s), RecruiterRewardsVault(A),
  *  ProtocolRevenueVault(A), CommunityRewardsVault(A, router 0: set to the splitter by wireRealVaults, since the
  *  splitter needs the vault's address first), RewardDistributor(A) as the holder distributor. */
@@ -111,6 +91,10 @@ export const DEFAULT_CHOICE_VAULT_CAPS = {
  *  distributor, operator (the stack's operator, not paused) and caps; distributor batch operator = choice vault. */
 export async function wireRealVaults(s: BarkStack, v: RealVaults, caps = DEFAULT_CHOICE_VAULT_CAPS): Promise<void> {
   const { deployer, operator } = s.signers;
+  // the stack's deployer must be the vaults' admin (deployRealVaults(deployer) with the same signer)
+  if ((await v.community.admin()) !== deployer.address || (await v.holderDistributor.owner()) !== deployer.address) {
+    throw new Error("wireRealVaults: the stack's deployer is not the admin of the real vaults");
+  }
   const vault = await s.choiceVault.getAddress();
   await (await v.community.connect(deployer).setRouter(await s.splitter.getAddress())).wait();
   await (await s.choiceVault.connect(deployer).setHolderDistributorOnce(await v.holderDistributor.getAddress())).wait();
