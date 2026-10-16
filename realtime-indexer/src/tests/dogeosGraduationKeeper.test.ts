@@ -24,7 +24,8 @@ Object.assign(process.env, {
   DOGEOS_RPC_HTTP_6281971: RPC[DOGEOS],
 });
 
-const { FORBIDDEN_KEEPER_ADDRESSES, assertKeeperKeyAllowed } = await import("../evm/evmGraduationKeeper.js");
+const { FORBIDDEN_KEEPER_ADDRESSES, assertKeeperKeyAllowed, forbiddenKeeperAddresses } = await import("../evm/evmGraduationKeeper.js");
+const { assertOperatorKeyAllowed } = await import("../evm/evmCreatorChoiceConfig.js");
 const { V3_GRADUATION_CHAINS, enabledKeeperChains, keeperConfig, keeperWallet, v3ObservationSlots } = await import(
   "../evm/evmGraduationKeeperConfig.js"
 );
@@ -105,4 +106,40 @@ test("keeperRpc: 6281971 reads DOGEOS_RPC_HTTP_6281971 and never falls back to B
   assert.equal(keeperRpc(4663), RPC[4663]);
   assert.equal(keeperRpc(46630), RPC[46630]);
   assert.equal(keeperRpc(12345), "");
+});
+
+// Spec section 3 amendment + B9: FORBIDDEN_KEEPER_ADDRESSES for 6281971 also lists the DogeOS operator. Its address
+// is known only after the founder generates the key (plan t29), so it comes from DOGEOS_OPERATOR_ADDRESS.
+test("the keeper guard forbids the DogeOS operator from DOGEOS_OPERATOR_ADDRESS when set", () => {
+  const operator = ethers.Wallet.createRandom();
+  assert.deepEqual(forbiddenKeeperAddresses({}), FORBIDDEN_KEEPER_ADDRESSES, "unset: the hard-coded list only");
+  const env = { DOGEOS_OPERATOR_ADDRESS: operator.address };
+  const list = forbiddenKeeperAddresses(env);
+  assert.ok(list.includes(operator.address.toLowerCase()), "the operator is in the forbidden list");
+  for (const address of [DOGEOS_DEPLOYER, DOGEOS_UPDATER, DOGEOS_ROUTE_AUTHORITY]) {
+    assert.ok(list.includes(address.toLowerCase()), `${address} stays forbidden`);
+  }
+  assert.doesNotThrow(() => assertKeeperKeyAllowed(operator.address, {}), "not forbidden while unset");
+  assert.throws(() => assertKeeperKeyAllowed(operator.address, env), /refuses key/);
+  assert.throws(() => assertKeeperKeyAllowed(operator.address.toLowerCase(), { DOGEOS_OPERATOR_ADDRESS: ` ${operator.address.toUpperCase().replace("0X", "0x")} ` }), /refuses key/);
+});
+
+test("keeperWallet on 6281971 refuses the operator's key", () => {
+  const operator = ethers.Wallet.createRandom();
+  const env = { EVM_GRADUATION_KEEPER_PRIVATE_KEY_6281971: operator.privateKey };
+  assert.equal(keeperWallet(DOGEOS, env)?.address, operator.address);
+  assert.throws(() => keeperWallet(DOGEOS, { ...env, DOGEOS_OPERATOR_ADDRESS: operator.address }), /refuses key/);
+});
+
+test("a malformed DOGEOS_OPERATOR_ADDRESS fails closed: no keeper key passes the guard", () => {
+  const keeper = ethers.Wallet.createRandom();
+  for (const bad of ["0x1234", "not-an-address", `${keeper.address}00`]) {
+    assert.throws(() => assertKeeperKeyAllowed(keeper.address, { DOGEOS_OPERATOR_ADDRESS: bad }), /DOGEOS_OPERATOR_ADDRESS/, bad);
+  }
+});
+
+test("the operator keeps its operator role: the creator-choice operator guard does not refuse it (B9)", () => {
+  const operator = ethers.Wallet.createRandom();
+  assert.doesNotThrow(() => assertOperatorKeyAllowed(operator.address, { DOGEOS_OPERATOR_ADDRESS: operator.address }));
+  assert.ok(!FORBIDDEN_KEEPER_ADDRESSES.includes(operator.address.toLowerCase()), "the hard-coded list never carries it");
 });
