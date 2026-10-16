@@ -11,14 +11,8 @@
 //   npx hardhat --config hardhat.dogeos-bark-fork.config.ts test test/dogeos/barkswap/BarkAdmin.fork.spec.ts
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { expect } from "chai";
-import hre, { ethers, network } from "hardhat";
+import { ethers, network } from "hardhat";
 import { loadFixture, time } from "@nomicfoundation/hardhat-toolbox/network-helpers";
-import {
-  TASK_COMPILE_SOLIDITY_GET_SOLC_BUILD,
-  TASK_COMPILE_SOLIDITY_RUN_SOLC,
-  TASK_COMPILE_SOLIDITY_RUN_SOLCJS,
-} from "hardhat/builtin-tasks/task-names";
-import type { ContractTransactionReceipt } from "ethers";
 import {
   BARKSWAP,
   WAD,
@@ -42,81 +36,11 @@ import {
   type C,
   type LaunchResult,
 } from "./fixtures/barkswap";
+import { MEASURED_TOLERANCE_WEI, absb, collectChecked, expectBooksEqualBalances, sum } from "./fixtures/barkBooks";
+import { compileInline } from "./fixtures/rootVaults";
 
 const TICK_MAX = 887_270;
 const IERC20 = "@openzeppelin/contracts/token/ERC20/IERC20.sol:IERC20";
-/** The rounding between the plugin's booking and what collect takes, per swap per book, as measured and pinned in
- *  BarkMoney.fork.spec.ts (MEASURED_TOLERANCE_WEI). */
-const ROUNDING_WEI = 45n;
-
-const sum = (a: readonly bigint[]): bigint => a.reduce((x, y) => x + y, 0n);
-const big4 = (r: any): bigint[] => Array.from(r as ArrayLike<any>, (v) => BigInt(v));
-const absb = (v: bigint): bigint => (v < 0n ? -v : v);
-
-/** MwzBarkFeeBooks.apportion, off chain. */
-function apportion(amount: bigint, d: readonly bigint[]): bigint[] {
-  let rest = amount;
-  const b = [0n, 0n, 0n, 0n];
-  b[0] = d[0] < rest ? d[0] : rest;
-  rest -= b[0];
-  b[2] = d[2] < rest ? d[2] : rest;
-  rest -= b[2];
-  const dR = d[1] + d[3];
-  b[1] = rest >= dR ? d[1] : (rest * d[1]) / dR;
-  b[3] = rest - b[1];
-  return b;
-}
-
-const nativeOrder = (t: any): bigint[] => [t.bondingNative.creator, t.bondingNative.router, t.postNative.creator, t.postNative.router].map(BigInt);
-const coinOrder = (t: any): bigint[] => [t.bondingCoin.creator, t.bondingCoin.router, t.postCoin.creator, t.postCoin.router].map(BigInt);
-
-async function coinBooks(s: BarkStack, coin: string): Promise<bigint[]> {
-  const k = await s.launcher.coinFees(coin);
-  return [k.creatorBonding, k.routerBonding, k.creatorPost, k.routerPost].map(BigInt);
-}
-
-/** books == balances (spec invariant): native == creatorOwed + routerOwed + parkedOwed, no WDOGE at rest, per coin the
- *  four pending coin books. */
-async function expectBooksEqualBalances(s: BarkStack, coins: string[], label: string): Promise<void> {
-  const launcher = await s.launcher.getAddress();
-  let creators = 0n;
-  for (const c of coins) creators += await s.launcher.creatorOwed(c);
-  const books = creators + BigInt(await s.launcher.routerOwed()) + BigInt(await s.launcher.parkedOwed());
-  expect(await ethers.provider.getBalance(launcher), `${label}: native`).to.equal(books);
-  expect(await s.barkswap.wdoge.balanceOf(launcher), `${label}: WDOGE`).to.equal(0n);
-  for (const c of coins) {
-    const token = await ethers.getContractAt(IERC20, c);
-    expect(await token.balanceOf(launcher), `${label}: coin`).to.equal(sum(await coinBooks(s, c)));
-  }
-}
-
-interface Collected {
-  rc: ContractTransactionReceipt;
-  native: bigint;
-  coins: bigint;
-  dN: bigint[];
-  dC: bigint[];
-  nativeBooks: bigint[];
-  coinBooks: bigint[];
-}
-
-/** collect(coin), checking that the event's books are apportion(received, plugin delta) and that they sum exactly. */
-async function collect(s: BarkStack, L: LaunchResult): Promise<Collected> {
-  const prev = await s.launcher.collectedTotals(L.coin);
-  const t = await s.plugin.feeTotals(L.pool);
-  const dN = nativeOrder(t).map((v, i) => v - nativeOrder(prev)[i]);
-  const dC = coinOrder(t).map((v, i) => v - coinOrder(prev)[i]);
-  const rc = (await (await s.launcher.connect(s.signers.keeper).collect(L.coin, { gasLimit: 3_000_000n })).wait())!;
-  const ev = eventsOf(rc, s.launcher, "FeesCollected")[0].args;
-  const native = BigInt(ev.native);
-  const coins = BigInt(ev.coins);
-  const nativeBooks = big4(ev.nativeBooks);
-  const cBooks = big4(ev.coinBooks);
-  expect(nativeBooks).to.deep.equal(apportion(native, dN));
-  expect(cBooks).to.deep.equal(apportion(coins, dC));
-  return { rc, native, coins, dN, dC, nativeBooks, coinBooks: cBooks };
-}
-
 /** A/B principal: A holds liqA (minus the one graduation burn once taken), B holds liqB. */
 async function expectPrincipal(s: BarkStack, L: LaunchResult, label: string): Promise<void> {
   const launcher = await s.launcher.getAddress();
@@ -149,21 +73,7 @@ contract BarkSideDeployer {
     function afterCreatePoolHook(address, address, address) external pure {}
 }
 `;
-  const solcVersion = "0.8.26";
-  const file = "inline/BarkSideDeployer.sol";
-  const input = {
-    language: "Solidity",
-    sources: { [file]: { content: source } },
-    settings: { optimizer: { enabled: true, runs: 200 }, evmVersion: "cancun", outputSelection: { "*": { "*": ["abi", "evm.bytecode.object"] } } },
-  };
-  const build = await hre.run(TASK_COMPILE_SOLIDITY_GET_SOLC_BUILD, { quiet: true, solcVersion });
-  const output = build.isSolcJs
-    ? await hre.run(TASK_COMPILE_SOLIDITY_RUN_SOLCJS, { input, solcJsPath: build.compilerPath })
-    : await hre.run(TASK_COMPILE_SOLIDITY_RUN_SOLC, { input, solcPath: build.compilerPath, solcVersion });
-  const errors = (output.errors ?? []).filter((e: any) => e.severity === "error");
-  if (errors.length > 0) throw new Error(errors.map((e: any) => e.formattedMessage).join("\n"));
-  const out = output.contracts[file].BarkSideDeployer;
-  SIDE_DEPLOYER = { abi: out.abi, bytecode: `0x${out.evm.bytecode.object}` };
+  SIDE_DEPLOYER = await compileInline("BarkSideDeployer", source);
   return SIDE_DEPLOYER;
 }
 
@@ -232,7 +142,7 @@ describe("Barkswap admin cases on our pools (t9)", function () {
     await approveRouter(trader, L.coin);
     const b = barkSwapOf(s, await routerBuy(s, trader, L.coin, 40n * WAD));
     await routerSell(s, trader, L.coin, BigInt(b.coinAmount) / 3n);
-    await collect(s, L);
+    await collectChecked(s, L);
     const pool = await adminPool(L);
     const rc = (await (await pool.setPlugin(s.signers.outsider.address)).wait())!;
     expect(eventsOf(rc, L.poolContract, "Plugin").map((e) => e.args[0])).to.deep.equal([s.signers.outsider.address]); // detectable
@@ -246,14 +156,14 @@ describe("Barkswap admin cases on our pools (t9)", function () {
     await routerBuy(s, trader, L.coin, (raiseOfA(L) * 13n) / 10n); // crosses graduation, no latch (no hooks)
     expect((await s.plugin.pools(L.pool)).graduated).to.equal(false);
     await expect(s.launcher.connect(keeper).takeGraduationFee(L.pool)).to.be.revertedWithCustomError(s.launcher, "ForeignPlugin");
-    const c = await collect(s, L);
+    const c = await collectChecked(s, L);
     expect(c.dN.concat(c.dC)).to.deep.equal([0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n]);
     expect(c.nativeBooks.slice(0, 3)).to.deep.equal([0n, 0n, 0n]);
     expect(c.nativeBooks[3]).to.equal(c.native);
     const cf = BigInt((await poolState(L.pool)).communityFee);
     const swapIn = 10n * WAD + (raiseOfA(L) * 13n) / 10n;
     const gross = (swapIn * 3000n) / 1_000_000n;
-    expect(absb(c.native - (gross - (gross * cf) / 1000n))).to.be.at.most(8n * ROUNDING_WEI);
+    expect(absb(c.native - (gross - (gross * cf) / 1000n))).to.be.at.most(8n * MEASURED_TOLERANCE_WEI);
     await expectPrincipal(s, L, "foreign plugin");
     await expectBooksEqualBalances(s, [L.coin], "foreign plugin");
     // restore: our plugin, lastFee 0, config 135, in that order
@@ -262,7 +172,7 @@ describe("Barkswap admin cases on our pools (t9)", function () {
     const paid = barkSwapOf(s, await routerBuy(s, trader, L.coin, WAD));
     expect([paid.phase, paid.rateBps, paid.crossing]).to.deep.equal([1n, 100n, true]);
     expect((await s.launcher.launches(L.coin)).gradFeeTaken).to.equal(true);
-    const after = await collect(s, L);
+    const after = await collectChecked(s, L);
     expect(after.nativeBooks[2]).to.equal(BigInt(paid.creatorAmount));
     await expectPrincipal(s, L, "after restore");
     await expectBooksEqualBalances(s, [L.coin], "after restore");
@@ -273,7 +183,7 @@ describe("Barkswap admin cases on our pools (t9)", function () {
     const { trader, outsider } = s.signers;
     const launcher = await s.launcher.getAddress();
     await routerBuy(s, trader, L.coin, 60n * WAD);
-    await collect(s, L);
+    await collectChecked(s, L);
     const pool = await adminPool(L);
     await (await pool.setPluginConfig(131)).wait(); // swap hooks + dynamic fee, no before-position-modify
     // the outsider mints a range around the price through Barkswap's NPM (deployer = our launcher)
@@ -299,11 +209,11 @@ describe("Barkswap admin cases on our pools (t9)", function () {
       deadline: 2n ** 40n,
     };
     await (await npm.mint(params)).wait();
-    await collect(s, L); // the outsider's own buy (before its mint): all ours
+    await collectChecked(s, L); // the outsider's own buy (before its mint): all ours
     // trades now pay fees shared with the outsider; the plugin books the full net fee
     await approveRouter(trader, L.coin);
     const sw = barkSwapOf(s, await routerBuy(s, trader, L.coin, 10n * WAD));
-    const c = await collect(s, L);
+    const c = await collectChecked(s, L);
     expect(c.native, "our positions got only part of the fee").to.be.lessThan(sum(c.dN));
     // B10 first: the creator amount is whole; the router bonding book is the pro-rata share of what is left
     expect(c.nativeBooks[0]).to.equal(BigInt(sw.creatorAmount));
@@ -328,7 +238,7 @@ describe("Barkswap admin cases on our pools (t9)", function () {
     await approveRouter(trader, L.coin);
     const b = barkSwapOf(s, await routerBuy(s, trader, L.coin, 30n * WAD));
     await routerSell(s, trader, L.coin, BigInt(b.coinAmount) / 2n);
-    await collect(s, L);
+    await collectChecked(s, L);
     const pool = await adminPool(L);
     await expect(pool.setFee(3000)).to.be.revertedWithCustomError(L.poolContract, "dynamicFeeActive");
     await (await pool.setPluginConfig(7)).wait();
@@ -343,9 +253,9 @@ describe("Barkswap admin cases on our pools (t9)", function () {
       s.launcher,
       "ConversionFeeNotZero",
     );
-    const c = await collect(s, L);
+    const c = await collectChecked(s, L);
     expect(c.nativeBooks[0]).to.equal(BigInt(buy.creatorAmount));
-    expect(absb(c.native - sum(c.dN))).to.be.at.most(ROUNDING_WEI);
+    expect(absb(c.native - sum(c.dN))).to.be.at.most(MEASURED_TOLERANCE_WEI);
     expect(await restore(L)).to.deep.equal([false, true, true]);
     const conv = (await (await s.launcher.connect(keeper).convert(L.coin, { gasLimit: 3_000_000n })).wait())!;
     expect(eventsOf(conv, s.launcher, "CoinFeesConverted")).to.have.length(1);
@@ -368,7 +278,7 @@ describe("Barkswap admin cases on our pools (t9)", function () {
       if (cf === 1000n) {
         await expect(s.launcher.connect(keeper).collect(L.coin, { gasLimit: 3_000_000n })).to.be.revertedWithCustomError(s.launcher, "NothingToCollect");
       } else {
-        const c = await collect(s, L);
+        const c = await collectChecked(s, L);
         expect(c.nativeBooks[0]).to.equal(BigInt(sw.creatorAmount));
       }
       await expectPrincipal(s, L, `cf ${cf}`);
@@ -404,7 +314,7 @@ describe("Barkswap admin cases on our pools (t9)", function () {
     expect(poked[0]).to.equal(before[0]);
     expect(poked[3], "coin fees owed").to.be.greaterThan(0n);
     expect(poked[4], "WDOGE fees owed").to.be.greaterThan(0n);
-    const c = await collect(s, L);
+    const c = await collectChecked(s, L);
     expect(c.coins).to.be.at.least(poked[3]);
     expect(c.native).to.be.at.least(poked[4]);
     const after = await L.poolContract.positions(keyA);
@@ -418,7 +328,7 @@ describe("Barkswap admin cases on our pools (t9)", function () {
     const burnLiq = (L.liqA * 200n) / 10_000n;
     expect(taken[0].args.amount).to.equal(amount1Delta(L.sqrtStart, L.sqrtGrad, burnLiq, false));
     await routerSell(s, trader, L.coin, 2_000_000n * WAD);
-    await collect(s, L);
+    await collectChecked(s, L);
     await time.increase(600);
     const conv = (await (await s.launcher.connect(keeper).convert(L.coin, { gasLimit: 3_000_000n })).wait())!;
     expect(eventsOf(conv, s.launcher, "CoinFeesConverted")).to.have.length(1);
