@@ -1,6 +1,8 @@
 /**
  * Starts every gen-8 loop (ingest, holder census, side-pool watcher, fee routing). Nothing starts, and no RPC or DB
- * call is made, unless EVM_GEN8_LAUNCHER_<id> and EVM_GEN8_HOOK_<id> are set for at least one chain.
+ * call is made, unless EVM_GEN8_LAUNCHER_<id> and EVM_GEN8_HOOK_<id> are set for at least one chain, or, on the
+ * Barkswap venue (DogeOS 6281971), EVM_GEN8_LAUNCHER_<id> and EVM_GEN8_PLUGIN_<id>. A Barkswap chain gets the ingest
+ * (evmGen8Bark.ts) and the holder census here; its side-pool watch and fee routing are the DogeOS keepers' (t19, t20).
  *   EVM_GEN8_RPC_<id>             optional RPC for gen-8 (default: the chain's indexer RPC, BSC_RPC_HTTP_<id> / ROBINHOOD_RPC_HTTP_<id>)
  *   EVM_GEN8_POLL_MS              ingest interval (60000; floor 60000 — launcher, hook and splitter)
  *   EVM_GEN8_DISPLAY_HEAD_TAG(_<id>)  what the UI rows follow: latest (Robinhood) / finalized (BNB); rolled back on a reorg
@@ -16,8 +18,9 @@ import { ethers } from "ethers";
 import { pool } from "../db.js";
 import { bscRpcUrls } from "../canonicalCandleMaterializer.js";
 import { createStaticJsonRpcProvider, parseRpcList } from "../rpcProvider.js";
-import { configuredGen8Chains, gen8HolderPollMs, gen8SidePollMs } from "./evmGen8Config.js";
+import { configuredGen8BarkChains, configuredGen8Chains, gen8HolderPollMs, gen8SidePollMs } from "./evmGen8Config.js";
 import { startEvmGen8Indexer } from "./evmGen8Pool.js";
+import { startEvmGen8BarkIndexer } from "./evmGen8Bark.js";
 import { startEvmGen8FeeRoutingWorker } from "./evmGen8FeeRouting.js";
 import { runGen8HolderCensusOnce } from "./evmGen8Holders.js";
 import { GEN8_SIDE_ALERT_TYPE, runGen8SidePoolWatcherOnce } from "./evmGen8SidePools.js";
@@ -57,12 +60,16 @@ function loop(label: string, ms: number, fn: () => Promise<unknown>) {
 
 export function startEvmGen8Workers(env: NodeJS.ProcessEnv = process.env) {
   const chains = configuredGen8Chains(env);
-  if (!chains.length) {
-    console.log("[gen8] off (set EVM_GEN8_LAUNCHER_<chainId> and EVM_GEN8_HOOK_<chainId>)");
+  const barkChains = configuredGen8BarkChains(env);
+  if (!chains.length && !barkChains.length) {
+    console.log("[gen8] off (set EVM_GEN8_LAUNCHER_<chainId> and EVM_GEN8_HOOK_<chainId>, or EVM_GEN8_PLUGIN_<chainId> on Barkswap)");
     return;
   }
-  startEvmGen8Indexer({ db: pool, providerFor: (id) => gen8Provider(id, env), env });
-  startEvmGen8FeeRoutingWorker({ db: pool, providerFor: (id) => gen8Provider(id, env), env });
+  if (chains.length) {
+    startEvmGen8Indexer({ db: pool, providerFor: (id) => gen8Provider(id, env), env });
+    startEvmGen8FeeRoutingWorker({ db: pool, providerFor: (id) => gen8Provider(id, env), env });
+  }
+  if (barkChains.length) startEvmGen8BarkIndexer({ db: pool, providerFor: (id) => gen8Provider(id, env), env });
   void (async () => {
     const { ensureTokenHolderSchema } = await import("../tokenHolders.js");
     await ensureTokenHolderSchema();
@@ -76,6 +83,11 @@ export function startEvmGen8Workers(env: NodeJS.ProcessEnv = process.env) {
           runGen8SidePoolWatcherOnce({ db: pool, cfg, provider: provider as any, env, alert: (a) => watchdog.raiseAlert(pool as any, { ...a, rewardType: GEN8_SIDE_ALERT_TYPE }) }),
         );
       }
+    }
+    for (const cfg of barkChains) {
+      const provider = gen8Provider(cfg.chainId, env);
+      if (!provider) continue;
+      loop(`holders ${cfg.chainId}`, gen8HolderPollMs(env), () => runGen8HolderCensusOnce({ db: pool as any, cfg, provider: provider as any, env }));
     }
   })().catch((error) => console.error("[gen8] holder / side-pool start failed", error));
 }

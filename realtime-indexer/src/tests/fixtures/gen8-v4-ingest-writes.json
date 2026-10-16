@@ -1,0 +1,3332 @@
+{
+ "queries": [
+  {
+   "sql": "select last_indexed_block from public.indexer_state where ch#0714451ff331f534",
+   "params": [
+    97,
+    "gen8:0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec"
+   ]
+  },
+  {
+   "sql": "select r.is_og from public.wallet_recruiter_links l join pub#8f6cf56a7e968296",
+   "params": [
+    "0x9c3e960f1636c88d5b210a11748aafa414467cc7",
+    "2026-10-14T15:00:42.000Z"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_gen8_pools( chain_id, pool_id, token_#f482b5652803d6a0",
+   "params": [
+    97,
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0x49ed1f4ee8cd64edbb3cc88407e611f0398bae9c",
+    "0x3e16e0b82c33fff7036378232d3fa0d5e57595a1",
+    "0x9c3e960f1636c88d5b210a11748aafa414467cc7",
+    "0x9c3e960f1636c88d5b210a11748aafa414467cc7",
+    "standard_unlinked",
+    1,
+    0,
+    "150000000000000000000",
+    "250000000000000000",
+    "6131269674970738",
+    "1007164874618250302625982734",
+    258260,
+    221110,
+    "2485145006854016906826",
+    "2055136907921798718279",
+    "{\"bondingBps\":200,\"postBps\":100,\"creatorPostBps\":50,\"sniperStartBps\":9000,\"creatorBondingBps\":560}",
+    "0x7d7947201e26d8408a438e360d7bb20d582ed099",
+    "1000000000000000",
+    "138839416575563087598396150",
+    "0x08fd59804f024fbdb1c668feb7e15813d41279c2a00f7017a1712fa9febbc936",
+    21,
+    "2026-10-14T15:00:42.000Z",
+    "{\"name\":\"Gen Eight\",\"symbol\":\"GEN8\",\"logoURI\":\"ipfs://logo\",\"xAccount\":\"@gen8\",\"website\":\"https://memewar.zone\",\"extraLink\":\"\",\"metadataHash\":\"0x7a9d3a032b8ff274f09714b56ba8e5ed776ec9638ca303069bc3a3267bb22f65\"}",
+    "2026-10-12T09:19:12.000Z"
+   ]
+  },
+  {
+   "sql": "update public.campaigns set factory_generation = $3, campaig#a13ec0a70fb06016",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    8,
+    8,
+    "{\"poolId\":\"0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64\",\"hook\":\"0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec\",\"poolManager\":\"0x3e16e0b82c33fff7036378232d3fa0d5e57595a1\",\"display\":\"0x7d7947201e26d8408a438e360d7bb20d582ed099\",\"hookCreator\":\"0x9c3e960f1636c88d5b210a11748aafa414467cc7\",\"feeChoice\":1,\"feeCreatorPct\":0,\"targetUsd\":\"150000000000000000000\",\"tickStart\":258260,\"tickGrad\":221110,\"xAccount\":\"@gen8\",\"website\":\"https://memewar.zone\",\"extraLink\":\"\",\"openAt\":\"2026-10-12T09:19:12.000Z\"}"
+   ]
+  },
+  {
+   "sql": "insert into public.campaign_market_state( chain_id, campaign#75f035be1d0d0afd",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0x49ed1f4ee8cd64edbb3cc88407e611f0398bae9c",
+    "8",
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0x3e16e0b82c33fff7036378232d3fa0d5e57595a1"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_campaign_events(chain_id, contract_ad#8511e29c60de0647",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "gen8_hook",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "PoolLaunched",
+    "0x08fd59804f024fbdb1c668feb7e15813d41279c2a00f7017a1712fa9febbc936",
+    12,
+    21,
+    "2026-10-14T15:00:42.000Z",
+    "{\"poolId\":\"0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64\",\"token\":\"0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2\",\"creator\":\"0x9c3e960f1636c88d5b210a11748aafa414467cc7\",\"tickStart\":258260,\"tickGrad\":221110,\"liqA\":\"2485145006854016906826\",\"liqB\":\"2055136907921798718279\",\"fees\":{\"bondingBps\":200,\"postBps\":100,\"creatorPostBps\":50,\"sniperStartBps\":9000,\"creatorBondingBps\":560},\"display\":\"0x7d7947201e26d8408a438e360d7bb20d582ed099\",\"openAt\":1791796752}"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_campaign_events(chain_id, contract_ad#8511e29c60de0647",
+   "params": [
+    97,
+    "0x49ed1f4ee8cd64edbb3cc88407e611f0398bae9c",
+    "gen8_launcher",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "Launched",
+    "0x08fd59804f024fbdb1c668feb7e15813d41279c2a00f7017a1712fa9febbc936",
+    19,
+    21,
+    "2026-10-14T15:00:42.000Z",
+    "{\"token\":\"0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2\",\"poolId\":\"0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64\",\"creator\":\"0x9c3e960f1636c88d5b210a11748aafa414467cc7\",\"hookCreator\":\"0x9c3e960f1636c88d5b210a11748aafa414467cc7\",\"targetUsd\":\"150000000000000000000\",\"marketCapNative\":\"250000000000000000\",\"virtualNative\":\"6131269674970738\",\"virtualToken\":\"1007164874618250302625982734\",\"tickStart\":258260,\"tickGrad\":221110,\"feeChoice\":1,\"feeCreatorPct\":0,\"firstBuyIn\":\"1000000000000000\",\"firstBuyOut\":\"138839416575563087598396150\",\"openAt\":1791796752}"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_campaign_events(chain_id, contract_ad#8511e29c60de0647",
+   "params": [
+    97,
+    "0x49ed1f4ee8cd64edbb3cc88407e611f0398bae9c",
+    "gen8_launcher",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "LaunchMetadata",
+    "0x08fd59804f024fbdb1c668feb7e15813d41279c2a00f7017a1712fa9febbc936",
+    20,
+    21,
+    "2026-10-14T15:00:42.000Z",
+    "{\"token\":\"0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2\",\"poolId\":\"0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64\",\"name\":\"Gen Eight\",\"symbol\":\"GEN8\",\"logoURI\":\"ipfs://logo\",\"xAccount\":\"@gen8\",\"website\":\"https://memewar.zone\",\"extraLink\":\"\",\"metadataHash\":\"0x7a9d3a032b8ff274f09714b56ba8e5ed776ec9638ca303069bc3a3267bb22f65\"}"
+   ]
+  },
+  {
+   "sql": "select p.*, c.name, c.symbol from public.evm_gen8_pools p le#944d00d4e7ebe927",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec"
+   ]
+  },
+  {
+   "sql": "insert into public.curve_trades( chain_id, campaign_address,#e6d243513e91ed6b",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0x08fd59804f024fbdb1c668feb7e15813d41279c2a00f7017a1712fa9febbc936",
+    15,
+    21,
+    "2026-10-14T15:00:42.000Z",
+    "buy",
+    "0x9c3e960f1636c88d5b210a11748aafa414467cc7",
+    "138839416575563087598396150",
+    "980392156862745",
+    138839416.57556307,
+    0.000980392156862745,
+    7.061338e-12,
+    "gen8",
+    "19607843137255",
+    200,
+    "980392156862745",
+    "first_buy",
+    true,
+    "138839416575563087598396151"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_gen8_swaps(chain_id, hook_address, po#63b23ddf76daee97",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0x08fd59804f024fbdb1c668feb7e15813d41279c2a00f7017a1712fa9febbc936",
+    15,
+    21,
+    "2026-10-14T15:00:42.000Z",
+    "bonding",
+    "buy",
+    "27683963900745593771850195403338851",
+    8.190352e-12,
+    0.008190352,
+    0.000980392156862745,
+    "138839416575563087598396151"
+   ]
+  },
+  {
+   "sql": "update public.evm_gen8_pools set last_sqrt_price_x96 = $3, l#d4e8ec5b5d21f147",
+   "params": [
+    97,
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "27683963900745593771850195403338851",
+    255293,
+    "2485145006854016906826",
+    21,
+    15,
+    "bonding"
+   ]
+  },
+  {
+   "sql": "insert into public.campaign_activity (chain_id, campaign_add#3461d665e97e8f85",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "2026-10-14T15:00:42.000Z"
+   ]
+  },
+  {
+   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "1m",
+    "2026-10-14T15:00:00.000Z",
+    8.190352e-12,
+    0.000980392156862745,
+    1,
+    1,
+    0,
+    0.000980392156862745,
+    0,
+    21,
+    15,
+    0.008190352
+   ]
+  },
+  {
+   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "1h",
+    "2026-10-14T15:00:00.000Z",
+    8.190352e-12,
+    0.000980392156862745,
+    1,
+    1,
+    0,
+    0.000980392156862745,
+    0,
+    21,
+    15,
+    0.008190352
+   ]
+  },
+  {
+   "sql": "select coalesce(sum(bnb_amount), 0) as vol from public.curve#fdcbb4bed4788222",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2"
+   ]
+  },
+  {
+   "sql": "insert into public.token_stats(chain_id, campaign_address, l#24d3cfd085f2071d",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    8.190352e-12,
+    138839416.57556307,
+    0.008190352,
+    0
+   ]
+  },
+  {
+   "sql": "insert into public.curve_trades( chain_id, campaign_address,#e6d243513e91ed6b",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0xc33532b8a8b7465bc7a33d7a9a7999181bbd720cd507a2f64c6420d99a577bec",
+    2,
+    22,
+    "2026-10-14T15:00:44.000Z",
+    "buy",
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "187663930284394030099871145",
+    "1960784313725490",
+    187663930.28439403,
+    0.00196078431372549,
+    1.0448381e-11,
+    "gen8",
+    "39215686274510",
+    200,
+    "1960784313725490",
+    null,
+    false,
+    "326503346859957117698267297"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_gen8_swaps(chain_id, hook_address, po#63b23ddf76daee97",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0xc33532b8a8b7465bc7a33d7a9a7999181bbd720cd507a2f64c6420d99a577bec",
+    2,
+    22,
+    "2026-10-14T15:00:44.000Z",
+    "bonding",
+    "buy",
+    "21701106431410429489469512447203537",
+    1.3328933e-11,
+    0.013328933,
+    0.00196078431372549,
+    "326503346859957117698267297"
+   ]
+  },
+  {
+   "sql": "update public.evm_gen8_pools set last_sqrt_price_x96 = $3, l#d4e8ec5b5d21f147",
+   "params": [
+    97,
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "21701106431410429489469512447203537",
+    250423,
+    "2485145006854016906826",
+    22,
+    2,
+    "bonding"
+   ]
+  },
+  {
+   "sql": "insert into public.campaign_activity (chain_id, campaign_add#3461d665e97e8f85",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "2026-10-14T15:00:44.000Z"
+   ]
+  },
+  {
+   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "1m",
+    "2026-10-14T15:00:00.000Z",
+    1.3328933e-11,
+    0.00196078431372549,
+    1,
+    1,
+    0,
+    0.00196078431372549,
+    0,
+    22,
+    2,
+    0.013328933
+   ]
+  },
+  {
+   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "1h",
+    "2026-10-14T15:00:00.000Z",
+    1.3328933e-11,
+    0.00196078431372549,
+    1,
+    1,
+    0,
+    0.00196078431372549,
+    0,
+    22,
+    2,
+    0.013328933
+   ]
+  },
+  {
+   "sql": "select coalesce(sum(bnb_amount), 0) as vol from public.curve#fdcbb4bed4788222",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2"
+   ]
+  },
+  {
+   "sql": "insert into public.token_stats(chain_id, campaign_address, l#24d3cfd085f2071d",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    1.3328933e-11,
+    326503346.8599571,
+    0.013328933,
+    0
+   ]
+  },
+  {
+   "sql": "insert into public.curve_trades( chain_id, campaign_address,#e6d243513e91ed6b",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0xad330441df14b03c9bf8d66e9a56d5f5495c26eb48b2ce61170c317d59dc92db",
+    0,
+    23,
+    "2026-10-14T15:00:46.000Z",
+    "buy",
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "1000000000000000000000000",
+    "13348543984011",
+    1000000,
+    0.000013348543984011,
+    1.3348543e-11,
+    "gen8",
+    "266970879680",
+    200,
+    "13348543984011",
+    null,
+    false,
+    "327503346859957117698267297"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_gen8_swaps(chain_id, hook_address, po#63b23ddf76daee97",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0xad330441df14b03c9bf8d66e9a56d5f5495c26eb48b2ce61170c317d59dc92db",
+    0,
+    23,
+    "2026-10-14T15:00:46.000Z",
+    "bonding",
+    "buy",
+    "21669225731372502736490452599188024",
+    1.3368182e-11,
+    0.013368182,
+    0.000013348543984011,
+    "327503346859957117698267297"
+   ]
+  },
+  {
+   "sql": "update public.evm_gen8_pools set last_sqrt_price_x96 = $3, l#d4e8ec5b5d21f147",
+   "params": [
+    97,
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "21669225731372502736490452599188024",
+    250393,
+    "2485145006854016906826",
+    23,
+    0,
+    "bonding"
+   ]
+  },
+  {
+   "sql": "insert into public.campaign_activity (chain_id, campaign_add#3461d665e97e8f85",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "2026-10-14T15:00:46.000Z"
+   ]
+  },
+  {
+   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "1m",
+    "2026-10-14T15:00:00.000Z",
+    1.3368182e-11,
+    0.000013348543984011,
+    1,
+    1,
+    0,
+    0.000013348543984011,
+    0,
+    23,
+    0,
+    0.013368182
+   ]
+  },
+  {
+   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "1h",
+    "2026-10-14T15:00:00.000Z",
+    1.3368182e-11,
+    0.000013348543984011,
+    1,
+    1,
+    0,
+    0.000013348543984011,
+    0,
+    23,
+    0,
+    0.013368182
+   ]
+  },
+  {
+   "sql": "select coalesce(sum(bnb_amount), 0) as vol from public.curve#fdcbb4bed4788222",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2"
+   ]
+  },
+  {
+   "sql": "insert into public.token_stats(chain_id, campaign_address, l#24d3cfd085f2071d",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    1.3368182e-11,
+    327503346.8599571,
+    0.013368182,
+    0
+   ]
+  },
+  {
+   "sql": "insert into public.curve_trades( chain_id, campaign_address,#e6d243513e91ed6b",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0x8e52a7d18a7fc7bf55eb8e771e4a8797f7c7a71085b339ad45923fb72cd26966",
+    0,
+    25,
+    "2026-10-14T15:00:50.000Z",
+    "sell",
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "100000000000000000000000",
+    "1336621644253",
+    100000,
+    0.000001336621644253,
+    1.3366216e-11,
+    "gen8",
+    "26732432885",
+    200,
+    "1336621644253",
+    null,
+    false,
+    "327403346859957117698267297"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_gen8_swaps(chain_id, hook_address, po#63b23ddf76daee97",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0x8e52a7d18a7fc7bf55eb8e771e4a8797f7c7a71085b339ad45923fb72cd26966",
+    0,
+    25,
+    "2026-10-14T15:00:50.000Z",
+    "bonding",
+    "sell",
+    "21672413801376295411788358583989575",
+    1.336425e-11,
+    0.01336425,
+    0.000001336621644253,
+    "327403346859957117698267297"
+   ]
+  },
+  {
+   "sql": "update public.evm_gen8_pools set last_sqrt_price_x96 = $3, l#d4e8ec5b5d21f147",
+   "params": [
+    97,
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "21672413801376295411788358583989575",
+    250396,
+    "2485145006854016906826",
+    25,
+    0,
+    "bonding"
+   ]
+  },
+  {
+   "sql": "insert into public.campaign_activity (chain_id, campaign_add#3461d665e97e8f85",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "2026-10-14T15:00:50.000Z"
+   ]
+  },
+  {
+   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "1m",
+    "2026-10-14T15:00:00.000Z",
+    1.336425e-11,
+    0.000001336621644253,
+    1,
+    1,
+    0,
+    0.000001336621644253,
+    0,
+    25,
+    0,
+    0.01336425
+   ]
+  },
+  {
+   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "1h",
+    "2026-10-14T15:00:00.000Z",
+    1.336425e-11,
+    0.000001336621644253,
+    1,
+    1,
+    0,
+    0.000001336621644253,
+    0,
+    25,
+    0,
+    0.01336425
+   ]
+  },
+  {
+   "sql": "select coalesce(sum(bnb_amount), 0) as vol from public.curve#fdcbb4bed4788222",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2"
+   ]
+  },
+  {
+   "sql": "insert into public.token_stats(chain_id, campaign_address, l#24d3cfd085f2071d",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    1.336425e-11,
+    327403346.8599571,
+    0.01336425,
+    0
+   ]
+  },
+  {
+   "sql": "insert into public.curve_trades( chain_id, campaign_address,#e6d243513e91ed6b",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0x54cf07efc165967ddac9ff3c56fc7fc59cba4397d46abae9e8412fe0deef8cbd",
+    2,
+    26,
+    "2026-10-14T15:00:52.000Z",
+    "sell",
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "7722089678430490727801844",
+    "102040816326530",
+    7722089.678430491,
+    0.00010204081632653,
+    1.3214145e-11,
+    "gen8",
+    "2040816326530",
+    200,
+    "102040816326530",
+    null,
+    false,
+    "319681257181526626970465454"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_gen8_swaps(chain_id, hook_address, po#63b23ddf76daee97",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0x54cf07efc165967ddac9ff3c56fc7fc59cba4397d46abae9e8412fe0deef8cbd",
+    2,
+    26,
+    "2026-10-14T15:00:52.000Z",
+    "bonding",
+    "sell",
+    "21918599426080308145250171732187934",
+    1.3065726e-11,
+    0.013065726,
+    0.00010204081632653,
+    "319681257181526626970465454"
+   ]
+  },
+  {
+   "sql": "update public.evm_gen8_pools set last_sqrt_price_x96 = $3, l#d4e8ec5b5d21f147",
+   "params": [
+    97,
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "21918599426080308145250171732187934",
+    250622,
+    "2485145006854016906826",
+    26,
+    2,
+    "bonding"
+   ]
+  },
+  {
+   "sql": "insert into public.campaign_activity (chain_id, campaign_add#3461d665e97e8f85",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "2026-10-14T15:00:52.000Z"
+   ]
+  },
+  {
+   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "1m",
+    "2026-10-14T15:00:00.000Z",
+    1.3065726e-11,
+    0.00010204081632653,
+    1,
+    1,
+    0,
+    0.00010204081632653,
+    0,
+    26,
+    2,
+    0.013065726
+   ]
+  },
+  {
+   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "1h",
+    "2026-10-14T15:00:00.000Z",
+    1.3065726e-11,
+    0.00010204081632653,
+    1,
+    1,
+    0,
+    0.00010204081632653,
+    0,
+    26,
+    2,
+    0.013065726
+   ]
+  },
+  {
+   "sql": "select coalesce(sum(bnb_amount), 0) as vol from public.curve#fdcbb4bed4788222",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2"
+   ]
+  },
+  {
+   "sql": "insert into public.token_stats(chain_id, campaign_address, l#24d3cfd085f2071d",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    1.3065726e-11,
+    319681257.1815266,
+    0.013065726,
+    0
+   ]
+  },
+  {
+   "sql": "insert into public.curve_trades( chain_id, campaign_address,#e6d243513e91ed6b",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0xdec60c613a1ea7746e3698040f3db8d2d89fb4efebe2c04dd0709b102a77e716",
+    2,
+    27,
+    "2026-10-14T15:00:54.000Z",
+    "buy",
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "618177375115218587465602423",
+    "98039215686274509",
+    618177375.1152186,
+    0.09803921568627451,
+    1.58593988e-10,
+    "gen8",
+    "1960784313725491",
+    200,
+    "98039215686274509",
+    null,
+    false,
+    "849999999999999999999944313"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_gen8_swaps(chain_id, hook_address, po#63b23ddf76daee97",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0xdec60c613a1ea7746e3698040f3db8d2d89fb4efebe2c04dd0709b102a77e716",
+    2,
+    27,
+    "2026-10-14T15:00:54.000Z",
+    "bonding",
+    "buy",
+    "1624603750775462556545270303846556",
+    2.378287013e-9,
+    2.378287013,
+    0.09803921568627451,
+    "849999999999999999999944313"
+   ]
+  },
+  {
+   "sql": "update public.evm_gen8_pools set last_sqrt_price_x96 = $3, l#d4e8ec5b5d21f147",
+   "params": [
+    97,
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "1624603750775462556545270303846556",
+    198578,
+    "2055136907921798718279",
+    27,
+    2,
+    "post"
+   ]
+  },
+  {
+   "sql": "insert into public.campaign_activity (chain_id, campaign_add#3461d665e97e8f85",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "2026-10-14T15:00:54.000Z"
+   ]
+  },
+  {
+   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "1m",
+    "2026-10-14T15:00:00.000Z",
+    2.378287013e-9,
+    0.09803921568627451,
+    1,
+    1,
+    0,
+    0.09803921568627451,
+    0,
+    27,
+    2,
+    2.378287013
+   ]
+  },
+  {
+   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "1h",
+    "2026-10-14T15:00:00.000Z",
+    2.378287013e-9,
+    0.09803921568627451,
+    1,
+    1,
+    0,
+    0.09803921568627451,
+    0,
+    27,
+    2,
+    2.378287013
+   ]
+  },
+  {
+   "sql": "select coalesce(sum(bnb_amount), 0) as vol from public.curve#fdcbb4bed4788222",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2"
+   ]
+  },
+  {
+   "sql": "insert into public.token_stats(chain_id, campaign_address, l#24d3cfd085f2071d",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    2.378287013e-9,
+    850000000,
+    2.378287013,
+    0
+   ]
+  },
+  {
+   "sql": "insert into public.evm_campaign_events(chain_id, contract_ad#8511e29c60de0647",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "gen8_hook",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "Graduated",
+    "0xdec60c613a1ea7746e3698040f3db8d2d89fb4efebe2c04dd0709b102a77e716",
+    5,
+    27,
+    "2026-10-14T15:00:54.000Z",
+    "{\"poolId\":\"0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64\",\"gradFeeNative\":\"663104639541882\",\"nativeInA\":\"33155231977094105\",\"liquidityRemoved\":\"49702900137080338136\"}"
+   ]
+  },
+  {
+   "sql": "update public.evm_gen8_pools set graduated_block = $3, gradu#ef5fe7ddfbc21519",
+   "params": [
+    97,
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    27,
+    "0xdec60c613a1ea7746e3698040f3db8d2d89fb4efebe2c04dd0709b102a77e716",
+    5,
+    "663104639541882",
+    "33155231977094105"
+   ]
+  },
+  {
+   "sql": "select market_stage from public.campaign_market_state where #df0453fb4008d64f",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2"
+   ]
+  },
+  {
+   "sql": "insert into public.campaign_market_state( chain_id, campaign#c5b515c35ecad3d0",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0x49ed1f4ee8cd64edbb3cc88407e611f0398bae9c",
+    "0xdec60c613a1ea7746e3698040f3db8d2d89fb4efebe2c04dd0709b102a77e716",
+    27,
+    "2026-10-14T15:00:54.000Z",
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0x3e16e0b82c33fff7036378232d3fa0d5e57595a1",
+    "2.378287013e-9",
+    "1000000000000000000000000000"
+   ]
+  },
+  {
+   "sql": "update public.campaigns set market_stage = 'DEX_ACTIVE', upd#34cb2a919bf4989b",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2"
+   ]
+  },
+  {
+   "sql": "insert into public.dex_trades( chain_id, campaign_address, t#728202e88bccdbc2",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0x2e85e3b406212d13e302cca9ac757e4b04014080c8de377db4fb4824e5d55cc8",
+    2,
+    28,
+    "",
+    "2026-10-14T15:00:56.000Z",
+    "buy",
+    "0x0ed7895ed0973f74c732ec68b728666dee6f57a3",
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "816483432870665282103790",
+    "1980198019801980",
+    816483.4328706653,
+    0.00198019801980198,
+    2.425276423e-9,
+    "0xae13d989dac2f0debff460ac112a837c89baa7cd",
+    "gen8_v4"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_gen8_swaps(chain_id, hook_address, po#63b23ddf76daee97",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0x2e85e3b406212d13e302cca9ac757e4b04014080c8de377db4fb4824e5d55cc8",
+    2,
+    28,
+    "2026-10-14T15:00:56.000Z",
+    "post",
+    "buy",
+    "1593127267695269143415943730068221",
+    2.473194234e-9,
+    2.473194234,
+    0.00198019801980198,
+    null
+   ]
+  },
+  {
+   "sql": "update public.evm_gen8_pools set last_sqrt_price_x96 = $3, l#d4e8ec5b5d21f147",
+   "params": [
+    97,
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "1593127267695269143415943730068221",
+    198187,
+    "2055136907921798718279",
+    28,
+    2,
+    "post"
+   ]
+  },
+  {
+   "sql": "select market_stage from public.campaign_market_state where #df0453fb4008d64f",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2"
+   ]
+  },
+  {
+   "sql": "insert into public.campaign_activity (chain_id, campaign_add#3461d665e97e8f85",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "2026-10-14T15:00:56.000Z"
+   ]
+  },
+  {
+   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "1m",
+    "2026-10-14T15:00:00.000Z",
+    2.473194234e-9,
+    0.00198019801980198,
+    2,
+    0,
+    1,
+    0,
+    0.00198019801980198,
+    28,
+    2,
+    2.473194234
+   ]
+  },
+  {
+   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "1h",
+    "2026-10-14T15:00:00.000Z",
+    2.473194234e-9,
+    0.00198019801980198,
+    2,
+    0,
+    1,
+    0,
+    0.00198019801980198,
+    28,
+    2,
+    2.473194234
+   ]
+  },
+  {
+   "sql": "select holder_count from public.evm_gen8_pools where chain_i#1fbb0472e721c8e2",
+   "params": [
+    97,
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64"
+   ]
+  },
+  {
+   "sql": "select coalesce(sum(case when \"blockTime\" >= now() - interva#77d6392b763422e7",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2"
+   ]
+  },
+  {
+   "sql": "insert into public.market_stats( chain_id, campaign_address,#ebaaaf3ec6a5a837",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    2.473194234e-9,
+    2.473194234,
+    0.20441192214136736,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    null,
+    "1000000000000000000000000000",
+    28,
+    "2026-10-14T15:00:56.000Z"
+   ]
+  },
+  {
+   "sql": "select last_price_bnb, market_cap_bnb, liquidity_bnb, volume#98b7abf537ebc9cc",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2"
+   ]
+  },
+  {
+   "sql": "select coalesce(sum(bnb_amount), 0) as vol from public.curve#fdcbb4bed4788222",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2"
+   ]
+  },
+  {
+   "sql": "insert into public.token_stats(chain_id, campaign_address, l#24d3cfd085f2071d",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    2.473194234e-9,
+    850000000,
+    2.473194234,
+    0
+   ]
+  },
+  {
+   "sql": "insert into public.dex_trades( chain_id, campaign_address, t#728202e88bccdbc2",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0xd3f3cfde53c75e376a679176d621923951e50106b76b8f5272f2724c23b70433",
+    0,
+    29,
+    "",
+    "2026-10-14T15:00:58.000Z",
+    "sell",
+    "0x0ed7895ed0973f74c732ec68b728666dee6f57a3",
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "100000000000000000000000",
+    "246722392443104",
+    100000,
+    0.000246722392443104,
+    2.467223924e-9,
+    "0xae13d989dac2f0debff460ac112a837c89baa7cd",
+    "gen8_v4"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_gen8_swaps(chain_id, hook_address, po#63b23ddf76daee97",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0xd3f3cfde53c75e376a679176d621923951e50106b76b8f5272f2724c23b70433",
+    0,
+    29,
+    "2026-10-14T15:00:58.000Z",
+    "post",
+    "sell",
+    "1596982395896649248125688494490023",
+    2.461268026e-9,
+    2.461268026,
+    0.000246722392443104,
+    null
+   ]
+  },
+  {
+   "sql": "update public.evm_gen8_pools set last_sqrt_price_x96 = $3, l#d4e8ec5b5d21f147",
+   "params": [
+    97,
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "1596982395896649248125688494490023",
+    198235,
+    "2055136907921798718279",
+    29,
+    0,
+    "post"
+   ]
+  },
+  {
+   "sql": "select market_stage from public.campaign_market_state where #df0453fb4008d64f",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2"
+   ]
+  },
+  {
+   "sql": "insert into public.campaign_activity (chain_id, campaign_add#3461d665e97e8f85",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "2026-10-14T15:00:58.000Z"
+   ]
+  },
+  {
+   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "1m",
+    "2026-10-14T15:00:00.000Z",
+    2.461268026e-9,
+    0.000246722392443104,
+    2,
+    0,
+    1,
+    0,
+    0.000246722392443104,
+    29,
+    0,
+    2.461268026
+   ]
+  },
+  {
+   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "1h",
+    "2026-10-14T15:00:00.000Z",
+    2.461268026e-9,
+    0.000246722392443104,
+    2,
+    0,
+    1,
+    0,
+    0.000246722392443104,
+    29,
+    0,
+    2.461268026
+   ]
+  },
+  {
+   "sql": "select holder_count from public.evm_gen8_pools where chain_i#1fbb0472e721c8e2",
+   "params": [
+    97,
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64"
+   ]
+  },
+  {
+   "sql": "select coalesce(sum(case when \"blockTime\" >= now() - interva#77d6392b763422e7",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2"
+   ]
+  },
+  {
+   "sql": "insert into public.market_stats( chain_id, campaign_address,#ebaaaf3ec6a5a837",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    2.461268026e-9,
+    2.461268026,
+    0.20391847738613972,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    null,
+    "1000000000000000000000000000",
+    29,
+    "2026-10-14T15:00:58.000Z"
+   ]
+  },
+  {
+   "sql": "select last_price_bnb, market_cap_bnb, liquidity_bnb, volume#98b7abf537ebc9cc",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2"
+   ]
+  },
+  {
+   "sql": "select coalesce(sum(bnb_amount), 0) as vol from public.curve#fdcbb4bed4788222",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2"
+   ]
+  },
+  {
+   "sql": "insert into public.token_stats(chain_id, campaign_address, l#24d3cfd085f2071d",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    2.461268026e-9,
+    850000000,
+    2.461268026,
+    0
+   ]
+  },
+  {
+   "sql": "insert into public.evm_gen8_display_blocks(chain_id, hook_ad#50cc8e879889d7e4",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    30,
+    "0x000000000000000000000000000000000000000000000000000000000000001e"
+   ]
+  },
+  {
+   "sql": "insert into public.indexer_state(chain_id, cursor, last_inde#2f254ed4016e4cd6",
+   "params": [
+    97,
+    "gen8:0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    31
+   ]
+  },
+  {
+   "sql": "select last_indexed_block from public.indexer_state where ch#0714451ff331f534",
+   "params": [
+    97,
+    "gen8-money:0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec"
+   ]
+  },
+  {
+   "sql": "select r.is_og from public.wallet_recruiter_links l join pub#8f6cf56a7e968296",
+   "params": [
+    "0x9c3e960f1636c88d5b210a11748aafa414467cc7",
+    "2026-10-14T15:00:42.000Z"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_gen8_pools( chain_id, pool_id, token_#f482b5652803d6a0",
+   "params": [
+    97,
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0x49ed1f4ee8cd64edbb3cc88407e611f0398bae9c",
+    "0x3e16e0b82c33fff7036378232d3fa0d5e57595a1",
+    "0x9c3e960f1636c88d5b210a11748aafa414467cc7",
+    "0x9c3e960f1636c88d5b210a11748aafa414467cc7",
+    "standard_unlinked",
+    1,
+    0,
+    "150000000000000000000",
+    "250000000000000000",
+    "6131269674970738",
+    "1007164874618250302625982734",
+    258260,
+    221110,
+    "2485145006854016906826",
+    "2055136907921798718279",
+    "{\"bondingBps\":200,\"postBps\":100,\"creatorPostBps\":50,\"sniperStartBps\":9000,\"creatorBondingBps\":560}",
+    "0x7d7947201e26d8408a438e360d7bb20d582ed099",
+    "1000000000000000",
+    "138839416575563087598396150",
+    "0x08fd59804f024fbdb1c668feb7e15813d41279c2a00f7017a1712fa9febbc936",
+    21,
+    "2026-10-14T15:00:42.000Z",
+    "{\"name\":\"Gen Eight\",\"symbol\":\"GEN8\",\"logoURI\":\"ipfs://logo\",\"xAccount\":\"@gen8\",\"website\":\"https://memewar.zone\",\"extraLink\":\"\",\"metadataHash\":\"0x7a9d3a032b8ff274f09714b56ba8e5ed776ec9638ca303069bc3a3267bb22f65\"}",
+    "2026-10-12T09:19:12.000Z"
+   ]
+  },
+  {
+   "sql": "update public.campaigns set factory_generation = $3, campaig#a13ec0a70fb06016",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    8,
+    8,
+    "{\"poolId\":\"0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64\",\"hook\":\"0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec\",\"poolManager\":\"0x3e16e0b82c33fff7036378232d3fa0d5e57595a1\",\"display\":\"0x7d7947201e26d8408a438e360d7bb20d582ed099\",\"hookCreator\":\"0x9c3e960f1636c88d5b210a11748aafa414467cc7\",\"feeChoice\":1,\"feeCreatorPct\":0,\"targetUsd\":\"150000000000000000000\",\"tickStart\":258260,\"tickGrad\":221110,\"xAccount\":\"@gen8\",\"website\":\"https://memewar.zone\",\"extraLink\":\"\",\"openAt\":\"2026-10-12T09:19:12.000Z\"}"
+   ]
+  },
+  {
+   "sql": "insert into public.campaign_market_state( chain_id, campaign#75f035be1d0d0afd",
+   "params": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0x49ed1f4ee8cd64edbb3cc88407e611f0398bae9c",
+    "8",
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0x3e16e0b82c33fff7036378232d3fa0d5e57595a1"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_campaign_events(chain_id, contract_ad#8511e29c60de0647",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "gen8_hook",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "PoolLaunched",
+    "0x08fd59804f024fbdb1c668feb7e15813d41279c2a00f7017a1712fa9febbc936",
+    12,
+    21,
+    "2026-10-14T15:00:42.000Z",
+    "{\"poolId\":\"0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64\",\"token\":\"0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2\",\"creator\":\"0x9c3e960f1636c88d5b210a11748aafa414467cc7\",\"tickStart\":258260,\"tickGrad\":221110,\"liqA\":\"2485145006854016906826\",\"liqB\":\"2055136907921798718279\",\"fees\":{\"bondingBps\":200,\"postBps\":100,\"creatorPostBps\":50,\"sniperStartBps\":9000,\"creatorBondingBps\":560},\"display\":\"0x7d7947201e26d8408a438e360d7bb20d582ed099\",\"openAt\":1791796752}"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_campaign_events(chain_id, contract_ad#8511e29c60de0647",
+   "params": [
+    97,
+    "0x49ed1f4ee8cd64edbb3cc88407e611f0398bae9c",
+    "gen8_launcher",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "Launched",
+    "0x08fd59804f024fbdb1c668feb7e15813d41279c2a00f7017a1712fa9febbc936",
+    19,
+    21,
+    "2026-10-14T15:00:42.000Z",
+    "{\"token\":\"0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2\",\"poolId\":\"0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64\",\"creator\":\"0x9c3e960f1636c88d5b210a11748aafa414467cc7\",\"hookCreator\":\"0x9c3e960f1636c88d5b210a11748aafa414467cc7\",\"targetUsd\":\"150000000000000000000\",\"marketCapNative\":\"250000000000000000\",\"virtualNative\":\"6131269674970738\",\"virtualToken\":\"1007164874618250302625982734\",\"tickStart\":258260,\"tickGrad\":221110,\"feeChoice\":1,\"feeCreatorPct\":0,\"firstBuyIn\":\"1000000000000000\",\"firstBuyOut\":\"138839416575563087598396150\",\"openAt\":1791796752}"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_campaign_events(chain_id, contract_ad#8511e29c60de0647",
+   "params": [
+    97,
+    "0x49ed1f4ee8cd64edbb3cc88407e611f0398bae9c",
+    "gen8_launcher",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "LaunchMetadata",
+    "0x08fd59804f024fbdb1c668feb7e15813d41279c2a00f7017a1712fa9febbc936",
+    20,
+    21,
+    "2026-10-14T15:00:42.000Z",
+    "{\"token\":\"0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2\",\"poolId\":\"0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64\",\"name\":\"Gen Eight\",\"symbol\":\"GEN8\",\"logoURI\":\"ipfs://logo\",\"xAccount\":\"@gen8\",\"website\":\"https://memewar.zone\",\"extraLink\":\"\",\"metadataHash\":\"0x7a9d3a032b8ff274f09714b56ba8e5ed776ec9638ca303069bc3a3267bb22f65\"}"
+   ]
+  },
+  {
+   "sql": "select p.*, c.name, c.symbol from public.evm_gen8_pools p le#944d00d4e7ebe927",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec"
+   ]
+  },
+  {
+   "sql": "select r.is_og from public.wallet_recruiter_links l join pub#8f6cf56a7e968296",
+   "params": [
+    "0x9c3e960f1636c88d5b210a11748aafa414467cc7",
+    "2026-10-14T15:00:42.000Z"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_gen8_fee_accruals( chain_id, hook_add#d702dc60abe59262",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0x08fd59804f024fbdb1c668feb7e15813d41279c2a00f7017a1712fa9febbc936",
+    14,
+    15,
+    21,
+    "2026-10-14T15:00:42.000Z",
+    "trade",
+    "bonding",
+    "0x9c3e960f1636c88d5b210a11748aafa414467cc7",
+    "0x49ed1f4ee8cd64edbb3cc88407e611f0398bae9c",
+    null,
+    "buy",
+    "standard_unlinked",
+    "980392156862745",
+    "19607843137255",
+    200,
+    "1098039215686",
+    "18509803921569",
+    "2205882352941",
+    "5147058823529",
+    "0",
+    "0",
+    "2941176470588",
+    "8215686274511"
+   ]
+  },
+  {
+   "sql": "insert into public.epochs(chain_id, epoch_type, start_at, en#da1431dea14a3a9d",
+   "params": [
+    97,
+    "2026-10-12T00:00:00.000Z",
+    "2026-10-19T00:00:00.000Z",
+    "open"
+   ]
+  },
+  {
+   "sql": "insert into public.reward_events( chain_id, tx_hash, log_ind#3c22db8adfe0dba2",
+   "params": [
+    97,
+    "0x08fd59804f024fbdb1c668feb7e15813d41279c2a00f7017a1712fa9febbc936",
+    14,
+    21,
+    "2026-10-14T15:00:42.000Z",
+    1,
+    "0x9c3e960f1636c88d5b210a11748aafa414467cc7",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "trade",
+    "standard_unlinked",
+    "7352941176470",
+    "0",
+    "2941176470588",
+    "0",
+    "8215686274511",
+    "19607843137255",
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "HookFee",
+    "gen8_hook",
+    "{\"generation\":8,\"poolId\":\"0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64\",\"weeklyLeagueWei\":\"2205882352941\",\"monthlyLeagueWei\":\"5147058823529\",\"creatorShareWei\":\"1098039215686\",\"routerAmountWei\":\"18509803921569\",\"curveAmountWei\":\"980392156862745\",\"feeBps\":200,\"swapSender\":\"0x49ed1f4ee8cd64edbb3cc88407e611f0398bae9c\",\"referrer\":null,\"swapLogIndex\":15}"
+   ]
+  },
+  {
+   "sql": "select r.is_og from public.wallet_recruiter_links l join pub#8f6cf56a7e968296",
+   "params": [
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "2026-10-14T15:00:44.000Z"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_gen8_fee_accruals( chain_id, hook_add#d702dc60abe59262",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0xc33532b8a8b7465bc7a33d7a9a7999181bbd720cd507a2f64c6420d99a577bec",
+    1,
+    2,
+    22,
+    "2026-10-14T15:00:44.000Z",
+    "trade",
+    "bonding",
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "0x0ed7895ed0973f74c732ec68b728666dee6f57a3",
+    null,
+    "buy",
+    "standard_unlinked",
+    "1960784313725490",
+    "39215686274510",
+    200,
+    "2196078431372",
+    "37019607843138",
+    "4411764705882",
+    "10294117647059",
+    "0",
+    "0",
+    "5882352941176",
+    "16431372549021"
+   ]
+  },
+  {
+   "sql": "insert into public.epochs(chain_id, epoch_type, start_at, en#da1431dea14a3a9d",
+   "params": [
+    97,
+    "2026-10-12T00:00:00.000Z",
+    "2026-10-19T00:00:00.000Z",
+    "open"
+   ]
+  },
+  {
+   "sql": "insert into public.reward_events( chain_id, tx_hash, log_ind#3c22db8adfe0dba2",
+   "params": [
+    97,
+    "0xc33532b8a8b7465bc7a33d7a9a7999181bbd720cd507a2f64c6420d99a577bec",
+    1,
+    22,
+    "2026-10-14T15:00:44.000Z",
+    1,
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "trade",
+    "standard_unlinked",
+    "14705882352941",
+    "0",
+    "5882352941176",
+    "0",
+    "16431372549021",
+    "39215686274510",
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "HookFee",
+    "gen8_hook",
+    "{\"generation\":8,\"poolId\":\"0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64\",\"weeklyLeagueWei\":\"4411764705882\",\"monthlyLeagueWei\":\"10294117647059\",\"creatorShareWei\":\"2196078431372\",\"routerAmountWei\":\"37019607843138\",\"curveAmountWei\":\"1960784313725490\",\"feeBps\":200,\"swapSender\":\"0x0ed7895ed0973f74c732ec68b728666dee6f57a3\",\"referrer\":null,\"swapLogIndex\":2}"
+   ]
+  },
+  {
+   "sql": "select r.is_og from public.wallet_recruiter_links l join pub#8f6cf56a7e968296",
+   "params": [
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "2026-10-14T15:00:46.000Z"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_gen8_fee_accruals( chain_id, hook_add#d702dc60abe59262",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0xad330441df14b03c9bf8d66e9a56d5f5495c26eb48b2ce61170c317d59dc92db",
+    2,
+    0,
+    23,
+    "2026-10-14T15:00:46.000Z",
+    "trade",
+    "bonding",
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "0x0ed7895ed0973f74c732ec68b728666dee6f57a3",
+    null,
+    "buy",
+    "standard_unlinked",
+    "13348543984011",
+    "266970879680",
+    200,
+    "14950369262",
+    "252020510418",
+    "30034223964",
+    "70079855916",
+    "0",
+    "0",
+    "40045631952",
+    "111860798586"
+   ]
+  },
+  {
+   "sql": "insert into public.epochs(chain_id, epoch_type, start_at, en#da1431dea14a3a9d",
+   "params": [
+    97,
+    "2026-10-12T00:00:00.000Z",
+    "2026-10-19T00:00:00.000Z",
+    "open"
+   ]
+  },
+  {
+   "sql": "insert into public.reward_events( chain_id, tx_hash, log_ind#3c22db8adfe0dba2",
+   "params": [
+    97,
+    "0xad330441df14b03c9bf8d66e9a56d5f5495c26eb48b2ce61170c317d59dc92db",
+    2,
+    23,
+    "2026-10-14T15:00:46.000Z",
+    1,
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "trade",
+    "standard_unlinked",
+    "100114079880",
+    "0",
+    "40045631952",
+    "0",
+    "111860798586",
+    "266970879680",
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "HookFee",
+    "gen8_hook",
+    "{\"generation\":8,\"poolId\":\"0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64\",\"weeklyLeagueWei\":\"30034223964\",\"monthlyLeagueWei\":\"70079855916\",\"creatorShareWei\":\"14950369262\",\"routerAmountWei\":\"252020510418\",\"curveAmountWei\":\"13348543984011\",\"feeBps\":200,\"swapSender\":\"0x0ed7895ed0973f74c732ec68b728666dee6f57a3\",\"referrer\":null,\"swapLogIndex\":0}"
+   ]
+  },
+  {
+   "sql": "select r.is_og from public.wallet_recruiter_links l join pub#8f6cf56a7e968296",
+   "params": [
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "2026-10-14T15:00:50.000Z"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_gen8_fee_accruals( chain_id, hook_add#d702dc60abe59262",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0x8e52a7d18a7fc7bf55eb8e771e4a8797f7c7a71085b339ad45923fb72cd26966",
+    2,
+    0,
+    25,
+    "2026-10-14T15:00:50.000Z",
+    "trade",
+    "bonding",
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "0x0ed7895ed0973f74c732ec68b728666dee6f57a3",
+    null,
+    "sell",
+    "standard_unlinked",
+    "1336621644253",
+    "26732432885",
+    200,
+    "1497016241",
+    "25235416644",
+    "3007398699",
+    "7017263632",
+    "0",
+    "0",
+    "4009864932",
+    "11200889381"
+   ]
+  },
+  {
+   "sql": "insert into public.epochs(chain_id, epoch_type, start_at, en#da1431dea14a3a9d",
+   "params": [
+    97,
+    "2026-10-12T00:00:00.000Z",
+    "2026-10-19T00:00:00.000Z",
+    "open"
+   ]
+  },
+  {
+   "sql": "insert into public.reward_events( chain_id, tx_hash, log_ind#3c22db8adfe0dba2",
+   "params": [
+    97,
+    "0x8e52a7d18a7fc7bf55eb8e771e4a8797f7c7a71085b339ad45923fb72cd26966",
+    2,
+    25,
+    "2026-10-14T15:00:50.000Z",
+    1,
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "trade",
+    "standard_unlinked",
+    "10024662331",
+    "0",
+    "4009864932",
+    "0",
+    "11200889381",
+    "26732432885",
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "HookFee",
+    "gen8_hook",
+    "{\"generation\":8,\"poolId\":\"0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64\",\"weeklyLeagueWei\":\"3007398699\",\"monthlyLeagueWei\":\"7017263632\",\"creatorShareWei\":\"1497016241\",\"routerAmountWei\":\"25235416644\",\"curveAmountWei\":\"1336621644253\",\"feeBps\":200,\"swapSender\":\"0x0ed7895ed0973f74c732ec68b728666dee6f57a3\",\"referrer\":null,\"swapLogIndex\":0}"
+   ]
+  },
+  {
+   "sql": "select r.is_og from public.wallet_recruiter_links l join pub#8f6cf56a7e968296",
+   "params": [
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "2026-10-14T15:00:52.000Z"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_gen8_fee_accruals( chain_id, hook_add#d702dc60abe59262",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0x54cf07efc165967ddac9ff3c56fc7fc59cba4397d46abae9e8412fe0deef8cbd",
+    1,
+    2,
+    26,
+    "2026-10-14T15:00:52.000Z",
+    "trade",
+    "bonding",
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "0x0ed7895ed0973f74c732ec68b728666dee6f57a3",
+    null,
+    "sell",
+    "standard_unlinked",
+    "102040816326530",
+    "2040816326530",
+    200,
+    "114285714285",
+    "1926530612245",
+    "229591836734",
+    "535714285714",
+    "0",
+    "0",
+    "306122448979",
+    "855102040818"
+   ]
+  },
+  {
+   "sql": "insert into public.epochs(chain_id, epoch_type, start_at, en#da1431dea14a3a9d",
+   "params": [
+    97,
+    "2026-10-12T00:00:00.000Z",
+    "2026-10-19T00:00:00.000Z",
+    "open"
+   ]
+  },
+  {
+   "sql": "insert into public.reward_events( chain_id, tx_hash, log_ind#3c22db8adfe0dba2",
+   "params": [
+    97,
+    "0x54cf07efc165967ddac9ff3c56fc7fc59cba4397d46abae9e8412fe0deef8cbd",
+    1,
+    26,
+    "2026-10-14T15:00:52.000Z",
+    1,
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "trade",
+    "standard_unlinked",
+    "765306122448",
+    "0",
+    "306122448979",
+    "0",
+    "855102040818",
+    "2040816326530",
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "HookFee",
+    "gen8_hook",
+    "{\"generation\":8,\"poolId\":\"0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64\",\"weeklyLeagueWei\":\"229591836734\",\"monthlyLeagueWei\":\"535714285714\",\"creatorShareWei\":\"114285714285\",\"routerAmountWei\":\"1926530612245\",\"curveAmountWei\":\"102040816326530\",\"feeBps\":200,\"swapSender\":\"0x0ed7895ed0973f74c732ec68b728666dee6f57a3\",\"referrer\":null,\"swapLogIndex\":2}"
+   ]
+  },
+  {
+   "sql": "select r.is_og from public.wallet_recruiter_links l join pub#8f6cf56a7e968296",
+   "params": [
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "2026-10-14T15:00:54.000Z"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_gen8_fee_accruals( chain_id, hook_add#d702dc60abe59262",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0xdec60c613a1ea7746e3698040f3db8d2d89fb4efebe2c04dd0709b102a77e716",
+    1,
+    2,
+    27,
+    "2026-10-14T15:00:54.000Z",
+    "trade",
+    "bonding",
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "0x0ed7895ed0973f74c732ec68b728666dee6f57a3",
+    null,
+    "buy",
+    "standard_unlinked",
+    "98039215686274509",
+    "1960784313725491",
+    200,
+    "109803921568627",
+    "1850980392156864",
+    "220588235294117",
+    "514705882352942",
+    "0",
+    "0",
+    "294117647058823",
+    "821568627450982"
+   ]
+  },
+  {
+   "sql": "insert into public.epochs(chain_id, epoch_type, start_at, en#da1431dea14a3a9d",
+   "params": [
+    97,
+    "2026-10-12T00:00:00.000Z",
+    "2026-10-19T00:00:00.000Z",
+    "open"
+   ]
+  },
+  {
+   "sql": "insert into public.reward_events( chain_id, tx_hash, log_ind#3c22db8adfe0dba2",
+   "params": [
+    97,
+    "0xdec60c613a1ea7746e3698040f3db8d2d89fb4efebe2c04dd0709b102a77e716",
+    1,
+    27,
+    "2026-10-14T15:00:54.000Z",
+    1,
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "trade",
+    "standard_unlinked",
+    "735294117647059",
+    "0",
+    "294117647058823",
+    "0",
+    "821568627450982",
+    "1960784313725491",
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "HookFee",
+    "gen8_hook",
+    "{\"generation\":8,\"poolId\":\"0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64\",\"weeklyLeagueWei\":\"220588235294117\",\"monthlyLeagueWei\":\"514705882352942\",\"creatorShareWei\":\"109803921568627\",\"routerAmountWei\":\"1850980392156864\",\"curveAmountWei\":\"98039215686274509\",\"feeBps\":200,\"swapSender\":\"0x0ed7895ed0973f74c732ec68b728666dee6f57a3\",\"referrer\":null,\"swapLogIndex\":2}"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_campaign_events(chain_id, contract_ad#8511e29c60de0647",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "gen8_hook",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "Graduated",
+    "0xdec60c613a1ea7746e3698040f3db8d2d89fb4efebe2c04dd0709b102a77e716",
+    5,
+    27,
+    "2026-10-14T15:00:54.000Z",
+    "{\"poolId\":\"0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64\",\"gradFeeNative\":\"663104639541882\",\"nativeInA\":\"33155231977094105\",\"liquidityRemoved\":\"49702900137080338136\"}"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_gen8_fee_accruals( chain_id, hook_add#d702dc60abe59262",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0xdec60c613a1ea7746e3698040f3db8d2d89fb4efebe2c04dd0709b102a77e716",
+    5,
+    null,
+    27,
+    "2026-10-14T15:00:54.000Z",
+    "graduation",
+    "bonding",
+    "0x9c3e960f1636c88d5b210a11748aafa414467cc7",
+    null,
+    null,
+    null,
+    "standard_unlinked",
+    "33155231977094105",
+    "663104639541882",
+    200,
+    "0",
+    "663104639541882",
+    "0",
+    "0",
+    "0",
+    "0",
+    "116043311919829",
+    "547061327622053"
+   ]
+  },
+  {
+   "sql": "insert into public.epochs(chain_id, epoch_type, start_at, en#da1431dea14a3a9d",
+   "params": [
+    97,
+    "2026-10-12T00:00:00.000Z",
+    "2026-10-19T00:00:00.000Z",
+    "open"
+   ]
+  },
+  {
+   "sql": "insert into public.reward_events( chain_id, tx_hash, log_ind#3c22db8adfe0dba2",
+   "params": [
+    97,
+    "0xdec60c613a1ea7746e3698040f3db8d2d89fb4efebe2c04dd0709b102a77e716",
+    5,
+    27,
+    "2026-10-14T15:00:54.000Z",
+    1,
+    "0x9c3e960f1636c88d5b210a11748aafa414467cc7",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "finalize",
+    "standard_unlinked",
+    "0",
+    "0",
+    "116043311919829",
+    "0",
+    "547061327622053",
+    "663104639541882",
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "Graduated",
+    "gen8_hook",
+    "{\"generation\":8,\"poolId\":\"0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64\",\"weeklyLeagueWei\":\"0\",\"monthlyLeagueWei\":\"0\",\"creatorShareWei\":\"0\",\"routerAmountWei\":\"663104639541882\",\"curveAmountWei\":\"33155231977094105\",\"feeBps\":200,\"swapSender\":null,\"referrer\":null,\"swapLogIndex\":null}"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_gen8_fee_accruals( chain_id, hook_add#d702dc60abe59262",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0x2e85e3b406212d13e302cca9ac757e4b04014080c8de377db4fb4824e5d55cc8",
+    1,
+    2,
+    28,
+    "2026-10-14T15:00:56.000Z",
+    "trade",
+    "post",
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "0x0ed7895ed0973f74c732ec68b728666dee6f57a3",
+    null,
+    "buy",
+    null,
+    "1980198019801980",
+    "19801980198020",
+    100,
+    "9900990099009",
+    "9900990099011",
+    "0",
+    "0",
+    "0",
+    "0",
+    "0",
+    "9900990099011"
+   ]
+  },
+  {
+   "sql": "insert into public.evm_gen8_fee_accruals( chain_id, hook_add#d702dc60abe59262",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0xd3f3cfde53c75e376a679176d621923951e50106b76b8f5272f2724c23b70433",
+    2,
+    0,
+    29,
+    "2026-10-14T15:00:58.000Z",
+    "trade",
+    "post",
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "0x0ed7895ed0973f74c732ec68b728666dee6f57a3",
+    null,
+    "sell",
+    null,
+    "246722392443104",
+    "2467223924431",
+    100,
+    "1233611962215",
+    "1233611962216",
+    "0",
+    "0",
+    "0",
+    "0",
+    "0",
+    "1233611962216"
+   ]
+  },
+  {
+   "sql": "insert into public.indexer_state(chain_id, cursor, last_inde#2f254ed4016e4cd6",
+   "params": [
+    97,
+    "gen8-money:0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    31
+   ]
+  },
+  {
+   "sql": "delete from public.evm_gen8_display_blocks where chain_id = #0391fed4bee46d57",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    30
+   ]
+  },
+  {
+   "sql": "select last_indexed_block from public.indexer_state where ch#0714451ff331f534",
+   "params": [
+    97,
+    "gen8:0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec"
+   ]
+  },
+  {
+   "sql": "select block_number, block_hash from public.evm_gen8_display#d42642e6ea696cae",
+   "params": [
+    97,
+    "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+    30,
+    2048
+   ]
+  },
+  {
+   "sql": "select last_indexed_block from public.indexer_state where ch#0714451ff331f534",
+   "params": [
+    97,
+    "gen8-money:0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec"
+   ]
+  }
+ ],
+ "sinks": [
+  {
+   "name": "upsertCampaign",
+   "args": [
+    97,
+    "0x49ed1f4ee8cd64edbb3cc88407e611f0398bae9c",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0x9c3e960f1636c88d5b210a11748aafa414467cc7",
+    "Gen Eight",
+    "GEN8",
+    21,
+    "2026-10-14T15:00:42.000Z",
+    "ipfs://logo"
+   ]
+  },
+  {
+   "name": "publishLeague",
+   "args": [
+    97,
+    "campaign_created",
+    {
+     "type": "campaign_created",
+     "chainId": 97,
+     "ts": "<now>",
+     "item": {
+      "campaignAddress": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+      "tokenAddress": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+      "creatorAddress": "0x9c3e960f1636c88d5b210a11748aafa414467cc7",
+      "name": "Gen Eight",
+      "symbol": "GEN8",
+      "createdAtChain": "2026-10-14T15:00:42.000Z",
+      "blockNumber": 21
+     }
+    }
+   ]
+  },
+  {
+   "name": "insertActivityEvent",
+   "args": [
+    {
+     "chainId": 97,
+     "eventType": "CREATE_CAMPAIGN",
+     "txHash": "0x08fd59804f024fbdb1c668feb7e15813d41279c2a00f7017a1712fa9febbc936",
+     "logIndex": 12,
+     "blockNumber": 21,
+     "blockTime": "2026-10-14T15:00:42.000Z",
+     "actor": "0x9c3e960f1636c88d5b210a11748aafa414467cc7",
+     "campaign": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "token": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "meta": {
+      "name": "Gen Eight",
+      "symbol": "GEN8",
+      "factory": "0x49ed1f4ee8cd64edbb3cc88407e611f0398bae9c",
+      "generation": 8,
+      "poolId": "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+      "openAt": "2026-10-12T09:19:12.000Z"
+     }
+    }
+   ]
+  },
+  {
+   "name": "queueActivity",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    1791990042
+   ]
+  },
+  {
+   "name": "insertActivityEvent",
+   "args": [
+    {
+     "chainId": 97,
+     "eventType": "BUY",
+     "txHash": "0x08fd59804f024fbdb1c668feb7e15813d41279c2a00f7017a1712fa9febbc936",
+     "logIndex": 15,
+     "blockNumber": 21,
+     "blockTime": "2026-10-14T15:00:42.000Z",
+     "actor": "0x9c3e960f1636c88d5b210a11748aafa414467cc7",
+     "campaign": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "token": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "amountInWei": "1000000000000000",
+     "amountOutWei": "138839416575563087598396150",
+     "costWei": "1000000000000000",
+     "payoutWei": null,
+     "meta": {
+      "priceBnb": 7.061338782918096e-12,
+      "generation": 8,
+      "phase": "bonding",
+      "curveAmountWei": "980392156862745",
+      "feeWei": "19607843137255",
+      "feeBps": 200,
+      "swapSender": "0x49ed1f4ee8cd64edbb3cc88407e611f0398bae9c",
+      "tradeType": "buy_exact_in",
+      "spotPriceBnb": 8.190352e-12
+     }
+    }
+   ]
+  },
+  {
+   "name": "publishTrade",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "type": "trade",
+     "chainId": 97,
+     "token": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "txHash": "0x08fd59804f024fbdb1c668feb7e15813d41279c2a00f7017a1712fa9febbc936",
+     "logIndex": 15,
+     "side": "buy",
+     "wallet": "0x9c3e960f1636c88d5b210a11748aafa414467cc7",
+     "tokenAmountRaw": "138839416575563087598396150",
+     "bnbAmountRaw": "980392156862745",
+     "tokenAmount": "138839416.57556307",
+     "bnbAmount": "0.000980392156862745",
+     "priceBnb": "7.061338782918096e-12",
+     "ts": "<now>",
+     "blockNumber": 21
+    }
+   ]
+  },
+  {
+   "name": "publishCandle",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "tf": "1m",
+     "bucketSec": 1791990000,
+     "close": 8.190352e-12
+    }
+   ]
+  },
+  {
+   "name": "publishCandle",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "tf": "1h",
+     "bucketSec": 1791990000,
+     "close": 8.190352e-12
+    }
+   ]
+  },
+  {
+   "name": "publishStats",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "type": "stats_patch",
+     "lastPriceBnb": "8.190352e-12",
+     "marketcapBnb": "0.008190352",
+     "vol24hBnb": "0"
+    }
+   ]
+  },
+  {
+   "name": "queueStats",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "lastPriceBnb": "8.190352e-12",
+     "marketcapBnb": "0.008190352",
+     "vol24hBnb": "0"
+    }
+   ]
+  },
+  {
+   "name": "queueRaisedDelta",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    0.000980392156862745
+   ]
+  },
+  {
+   "name": "checkMilestones",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "progressPct": 16.33
+    }
+   ]
+  },
+  {
+   "name": "queueActivity",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    1791990044
+   ]
+  },
+  {
+   "name": "insertActivityEvent",
+   "args": [
+    {
+     "chainId": 97,
+     "eventType": "BUY",
+     "txHash": "0xc33532b8a8b7465bc7a33d7a9a7999181bbd720cd507a2f64c6420d99a577bec",
+     "logIndex": 2,
+     "blockNumber": 22,
+     "blockTime": "2026-10-14T15:00:44.000Z",
+     "actor": "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+     "campaign": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "token": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "amountInWei": "2000000000000000",
+     "amountOutWei": "187663930284394030099871145",
+     "costWei": "2000000000000000",
+     "payoutWei": null,
+     "meta": {
+      "priceBnb": 1.0448381373842235e-11,
+      "generation": 8,
+      "phase": "bonding",
+      "curveAmountWei": "1960784313725490",
+      "feeWei": "39215686274510",
+      "feeBps": 200,
+      "swapSender": "0x0ed7895ed0973f74c732ec68b728666dee6f57a3",
+      "tradeType": "buy_exact_in",
+      "spotPriceBnb": 1.3328933e-11
+     }
+    }
+   ]
+  },
+  {
+   "name": "publishTrade",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "type": "trade",
+     "chainId": 97,
+     "token": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "txHash": "0xc33532b8a8b7465bc7a33d7a9a7999181bbd720cd507a2f64c6420d99a577bec",
+     "logIndex": 2,
+     "side": "buy",
+     "wallet": "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+     "tokenAmountRaw": "187663930284394030099871145",
+     "bnbAmountRaw": "1960784313725490",
+     "tokenAmount": "187663930.28439403",
+     "bnbAmount": "0.00196078431372549",
+     "priceBnb": "1.0448381373842235e-11",
+     "ts": "<now>",
+     "blockNumber": 22
+    }
+   ]
+  },
+  {
+   "name": "publishCandle",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "tf": "1m",
+     "bucketSec": 1791990000,
+     "close": 1.3328933e-11
+    }
+   ]
+  },
+  {
+   "name": "publishCandle",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "tf": "1h",
+     "bucketSec": 1791990000,
+     "close": 1.3328933e-11
+    }
+   ]
+  },
+  {
+   "name": "publishStats",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "type": "stats_patch",
+     "lastPriceBnb": "1.3328933e-11",
+     "marketcapBnb": "0.013328933",
+     "vol24hBnb": "0"
+    }
+   ]
+  },
+  {
+   "name": "queueStats",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "lastPriceBnb": "1.3328933e-11",
+     "marketcapBnb": "0.013328933",
+     "vol24hBnb": "0"
+    }
+   ]
+  },
+  {
+   "name": "queueRaisedDelta",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    0.00196078431372549
+   ]
+  },
+  {
+   "name": "checkMilestones",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "progressPct": 38.41
+    }
+   ]
+  },
+  {
+   "name": "queueActivity",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    1791990046
+   ]
+  },
+  {
+   "name": "insertActivityEvent",
+   "args": [
+    {
+     "chainId": 97,
+     "eventType": "BUY",
+     "txHash": "0xad330441df14b03c9bf8d66e9a56d5f5495c26eb48b2ce61170c317d59dc92db",
+     "logIndex": 0,
+     "blockNumber": 23,
+     "blockTime": "2026-10-14T15:00:46.000Z",
+     "actor": "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+     "campaign": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "token": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "amountInWei": "13615514863691",
+     "amountOutWei": "1000000000000000000000000",
+     "costWei": "13615514863691",
+     "payoutWei": null,
+     "meta": {
+      "priceBnb": 1.3348543984010998e-11,
+      "generation": 8,
+      "phase": "bonding",
+      "curveAmountWei": "13348543984011",
+      "feeWei": "266970879680",
+      "feeBps": 200,
+      "swapSender": "0x0ed7895ed0973f74c732ec68b728666dee6f57a3",
+      "tradeType": "buy_exact_out",
+      "spotPriceBnb": 1.3368182e-11
+     }
+    }
+   ]
+  },
+  {
+   "name": "publishTrade",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "type": "trade",
+     "chainId": 97,
+     "token": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "txHash": "0xad330441df14b03c9bf8d66e9a56d5f5495c26eb48b2ce61170c317d59dc92db",
+     "logIndex": 0,
+     "side": "buy",
+     "wallet": "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+     "tokenAmountRaw": "1000000000000000000000000",
+     "bnbAmountRaw": "13348543984011",
+     "tokenAmount": "1000000",
+     "bnbAmount": "0.000013348543984011",
+     "priceBnb": "1.3348543984010998e-11",
+     "ts": "<now>",
+     "blockNumber": 23
+    }
+   ]
+  },
+  {
+   "name": "publishCandle",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "tf": "1m",
+     "bucketSec": 1791990000,
+     "close": 1.3368182e-11
+    }
+   ]
+  },
+  {
+   "name": "publishCandle",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "tf": "1h",
+     "bucketSec": 1791990000,
+     "close": 1.3368182e-11
+    }
+   ]
+  },
+  {
+   "name": "publishStats",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "type": "stats_patch",
+     "lastPriceBnb": "1.3368182e-11",
+     "marketcapBnb": "0.013368182",
+     "vol24hBnb": "0"
+    }
+   ]
+  },
+  {
+   "name": "queueStats",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "lastPriceBnb": "1.3368182e-11",
+     "marketcapBnb": "0.013368182",
+     "vol24hBnb": "0"
+    }
+   ]
+  },
+  {
+   "name": "queueRaisedDelta",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    0.000013348543984011
+   ]
+  },
+  {
+   "name": "checkMilestones",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "progressPct": 38.52
+    }
+   ]
+  },
+  {
+   "name": "queueActivity",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    1791990050
+   ]
+  },
+  {
+   "name": "insertActivityEvent",
+   "args": [
+    {
+     "chainId": 97,
+     "eventType": "SELL",
+     "txHash": "0x8e52a7d18a7fc7bf55eb8e771e4a8797f7c7a71085b339ad45923fb72cd26966",
+     "logIndex": 0,
+     "blockNumber": 25,
+     "blockTime": "2026-10-14T15:00:50.000Z",
+     "actor": "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+     "campaign": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "token": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "amountInWei": "100000000000000000000000",
+     "amountOutWei": "1309889211368",
+     "costWei": null,
+     "payoutWei": "1309889211368",
+     "meta": {
+      "priceBnb": 1.336621644253e-11,
+      "generation": 8,
+      "phase": "bonding",
+      "curveAmountWei": "1336621644253",
+      "feeWei": "26732432885",
+      "feeBps": 200,
+      "swapSender": "0x0ed7895ed0973f74c732ec68b728666dee6f57a3",
+      "tradeType": "sell_exact_in",
+      "spotPriceBnb": 1.336425e-11
+     }
+    }
+   ]
+  },
+  {
+   "name": "publishTrade",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "type": "trade",
+     "chainId": 97,
+     "token": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "txHash": "0x8e52a7d18a7fc7bf55eb8e771e4a8797f7c7a71085b339ad45923fb72cd26966",
+     "logIndex": 0,
+     "side": "sell",
+     "wallet": "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+     "tokenAmountRaw": "100000000000000000000000",
+     "bnbAmountRaw": "1336621644253",
+     "tokenAmount": "100000",
+     "bnbAmount": "0.000001336621644253",
+     "priceBnb": "1.336621644253e-11",
+     "ts": "<now>",
+     "blockNumber": 25
+    }
+   ]
+  },
+  {
+   "name": "publishCandle",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "tf": "1m",
+     "bucketSec": 1791990000,
+     "close": 1.336425e-11
+    }
+   ]
+  },
+  {
+   "name": "publishCandle",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "tf": "1h",
+     "bucketSec": 1791990000,
+     "close": 1.336425e-11
+    }
+   ]
+  },
+  {
+   "name": "publishStats",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "type": "stats_patch",
+     "lastPriceBnb": "1.336425e-11",
+     "marketcapBnb": "0.01336425",
+     "vol24hBnb": "0"
+    }
+   ]
+  },
+  {
+   "name": "queueStats",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "lastPriceBnb": "1.336425e-11",
+     "marketcapBnb": "0.01336425",
+     "vol24hBnb": "0"
+    }
+   ]
+  },
+  {
+   "name": "queueRaisedDelta",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    -0.000001336621644253
+   ]
+  },
+  {
+   "name": "checkMilestones",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "progressPct": 38.51
+    }
+   ]
+  },
+  {
+   "name": "queueActivity",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    1791990052
+   ]
+  },
+  {
+   "name": "insertActivityEvent",
+   "args": [
+    {
+     "chainId": 97,
+     "eventType": "SELL",
+     "txHash": "0x54cf07efc165967ddac9ff3c56fc7fc59cba4397d46abae9e8412fe0deef8cbd",
+     "logIndex": 2,
+     "blockNumber": 26,
+     "blockTime": "2026-10-14T15:00:52.000Z",
+     "actor": "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+     "campaign": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "token": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "amountInWei": "7722089678430490727801844",
+     "amountOutWei": "100000000000000",
+     "costWei": null,
+     "payoutWei": "100000000000000",
+     "meta": {
+      "priceBnb": 1.3214145467845658e-11,
+      "generation": 8,
+      "phase": "bonding",
+      "curveAmountWei": "102040816326530",
+      "feeWei": "2040816326530",
+      "feeBps": 200,
+      "swapSender": "0x0ed7895ed0973f74c732ec68b728666dee6f57a3",
+      "tradeType": "sell_exact_out",
+      "spotPriceBnb": 1.3065726e-11
+     }
+    }
+   ]
+  },
+  {
+   "name": "publishTrade",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "type": "trade",
+     "chainId": 97,
+     "token": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "txHash": "0x54cf07efc165967ddac9ff3c56fc7fc59cba4397d46abae9e8412fe0deef8cbd",
+     "logIndex": 2,
+     "side": "sell",
+     "wallet": "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+     "tokenAmountRaw": "7722089678430490727801844",
+     "bnbAmountRaw": "102040816326530",
+     "tokenAmount": "7722089.678430491",
+     "bnbAmount": "0.00010204081632653",
+     "priceBnb": "1.3214145467845658e-11",
+     "ts": "<now>",
+     "blockNumber": 26
+    }
+   ]
+  },
+  {
+   "name": "publishCandle",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "tf": "1m",
+     "bucketSec": 1791990000,
+     "close": 1.3065726e-11
+    }
+   ]
+  },
+  {
+   "name": "publishCandle",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "tf": "1h",
+     "bucketSec": 1791990000,
+     "close": 1.3065726e-11
+    }
+   ]
+  },
+  {
+   "name": "publishStats",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "type": "stats_patch",
+     "lastPriceBnb": "1.3065726e-11",
+     "marketcapBnb": "0.013065726",
+     "vol24hBnb": "0"
+    }
+   ]
+  },
+  {
+   "name": "queueStats",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "lastPriceBnb": "1.3065726e-11",
+     "marketcapBnb": "0.013065726",
+     "vol24hBnb": "0"
+    }
+   ]
+  },
+  {
+   "name": "queueRaisedDelta",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    -0.00010204081632653
+   ]
+  },
+  {
+   "name": "checkMilestones",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "progressPct": 37.6
+    }
+   ]
+  },
+  {
+   "name": "queueActivity",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    1791990054
+   ]
+  },
+  {
+   "name": "insertActivityEvent",
+   "args": [
+    {
+     "chainId": 97,
+     "eventType": "BUY",
+     "txHash": "0xdec60c613a1ea7746e3698040f3db8d2d89fb4efebe2c04dd0709b102a77e716",
+     "logIndex": 2,
+     "blockNumber": 27,
+     "blockTime": "2026-10-14T15:00:54.000Z",
+     "actor": "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+     "campaign": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "token": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "amountInWei": "100000000000000000",
+     "amountOutWei": "618177375115218587465602423",
+     "costWei": "100000000000000000",
+     "payoutWei": null,
+     "meta": {
+      "priceBnb": 1.5859398876900262e-10,
+      "generation": 8,
+      "phase": "bonding",
+      "curveAmountWei": "98039215686274509",
+      "feeWei": "1960784313725491",
+      "feeBps": 200,
+      "swapSender": "0x0ed7895ed0973f74c732ec68b728666dee6f57a3",
+      "tradeType": "buy_exact_in",
+      "spotPriceBnb": 2.378287013e-9
+     }
+    }
+   ]
+  },
+  {
+   "name": "publishTrade",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "type": "trade",
+     "chainId": 97,
+     "token": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "txHash": "0xdec60c613a1ea7746e3698040f3db8d2d89fb4efebe2c04dd0709b102a77e716",
+     "logIndex": 2,
+     "side": "buy",
+     "wallet": "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+     "tokenAmountRaw": "618177375115218587465602423",
+     "bnbAmountRaw": "98039215686274509",
+     "tokenAmount": "618177375.1152186",
+     "bnbAmount": "0.09803921568627451",
+     "priceBnb": "1.5859398876900262e-10",
+     "ts": "<now>",
+     "blockNumber": 27
+    }
+   ]
+  },
+  {
+   "name": "publishCandle",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "tf": "1m",
+     "bucketSec": 1791990000,
+     "close": 2.378287013e-9
+    }
+   ]
+  },
+  {
+   "name": "publishCandle",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "tf": "1h",
+     "bucketSec": 1791990000,
+     "close": 2.378287013e-9
+    }
+   ]
+  },
+  {
+   "name": "publishStats",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "type": "stats_patch",
+     "lastPriceBnb": "2.378287013e-9",
+     "marketcapBnb": "2.378287013",
+     "vol24hBnb": "0"
+    }
+   ]
+  },
+  {
+   "name": "queueStats",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "lastPriceBnb": "2.378287013e-9",
+     "marketcapBnb": "2.378287013",
+     "vol24hBnb": "0"
+    }
+   ]
+  },
+  {
+   "name": "queueRaisedDelta",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    0.09803921568627451
+   ]
+  },
+  {
+   "name": "checkMilestones",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "progressPct": 100
+    }
+   ]
+  },
+  {
+   "name": "markEvmCampaignGraduated",
+   "args": [
+    {
+     "chainId": 97,
+     "campaign": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "tokenAddr": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "txHash": "0xdec60c613a1ea7746e3698040f3db8d2d89fb4efebe2c04dd0709b102a77e716",
+     "logIndex": 5,
+     "blockNumber": 27,
+     "tsSec": 1791990054,
+     "actor": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "pair": "",
+     "meta": {
+      "generation": 8,
+      "poolId": "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+      "hook": "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+      "gradFeeNative": "663104639541882",
+      "nativeInA": "33155231977094105",
+      "liquidityRemoved": "49702900137080338136"
+     }
+    },
+    {
+     "market": {
+      "venue": "uniswap_v4",
+      "pair": "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+      "quoteAsset": "BNB"
+     },
+     "seedRobinhoodCms": false
+    }
+   ]
+  },
+  {
+   "name": "publishTokenEvent",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "market_stage_changed",
+    {
+     "eventId": "97:0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2:27:DEX_ACTIVE",
+     "from": "BONDING",
+     "to": "DEX_ACTIVE",
+     "marketStage": "DEX_ACTIVE",
+     "blockNumber": 27,
+     "txHash": "0xdec60c613a1ea7746e3698040f3db8d2d89fb4efebe2c04dd0709b102a77e716",
+     "reason": "gen8_graduated"
+    }
+   ]
+  },
+  {
+   "name": "queueActivity",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    1791990056
+   ]
+  },
+  {
+   "name": "insertActivityEvent",
+   "args": [
+    {
+     "chainId": 97,
+     "eventType": "BUY",
+     "txHash": "0x2e85e3b406212d13e302cca9ac757e4b04014080c8de377db4fb4824e5d55cc8",
+     "logIndex": 2,
+     "blockNumber": 28,
+     "blockTime": "2026-10-14T15:00:56.000Z",
+     "actor": "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+     "campaign": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "token": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "amountInWei": "2000000000000000",
+     "amountOutWei": "816483432870665282103790",
+     "costWei": "2000000000000000",
+     "payoutWei": null,
+     "meta": {
+      "priceBnb": 2.4252764233559804e-9,
+      "generation": 8,
+      "phase": "post",
+      "curveAmountWei": "1980198019801980",
+      "feeWei": "19801980198020",
+      "feeBps": 100,
+      "swapSender": "0x0ed7895ed0973f74c732ec68b728666dee6f57a3",
+      "tradeType": "buy_exact_in",
+      "spotPriceBnb": 2.473194234e-9
+     }
+    }
+   ]
+  },
+  {
+   "name": "publishTokenEvent",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "market_stats_patch",
+    {
+     "pairAddress": "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+     "last_price_bnb": "1",
+     "market_cap_bnb": "1",
+     "liquidity_bnb": "1",
+     "volume_5m_bnb": "0",
+     "volume_1h_bnb": "0",
+     "volume_4h_bnb": "0",
+     "dex_volume_24h_bnb": "0",
+     "vol_24h_bnb": "0",
+     "trades_24h": 0,
+     "buys_24h": 0,
+     "sells_24h": 0,
+     "last_trade_at": null,
+     "market_stage": "DEX_ACTIVE"
+    }
+   ]
+  },
+  {
+   "name": "publishStats",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "type": "stats_patch",
+     "lastPriceBnb": "2.473194234e-9",
+     "marketcapBnb": "2.473194234",
+     "vol24hBnb": "0"
+    }
+   ]
+  },
+  {
+   "name": "queueStats",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "lastPriceBnb": "2.473194234e-9",
+     "marketcapBnb": "2.473194234",
+     "vol24hBnb": "0"
+    }
+   ]
+  },
+  {
+   "name": "publishTokenEvent",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "market_trade",
+    {
+     "eventId": "97:0x2e85e3b406212d13e302cca9ac757e4b04014080c8de377db4fb4824e5d55cc8:2",
+     "source": "gen8_v4",
+     "origin": "unknown",
+     "side": "buy",
+     "wallet": "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+     "recipient": "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+     "pairAddress": "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+     "baseTokenAddress": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "quoteAssetType": "WRAPPED_NATIVE",
+     "baseAmountRaw": "816483432870665282103790",
+     "quoteAmountRaw": "1980198019801980",
+     "tokenAmountRaw": "816483432870665282103790",
+     "nativeAmountRaw": "1980198019801980",
+     "priceBnb": "2.4252764233559804e-9",
+     "spotPriceBnb": "2.473194234e-9",
+     "txHash": "0x2e85e3b406212d13e302cca9ac757e4b04014080c8de377db4fb4824e5d55cc8",
+     "logIndex": 2,
+     "blockNumber": 28,
+     "blockTime": "2026-10-14T15:00:56.000Z"
+    }
+   ]
+  },
+  {
+   "name": "publishTokenEvent",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "market_candle_upsert",
+    {
+     "pairAddress": "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+     "resolution": "1m",
+     "tf": "1m",
+     "bucket_start": "2026-10-14T15:00:00.000Z",
+     "open": "2.473194234e-9",
+     "high": "2.473194234e-9",
+     "low": "2.473194234e-9",
+     "close": "2.473194234e-9",
+     "volume_bnb": "0.00198019801980198",
+     "trades_count": 1
+    }
+   ]
+  },
+  {
+   "name": "publishTokenEvent",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "market_candle_upsert",
+    {
+     "pairAddress": "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+     "resolution": "1h",
+     "tf": "1h",
+     "bucket_start": "2026-10-14T15:00:00.000Z",
+     "open": "2.473194234e-9",
+     "high": "2.473194234e-9",
+     "low": "2.473194234e-9",
+     "close": "2.473194234e-9",
+     "volume_bnb": "0.00198019801980198",
+     "trades_count": 1
+    }
+   ]
+  },
+  {
+   "name": "queueActivity",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    1791990058
+   ]
+  },
+  {
+   "name": "insertActivityEvent",
+   "args": [
+    {
+     "chainId": 97,
+     "eventType": "SELL",
+     "txHash": "0xd3f3cfde53c75e376a679176d621923951e50106b76b8f5272f2724c23b70433",
+     "logIndex": 0,
+     "blockNumber": 29,
+     "blockTime": "2026-10-14T15:00:58.000Z",
+     "actor": "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+     "campaign": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "token": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "amountInWei": "100000000000000000000000",
+     "amountOutWei": "244255168518673",
+     "costWei": null,
+     "payoutWei": "244255168518673",
+     "meta": {
+      "priceBnb": 2.46722392443104e-9,
+      "generation": 8,
+      "phase": "post",
+      "curveAmountWei": "246722392443104",
+      "feeWei": "2467223924431",
+      "feeBps": 100,
+      "swapSender": "0x0ed7895ed0973f74c732ec68b728666dee6f57a3",
+      "tradeType": "sell_exact_in",
+      "spotPriceBnb": 2.461268026e-9
+     }
+    }
+   ]
+  },
+  {
+   "name": "publishTokenEvent",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "market_stats_patch",
+    {
+     "pairAddress": "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+     "last_price_bnb": "1",
+     "market_cap_bnb": "1",
+     "liquidity_bnb": "1",
+     "volume_5m_bnb": "0",
+     "volume_1h_bnb": "0",
+     "volume_4h_bnb": "0",
+     "dex_volume_24h_bnb": "0",
+     "vol_24h_bnb": "0",
+     "trades_24h": 0,
+     "buys_24h": 0,
+     "sells_24h": 0,
+     "last_trade_at": null,
+     "market_stage": "DEX_ACTIVE"
+    }
+   ]
+  },
+  {
+   "name": "publishStats",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "type": "stats_patch",
+     "lastPriceBnb": "2.461268026e-9",
+     "marketcapBnb": "2.461268026",
+     "vol24hBnb": "0"
+    }
+   ]
+  },
+  {
+   "name": "queueStats",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    {
+     "lastPriceBnb": "2.461268026e-9",
+     "marketcapBnb": "2.461268026",
+     "vol24hBnb": "0"
+    }
+   ]
+  },
+  {
+   "name": "publishTokenEvent",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "market_trade",
+    {
+     "eventId": "97:0xd3f3cfde53c75e376a679176d621923951e50106b76b8f5272f2724c23b70433:0",
+     "source": "gen8_v4",
+     "origin": "unknown",
+     "side": "sell",
+     "wallet": "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+     "recipient": "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+     "pairAddress": "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+     "baseTokenAddress": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "quoteAssetType": "WRAPPED_NATIVE",
+     "baseAmountRaw": "100000000000000000000000",
+     "quoteAmountRaw": "246722392443104",
+     "tokenAmountRaw": "100000000000000000000000",
+     "nativeAmountRaw": "246722392443104",
+     "priceBnb": "2.46722392443104e-9",
+     "spotPriceBnb": "2.461268026e-9",
+     "txHash": "0xd3f3cfde53c75e376a679176d621923951e50106b76b8f5272f2724c23b70433",
+     "logIndex": 0,
+     "blockNumber": 29,
+     "blockTime": "2026-10-14T15:00:58.000Z"
+    }
+   ]
+  },
+  {
+   "name": "publishTokenEvent",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "market_candle_upsert",
+    {
+     "pairAddress": "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+     "resolution": "1m",
+     "tf": "1m",
+     "bucket_start": "2026-10-14T15:00:00.000Z",
+     "open": "2.461268026e-9",
+     "high": "2.461268026e-9",
+     "low": "2.461268026e-9",
+     "close": "2.461268026e-9",
+     "volume_bnb": "0.000246722392443104",
+     "trades_count": 1
+    }
+   ]
+  },
+  {
+   "name": "publishTokenEvent",
+   "args": [
+    97,
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "market_candle_upsert",
+    {
+     "pairAddress": "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
+     "resolution": "1h",
+     "tf": "1h",
+     "bucket_start": "2026-10-14T15:00:00.000Z",
+     "open": "2.461268026e-9",
+     "high": "2.461268026e-9",
+     "low": "2.461268026e-9",
+     "close": "2.461268026e-9",
+     "volume_bnb": "0.000246722392443104",
+     "trades_count": 1
+    }
+   ]
+  },
+  {
+   "name": "upsertCampaign",
+   "args": [
+    97,
+    "0x49ed1f4ee8cd64edbb3cc88407e611f0398bae9c",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+    "0x9c3e960f1636c88d5b210a11748aafa414467cc7",
+    "Gen Eight",
+    "GEN8",
+    21,
+    "2026-10-14T15:00:42.000Z",
+    "ipfs://logo"
+   ]
+  },
+  {
+   "name": "publishLeague",
+   "args": [
+    97,
+    "campaign_created",
+    {
+     "type": "campaign_created",
+     "chainId": 97,
+     "ts": "<now>",
+     "item": {
+      "campaignAddress": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+      "tokenAddress": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+      "creatorAddress": "0x9c3e960f1636c88d5b210a11748aafa414467cc7",
+      "name": "Gen Eight",
+      "symbol": "GEN8",
+      "createdAtChain": "2026-10-14T15:00:42.000Z",
+      "blockNumber": 21
+     }
+    }
+   ]
+  },
+  {
+   "name": "insertActivityEvent",
+   "args": [
+    {
+     "chainId": 97,
+     "eventType": "CREATE_CAMPAIGN",
+     "txHash": "0x08fd59804f024fbdb1c668feb7e15813d41279c2a00f7017a1712fa9febbc936",
+     "logIndex": 12,
+     "blockNumber": 21,
+     "blockTime": "2026-10-14T15:00:42.000Z",
+     "actor": "0x9c3e960f1636c88d5b210a11748aafa414467cc7",
+     "campaign": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "token": "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
+     "meta": {
+      "name": "Gen Eight",
+      "symbol": "GEN8",
+      "factory": "0x49ed1f4ee8cd64edbb3cc88407e611f0398bae9c",
+      "generation": 8,
+      "poolId": "0xb7d3eb779363d83222bab9febfd928a85cd4ef87b6dc1d28e29b1216d843bc64",
+      "openAt": "2026-10-12T09:19:12.000Z"
+     }
+    }
+   ]
+  },
+  {
+   "name": "recordTradeActivity",
+   "args": [
+    "0x9c3e960f1636c88d5b210a11748aafa414467cc7",
+    "2026-10-14T15:00:42.000Z"
+   ]
+  },
+  {
+   "name": "recordTradeActivity",
+   "args": [
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "2026-10-14T15:00:44.000Z"
+   ]
+  },
+  {
+   "name": "recordTradeActivity",
+   "args": [
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "2026-10-14T15:00:46.000Z"
+   ]
+  },
+  {
+   "name": "recordTradeActivity",
+   "args": [
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "2026-10-14T15:00:50.000Z"
+   ]
+  },
+  {
+   "name": "recordTradeActivity",
+   "args": [
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "2026-10-14T15:00:52.000Z"
+   ]
+  },
+  {
+   "name": "recordTradeActivity",
+   "args": [
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "2026-10-14T15:00:54.000Z"
+   ]
+  },
+  {
+   "name": "recordTradeActivity",
+   "args": [
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "2026-10-14T15:00:56.000Z"
+   ]
+  },
+  {
+   "name": "recordTradeActivity",
+   "args": [
+    "0x621f4191f6fea077f863c882387521c1ee8db9c2",
+    "2026-10-14T15:00:58.000Z"
+   ]
+  }
+ ]
+}

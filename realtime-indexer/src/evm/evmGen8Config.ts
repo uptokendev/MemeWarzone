@@ -159,6 +159,17 @@ export type Gen8BarkChainConfig = {
 
 export type Gen8BarkConfigResult = { config: Gen8BarkChainConfig | null; invalid: string[]; reason: string | null };
 
+/** Either venue's chain config. */
+export type Gen8AnyChainConfig = Gen8ChainConfig | Gen8BarkChainConfig;
+
+/**
+ * The contract all of a chain's pools share, whose address keys the gen-8 rows (evm_gen8_pools / swaps / accruals
+ * hook_address, display blocks) and the ingest cursors: the hook on V4, the plugin on Barkswap.
+ */
+export function gen8CoreAddress(cfg: Gen8AnyChainConfig): string {
+  return cfg.venue === "barkswap" ? cfg.plugin.address : cfg.hook.address;
+}
+
 export function evmGen8BarkConfig(chainId: number, env: NodeJS.ProcessEnv = process.env): Gen8BarkConfigResult {
   if (gen8Venue(chainId) !== "barkswap") return { config: null, invalid: [], reason: `chain ${chainId} is not on the barkswap venue` };
   const invalid: string[] = [];
@@ -264,6 +275,11 @@ export const GEN8_MONEY_DEPTH: Readonly<Record<number, { blocks: number; maxReor
   6281971: { blocks: 20, maxReorg: 17 },
 });
 
+/**
+ * The money TAG only. Do not read a money head with gen8HeadBlock(provider, id, gen8MoneyHeadTag(id)): on a
+ * GEN8_MONEY_DEPTH chain (DogeOS) the tag is `latest` and the money head is latest minus the depth, which only
+ * gen8MoneyHead applies. Every money reader goes through gen8MoneyHead.
+ */
 export function gen8MoneyHeadTag(chainId: number, env: NodeJS.ProcessEnv = process.env): Gen8HeadTag {
   const byDefault: Gen8HeadTag = Object.hasOwn(GEN8_MONEY_DEPTH, chainId) ? "latest" : isRollup(chainId) ? "safe" : "finalized";
   return headTagEnv(env[`EVM_GEN8_MONEY_HEAD_TAG_${chainId}`]) ?? headTagEnv(env.EVM_GEN8_MONEY_HEAD_TAG) ?? byDefault;
@@ -375,7 +391,7 @@ export function gen8LinkCheck(policy: Gen8LinkPolicy, t: { txFrom: string; txTo:
  * vault for choice coins), or when the swap came through the escrow, the launcher (the creator's first buy) or the
  * choice vault (buybacks). Matching the swap sender as well catches a creator trading from a contract wallet.
  */
-export function gen8LeagueExcluded(cfg: Pick<Gen8ChainConfig, "launcher" | "escrow" | "choiceVault">, pool: { creator: string; hookCreator: string | null }, txFrom: string, swapSender: string): boolean {
+export function gen8LeagueExcluded(cfg: Pick<Gen8ChainConfig | Gen8BarkChainConfig, "launcher" | "escrow" | "choiceVault">, pool: { creator: string; hookCreator: string | null }, txFrom: string, swapSender: string): boolean {
   const from = txFrom.toLowerCase();
   const sender = swapSender.toLowerCase();
   const creatorSide = new Set([pool.creator, pool.hookCreator].filter((a): a is string => Boolean(a)).map((a) => a.toLowerCase()));

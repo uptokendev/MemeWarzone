@@ -51,6 +51,11 @@ must pass after every merge.
 - Fork proof: `scripts/research/barkswap-plugin/` (README + results), 117/117 checks on a Chikyū fork.
   Use tick spacing 10; direct `pool.mint` (6.13M gas) beats the NPM route.
 - DogeOS chain facts (RPC, explorer, gas, L1 fee, getLogs caps): `docs/templar/specs/2026-10-10-dogeos-foundation-launch-design.md`.
+- Indexer (t18, `realtime-indexer/src/evm/evmGen8Bark.ts`): a Barkswap pool's gen-8 **pool id is its address
+  left-padded to bytes32** (`barkPoolId`), so `campaigns-base.js gen8FieldsFromRow` and the holder batch accept
+  DogeOS rows; `evm_gen8_pools.hook_address` = the plugin, `pool_manager_address` = the pool, `dex_trades.pair_address`
+  = the pool; ticks / sqrt prices are stored in Barkswap orientation (coin = token0, price rises on buys). Rows keep
+  `venue 'gen8'` / `execution_source 'gen8_v4'`. Conversion swaps write no trade/accrual row; sell accruals are t19's.
 
 ## Keys
 

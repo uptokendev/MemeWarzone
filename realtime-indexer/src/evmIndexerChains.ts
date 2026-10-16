@@ -91,9 +91,11 @@ export function isV3GraduationIndexerChainId(chainId: number): boolean {
 
 /**
  * Venue + quote asset announced when a gen-7 (or older) campaign graduates. Gen-8 coins pass their own
- * market label (evm/evmGen8Pool.ts), and that is the only way DogeOS graduates (Removed B8).
+ * market label (evm/evmGen8Pool.ts, evm/evmGen8Bark.ts), and that is the only way DogeOS graduates (Removed B8):
+ * asked for 6281971 it throws rather than announce a BNB (Topaz / WBNB) market for a DogeOS coin.
  */
 export function graduatedMarketFor(chainId: number): { venue: "v3" | "topaz"; quoteAsset: "WETH" | "WBNB" } {
+  if (chainId === DOGEOS_TESTNET_CHAIN_ID) throw new Error("DogeOS graduates only through gen-8 (Barkswap), which passes its own market; no gen-7 market exists for 6281971");
   if (chainId === 46630 || chainId === 4663) return { venue: "v3", quoteAsset: "WETH" };
   return { venue: "topaz", quoteAsset: "WBNB" };
 }

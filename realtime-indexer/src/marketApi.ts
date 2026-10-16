@@ -8,6 +8,7 @@ import {
 } from "./abis.js";
 import { pool } from "./db.js";
 import { isGen8Campaign } from "./evm/evmGen8Guard.js";
+import { evmGen8BarkConfig } from "./evm/evmGen8Config.js";
 import { ENV } from "./env.js";
 import { rewindEmptyCampaignTradeCursor } from "./emptyTradeCursorRewind.js";
 import { TIMEFRAMES } from "./timeframes.js";
@@ -110,9 +111,9 @@ async function maybeRewindEmptyTradeCursor(chainId: number, campaign: string): P
 }
 
 /**
- * RPC for the Topaz (BNB) market-state and dex_pools repair below. DogeOS graduates to a
- * V3 pool, not Topaz, and must never be read through a BSC RPC, so it gets no RPC here
- * and both repairs return early for it.
+ * RPC for the Topaz (BNB) market-state and dex_pools repair below. DogeOS trades in its gen-8
+ * Barkswap pool (evm/evmGen8Bark.ts), not Topaz, and must never be read through a BSC RPC, so it
+ * gets no RPC here and both repairs return early for it.
  */
 export function rpcUrlForChain(chainId: number): string {
   if (chainId === 6281971) return "";
@@ -878,10 +879,13 @@ async function readMarketState(chainId: number, campaign: string) {
     lastError: row.last_error,
     // Diagnostics: shows whether this request attempted a dex_pools repair.
     dexPoolRepair,
+    // DogeOS has no V3 / Topaz pool indexer: its pools are read by the gen-8 Barkswap ingest (evm/evmGen8Bark.ts).
     poolIndexerEnvEnabled:
-      chainId === 4663 || chainId === 46630 || chainId === 6281971
-        ? ENV.ENABLE_ROBINHOOD_V3_POOL_INDEXER
-        : ENV.ENABLE_TOPAZ_POOL_INDEXER,
+      chainId === 6281971
+        ? Boolean(evmGen8BarkConfig(6281971).config)
+        : chainId === 4663 || chainId === 46630
+          ? ENV.ENABLE_ROBINHOOD_V3_POOL_INDEXER
+          : ENV.ENABLE_TOPAZ_POOL_INDEXER,
     unifiedMarketApiEnvEnabled: ENV.ENABLE_UNIFIED_MARKET_API,
   };
 }

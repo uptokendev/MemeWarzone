@@ -150,8 +150,8 @@ test("CHAINS: a 6281971 entry (RPC only, no gen-7 factory) exists only when its 
 test("graduated market and V3 branches: 6281971 is no gen-7 V3 graduation chain (B8); Robinhood and BNB unchanged", () => {
   // DogeOS graduates only through gen-8, which passes its own market label; the gen-7 V3/WDOGE
   // announcement, the V3 CMS seed and the pre-scan V3 heal are gone for 6281971.
-  assert.notEqual(chains.graduatedMarketFor(DOGEOS).venue, "v3");
-  assert.notEqual(chains.graduatedMarketFor(DOGEOS).quoteAsset, "WDOGE");
+  // t18: asked for DogeOS it throws (never a Topaz / WBNB or V3 announcement); gen-8 passes the Barkswap market.
+  assert.throws(() => chains.graduatedMarketFor(DOGEOS), /DogeOS graduates only through gen-8/);
   assert.deepEqual(chains.graduatedMarketFor(46630), { venue: "v3", quoteAsset: "WETH" });
   assert.deepEqual(chains.graduatedMarketFor(4663), { venue: "v3", quoteAsset: "WETH" });
   assert.deepEqual(chains.graduatedMarketFor(56), { venue: "topaz", quoteAsset: "WBNB" });

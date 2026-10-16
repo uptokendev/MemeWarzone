@@ -18,12 +18,20 @@
  *
  * Hybrid ingestion (F10): the display pass (cursor gen8:<hook>) reads up to the display head and can be rolled back
  * on a reorg; the money pass (cursor gen8-money:<hook>) writes accruals, reward_events and route runs only up to the
- * money head (safe / finalized) and never past the display cursor. See Gen8IngestMode.
+ * money head (gen8MoneyHead: safe on Robinhood, finalized on BNB, latest - 20 on DogeOS) and never past the display
+ * cursor. See Gen8IngestMode.
+ *
+ * Venues (barkswap spec section 4, B7): the steps above are the Uniswap V4 venue. The Barkswap venue (DogeOS 6281971,
+ * evmGen8Bark.ts) has its own range ingest (launcher + plugin logs, one BarkSwap event per swap) and reuses the shared
+ * steps exported here: the display writes of a trade (applyGen8TradeDisplay), contract events (applyGen8Event), the
+ * graduation display (applyGen8GraduationDisplay), the reorg rollback and the two-cursor pass (runGen8ChainOnce), with
+ * its own price maths through Gen8VenueOps. The V4 path writes exactly what it wrote before (evmGen8Bark.test.ts).
  *
  * Inert without EVM_GEN8_LAUNCHER_<id> + EVM_GEN8_HOOK_<id> (evmGen8Config.ts).
  */
 import { ethers } from "ethers";
-import { configuredGen8Chains, gen8DisplayHead, gen8IngestPollMs, gen8LeagueExcluded, gen8LinkCheck, gen8LinkPolicy, gen8MoneyHead, intEnv, type Gen8ChainConfig, type Gen8LinkPolicy } from "./evmGen8Config.js";
+import { configuredGen8Chains, gen8CoreAddress, gen8DisplayHead, gen8IngestPollMs, gen8LeagueExcluded, gen8LinkCheck, gen8LinkPolicy, gen8MoneyHead, intEnv, type Gen8AnyChainConfig, type Gen8ChainConfig, type Gen8LinkPolicy } from "./evmGen8Config.js";
+export { gen8CoreAddress, type Gen8AnyChainConfig } from "./evmGen8Config.js";
 export { gen8LeagueExcluded } from "./evmGen8Config.js";
 import { GEN8_TOPICS, gen8PoolId } from "./evmGen8Abi.js";
 import { decodeGen8Log, groupByTx, joinSwapsWithFees, traderNative, type Gen8Event, type JoinedSwap, type LogLike } from "./evmGen8Decode.js";
@@ -47,6 +55,7 @@ import {
   insertGen8CurveTrade,
   insertGen8DexTrade,
   loadGen8Pool,
+  loadGen8PoolByToken,
   loadGen8Pools,
   markGen8Campaign,
   patchGen8TokenStats,
@@ -123,25 +132,63 @@ export async function defaultGen8Sinks(db: Queryable): Promise<Gen8Sinks> {
   };
 }
 
-type Ctx = { cfg: Gen8ChainConfig; db: Queryable; provider: Gen8Provider; sinks: Gen8Sinks; env: NodeJS.ProcessEnv; linkPolicy?: Gen8LinkPolicy };
+/** The shared steps below serve both venues; the V4-only steps narrow with v4Config. */
+function v4Config(cfg: Gen8AnyChainConfig): Gen8ChainConfig {
+  if (cfg.venue === "barkswap") throw new Error(`gen8: chain ${cfg.chainId} is on the barkswap venue; this step is V4 only`);
+  return cfg;
+}
+
+export type Gen8PriceState = { price: number; mcap: number; progress: { soldRaw: bigint; bps: number }; priceWei: bigint };
+
+/**
+ * The venue-specific maths and addresses of the shared display steps. V4 (GEN8_V4_OPS): currency0 = native, the price
+ * falls on buys (evmGen8Math.ts). Barkswap (evmGen8Bark.ts GEN8_BARK_OPS): token0 = the coin, the price rises on buys.
+ */
+export type Gen8VenueOps = {
+  priceState(pool: Gen8PoolRow, sqrtPriceX96: bigint, graduated: boolean): Gen8PriceState;
+  /** The pool's phase at a price: post at or past the graduation price. */
+  pricePhase(pool: Pick<Gen8PoolRow, "tickGrad">, sqrtPriceX96: bigint): "bonding" | "post";
+  displayStats(input: { liqA: bigint; tickStart: number; tickGrad: number; sqrtPriceX96: bigint }): { price: number; mcap: number; soldWhole: number };
+  /** Pool liquidity in native wei after the latch (market_stats.liquidity_bnb). */
+  liquidityNativeWei(pool: Gen8PoolRow, sqrtPriceX96: bigint): bigint;
+  /** dex_trades.pair_address and the realtime pairAddress of a coin. */
+  pairAddress(cfg: Gen8AnyChainConfig, pool: Gen8PoolRow): string;
+  /** What the buyer paid / the seller received, in native wei. */
+  traderNative(j: JoinedSwap): bigint;
+};
+
+export const GEN8_V4_OPS: Gen8VenueOps = {
+  priceState: (pool, sqrtPriceX96, graduated) => priceState(pool, sqrtPriceX96, graduated),
+  pricePhase: (pool, sqrtPriceX96) => gen8PricePhase(pool, sqrtPriceX96),
+  displayStats: (input) => gen8DisplayStats(input),
+  liquidityNativeWei: (pool, sqrtPriceX96) =>
+    gen8PoolHoldings({ liqA: pool.liqA, liqB: pool.liqB, tickStart: pool.tickStart, tickGrad: pool.tickGrad, sqrtPriceX96, graduated: true }).liquidityNativeWei,
+  pairAddress: (cfg) => gen8CoreAddress(cfg),
+  traderNative: (j) => traderNative(j),
+};
+
+/** The ingest context. `ops` defaults to the V4 venue. */
+export type Gen8Ctx = { cfg: Gen8AnyChainConfig; db: Queryable; provider: Gen8Provider; sinks: Gen8Sinks; env: NodeJS.ProcessEnv; linkPolicy?: Gen8LinkPolicy; ops?: Gen8VenueOps };
+type Ctx = Gen8Ctx;
+const opsOf = (ctx: Gen8Ctx): Gen8VenueOps => ctx.ops ?? GEN8_V4_OPS;
 
 /**
  * Hybrid ingestion (F10, founder 2026-10-12): `display` writes what the UI reads (trades, candles, stats, activity,
  * Ably) up to the display head and can be rolled back; `money` writes the accrual, reward and route rows only up to
- * the money head (safe / finalized), never before. evmGen8Config.ts gen8DisplayHeadTag / gen8MoneyHeadTag.
+ * the money head (evmGen8Config.ts gen8MoneyHead), never before. evmGen8Config.ts gen8DisplayHeadTag / gen8MoneyHead.
  */
 export type Gen8IngestMode = "display" | "money";
 
-type TxInfo = { from: string; to: string | null };
+export type TxInfo = { from: string; to: string | null };
 
 /** The display cursor (next block the display pass reads). */
-export function gen8Cursor(cfg: Gen8ChainConfig): string {
-  return `gen8:${cfg.hook.address}`;
+export function gen8Cursor(cfg: Gen8AnyChainConfig): string {
+  return `gen8:${gen8CoreAddress(cfg)}`;
 }
 
 /** The money cursor (next block the money pass reads); never ahead of the display cursor. */
-export function gen8MoneyCursor(cfg: Gen8ChainConfig): string {
-  return `gen8-money:${cfg.hook.address}`;
+export function gen8MoneyCursor(cfg: Gen8AnyChainConfig): string {
+  return `gen8-money:${gen8CoreAddress(cfg)}`;
 }
 
 async function getCursor(db: Queryable, chainId: number, cursor: string): Promise<number> {
@@ -170,7 +217,7 @@ function addrs(cfg: Gen8ChainConfig) {
   return { launcher: cfg.launcher.address, hook: cfg.hook.address, poolManager: cfg.poolManager, splitter: cfg.splitter?.address ?? null, choiceVault: cfg.choiceVault };
 }
 
-function normLog(log: any): LogLike & { blockHash: string | null } {
+export function normLog(log: any): LogLike & { blockHash: string | null } {
   return {
     address: String(log.address),
     topics: [...log.topics],
@@ -182,7 +229,7 @@ function normLog(log: any): LogLike & { blockHash: string | null } {
   };
 }
 
-function argsOf(e: Gen8Event): Record<string, unknown> {
+export function argsOf(e: { address: string; blockNumber: number; txHash: string; logIndex: number; kind: string }): Record<string, unknown> {
   const { address: _a, blockNumber: _b, txHash: _t, logIndex: _l, kind: _k, ...rest } = e as any;
   return rest;
 }
@@ -193,7 +240,8 @@ export type Gen8RangeResult = { launches: number; trades: number; curveTrades: n
  * Ingest [fromBlock, toBlock] for one chain. Idempotent: re-running a range writes nothing new.
  */
 export async function ingestGen8Range(ctx: Ctx, fromBlock: number, toBlock: number, mode: Gen8IngestMode = "display", blockHashOut?: Map<number, string>): Promise<Gen8RangeResult> {
-  const { cfg, db, provider } = ctx;
+  const { db, provider } = ctx;
+  const cfg = v4Config(ctx.cfg);
   const a = addrs(cfg);
   const result: Gen8RangeResult = { launches: 0, trades: 0, curveTrades: 0, dexTrades: 0, graduations: 0, orphans: 0, events: 0 };
   const control = [a.launcher, a.hook, ...(a.splitter ? [a.splitter] : []), ...(a.choiceVault ? [a.choiceVault] : [])];
@@ -286,7 +334,8 @@ export async function ingestGen8Range(ctx: Ctx, fromBlock: number, toBlock: numb
 }
 
 async function applyLaunches(ctx: Ctx, events: Gen8Event[], timeOf: (n: number) => Promise<Date>): Promise<number> {
-  const { cfg, db, sinks } = ctx;
+  const { db, sinks } = ctx;
+  const cfg = v4Config(ctx.cfg);
   const byPool = new Map<string, { pool?: Extract<Gen8Event, { kind: "PoolLaunched" }>; launched?: Extract<Gen8Event, { kind: "Launched" }>; meta?: Extract<Gen8Event, { kind: "LaunchMetadata" }> }>();
   for (const e of events) {
     if (e.kind !== "PoolLaunched" && e.kind !== "Launched" && e.kind !== "LaunchMetadata") continue;
@@ -356,7 +405,8 @@ async function applyLaunches(ctx: Ctx, events: Gen8Event[], timeOf: (n: number) 
   return n;
 }
 
-async function linkedProfile(db: Queryable, cfg: Gen8ChainConfig, policy: Gen8LinkPolicy, tx: TxInfo, swapSender: string, at: Date) {
+/** The recruiter profile a trade carries: the wallet's link, only through an allowed router (gen8LinkCheck). */
+export async function gen8LinkedProfile(db: Queryable, cfg: Gen8AnyChainConfig, policy: Gen8LinkPolicy, tx: TxInfo, swapSender: string, at: Date) {
   const profile = await resolveGen8Profile(db, tx.from, at);
   if (profile === "standard_unlinked") return profile;
   const quick = gen8LinkCheck(policy, { txFrom: tx.from, txTo: tx.to, swapSender, distinctSwapSenders: 0 });
@@ -374,9 +424,9 @@ function priceState(pool: Gen8PoolRow, sqrtPriceX96: bigint, graduated: boolean)
 }
 
 async function applyTrade(ctx: Ctx, pool: Gen8PoolRow, j: JoinedSwap, tx: TxInfo, policy: Gen8LinkPolicy, blockTime: Date, blockHash: string | null, mode: Gen8IngestMode): Promise<"curve_trades" | "dex_trades" | null> {
-  const { cfg, db, sinks } = ctx;
+  const { db, sinks } = ctx;
+  const cfg = v4Config(ctx.cfg);
   const txFrom = tx.from;
-  const tsSec = Math.floor(blockTime.getTime() / 1000);
   // F1 (contract round, founder 2026-10-12): graduation stays instant and HookFee.graduated keeps meaning "latched";
   // the fee RATE of a post-latch swap back inside range A follows the pool price at the start of the swap and the
   // contract will expose it. Once it does, `phase` of the accrual must follow the rate actually charged (bonding
@@ -386,12 +436,12 @@ async function applyTrade(ctx: Ctx, pool: Gen8PoolRow, j: JoinedSwap, tx: TxInfo
 
   if (mode === "money") {
     // D1 accrual (idempotent on the HookFee log) and, in the bonding phase, the reward_events row. Only at or below
-    // the money head (safe / finalized), so these rows are never reorganised away.
+    // the money head (gen8MoneyHead), so these rows are never reorganised away.
     // Buybacks (swap sender = our creator-choice vault) are attributed UNLINKED, like the Solana DBC buyback whose
     // operator wallet is unlinked. PENDING FOUNDER CONFIRMATION (step-2 finding, 2026-10-11).
     // C-M4 / F9: a recruiter / squad link counts only for a trade the wallet sent itself through an allowed router
     // (gen8LinkPolicy); relayed, bundled or forwarded trades are unlinked.
-    const profile = phase === "bonding" ? (viaChoiceVault ? "standard_unlinked" : await linkedProfile(db, cfg, policy, tx, j.fee.swapSender, blockTime)) : null;
+    const profile = phase === "bonding" ? (viaChoiceVault ? "standard_unlinked" : await gen8LinkedProfile(db, cfg, policy, tx, j.fee.swapSender, blockTime)) : null;
     const accrual: Gen8AccrualRow = {
       chainId: cfg.chainId, hook: cfg.hook.address, poolId: pool.poolId, token: pool.token, txHash: j.fee.txHash, logIndex: j.fee.logIndex, swapLogIndex: j.swap.logIndex,
       blockNumber: j.fee.blockNumber, blockTime, kind: "trade", phase, trader: txFrom, swapSender: j.fee.swapSender,
@@ -410,22 +460,42 @@ async function applyTrade(ctx: Ctx, pool: Gen8PoolRow, j: JoinedSwap, tx: TxInfo
     }
     return null;
   }
+  return applyGen8TradeDisplay(ctx, pool, j, txFrom, blockTime, blockHash);
+}
 
-  // ---- display
+/** Barkswap swap kinds the shared display step cannot see from the swap sender alone (evmGen8Bark.ts). */
+export type Gen8TradeDisplayOptions = {
+  creatorBuyKind?: "first_buy" | "escrow" | null;
+  leagueExcluded?: boolean;
+  /** The pool's active liquidity after the swap, null when the venue's swap event does not carry it (default: Swap.liquidity). */
+  poolLiquidity?: bigint | null;
+};
+
+/**
+ * The display writes of one trade (both venues): curve_trades (bonding phase, the crossing swap included) or dex_trades
+ * (post phase) by HookFee.graduated (D14), the evm_gen8_swaps ledger, the pool price and phase, activity, candles,
+ * token_stats / market_stats and the realtime events. `j` is the V4 Swap + HookFee join, or its Barkswap equivalent
+ * (evmGen8Bark.ts barkJoinedSwap). Returns the table a NEW row went to, or null on a re-scan.
+ */
+export async function applyGen8TradeDisplay(ctx: Gen8Ctx, pool: Gen8PoolRow, j: JoinedSwap, txFrom: string, blockTime: Date, blockHash: string | null, opts: Gen8TradeDisplayOptions = {}): Promise<"curve_trades" | "dex_trades" | null> {
+  const { cfg, db, sinks } = ctx;
+  const ops = opsOf(ctx);
+  const tsSec = Math.floor(blockTime.getTime() / 1000);
+  const phase = j.fee.graduated ? "post" : "bonding";
   const viaEscrow = Boolean(cfg.escrow && j.fee.swapSender === cfg.escrow);
   const viaLauncher = j.fee.swapSender === cfg.launcher.address;
-  const creatorBuyKind = j.side === "buy" ? (viaLauncher ? "first_buy" : viaEscrow ? "escrow" : null) : null;
+  const creatorBuyKind = opts.creatorBuyKind !== undefined ? opts.creatorBuyKind : j.side === "buy" ? (viaLauncher ? "first_buy" : viaEscrow ? "escrow" : null) : null;
   // audit 10.2: league exclusion = tx.from is the current creator, or the swap came through the escrow. Also the
   // launcher's first buy (the creator's) and the choice vault's buybacks (operator-sent, burned coins; excluded from
   // league volume and trader stats like creator and escrow trades; PENDING FOUNDER CONFIRMATION, step-2 finding).
   // D-L2 / F12: also the hook creator, and the swap sender as well as tx.from (gen8LeagueExcluded).
-  const leagueExcluded = gen8LeagueExcluded(cfg, pool, txFrom, j.fee.swapSender);
-  const state = priceState(pool, j.swap.sqrtPriceX96, j.fee.graduated);
+  const leagueExcluded = gen8LeagueExcluded(cfg, pool, txFrom, j.fee.swapSender) || opts.leagueExcluded === true;
+  const state = ops.priceState(pool, j.swap.sqrtPriceX96, j.fee.graduated);
   if (j.anomalies.length) {
     await sinks.raiseAlert({ severity: "warning", kind: "gen8_swap_anomaly", chainId: cfg.chainId, subject: `${j.swap.txHash}:${j.swap.logIndex}`, title: "Gen-8 swap and fee log disagree", message: `${j.anomalies.join(", ")} on ${j.swap.txHash} log ${j.swap.logIndex}` });
   }
   const row = {
-    chainId: cfg.chainId, token: pool.token, hook: cfg.hook.address, txHash: j.swap.txHash, logIndex: j.swap.logIndex, blockNumber: j.swap.blockNumber,
+    chainId: cfg.chainId, token: pool.token, hook: ops.pairAddress(cfg, pool), txHash: j.swap.txHash, logIndex: j.swap.logIndex, blockNumber: j.swap.blockNumber,
     blockHash, blockTime, side: j.side, wallet: txFrom, swapSender: j.fee.swapSender, coinRaw: j.coinRaw, curveRaw: j.fee.curveAmount,
     feeRaw: j.fee.fee, feeBps: j.fee.feeBps, creatorBuyKind, leagueExcluded, soldAfterRaw: phase === "bonding" ? state.progress.soldRaw : null,
   } as const;
@@ -433,14 +503,14 @@ async function applyTrade(ctx: Ctx, pool: Gen8PoolRow, j: JoinedSwap, tx: TxInfo
   const inserted = table === "curve_trades" ? await insertGen8CurveTrade(db, row) : await insertGen8DexTrade(db, row);
   const curveDec = rawToDecimal(j.fee.curveAmount);
   await insertGen8Swap(db, {
-    chainId: cfg.chainId, hook: cfg.hook.address, poolId: pool.poolId, token: pool.token, txHash: j.swap.txHash, logIndex: j.swap.logIndex, blockNumber: j.swap.blockNumber, blockTime,
+    chainId: cfg.chainId, hook: gen8CoreAddress(cfg), poolId: pool.poolId, token: pool.token, txHash: j.swap.txHash, logIndex: j.swap.logIndex, blockNumber: j.swap.blockNumber, blockTime,
     phase, side: j.side, sqrtPriceX96: j.swap.sqrtPriceX96, price: state.price, mcap: state.mcap, volume: curveDec, soldRaw: phase === "bonding" ? state.progress.soldRaw : null,
   });
   // The pool's CURRENT phase after this swap, from its resulting price (the lens's postPhase rule: post when the price
   // is at or past the graduation price). HookFee.graduated is the phase the swap STARTED in and decides its row and
   // its accrual; the current phase decides the platform status (gen8PlatformStatus) and what the next swap will pay.
-  const pricePhase = gen8PricePhase(pool, j.swap.sqrtPriceX96);
-  await updateGen8PoolPrice(db, { chainId: cfg.chainId, poolId: pool.poolId, sqrtPriceX96: j.swap.sqrtPriceX96, tick: j.swap.tick, liquidity: j.swap.liquidity, blockNumber: j.swap.blockNumber, logIndex: j.swap.logIndex, phase: pricePhase });
+  const pricePhase = ops.pricePhase(pool, j.swap.sqrtPriceX96);
+  await updateGen8PoolPrice(db, { chainId: cfg.chainId, poolId: pool.poolId, sqrtPriceX96: j.swap.sqrtPriceX96, tick: j.swap.tick, liquidity: opts.poolLiquidity !== undefined ? opts.poolLiquidity : j.swap.liquidity, blockNumber: j.swap.blockNumber, logIndex: j.swap.logIndex, phase: pricePhase });
   pool.lastSqrtPriceX96 = j.swap.sqrtPriceX96;
   pool.lastPhase = pricePhase;
   // F1: once latched, the market stage follows the current phase (post: DEX_ACTIVE; back inside A: BONDING).
@@ -462,8 +532,8 @@ async function applyTrade(ctx: Ctx, pool: Gen8PoolRow, j: JoinedSwap, tx: TxInfo
   await sinks.insertActivityEvent({
     chainId: cfg.chainId, eventType: j.side === "buy" ? "BUY" : "SELL", txHash: j.swap.txHash, logIndex: j.swap.logIndex, blockNumber: j.swap.blockNumber, blockTime,
     actor: txFrom, campaign: pool.token, token: pool.token,
-    amountInWei: j.side === "buy" ? traderNative(j) : j.coinRaw, amountOutWei: j.side === "buy" ? j.coinRaw : traderNative(j),
-    costWei: j.side === "buy" ? traderNative(j) : null, payoutWei: j.side === "sell" ? traderNative(j) : null,
+    amountInWei: j.side === "buy" ? ops.traderNative(j) : j.coinRaw, amountOutWei: j.side === "buy" ? j.coinRaw : ops.traderNative(j),
+    costWei: j.side === "buy" ? ops.traderNative(j) : null, payoutWei: j.side === "sell" ? ops.traderNative(j) : null,
     meta: { priceBnb: fill, generation: 8, phase, curveAmountWei: j.fee.curveAmount.toString(), feeWei: j.fee.fee.toString(), feeBps: j.fee.feeBps, swapSender: j.fee.swapSender, tradeType: j.type, spotPriceBnb: state.price },
   });
 
@@ -492,13 +562,13 @@ async function applyTrade(ctx: Ctx, pool: Gen8PoolRow, j: JoinedSwap, tx: TxInfo
   await restateGen8DexTokenStats(ctx, pool, j.swap.sqrtPriceX96);
   await sinks.publishTokenEvent(cfg.chainId, pool.token, "market_trade", {
     eventId: `${cfg.chainId}:${j.swap.txHash}:${j.swap.logIndex}`, source: "gen8_v4", origin: "unknown", side: j.side, wallet: txFrom, recipient: txFrom,
-    pairAddress: cfg.hook.address, baseTokenAddress: pool.token, quoteAssetType: "WRAPPED_NATIVE", baseAmountRaw: j.coinRaw.toString(), quoteAmountRaw: j.fee.curveAmount.toString(),
+    pairAddress: ops.pairAddress(cfg, pool), baseTokenAddress: pool.token, quoteAssetType: "WRAPPED_NATIVE", baseAmountRaw: j.coinRaw.toString(), quoteAmountRaw: j.fee.curveAmount.toString(),
     tokenAmountRaw: j.coinRaw.toString(), nativeAmountRaw: j.fee.curveAmount.toString(), priceBnb: fill !== null ? String(fill) : null, spotPriceBnb: String(state.price),
     txHash: j.swap.txHash, logIndex: j.swap.logIndex, blockNumber: j.swap.blockNumber, blockTime: blockTime.toISOString(),
   }).catch(() => undefined);
   for (const { tf, c } of candles) {
     await sinks.publishTokenEvent(cfg.chainId, pool.token, "market_candle_upsert", {
-      pairAddress: cfg.hook.address, resolution: tf, tf, bucket_start: new Date(c.bucket_start).toISOString(), open: String(c.o), high: String(c.h), low: String(c.l), close: String(c.c),
+      pairAddress: ops.pairAddress(cfg, pool), resolution: tf, tf, bucket_start: new Date(c.bucket_start).toISOString(), open: String(c.o), high: String(c.h), low: String(c.l), close: String(c.c),
       volume_bnb: String(c.volume_bnb ?? "0"), trades_count: Number(c.trades_count ?? 0),
     }).catch(() => undefined);
   }
@@ -515,7 +585,7 @@ export function gen8PricePhase(pool: Pick<Gen8PoolRow, "tickGrad">, sqrtPriceX96
  * campaign_market_state.market_stage move between DEX_ACTIVE and BONDING with the price, with a market_stage_changed
  * event for the UI. campaigns.graduated_* (set at the Graduated event) stay as they are.
  */
-async function syncGen8MarketStage(ctx: Ctx, pool: Gen8PoolRow, blockNumber: number, txHash: string) {
+export async function syncGen8MarketStage(ctx: Gen8Ctx, pool: Gen8PoolRow, blockNumber: number, txHash: string) {
   const { cfg, db, sinks } = ctx;
   const to = gen8PlatformStatus(pool) === "graduated" ? "DEX_ACTIVE" : "BONDING";
   const prev = await db.query(`select market_stage from public.campaign_market_state where chain_id = $1 and campaign_address = $2`, [cfg.chainId, pool.token]);
@@ -532,15 +602,15 @@ async function syncGen8MarketStage(ctx: Ctx, pool: Gen8PoolRow, blockNumber: num
  * token_stats from the pool spot and the current price phase. No raised-delta: dex volume stays out of the
  * bonding league total. Also the startup repair for swaps already stored in evm_gen8_swaps.
  */
-export async function restateGen8TokenStatsFromSqrt(db: Queryable, input: { chainId: number; token: string; liqA: bigint; tickStart: number; tickGrad: number; sqrtPriceX96: bigint }) {
-  const stats = gen8DisplayStats(input);
+export async function restateGen8TokenStatsFromSqrt(db: Queryable, input: { chainId: number; token: string; liqA: bigint; tickStart: number; tickGrad: number; sqrtPriceX96: bigint }, ops: Gen8VenueOps = GEN8_V4_OPS) {
+  const stats = ops.displayStats(input);
   const patched = await patchGen8TokenStats(db, { chainId: input.chainId, token: input.token, price: stats.price, soldWhole: stats.soldWhole, mcap: stats.mcap });
   return { ...stats, vol24h: patched.vol24h };
 }
 
-async function restateGen8DexTokenStats(ctx: Ctx, pool: Gen8PoolRow, sqrtPriceX96: bigint) {
+export async function restateGen8DexTokenStats(ctx: Gen8Ctx, pool: Gen8PoolRow, sqrtPriceX96: bigint) {
   const { cfg, db, sinks } = ctx;
-  const stats = await restateGen8TokenStatsFromSqrt(db, { chainId: cfg.chainId, token: pool.token, liqA: pool.liqA, tickStart: pool.tickStart, tickGrad: pool.tickGrad, sqrtPriceX96 });
+  const stats = await restateGen8TokenStatsFromSqrt(db, { chainId: cfg.chainId, token: pool.token, liqA: pool.liqA, tickStart: pool.tickStart, tickGrad: pool.tickGrad, sqrtPriceX96 }, opsOf(ctx));
   const patch = { lastPriceBnb: String(stats.price), marketcapBnb: String(stats.mcap), vol24hBnb: String(stats.vol24h) };
   await sinks.publishStats(cfg.chainId, pool.token, { type: "stats_patch", ...patch }).catch(() => undefined);
   try {
@@ -552,7 +622,7 @@ async function restateGen8DexTokenStats(ctx: Ctx, pool: Gen8PoolRow, sqrtPriceX9
 }
 
 /** One pass at indexer start. Reads evm_gen8_swaps already in the database. No RPC and no hand-written SQL. */
-export async function repairGen8TokenStatsFromSwaps(db: Queryable, chainIds: number[]): Promise<number> {
+export async function repairGen8TokenStatsFromSwaps(db: Queryable, chainIds: number[], ops: Gen8VenueOps = GEN8_V4_OPS): Promise<number> {
   if (!chainIds.length) return 0;
   const { rows } = await db.query(
     `select p.chain_id, p.token_address, p.tick_start, p.tick_grad, p.liq_a, s.sqrt_price_x96
@@ -575,13 +645,13 @@ export async function repairGen8TokenStatsFromSwaps(db: Queryable, chainIds: num
       tickStart: Number(r.tick_start),
       tickGrad: Number(r.tick_grad),
       sqrtPriceX96: BigInt(String(r.sqrt_price_x96)),
-    });
+    }, ops);
   }
   return rows.length;
 }
 
 /** token_stats + the stats_patch publish after a bonding swap (also used to restate a coin after a rollback). */
-async function restateGen8BondingStats(ctx: Ctx, pool: Gen8PoolRow, s: { price: number; soldRaw: bigint; mcap: number; raisedDelta: number | null }) {
+export async function restateGen8BondingStats(ctx: Gen8Ctx, pool: Gen8PoolRow, s: { price: number; soldRaw: bigint; mcap: number; raisedDelta: number | null }) {
   const { cfg, db, sinks } = ctx;
   const { vol24h } = await patchGen8TokenStats(db, { chainId: cfg.chainId, token: pool.token, price: s.price, soldWhole: rawToDecimal(s.soldRaw), mcap: s.mcap });
   const patch = { lastPriceBnb: String(s.price), marketcapBnb: String(s.mcap), vol24hBnb: String(vol24h) };
@@ -595,17 +665,18 @@ async function restateGen8BondingStats(ctx: Ctx, pool: Gen8PoolRow, s: { price: 
 }
 
 /** market_stats + the market_stats_patch publish after a post-graduation swap (also used after a rollback). */
-async function restateGen8MarketStats(ctx: Ctx, pool: Gen8PoolRow, s: { sqrtPriceX96: bigint; price: number; mcap: number; lastTradeBlock: number; lastTradeAt: Date }) {
+export async function restateGen8MarketStats(ctx: Gen8Ctx, pool: Gen8PoolRow, s: { sqrtPriceX96: bigint; price: number; mcap: number; lastTradeBlock: number; lastTradeAt: Date }) {
   const { cfg, db, sinks } = ctx;
-  const holdings = gen8PoolHoldings({ liqA: pool.liqA, liqB: pool.liqB, tickStart: pool.tickStart, tickGrad: pool.tickGrad, sqrtPriceX96: s.sqrtPriceX96, graduated: true });
+  const ops = opsOf(ctx);
+  const liquidityNativeWei = ops.liquidityNativeWei(pool, s.sqrtPriceX96);
   const holders = await db.query(`select holder_count from public.evm_gen8_pools where chain_id = $1 and pool_id = $2`, [cfg.chainId, pool.poolId]);
   const stats = await refreshGen8MarketStats(db, {
-    chainId: cfg.chainId, token: pool.token, price: s.price, mcap: s.mcap, liquidity: rawToDecimal(holdings.liquidityNativeWei),
+    chainId: cfg.chainId, token: pool.token, price: s.price, mcap: s.mcap, liquidity: rawToDecimal(liquidityNativeWei),
     holders: holders.rows[0]?.holder_count != null ? Number(holders.rows[0].holder_count) : null, lastTradeBlock: s.lastTradeBlock, lastTradeAt: s.lastTradeAt,
   });
   if (!stats) return;
   await sinks.publishTokenEvent(cfg.chainId, pool.token, "market_stats_patch", {
-    pairAddress: cfg.hook.address,
+    pairAddress: ops.pairAddress(cfg, pool),
     last_price_bnb: stats.last_price_bnb == null ? null : String(stats.last_price_bnb),
     market_cap_bnb: stats.market_cap_bnb == null ? null : String(stats.market_cap_bnb),
     liquidity_bnb: stats.liquidity_bnb == null ? null : String(stats.liquidity_bnb),
@@ -617,9 +688,19 @@ async function restateGen8MarketStats(ctx: Ctx, pool: Gen8PoolRow, s: { sqrtPric
 }
 
 async function applyEvent(ctx: Ctx, e: Gen8Event, pools: Map<string, Gen8PoolRow>, at: Date, txOf?: (tx: string) => Promise<TxInfo>, txEvents: Gen8Event[] = [], mode: Gen8IngestMode = "display"): Promise<boolean> {
+  return applyGen8Event(ctx, e, pools, at, txOf, txEvents, mode);
+}
+
+/**
+ * A contract event of either venue (decoded into the gen-8 shape): recorded in evm_campaign_events (the hook's or
+ * plugin's events as gen8_hook) and acted on (creator hand-over, control-event alerts, holder-batch alerts). On
+ * Barkswap the caller handles Graduated itself (evmGen8Bark.ts) and Routed is not reconciled here (t19: the route
+ * worker reads the launcher, not a hook).
+ */
+export async function applyGen8Event(ctx: Gen8Ctx, e: Gen8Event, pools: Map<string, Gen8PoolRow>, at: Date, txOf?: (tx: string) => Promise<TxInfo>, txEvents: Gen8Event[] = [], mode: Gen8IngestMode = "display"): Promise<boolean> {
   const { cfg, db, sinks } = ctx;
   const display = mode === "display";
-  const kind = e.address === cfg.hook.address ? "gen8_hook" : e.address === cfg.launcher.address ? "gen8_launcher" : cfg.splitter && e.address === cfg.splitter.address ? "gen8_splitter" : "gen8_choice_vault";
+  const kind = e.address === gen8CoreAddress(cfg) ? "gen8_hook" : e.address === cfg.launcher.address ? "gen8_launcher" : cfg.splitter && e.address === cfg.splitter.address ? "gen8_splitter" : "gen8_choice_vault";
   const poolIdOf = (e as any).poolId as string | undefined;
   const pool = poolIdOf ? pools.get(poolIdOf) || (await loadGen8Pool(db, cfg.chainId, poolIdOf)) : null;
   // Contract events are display rows (rolled back with the rest); the money pass re-inserts the ones it passes
@@ -627,7 +708,7 @@ async function applyEvent(ctx: Ctx, e: Gen8Event, pools: Map<string, Gen8PoolRow
   const fresh = (await recordGen8Event(db, { chainId: cfg.chainId, contract: e.address, kind, campaign: pool?.token ?? null, eventName: e.kind, txHash: e.txHash, logIndex: e.logIndex, blockNumber: e.blockNumber, blockTime: at, args: argsOf(e) })) && display;
   switch (e.kind) {
     case "Graduated": {
-      if (!pool) return false;
+      if (!pool || cfg.venue === "barkswap") return false;
       await applyGraduation(ctx, pool, e, at, mode);
       return true;
     }
@@ -652,7 +733,7 @@ async function applyEvent(ctx: Ctx, e: Gen8Event, pools: Map<string, Gen8PoolRow
     }
     case "Routed": {
       // Money: the run and its rows are confirmed only at or below the money head.
-      if (mode === "money") await recordRoutedRun(db, cfg, e, at, (a) => sinks.raiseAlert({ ...a, kind: a.kind }), ctx.env);
+      if (mode === "money" && cfg.venue !== "barkswap") await recordRoutedRun(db, cfg, e, at, (a) => sinks.raiseAlert({ ...a, kind: a.kind }), ctx.env);
       return false;
     }
     case "RouterProposed":
@@ -731,7 +812,7 @@ async function applyEvent(ctx: Ctx, e: Gen8Event, pools: Map<string, Gen8PoolRow
       const burst = intEnv(ctx.env.EVM_GEN8_DISPLAY_FAIL_ALERT_PER_HOUR, 5, 1);
       const n = await db.query(
         `select count(*)::int as n from public.evm_campaign_events where chain_id = $1 and contract_address = $2 and event_name = 'DisplayUpdateFailed' and block_time >= $3::timestamptz - interval '1 hour'`,
-        [cfg.chainId, cfg.hook.address, at],
+        [cfg.chainId, gen8CoreAddress(cfg), at],
       );
       if (Number(n.rows[0]?.n || 0) >= burst) {
         await sinks.raiseAlert({ severity: "warning", kind: "gen8_display_failed", chainId: cfg.chainId, subject: e.poolId, title: `Gen-8 display pair updates failing on chain ${cfg.chainId}`, message: `${n.rows[0].n} DisplayUpdateFailed in the hour up to ${at.toISOString()} (latest pool ${e.poolId}).` });
@@ -744,8 +825,8 @@ async function applyEvent(ctx: Ctx, e: Gen8Event, pools: Map<string, Gen8PoolRow
 }
 
 async function applyGraduation(ctx: Ctx, pool: Gen8PoolRow, e: Extract<Gen8Event, { kind: "Graduated" }>, at: Date, mode: Gen8IngestMode) {
-  const { cfg, db, sinks } = ctx;
-  const tsSec = Math.floor(at.getTime() / 1000);
+  const { db } = ctx;
+  const cfg = v4Config(ctx.cfg);
   if (mode === "money") {
     // D1: the graduation fee, by the creator's profile stored at launch (gen-7 fixes it at create).
     const profile = pool.creatorProfile || (await resolveGen8Profile(db, pool.creator, at));
@@ -758,10 +839,36 @@ async function applyGraduation(ctx: Ctx, pool: Gen8PoolRow, e: Extract<Gen8Event
     if (e.gradFeeNative > 0n) await upsertGen8RewardEvent(db, accrual);
     return;
   }
+  await applyGen8GraduationDisplay(ctx, pool, {
+    blockNumber: e.blockNumber, txHash: e.txHash, logIndex: e.logIndex, gradFeeNative: e.gradFeeNative, nativeInA: e.nativeInA,
+    meta: { generation: 8, poolId: pool.poolId, hook: cfg.hook.address, gradFeeNative: e.gradFeeNative.toString(), nativeInA: e.nativeInA.toString(), liquidityRemoved: e.liquidityRemoved.toString() },
+    market: { venue: "uniswap_v4", pair: cfg.hook.address, quoteAsset: cfg.chainId === 4663 || cfg.chainId === 46630 ? "ETH" : "BNB" },
+    routerAddress: cfg.hook.address, factoryAddress: cfg.poolManager,
+  }, at);
+}
+
+export type Gen8GraduationDisplay = {
+  blockNumber: number; txHash: string; logIndex: number;
+  /** Null when the latch event does not carry it (Barkswap: GraduationFeeTaken sets it, evmGen8Bark.ts). */
+  gradFeeNative: bigint | null; nativeInA: bigint | null;
+  meta: Record<string, unknown>;
+  market: { venue: string; pair: string; quoteAsset: string };
+  /** campaign_market_state.dex_router_address / dex_factory_address. */
+  routerAddress: string; factoryAddress: string;
+};
+
+/**
+ * The display side of the graduation latch (both venues): evm_gen8_pools.graduated_*, the gen-7 graduated path once
+ * (campaigns.graduated_*, notification, league feed), campaign_market_state DEX_ACTIVE and the stage event.
+ */
+export async function applyGen8GraduationDisplay(ctx: Gen8Ctx, pool: Gen8PoolRow, g: Gen8GraduationDisplay, at: Date) {
+  const { cfg, db, sinks } = ctx;
+  const e = g;
+  const tsSec = Math.floor(at.getTime() / 1000);
   await db.query(
     `update public.evm_gen8_pools set graduated_block = $3, graduated_tx = $4, graduated_log_index = $5, grad_fee_native = $6, native_in_a = $7, updated_at = now()
       where chain_id = $1 and pool_id = $2 and graduated_block is null`,
-    [cfg.chainId, pool.poolId, e.blockNumber, e.txHash, e.logIndex, e.gradFeeNative.toString(), e.nativeInA.toString()],
+    [cfg.chainId, pool.poolId, e.blockNumber, e.txHash, e.logIndex, g.gradFeeNative === null ? null : g.gradFeeNative.toString(), g.nativeInA === null ? null : g.nativeInA.toString()],
   );
   const fresh = pool.graduatedBlock === null;
   pool.graduatedBlock = e.blockNumber;
@@ -771,14 +878,14 @@ async function applyGraduation(ctx: Ctx, pool: Gen8PoolRow, e: Extract<Gen8Event
       {
         chainId: cfg.chainId, campaign: pool.token, tokenAddr: pool.token, txHash: e.txHash, logIndex: e.logIndex, blockNumber: e.blockNumber, tsSec,
         actor: pool.token, pair: "",
-        meta: { generation: 8, poolId: pool.poolId, hook: cfg.hook.address, gradFeeNative: e.gradFeeNative.toString(), nativeInA: e.nativeInA.toString(), liquidityRemoved: e.liquidityRemoved.toString() },
+        meta: g.meta,
       },
-      { market: { venue: "uniswap_v4", pair: cfg.hook.address, quoteAsset: cfg.chainId === 4663 || cfg.chainId === 46630 ? "ETH" : "BNB" }, seedRobinhoodCms: false },
+      { market: g.market, seedRobinhoodCms: false },
     );
   }
   const prev = await db.query(`select market_stage from public.campaign_market_state where chain_id = $1 and campaign_address = $2`, [cfg.chainId, pool.token]);
   const from = String(prev.rows[0]?.market_stage || "BONDING");
-  const price = pool.lastSqrtPriceX96 ? nativePerCoin(pool.lastSqrtPriceX96) : null;
+  const price = pool.lastSqrtPriceX96 ? opsOf(ctx).priceState(pool, pool.lastSqrtPriceX96, true).price : null;
   // dex_pair_address stays empty: campaign_market_state_pair_uidx is unique per (chain, pair) and every gen-8 coin
   // shares the hook; the hook is in dex_router_address and the pool id in campaigns.meta.gen8.poolId.
   await db.query(
@@ -793,7 +900,7 @@ async function applyGraduation(ctx: Ctx, pool: Gen8PoolRow, e: Extract<Gen8Event
        final_curve_price_bnb = coalesce(public.campaign_market_state.final_curve_price_bnb, excluded.final_curve_price_bnb),
        initial_dex_price_bnb = coalesce(public.campaign_market_state.initial_dex_price_bnb, excluded.initial_dex_price_bnb),
        post_burn_total_supply_raw = excluded.post_burn_total_supply_raw, campaign_generation = '8', pool_verified = true, indexing_enabled = true, updated_at = now()`,
-    [cfg.chainId, pool.token, cfg.launcher.address, e.txHash, e.blockNumber, at, cfg.hook.address, cfg.poolManager, price === null ? null : String(price), "1000000000000000000000000000"],
+    [cfg.chainId, pool.token, cfg.launcher.address, e.txHash, e.blockNumber, at, g.routerAddress, g.factoryAddress, price === null ? null : String(price), "1000000000000000000000000000"],
   );
   await db.query(`update public.campaigns set market_stage = 'DEX_ACTIVE', updated_at = now() where chain_id = $1 and campaign_address = $2`, [cfg.chainId, pool.token]).catch(() => undefined);
   if (from !== "DEX_ACTIVE") {
@@ -814,7 +921,7 @@ export type Gen8Reorg = { tip: number; ancestor: number; deep: boolean };
  */
 export async function detectGen8Reorg(ctx: Ctx, tip: number): Promise<Gen8Reorg | null> {
   const { cfg, db, provider } = ctx;
-  const stored = await loadGen8DisplayBlocks(db, cfg.chainId, cfg.hook.address, tip);
+  const stored = await loadGen8DisplayBlocks(db, cfg.chainId, gen8CoreAddress(cfg), tip);
   if (!stored.length) return null;
   const chainHashOf = async (n: number) => String((await provider.getBlock(n))?.hash || "").toLowerCase();
   if ((await chainHashOf(stored[0]!.number)) === stored[0]!.hash) return null;
@@ -834,13 +941,13 @@ export async function detectGen8Reorg(ctx: Ctx, tip: number): Promise<Gen8Reorg 
  */
 export async function rollbackGen8Display(ctx: Ctx, reorg: Gen8Reorg): Promise<Gen8RollbackScope> {
   const { cfg, db, sinks } = ctx;
-  const scope = await gen8DisplayRowsAbove(db, cfg.chainId, cfg.hook.address, reorg.ancestor);
+  const scope = await gen8DisplayRowsAbove(db, cfg.chainId, gen8CoreAddress(cfg), reorg.ancestor);
   await sinks.raiseAlert({
     severity: reorg.deep ? "critical" : "warning", kind: reorg.deep ? "gen8_reorg_past_money_tag" : "gen8_reorg", chainId: cfg.chainId, subject: `${reorg.ancestor}`,
     title: reorg.deep ? `Gen-8 chain ${cfg.chainId} reorganised past the money tag` : `Gen-8 display rollback on chain ${cfg.chainId}`,
     message: `Tip ${reorg.tip} no longer matches the chain; common ancestor ${reorg.ancestor}. Rolled back ${scope.trades} swaps, ${scope.launches.length} launches, ${scope.graduations.length} graduations of ${scope.tokens.length} coins and re-ingesting.${reorg.deep ? " No stored block matched: the money rows above the ancestor may be wrong and need a manual check." : ""}`,
   });
-  await deleteGen8DisplayRows(db, cfg.chainId, cfg.hook.address, reorg.ancestor);
+  await deleteGen8DisplayRows(db, cfg.chainId, gen8CoreAddress(cfg), reorg.ancestor);
   for (const g of scope.graduations) {
     await undoGen8Graduation(db, cfg.chainId, g.token, g.poolId);
     await sinks.raiseAlert({ severity: "critical", kind: "gen8_reorg_graduation", chainId: cfg.chainId, subject: g.token, title: `Gen-8 graduation of ${g.token} dropped by a reorg on chain ${cfg.chainId}`, message: `The Graduated event above block ${reorg.ancestor} is no longer on the chain. Campaign and market state reset to BONDING; the graduation notification may already have gone out.` });
@@ -852,12 +959,12 @@ export async function rollbackGen8Display(ctx: Ctx, reorg: Gen8Reorg): Promise<G
   const gone = new Set(scope.launches.map((l) => l.token));
   for (const token of scope.tokens) {
     if (gone.has(token)) continue;
-    const pool = await loadGen8Pool(db, cfg.chainId, gen8PoolId(token, cfg.hook.address));
+    const pool = cfg.venue === "barkswap" ? await loadGen8PoolByToken(db, cfg.chainId, token) : await loadGen8Pool(db, cfg.chainId, gen8PoolId(token, cfg.hook.address));
     if (!pool) continue;
     if (scope.firstTime) await rebuildGen8Candles(ctx, pool, scope.firstTime);
     const last = await lastGen8Swap(db, cfg.chainId, token);
     if (!last) continue;
-    pool.lastPhase = gen8PricePhase(pool, last.sqrtPriceX96);
+    pool.lastPhase = opsOf(ctx).pricePhase(pool, last.sqrtPriceX96);
     await db.query(`update public.evm_gen8_pools set last_phase = $3, updated_at = now() where chain_id = $1 and pool_id = $2`, [cfg.chainId, pool.poolId, pool.lastPhase]);
     if (pool.graduatedBlock !== null) await syncGen8MarketStage(ctx, pool, last.blockNumber, last.txHash);
     if (last.phase === "bonding") await restateGen8BondingStats(ctx, pool, { price: last.price, soldRaw: last.soldRaw ?? 0n, mcap: last.mcap, raisedDelta: null });
@@ -891,7 +998,11 @@ export type Gen8PassResult = { from: number; to: number; result: Gen8RangeResult
  * One pass of both cursors: the display pass (reorg check at its tip, then one chunk up to the display head), then
  * the money pass (one chunk up to the money head, never past the display cursor). Null when neither had a block.
  */
-export async function runGen8ChainOnce(ctx: Ctx, opts: { maxBlocks?: number } = {}): Promise<(Gen8PassResult & { display: Gen8PassResult | null; money: Gen8PassResult | null; reorg: Gen8Reorg | null }) | null> {
+/** One range ingest of a venue: ingestGen8Range (V4) or evmGen8Bark.ts ingestGen8BarkRange. */
+export type Gen8RangeIngest = (ctx: Gen8Ctx, fromBlock: number, toBlock: number, mode: Gen8IngestMode, blockHashOut?: Map<number, string>) => Promise<Gen8RangeResult>;
+
+export async function runGen8ChainOnce(ctx: Ctx, opts: { maxBlocks?: number; ingest?: Gen8RangeIngest } = {}): Promise<(Gen8PassResult & { display: Gen8PassResult | null; money: Gen8PassResult | null; reorg: Gen8Reorg | null }) | null> {
+  const ingest = opts.ingest ?? ingestGen8Range;
   const { cfg, db, provider, env } = ctx;
   const span = opts.maxBlocks ?? intEnv(env.EVM_GEN8_LOG_CHUNK, 2_000, 1, 50_000);
   const displayCursor = gen8Cursor(cfg);
@@ -914,10 +1025,10 @@ export async function runGen8ChainOnce(ctx: Ctx, opts: { maxBlocks?: number } = 
   if (from <= displayHead) {
     const to = Math.min(displayHead, from + span - 1);
     const hashes = new Map<number, string>();
-    const result = await ingestGen8Range(ctx, from, to, "display", hashes);
+    const result = await ingest(ctx, from, to, "display", hashes);
     const tip = await provider.getBlock(to);
     if (tip?.hash) hashes.set(to, String(tip.hash).toLowerCase());
-    await storeGen8DisplayBlocks(db, cfg.chainId, cfg.hook.address, hashes);
+    await storeGen8DisplayBlocks(db, cfg.chainId, gen8CoreAddress(cfg), hashes);
     await setCursorMax(db, cfg.chainId, displayCursor, to + 1);
     display = { from, to, result };
   }
@@ -929,9 +1040,9 @@ export async function runGen8ChainOnce(ctx: Ctx, opts: { maxBlocks?: number } = 
   const mFrom = Math.max(await getCursor(db, cfg.chainId, moneyCursor), cfg.startBlock);
   if (mFrom <= moneyHead) {
     const to = Math.min(moneyHead, mFrom + span - 1);
-    const result = await ingestGen8Range(ctx, mFrom, to, "money");
+    const result = await ingest(ctx, mFrom, to, "money");
     await setCursorMax(db, cfg.chainId, moneyCursor, to + 1);
-    await pruneGen8DisplayBlocks(db, cfg.chainId, cfg.hook.address, to);
+    await pruneGen8DisplayBlocks(db, cfg.chainId, gen8CoreAddress(cfg), to);
     money = { from: mFrom, to, result };
   }
   if (!display && !money) return null;
