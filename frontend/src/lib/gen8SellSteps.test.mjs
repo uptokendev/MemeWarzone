@@ -13,6 +13,7 @@ import {
   GEN8_WAITING_CONFIRMATION,
   gen8StepLabel,
   sendGen8Tx,
+  waitGen8Receipt,
 } from "./evmGen8Client.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -161,6 +162,38 @@ test("the trade panel and the widget show those steps", () => {
   assert.match(widget, /Step \$\{stepIndex\} of \$\{stepTotal\}: approve the coin \(one time\)/);
   assert.match(widget, /Step \$\{stepIndex\} of \$\{stepTotal\}: allow the Uniswap router \(one time\)/);
   assert.match(widget, /Waiting for confirmation/);
-  assert.match(widget, /setTimeout\(resolve, 250\)/);
+  assert.match(widget, /pollGen8Receipt/);
+  assert.match(widget, /intervalMs: 250/);
+  assert.match(widget, /timeoutMs: 120_000/);
   assert.doesNotMatch(widget, /setTimeout\(resolve, 1500\)/);
+  assert.doesNotMatch(widget, /evmGen8Client/);
+  const solana = fs.readFileSync(path.join(here, "../widget/mwzSwapWidget.ts"), "utf8");
+  assert.match(solana, /setTimeout\(resolve, 1500\)/);
+});
+
+test("a hung receipt read stops at the timeout and is not polled again", async () => {
+  let polls = 0;
+  await assert.rejects(
+    () => waitGen8Receipt({
+      getTransactionReceipt() {
+        polls += 1;
+        return new Promise(() => {});
+      },
+    }, HASH, { timeoutMs: 40, intervalMs: 250, sleep: async () => { throw new Error("slept after the deadline"); } }),
+    /not confirmed in time/,
+  );
+  assert.equal(polls, 1);
+});
+
+test("the receipt poll returns the first receipt and does not read again", async () => {
+  let polls = 0;
+  const receipt = await waitGen8Receipt({
+    async getTransactionReceipt() {
+      polls += 1;
+      return { hash: HASH, status: 1, blockNumber: 4 };
+    },
+  }, HASH, { timeoutMs: 1_000, sleep: async () => { throw new Error("slept after the receipt"); } });
+  assert.equal(receipt.blockNumber, 4);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(polls, 1);
 });

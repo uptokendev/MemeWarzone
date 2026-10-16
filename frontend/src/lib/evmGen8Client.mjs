@@ -60,6 +60,7 @@ import {
   gen8SellFeeSplit,
   gen8SizedSlippageBps,
 } from "../../shared/evmGen8Swap.mjs";
+import { pollGen8Receipt } from "../../shared/gen8ReceiptPoll.mjs";
 import { gasWithHeadroom, legacyGasPriceFor } from "./evmGasHeadroom.mjs";
 
 export const GEN8_DEFAULT_SLIPPAGE_BPS = 100;
@@ -379,19 +380,20 @@ export function gen8StepLabel({ index, total, kind }) {
   return `Step ${index} of ${total}: ${action}`;
 }
 
-/** One confirmation from `provider` (the HTTP read provider, not the wallet). Resolves on the first successful receipt. */
+/**
+ * One confirmation from `provider` (the HTTP read provider, not the wallet).
+ * Returns on the first receipt and does not poll again. A read that never returns loses to `timeoutMs`
+ * (180 s): the timer is cleared and no later receipt read is started.
+ */
 export async function waitGen8Receipt(provider, hash, { timeoutMs = 180_000, intervalMs = GEN8_RECEIPT_POLL_MS, sleep = null } = {}) {
-  const pause = sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
-  const start = Date.now();
-  for (;;) {
-    const receipt = await provider.getTransactionReceipt(hash);
-    if (receipt) {
-      if (Number(receipt.status) !== 1) throw new Error("The transaction reverted.");
-      return receipt;
-    }
-    if (Date.now() - start >= timeoutMs) throw new Error("The transaction was not confirmed in time.");
-    await pause(intervalMs);
-  }
+  const receipt = await pollGen8Receipt(() => provider.getTransactionReceipt(hash), {
+    timeoutMs,
+    intervalMs,
+    sleep,
+    isDone: (found) => Boolean(found),
+  });
+  if (Number(receipt.status) !== 1) throw new Error("The transaction reverted.");
+  return receipt;
 }
 
 /**

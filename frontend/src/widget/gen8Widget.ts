@@ -11,6 +11,7 @@
  * allowance for our router. Every later sell is only the swap.
  */
 import { gen8FormatAmount } from "../../shared/gen8FormatAmount.mjs";
+import { pollGen8Receipt } from "../../shared/gen8ReceiptPoll.mjs";
 import { STYLE, fromRaw, toRaw } from "./widgetShared";
 import { addProtectedBscRpc, offersProtectedRpc, readProtectedRpcChoice, rememberProtectedRpcChoice } from "../lib/bscProtectedRpc.mjs";
 
@@ -481,13 +482,22 @@ export class Gen8SwapWidget {
   }
 
   private async waitFor(hash: string) {
-    const until = Date.now() + 120_000;
-    while (Date.now() < until) {
-      const status = await this.call<{ status: string }>(`/api/widget/swap/gen8/status?chainId=${this.token?.chainId}&txHash=${hash}`).catch(() => null);
-      if (status?.status === "failed") throw new Error("The transaction failed on chain.");
-      if (status?.status === "success") return;
-      await new Promise((resolve) => setTimeout(resolve, 250));
+    let status: { status?: string } | null;
+    try {
+      status = await pollGen8Receipt(
+        (signal: AbortSignal) => this.call<{ status: string }>(`/api/widget/swap/gen8/status?chainId=${this.token?.chainId}&txHash=${hash}`, { signal }).catch(() => null),
+        {
+          timeoutMs: 120_000,
+          intervalMs: 250,
+          isDone: (row: { status?: string } | null) => row?.status === "success" || row?.status === "failed",
+        },
+      );
+    } catch (error) {
+      if ((error as { code?: string })?.code === "GEN8_RECEIPT_TIMEOUT") {
+        throw new Error(`Not confirmed yet. Check ${hash.slice(0, 10)}... in your wallet.`);
+      }
+      throw error;
     }
-    throw new Error(`Not confirmed yet. Check ${hash.slice(0, 10)}... in your wallet.`);
+    if (status?.status === "failed") throw new Error("The transaction failed on chain.");
   }
 }
