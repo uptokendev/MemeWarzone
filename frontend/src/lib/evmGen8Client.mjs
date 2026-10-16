@@ -931,6 +931,6 @@ export function gen8ErrorMessage(error) {
   for (const e of Object.values(GEN8_REVERTS)) if (text.includes(e.name)) return e.message;
   if (/user rejected|denied/i.test(text)) return "You rejected the request in your wallet.";
   // Barkswap quote refusals (barkswapSwap.mjs) are already in plain words.
-  for (const words of [BARK_NOTHING_TO_SELL, BARK_BUY_NOT_FILLED]) if (text === words) return words;
+  for (const words of [BARK_NOTHING_TO_SELL, BARK_BUY_NOT_FILLED]) if (text.includes(words)) return words;
   return null;
 }

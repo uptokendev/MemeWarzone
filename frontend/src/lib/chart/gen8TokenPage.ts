@@ -151,16 +151,20 @@ export type Gen8HolderState = {
   } | null;
 } | null;
 
+/** Barkswap's community vault (one for every pool, docs/dogeos/barkswap-facts.md): the community fee of sells lands there in coins. */
+const BARKSWAP_COMMUNITY_VAULT = "0xA305F8BDf7EaA3233b3918A39d1e0867c6116c83";
+
 /**
- * Venue-specific holder exclusions. Barkswap (DogeOS, barkswap plan t22): the coin's Algebra pool holds positions A
- * and B, so a Transfer census ranks it first; it is excluded with the plugin and the Bark periphery the indexer also
- * excludes for 6281971 (pool, launcher, plugin, reserve lock, escrow, choice vault). V4 coins: nothing (their pool
- * coins sit in the PoolManager, already excluded by the caller).
+ * The holder exclusions only a Barkswap coin has (DogeOS, barkswap plan t22): the coin's Algebra pool (it holds
+ * positions A and B, so a Transfer census would rank it first), the plugin and Barkswap's community vault. With the
+ * launcher, reserve lock, escrow and choice vault (which the page already excludes from the state and config) this is
+ * the indexer's exclusion list for 6281971 (realtime-indexer evmGen8Holders.ts). V4 coins: nothing (their pool coins
+ * sit in the PoolManager, which the caller excludes).
  */
 export function gen8VenueHolderAddresses(state: Gen8HolderState): string[] {
   if (state?.gen8?.venue !== "barkswap") return [];
   const claims = state.creatorClaims;
-  return [state.gen8.pool, state.gen8.plugin, state.gen8.launcher, claims?.vault?.address, claims?.reserve?.address, claims?.escrow?.address]
+  return [state.gen8.pool, state.gen8.plugin, BARKSWAP_COMMUNITY_VAULT, state.gen8.launcher, claims?.vault?.address, claims?.reserve?.address, claims?.escrow?.address]
     .map((value) => String(value ?? "").trim())
     .filter((value) => /^0x[0-9a-fA-F]{40}$/.test(value));
 }

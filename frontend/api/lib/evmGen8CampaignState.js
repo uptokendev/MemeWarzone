@@ -546,6 +546,17 @@ async function readBarkPool({ provider, cfg, token }) {
   };
 }
 
+/**
+ * The Barkswap pool address behind an indexed pool id: the indexer stores it left-padded to bytes32
+ * (realtime-indexer evmGen8Bark.ts barkPoolId); a bare address reads as itself. Null for anything else (a V4 keccak id).
+ */
+export function barkPoolAddressFromId(poolId) {
+  const id = String(poolId || "").trim().toLowerCase();
+  if (/^0x[0-9a-f]{40}$/.test(id)) return ethers.getAddress(id);
+  const padded = id.match(/^0x0{24}([0-9a-f]{40})$/);
+  return padded && !/^0+$/.test(padded[1]) ? ethers.getAddress(`0x${padded[1]}`) : null;
+}
+
 /** gen8IndexedCampaignState on the Barkswap venue: the same fields, progress in Barkswap orientation. */
 function barkIndexedCampaignState({ cfg, indexed, nowSec }) {
   const latched = indexed.graduatedBlock !== null;
@@ -580,6 +591,7 @@ function barkIndexedCampaignState({ cfg, indexed, nowSec }) {
       venue: GEN8_VENUE_BARKSWAP,
       poolId: indexed.poolId,
       poolKey: null,
+      pool: barkPoolAddressFromId(indexed.poolId),
       plugin: cfg.plugin,
       hook: null,
       poolManager: null,

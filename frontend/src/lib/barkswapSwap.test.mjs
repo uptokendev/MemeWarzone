@@ -391,8 +391,14 @@ test("a sell at the launch price (nothing sold from A yet) is refused before Quo
   assert.ok(!chain.calls.some((c) => c.fn === "quoteExactInputSingle"));
   // without a lens the quoter's revert on a sell gets the same words, not "No quote for this amount"
   const noLens = { ...cfg(), lens: null };
-  const reverting = fakeChain({ quote: () => { throw new Error("invalid limit"); } });
+  const reverting = fakeChain({ quote: () => { throw Object.assign(new Error("execution reverted"), { code: "CALL_EXCEPTION" }); } });
   await assert.rejects(bark.quoteBarkTrade({ provider: reverting.provider, cfg: noLens, token: COIN, side: "sell", amountIn: WAD }), /launch price/);
+  // anything that is not a contract revert (RPC down, timeouts) surfaces as itself, never as "launch price"
+  const down = fakeChain({ quote: () => { throw Object.assign(new Error("rpc endpoint down"), { code: "SERVER_ERROR" }); } });
+  await assert.rejects(bark.quoteBarkTrade({ provider: down.provider, cfg: noLens, token: COIN, side: "sell", amountIn: WAD }), /rpc endpoint down/);
+  // with a lens the launch-price case is caught before the quote, so a revert after it is not relabelled either
+  const withLens = fakeChain({ quote: () => { throw Object.assign(new Error("execution reverted: SPL"), { code: "CALL_EXCEPTION" }); } });
+  await assert.rejects(bark.quoteBarkTrade({ provider: withLens.provider, cfg: cfg(), token: COIN, side: "sell", amountIn: WAD }), (e) => !/launch price/.test(e.message));
 });
 
 test("a buy the pool cannot fill in full is refused: no DOGE may stay in the router", async () => {
@@ -650,6 +656,8 @@ test("the pool record, fee and sell cap of a 6281971 coin come from the Bark lau
 test("the panel shows the Barkswap refusals in their own words (gen8ErrorMessage), not 'No quote for this amount'", () => {
   for (const words of [bark.BARK_NOTHING_TO_SELL, bark.BARK_BUY_NOT_FILLED]) {
     assert.equal(client.gen8ErrorMessage(new Error(words)), words);
+    // as the wallet or a wrapper reports it: the sentence inside a longer message
+    assert.equal(client.gen8ErrorMessage(new Error(`Error: ${words} (quote)`)), words);
   }
   assert.equal(client.gen8ErrorMessage(new Error("something else entirely")), null);
 });

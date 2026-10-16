@@ -823,6 +823,15 @@ test("indexer fallback on Barkswap: progress from the last indexed price in Bark
   const expected = barkShared.barkProgress({ liqA: LIQ_A, tickStart: TICK_START, tickGrad: TICK_GRAD, sqrtPriceX96: SQRT_MID });
   assert.equal(s.graduation.progressBps, expected.bps);
   assert.ok(expected.bps > 0 && expected.bps < 10_000);
+  // the coin's pool (the page excludes it from the holder census): t18 stores the Bark pool id as the pool address
+  // left-padded to bytes32 (realtime-indexer evmGen8Bark.ts barkPoolId); a bare address id reads the same
+  assert.equal(s.gen8.pool, POOL);
+  const padded = gen8IndexedCampaignState({ cfg: barkCfg(), indexed: { ...indexed, poolId: ethers.zeroPadValue(POOL, 32).toLowerCase() }, nowSec: NOW });
+  assert.equal(padded.gen8.pool, POOL);
+  assert.equal(padded.gen8.poolId, ethers.zeroPadValue(POOL, 32).toLowerCase());
+  // a V4-style (keccak) id is no Barkswap pool address: no pool rather than a wrong one
+  const keccakId = ethers.keccak256(ethers.toUtf8Bytes("not a bark pool"));
+  assert.equal(gen8IndexedCampaignState({ cfg: barkCfg(), indexed: { ...indexed, poolId: keccakId }, nowSec: NOW }).gen8.pool, null);
 });
 
 test("list progress on Barkswap: the indexer row in Barkswap orientation, else lens.progress(coin)", async () => {

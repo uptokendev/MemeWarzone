@@ -155,6 +155,8 @@ test("a Barkswap coin's holder census excludes its pool, plugin and the Bark per
   for (const address of [
     BARK_STATE.gen8.pool,
     BARK_STATE.gen8.plugin,
+    // Barkswap's community vault (every pool's, docs/dogeos/barkswap-facts.md): it receives the community fee in coins
+    "0xA305F8BDf7EaA3233b3918A39d1e0867c6116c83",
     BARK_STATE.gen8.launcher,
     BARK_STATE.creatorClaims.vault.address,
     BARK_STATE.creatorClaims.reserve.address,

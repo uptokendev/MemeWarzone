@@ -438,8 +438,9 @@ export async function quoteBarkTrade({ provider, cfg, token, side, amountIn, sli
   const [feeBps, quotedRaw, refRaw] = await Promise.all([
     readBarkFeeBps({ provider, cfg, coin: pool.coin, sender: swapSender, record: pool, postPhase }),
     quoter.quoteExactInputSingle.staticCall(params(amount)).catch((error) => {
-      // without a lens the launch-price case shows up here, as QuoterV2's revert on the sell's limit
-      if (side === "sell") throw new Error(BARK_NOTHING_TO_SELL);
+      // Without a lens the launch-price case shows up only here, as QuoterV2's revert on the sell's limit. Only that
+      // (a contract revert, no lens progress) is relabelled; RPC failures and anything else surface as themselves.
+      if (side === "sell" && !progress && error?.code === "CALL_EXCEPTION") throw new Error(BARK_NOTHING_TO_SELL);
       throw error;
     }),
     refIn == null ? null : quoter.quoteExactInputSingle.staticCall(params(refIn)).catch(() => null),
