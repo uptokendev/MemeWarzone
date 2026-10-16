@@ -40,7 +40,7 @@ Order: gates first, fork rehearsal, then Chikyū. Scripts: `scripts/deploy-dogeo
 guards `scripts/lib/dogeosTestnetDeployGuards.mjs`.
 
 0. **Gates 0-3 passed** (plan t7, t25-t28): audit PASS, full suites, branch review, fork rehearsal with the DOGE
-   budget (`scripts/rehearse-dogeos-bark-fork.ts`, written in t27, report `reports/dogeos/bark-fork-rehearsal.json`).
+   budget (`scripts/rehearse-dogeos-bark-fork.ts` and report `reports/dogeos/bark-fork-rehearsal.json`, both still to be written in t27).
    Fund the deployer, keeper and operator from that budget.
 1. **Build both artifact sets** (the stack refuses stale artifacts):
    `npx hardhat compile && npx hardhat --config hardhat.dogeos-bark-fork.config.ts compile`
