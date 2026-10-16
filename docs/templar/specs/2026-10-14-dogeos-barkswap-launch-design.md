@@ -216,7 +216,11 @@ order, reachable states, over/underflow and griefing, as CLAUDE.md requires.
 - Worker table for 6281971: the gen-7 graduation keeper is **off** (no gen-7 campaigns on DogeOS); the
   choice-vault operator worker is **on** for `buyback` (sub-project 2 turns on holder batches); the new keepers of
   section 4 are on.
-- `FORBIDDEN_KEEPER_ADDRESSES` for 6281971 also lists the DogeOS operator key.
+- Keeper keys for 6281971 also refuse the DogeOS operator. As built (t16/t20,
+  `realtime-indexer/src/evm/evmGraduationKeeper.ts`): the exported `FORBIDDEN_KEEPER_ADDRESSES` constant stays
+  **without** the operator, because the creator-choice operator guard reads that constant and the operator (B9) must
+  pass `assertOperatorKeyAllowed`. Keeper keys are checked with `forbiddenKeeperAddresses(env, chainId)`, which adds
+  `DOGEOS_OPERATOR_ADDRESS`; a set but malformed value throws only for chain 6281971 (other chains' keepers ignore it).
 
 ### Audit scope note
 
@@ -243,7 +247,9 @@ rows and `reward_events`. By swap kind: a **conversion** swap writes no trade ro
 movement, not trading; the pool price it leaves feeds stats and candles as any price change does, its volume
 counts nowhere); **escrow** buys and **choice-vault buybacks** are written as gen-8 writes them
 (`league_excluded`). Config follows gen-8's env pattern (`0xaddr@startBlock`) with the DogeOS launcher
-and plugin and a `barkswap` venue.
+and plugin and a `barkswap` venue. Money ingestion depth (founder 2026-10-15): money rows (accruals, reward
+events, route runs, holder census) read to 20 blocks below `latest` (`GEN8_MONEY_DEPTH`; the
+`EVM_GEN8_MONEY_DEPTH_6281971` override is floored at 17, Chikyū's max reorg); display rows follow `latest`.
 
 **API.** Gen-8 endpoints serve 6281971 through the adapter: campaign state (lens), progress, coin page, and
 the signed create (D3) with `openAt`. The create signer also returns the CREATE2 salt that sorts the coin below

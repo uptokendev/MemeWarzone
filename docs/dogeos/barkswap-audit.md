@@ -239,6 +239,8 @@ t8 / t9 rows are owned by those specs; the t7 reviewer checks the final suite ag
 Spec "Accepted testnet risks" unchanged, plus I-1 to I-12 above. The Barkswap admin powers and their effect on each
 contract are in the two "Barkswap admin powers" tables (plugin, launcher) and in the vault's `PoolNotRestored` entry;
 none can move A/B principal, change our rates, register a pool, reset a latch, or pay anyone but the entitled party.
+Accepted test gap: the escrow's refund branch is unreachable on a real pool and untested (MwzBarkCreatorEscrow,
+"Informational").
 
 ### Open items handed to the fork tests (t8-t10)
 
@@ -381,13 +383,17 @@ can never change (I12).
   and per book, and the creator amount is exactly B10's whenever Barkswap's cut leaves enough (cut <= 94.4% while
   bonding, <= 50% after graduation; the default is 3%). Above that the creator receives the whole net fee and the
   router 0; nothing can pay more than the net fee that reached our positions.
-- **Tolerance** (spec "within a stated rounding tolerance"): the plugin books an estimate; the pool computes the fee
-  per step (`mulDivRoundingUp(input, f, 1e6 - f)` on a step that reaches its target, `amountAvailable - input` on the
-  last step), takes the community cut per step, and credits our position through Q128 fee growth (floored). The
-  estimate is therefore below the pool's fee by up to about 2 wei per step and differs from what `collect` can take by
-  a few wei per step either way; a swap crosses at most three initialized ticks (start, graduation, max), so at most
-  four steps. Expected bound: <= 16 wei per swap per book. Fork-checked in t9, which pins the measured bound; the
-  launcher's collect (t4) must tolerate both signs (see open questions 4 and 5).
+- **Tolerance** (spec "within a stated rounding tolerance"): the plugin books an estimate of each swap's fee; what
+  `collect` can take is the pool's own fee after its rounding, the community cut and the Q128 fee-growth floor, so the
+  two differ per swap either way. The pool's fee is at or above the estimate (Gate 0 re-derivation below). Measured on
+  the Chikyū fork (t9, `test/dogeos/barkswap/BarkMoney.fork.spec.ts`, pinned as `MEASURED_AGAINST_US_WEI` /
+  `MEASURED_TOLERANCE_WEI` in `test/dogeos/barkswap/fixtures/barkBooks.ts`), collected minus plugin-booked, per swap
+  per book: **against us at most 1 wei**; **in our favour up to 45 wei** (single-step large bonding sells; per the t9
+  notes in `barkBooks.ts`, the pool recomputes the input from the rounded price and keeps the rest of the available
+  amount as fee). These figures are setup-dependent: measured at $0.10 DOGE, a $150 graduation target
+  and fork block 8,578,734; the in-our-favour side scales with the pool's liquidity and price. (The earlier per-step
+  derivation of a fixed bound was exceeded by large sells and is withdrawn.) The launcher's collect (t4) tolerates both
+  signs: creators never carry rounding, the difference lands in the router books (see open questions 4 and 5).
 
 ### Transient hand-over and nested swaps
 
@@ -634,10 +640,12 @@ described under `beforeSwap` / `afterSwap`. A2, A3 (display pair) do not apply: 
    must credit any surplus over the plugin's totals somewhere defined (router book of the current phase is the natural
    choice) so the launcher's books still equal its balances. **Resolved in t4** (MwzBarkLauncher, "Fee books",
    "Unbooked surplus"): router post, not the current phase's router book, so no splitter band grows without a trade row.
-5. **Rounding tolerance (t9).** The <= 16 wei per swap per book bound above is derived from the per-step rounding, not
-   measured; t9 measures it and pins the value it asserts, and t4's apportionment must accept totals a few wei above
-   what collect returns. **t4:** the launcher books what collect returns and lets the plugin's totals only steer the
-   split, so either sign is absorbed by the router books (MwzBarkLauncher, "Fee books", "Tolerance").
+5. **Rounding tolerance (t9).** **Measured, not derived** (see "Tolerance" above): per swap per book, at most 1 wei
+   against us and up to 45 wei in our favour (single-step large bonding sells) in the t9 fork setup ($0.10 DOGE, $150
+   target, fork block 8,578,734); the in-our-favour side scales with liquidity and price, so it is a property of the
+   setup, not a fixed bound. **t4:** the launcher books what collect returns and lets the plugin's totals only steer the
+   split, so either sign is absorbed by the router books (MwzBarkLauncher, "Fee books", "Tolerance"); t9 asserts the
+   creator books carry no rounding.
 6. **Swap kinds (t6).** Escrow and choice vault must swap directly on the pool for the kind label; if t6 routes them
    through the SwapRouter, the plugin needs another rule (for example recipient-based) and this section changes.
 7. **Licence.** The plugin is MIT (as gen-8) and compiles the vendored GPL-2.0-or-later Algebra interfaces; confirm the
@@ -1033,9 +1041,9 @@ creator totals unless the whole collect is smaller than the creator amounts alon
 our fees after a Barkswap admin cleared our config; then the creators get all of it and the router 0).
 
 **Tolerance (spec: "the plugin's per-phase totals equal what collect can still take, within a stated rounding
-tolerance").** The plugin's per-swap estimate and the pool's per-step fee, community cut and Q128 fee-growth flooring
-differ by a few wei per swap either way (plugin section, "Tolerance": derived <= 16 wei per swap per book; t9 measures
-and pins it). The launcher books collected amounts only, so the difference never enters a creator book and never
+tolerance").** The plugin's per-swap estimate and the pool's fee, community cut and Q128 fee-growth flooring
+differ per swap either way (plugin section, "Tolerance": measured at most 1 wei against us and up to 45 wei in our
+favour per swap per book in the t9 fork setup; setup-dependent). The launcher books collected amounts only, so the difference never enters a creator book and never
 accumulates: rounding in our favour lands in router post, rounding against us shrinks the two router books pro rata,
 and each collect moves the snapshot to the plugin's current totals (no carry). The plugin's books and the pool's fee
 growth always describe the same set of completed swaps, because `collect` can only run with the pool idle: its first
@@ -1343,6 +1351,13 @@ library's call guard (a few gas): about +6k. `lastConvertAt` shares slot 1 with 
 SSTORE); nothing else of the money side runs in `launch`. So **~6.40M** / **~6.47M**, and with the creator first buy
 (167k in the proof, 10 DOGE) a worst case of **~6.56-6.66M**, about 0.34M under the 7M gate (66-67% of a 10M block). t8
 pins the measured figure.
+
+**Measured (t8, Chikyū fork):** worst launch **6,293,026 gas** (buyback fee choice + creator first buy), 0.71M under
+the 7M gate; `test/dogeos/barkswap/BarkLaunch.fork.spec.ts` asserts every launch it runs is at most 7M
+(`LAUNCH_GAS_GATE`). The estimate above was conservative.
+
+**Measured gas of the money steps (t9 fork run, printed by `recordGas`, not asserted):** `collect` 180-409k, `convert`
+180-240k, splitter `route` 114-338k, `claimRouter` 55-109k. All far below the 10M block.
 
 ### Size and the library split (done in t4)
 
@@ -2199,6 +2214,10 @@ no admin, no fee, no rescue", every error (one added for the constructor).
 - ABI changes for the Bark venue (t17 / t18 / t22): constructor `(launcher)`; getter `launcher()` (no `hook()` /
   `poolManager()`); `EscrowBuy` topic 1 is the pool address; new error `ZeroAddress`; `buy`, `claim` and the views keep
   their signatures (`token` was already an address).
+- **Accepted known gap (t10 review): the refund branch of `buy` is not exercised.** Refunding an unfilled part needs
+  the buy to stop short of its input, which on a real pool means draining range B (about 3e42 wei on the fork); it is
+  unreachable on a real pool and only a mock-pool unit test could reach it (none is written). The branch is gen-8's
+  refund, unchanged: `msg.value - spent` to `msg.sender` as the last call.
 
 ### Hand-off from t6
 

@@ -28,9 +28,9 @@ Line numbers are from that tag. Scratch scripts are in `scripts/`, raw data in `
 | Default plugin factory (BasePluginV1Factory) | `0xa3411873111B2A6d2C107Ba146764C6E636d4b29` | `factory.defaultPluginFactory()`; bytecode match |
 | Vault factory (Stub) | `0x1dB26728A2f5E56A3652aE766301dBa038346b56` | `factory.vaultFactory()`; returns a single vault for every pool |
 | Community vault (all pools) | `0xA305F8BDf7EaA3233b3918A39d1e0867c6116c83` | `stub.defaultAlgebraCommunityVault()`; `pool.communityVault()` |
-| SwapRouter | `0x911E5A1630fD1768e5A1710DAaFAbB865cb79531` | `factory()`, `poolDeployer()`, `WNativeToken()`; bytecode match |
-| Quoter | `0x87D4CC67377b8AbE91BbD04BC8A8e9869559ee36` | bytecode match |
-| QuoterV2 | `0x187b41968063cb8a04a5f4d2113844ef2ba21493` | bytecode match |
+| SwapRouter | `0x911E5A1630fD1768E5A1710DAAFaBb865cB79531` | `factory()`, `poolDeployer()`, `WNativeToken()`; bytecode match |
+| Quoter | `0x87d4cC67377B8AbE91BBD04bc8a8E9869559Ee36` | bytecode match |
+| QuoterV2 | `0x187b41968063Cb8A04A5f4d2113844EF2Ba21493` | bytecode match |
 | TickLens | `0x0b565c5fc0d35a9a28b4f7be69a209cef69c318c` | bytecode match |
 | AlgebraInterfaceMulticall | `0xe21002c6d5b79b990f422aca638b1ef04bc8bbbf` | bytecode match |
 | NonfungiblePositionManager ("Barkswap Positions NFT-V2", BARKSW-POS) | `0xf596329a6c7E03F0708199cB5435f86783DB4302` | `name()`/`symbol()`, bytecode match |
@@ -253,7 +253,7 @@ Line numbers are from that tag. Scratch scripts are in `scripts/`, raw data in `
 |---|---|
 | Factory 0xF396… | VERIFIED |
 | Custom pool entry point 0x19b1… | VERIFIED (stock 1.2.1 EP, byte-identical) |
-| Router 0x911E5A16… / NPM 0xf596329a… | VERIFIED: `0x911E5A1630fD1768e5A1710DAaFAbB865cb79531` / `0xf596329a6c7E03F0708199cB5435f86783DB4302` |
+| Router 0x911E5A16… / NPM 0xf596329a… | VERIFIED: `0x911E5A1630fD1768E5A1710DAAFaBb865cB79531` / `0xf596329a6c7E03F0708199cB5435f86783DB4302` |
 | Algebra Integral 1.2 | VERIFIED, more precisely **1.2.1**, unmodified |
 | Core BUSL until 2027-03-15 | VERIFIED (earlier of 2027-03-15 or 4 years) |
 | Default community fee 3% | VERIFIED: `defaultCommunityFee = 30/1000` = **3% of the total swap fee (LP fee + plugin fee)**, in the input token. Not 3% of volume. Applied to every new pool, custom ones included, at `initialize`. |
