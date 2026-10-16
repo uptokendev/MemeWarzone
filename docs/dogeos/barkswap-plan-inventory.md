@@ -416,7 +416,9 @@ docs/dogeos/barkswap-facts.md. Untracked, no action: chatmuchfi.md, DOGEOS_FULL_
 - db/migrations/20261010_000020_dogeos_chain_launch_path.sql (27; ab7512dd7): nothing MuchFi-specific. Constraint 2 (L11-25, $150 clause + 6281971)
   KEEP (gen-8 $150 drafts), rewrite comment 11-13. Constraint 1 (L6-9 campaign_draft_evm_launch_options_chain_chk, gen-6/7 launch-options table)
   needed only if gen-8 DogeOS drafts write that table (check draftEvmLaunchOptions.js / gen-8 schedule); sibling anchor JSON 120.
-- database/staging_apply_dogeos_launch_path.sh (47), db/migrations/dogeosLaunchPathMigration.test.mjs (162): KEEP with migration; ADAPT wording.
+- database/staging_apply_dogeos_launch_path.sh (47), db/migrations/dogeosLaunchPathMigration.test.mjs (162): DELETED by t23. Superseded by
+  database/staging_apply_dogeos_barkswap.sh (applies 20261010 unchanged, then 20261015) and db/migrations/dogeosBarkswapMigration.test.mjs
+  (carries every 20261010 check over).
 
 ### C7. Env generator scripts/dogeos-env-blocks.mjs (308; 4b6d8d7f3) — KEEP file, ADAPT
 

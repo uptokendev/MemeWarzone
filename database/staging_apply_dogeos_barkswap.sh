@@ -45,7 +45,8 @@ trap 'rm -rf "$WORK"' EXIT
     [ -f "$f" ] || { echo "missing migration file: $f" >&2; exit 1; }
     echo
     echo "-- ===== $f ====="
-    sed -E '/^[[:space:]]*(begin|commit)[[:space:]]*;[[:space:]]*$/Id' "$f"
+    # drop the file's own begin; / commit; lines, any case (bracket classes: portable, no GNU-only /I flag)
+    sed -E '/^[[:space:]]*([Bb][Ee][Gg][Ii][Nn]|[Cc][Oo][Mm][Mm][Ii][Tt])[[:space:]]*;[[:space:]]*$/d' "$f"
   done
   echo
   if [ "$MODE" = apply ]; then echo "commit;"; else echo "rollback;"; fi

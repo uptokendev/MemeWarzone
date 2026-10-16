@@ -2,7 +2,7 @@
  * Throwaway Postgres for the gen-8 integration test (scripts/dbc/throwaway-postgres.mjs + the market tables). The
  * market-continuity foundation is applied up to its first market_trades_v (the tables; its union does not type-check
  * against the test curve_trades, and grants / triggers / backfills are not needed); the current view (20260921_000002)
- * is applied instead. The gen-8 migration is applied twice to prove it
+ * is applied instead. Each gen-8 migration (and the DogeOS Barkswap one, 20261015) is applied twice to prove it
  * is idempotent.
  */
 import fs from "node:fs";
@@ -28,5 +28,7 @@ export function gen8SchemaFiles(): string[] {
     "db/migrations/20261012_000011_evm_gen8_display.sql",
     "db/migrations/20261012_000012_evm_gen8_open_at_phase.sql",
     "db/migrations/20261012_000012_evm_gen8_open_at_phase.sql",
+    "db/migrations/20261015_000010_dogeos_barkswap.sql",
+    "db/migrations/20261015_000010_dogeos_barkswap.sql",
   ];
 }

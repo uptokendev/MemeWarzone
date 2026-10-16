@@ -134,7 +134,10 @@ function sqlLiterals(file) {
 
 const SQL_WORDS = new Set(["min", "max", "sum", "count", "coalesce", "text", "as", "null", "and", "or", "is", "not", "now"]);
 
-// Every column a statement names on `table` (inserts, set lists, select lists, where / order by).
+// Every column a statement names on `table` (inserts, set lists, select lists, where / order by). A deliberately small
+// parser for the indexer's own SQL shapes, not general SQL: its job is to catch a column the indexer uses that the
+// migration lacks (drift). If a statement shape changes so the parser no longer sees it, the "checked" floor in the
+// test below fails instead of the check silently covering nothing.
 function columnsUsedOn(stmt, table) {
   const used = new Set();
   const add = (s) => {
@@ -320,6 +323,8 @@ test("every column the indexer names on the Bark tables exists in the migration"
       }
     }
   }
+  // Floor, not a pin: today 99 column references are checked. Fewer than 60 means columnsUsedOn stopped recognizing
+  // the indexer's statements (a parser miss), which would make the loop above pass vacuously.
   assert.ok(checked > 60, `too few columns checked (${checked}); the source parser lost the statements`);
 });
 
@@ -533,7 +538,7 @@ test("apply script: staging-only (refuses production), dryrun|apply, one transac
   const files = [...sh.matchAll(/^\s*(db\/migrations\/\S+\.sql)\s*$/gm)].map((m) => m[1]);
   assert.deepEqual(files, [`db/migrations/${LAUNCH_FILE}`, `db/migrations/${BARK_FILE}`]);
   // begin/commit of the files are stripped so the bundle is exactly one transaction.
-  assert.match(sh, /sed -E '\/\^\[\[:space:\]\]\*\(begin\|commit\)/);
+  assert.ok(sh.includes(`sed -E '/^[[:space:]]*([Bb][Ee][Gg][Ii][Nn]|[Cc][Oo][Mm][Mm][Ii][Tt])[[:space:]]*;[[:space:]]*$/d'`), "begin/commit strip (portable sed) missing");
   assert.match(sh, /echo "begin;"/);
   assert.match(sh, /if \[ "\$MODE" = apply \]; then echo "commit;"; else echo "rollback;"; fi/);
 });
