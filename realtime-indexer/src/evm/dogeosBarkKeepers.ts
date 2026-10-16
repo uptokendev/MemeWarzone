@@ -59,6 +59,7 @@ export const BARK_TICK_SPACING = 10;
 export const BARK_LAUNCH_COMMUNITY_FEE = 30;
 
 export const BARK_KEEPER_ALERT_TYPE = "dogeos_bark_keeper";
+export const BARK_ADMIN_ALERT_KIND = "dogeos_bark_admin_change";
 
 export type BarkLane = "collect" | "gradFee" | "reserve" | "adminWatch" | "sidePools" | "route" | "buyback";
 export const BARK_LANES: readonly BarkLane[] = Object.freeze(["collect", "gradFee", "reserve", "adminWatch", "sidePools", "route", "buyback"]);
@@ -397,8 +398,8 @@ export function ethersBarkExec(addresses: { launcher: string; reserveLock: strin
 export type BarkCoin = { coin: string; pool: string; graduated: boolean };
 export type BarkOwed = { feeCreator: string; creatorOwed: bigint; coinBooks: bigint[]; uncollectedNative: bigint[]; uncollectedCoin: bigint[]; nextConvertAt: number; gradFeeTaken: boolean };
 export type BarkPoolSettings = { plugin: string; lastFee: number; pluginConfig: number; communityFee: number; tickSpacing: number; unlocked: boolean };
+/** A buyback coin's vault state (choiceOf is read first, so a non-buyback coin costs one read). */
 export type BarkChoiceState = {
-  choice: number;
   buybackBalance: bigint;
   spentInWeek: bigint;
   lastBuybackAt: number;
@@ -417,6 +418,8 @@ export interface BarkKeeperReader {
   reserveAmount(coin: string): Promise<bigint>;
   reserveReleaseDelay(): Promise<number>;
   poolSettings(pool: string): Promise<BarkPoolSettings>;
+  /** MwzBarkCreatorChoiceVault.cfg(coin).choice (0 = not registered, 4 = buyback). */
+  choiceOf(coin: string): Promise<number>;
   choiceState(coin: string): Promise<BarkChoiceState>;
 }
 
@@ -461,13 +464,16 @@ export function ethersBarkReader(a: { lens: string | null; reserveLock: string |
       const [plugin, g, spacing] = await Promise.all([c.plugin(), c.globalState(), c.tickSpacing()]);
       return { plugin: lc(plugin), lastFee: Number(g.lastFee), pluginConfig: Number(g.pluginConfig), communityFee: Number(g.communityFee), tickSpacing: Number(spacing), unlocked: Boolean(g.unlocked) };
     },
+    async choiceOf(coin) {
+      return Number((await vault().cfg(coin)).choice);
+    },
     async choiceState(coin) {
       const v = vault();
-      const [cfg, balance, spent, last, perTx, perWeek, interval, operator, paused] = await Promise.all([
-        v.cfg(coin), v.buybackBalance(coin), v.buybackSpentInWeek(coin), v.lastBuybackAt(coin), v.maxBuyPerTx(), v.maxBuybackPerCoinWeek(), v.minBuyInterval(), v.operator(), v.operatorPaused(),
+      const [balance, spent, last, perTx, perWeek, interval, operator, paused] = await Promise.all([
+        v.buybackBalance(coin), v.buybackSpentInWeek(coin), v.lastBuybackAt(coin), v.maxBuyPerTx(), v.maxBuybackPerCoinWeek(), v.minBuyInterval(), v.operator(), v.operatorPaused(),
       ]);
       return {
-        choice: Number(cfg.choice), buybackBalance: BigInt(balance), spentInWeek: BigInt(spent), lastBuybackAt: Number(last), maxBuyPerTx: BigInt(perTx),
+        buybackBalance: BigInt(balance), spentInWeek: BigInt(spent), lastBuybackAt: Number(last), maxBuyPerTx: BigInt(perTx),
         maxBuybackPerCoinWeek: BigInt(perWeek), minBuyInterval: Number(interval), operator: lc(operator), operatorPaused: Boolean(paused),
       };
     },
@@ -562,6 +568,8 @@ const RESTORABLE = new Set(["plugin", "lastFee", "pluginConfig"]);
 /** Admin-change watch + restore (keeper key): our launch values on every one of our pools. */
 export async function runBarkAdminWatchPass(input: {
   cfg: Gen8BarkChainConfig; coins: BarkCoin[]; reader: BarkKeeperReader; sender: BarkSender; alert: Alert; expected: { communityFee: number; tickSpacing: number };
+  /** Closes the pool's open admin-change alert once its launch values hold again, so a later change alerts anew. */
+  resolve?: (pool: string) => Promise<unknown>;
 }): Promise<BarkStep[]> {
   const out: BarkStep[] = [];
   const plugin = lc(input.cfg.plugin.address);
@@ -579,11 +587,14 @@ export async function runBarkAdminWatchPass(input: {
     if (s.pluginConfig !== BARK_PLUGIN_CONFIG) changed.push("pluginConfig");
     if (s.communityFee !== input.expected.communityFee) changed.push("communityFee");
     if (s.tickSpacing !== input.expected.tickSpacing) changed.push("tickSpacing");
-    if (!changed.length) continue;
+    if (!changed.length) {
+      await input.resolve?.(c.pool);
+      continue;
+    }
     const restore = changed.some((k) => RESTORABLE.has(k));
     await input.alert({
       severity: restore ? "critical" : "warning",
-      kind: "dogeos_bark_admin_change",
+      kind: BARK_ADMIN_ALERT_KIND,
       chainId: input.cfg.chainId,
       subject: c.pool,
       title: `Barkswap admin changed our pool ${c.pool} on chain ${input.cfg.chainId}`,
@@ -603,9 +614,14 @@ export async function runBarkAdminWatchPass(input: {
  * Choice-vault buyback (operator key). Per coin at its latest passed secret moment (never caught up, each used once):
  * a buyback coin of a vault we operate, outside the vault's interval, sized min(balance, per-tx cap, week cap left),
  * at least choice.minSpendWei. The vault caps the price impact itself (price limit, partial fill).
+ *
+ * Restart safety: `used` lives in memory, so the first time a coin is seen its set is seeded with the moment that was
+ * already due at `startedAt` (the lane's start). A moment that passed before the lane started counts as missed, as
+ * every missed moment does, so a restart never re-fires the latest moment.
  */
 export async function runBarkBuybackPass(input: {
   cfg: Gen8BarkChainConfig; coins: BarkCoin[]; reader: BarkKeeperReader; sender: BarkSender; choice: ChoiceConfig; now?: Date; used: Map<string, Set<string>>;
+  startedAt: Date;
 }): Promise<BarkStep[]> {
   const out: BarkStep[] = [];
   if (!input.cfg.choiceVault || !input.choice.masterSecret) return out;
@@ -613,21 +629,29 @@ export async function runBarkBuybackPass(input: {
   const operator = input.sender.address("operator");
   let chainNow: number | null = null;
   for (const c of input.coins) {
-    const used = input.used.get(c.coin) ?? new Set<string>();
-    input.used.set(c.coin, used);
-    const key = dueMomentKey({ masterSecret: input.choice.masterSecret, chainId: input.cfg.chainId, campaign: c.coin, now, perDay: input.choice.perDay, used });
+    const moment = (at: Date, used: Set<string>) =>
+      dueMomentKey({ masterSecret: input.choice.masterSecret, chainId: input.cfg.chainId, campaign: c.coin, now: at, perDay: input.choice.perDay, used });
+    let used = input.used.get(c.coin);
+    if (!used) {
+      used = new Set<string>();
+      const missed = moment(input.startedAt, used);
+      if (missed) used.add(missed);
+      input.used.set(c.coin, used);
+    }
+    const key = moment(now, used);
     if (!key) continue;
+    // The moment is consumed before any vault read: a transient RPC failure skips it (by design, never caught up).
     used.add(key);
     const call = "choiceVault.buyback";
     let st: BarkChoiceState;
     try {
+      if ((await input.reader.choiceOf(c.coin)) !== CHOICE_BUYBACK) continue;
       st = await input.reader.choiceState(c.coin);
       chainNow ??= await input.reader.blockTime();
     } catch (error) {
       out.push(readFailed("operator", call, c.coin, error));
       continue;
     }
-    if (st.choice !== CHOICE_BUYBACK) continue;
     const skip = (reason: string) => out.push({ who: "operator", call, coin: c.coin, decision: "skip", reason });
     if (st.operatorPaused) {
       skip("the vault's operator is paused");
@@ -752,7 +776,9 @@ export function startDogeosBarkKeepers(opts: {
     if (kc.lanes.gradFee) run("gradFee", kc.pollMs, async () => runBarkGradFeePass({ coins: await coins(), reader, sender }));
     if (kc.lanes.reserve) run("reserve", kc.pollMs, async () => runBarkReservePass({ coins: await coins(), reader, sender }));
     if (kc.lanes.adminWatch) {
-      run("adminWatch", kc.adminWatchMs, async () => runBarkAdminWatchPass({ cfg, coins: await coins(), reader, sender, alert: alertAs(BARK_KEEPER_ALERT_TYPE), expected: kc.expected }));
+      const resolve = async (pool: string) =>
+        (await import("./payoutWatchdogWorker.js")).resolveAlerts(opts.db as any, BARK_ADMIN_ALERT_KIND, cfg.chainId, pool, BARK_KEEPER_ALERT_TYPE);
+      run("adminWatch", kc.adminWatchMs, async () => runBarkAdminWatchPass({ cfg, coins: await coins(), reader, sender, alert: alertAs(BARK_KEEPER_ALERT_TYPE), expected: kc.expected, resolve }));
     }
     if (kc.lanes.sidePools) {
       schedule(label("sidePools"), kc.sidePollMs, async () => {
@@ -783,7 +809,8 @@ export function startDogeosBarkKeepers(opts: {
     }
     if (kc.lanes.buyback) {
       const used = new Map<string, Set<string>>();
-      run("buyback", kc.buybackPollMs, async () => runBarkBuybackPass({ cfg, coins: await coins(), reader, sender, choice: kc.choice, used }));
+      const startedAt = new Date();
+      run("buyback", kc.buybackPollMs, async () => runBarkBuybackPass({ cfg, coins: await coins(), reader, sender, choice: kc.choice, used, startedAt }));
     }
   }
   return started;

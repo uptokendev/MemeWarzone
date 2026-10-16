@@ -418,6 +418,7 @@ export function barkSideSwapCoinVolume(log: L, pool: { venue: SideVenue; coinIsT
 const BARK_SIDE_POOL_CONTRACTS = new Set<SideVenue>(["algebra", "v2", "v3", "v3_pancake", "solidly"]);
 
 /** One pass of the DogeOS side-pool watch (read only; the keepers' `sidePools` lane, off by default). */
+// Mirrors runGen8SidePoolWatcherOnce's writes on purpose: the V4 watcher stays byte-identical (V4-unchanged rule).
 export async function runBarkSidePoolWatcherOnce(opts: {
   db: Queryable; cfg: Gen8BarkChainConfig; provider: SideProvider; env?: NodeJS.ProcessEnv;
   alert: (a: { severity: "critical" | "warning" | "info"; kind: string; chainId: number; subject?: string; title: string; message: string; extra?: Record<string, unknown> }) => Promise<unknown>;

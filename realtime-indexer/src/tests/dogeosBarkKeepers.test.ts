@@ -152,10 +152,14 @@ function fakeReader(input: {
       reads.push(`pool:${pool}`);
       return { plugin: CFG.plugin.address, lastFee: 0, pluginConfig: BARK_PLUGIN_CONFIG, communityFee: 30, tickSpacing: 10, unlocked: true, ...(input.settings?.[pool] || {}) };
     },
+    async choiceOf(coin: string) {
+      reads.push(`choiceOf:${coin}`);
+      return Number(input.choice?.[coin]?.choice ?? 4);
+    },
     async choiceState(coin: string) {
       reads.push(`choice:${coin}`);
       return {
-        choice: 4, buybackBalance: 0n, spentInWeek: 0n, lastBuybackAt: 0, maxBuyPerTx: 10n ** 21n, maxBuybackPerCoinWeek: 10n ** 22n, minBuyInterval: 3600,
+        buybackBalance: 0n, spentInWeek: 0n, lastBuybackAt: 0, maxBuyPerTx: 10n ** 21n, maxBuybackPerCoinWeek: 10n ** 22n, minBuyInterval: 3600,
         operator: A(0), operatorPaused: false, ...(input.choice?.[coin] || {}),
       } as any;
     },
@@ -499,6 +503,24 @@ test("admin-change watch (keeper): launch values hold -> nothing; plugin / fee /
   assert.equal(byPool[POOL2].extra.restore, false);
 });
 
+test("admin-change watch: a pool whose launch values hold has its open alert resolved, so a later change alerts again", async () => {
+  const { keeper } = keys();
+  const coins = [{ coin: COIN1, pool: POOL1, graduated: false }, { coin: COIN2, pool: POOL2, graduated: false }];
+  const resolved: string[] = [];
+  const alerts: any[] = [];
+  const { s } = sender({ keeper });
+  await runBarkAdminWatchPass({
+    cfg: CFG, coins, reader: fakeReader({ settings: { [POOL2]: { plugin: A(0xbad) } } }), sender: s, alert: async (a: any) => alerts.push(a),
+    expected: { communityFee: 30, tickSpacing: 10 }, resolve: async (pool: string) => resolved.push(pool),
+  });
+  assert.deepEqual(resolved, [POOL1], "only the pool whose launch values hold");
+  assert.deepEqual(alerts.map((a) => a.subject), [POOL2]);
+  // production binds resolve to resolveAlerts with the alert's kind and reward type
+  const src = fs.readFileSync(path.join(HERE, "../evm/dogeosBarkKeepers.ts"), "utf8");
+  assert.match(src, /resolveAlerts\(opts\.db as any, BARK_ADMIN_ALERT_KIND, cfg\.chainId, pool, BARK_KEEPER_ALERT_TYPE\)/);
+  assert.match(src, /kind: BARK_ADMIN_ALERT_KIND,/);
+});
+
 test("choice-vault buyback (operator): at a secret moment, within the vault's caps, never below the minimum, buyback coins only", async () => {
   const { keeper, operator } = keys();
   const secret = "test-master-secret";
@@ -520,12 +542,16 @@ test("choice-vault buyback (operator): at a secret moment, within the vault's ca
   const { rec, s } = sender({ keeper, operator });
   const used = new Map<string, Set<string>>();
   const coins = [COIN1, COIN2, A(0x1003), A(0x1004)].map((coin, i) => ({ coin, pool: A(0x2001 + i), graduated: false }));
-  await runBarkBuybackPass({ cfg: CFG, coins, reader, sender: s, choice, now, used });
+  const startedAt = new Date(now.getTime() - 2 * 86_400_000);
+  await runBarkBuybackPass({ cfg: CFG, coins, reader, sender: s, choice, now, used, startedAt });
   assert.deepEqual(rec.sent().map((c) => `${c.who}:${c.contract}.${c.fn}(${c.args.join(",")})`), [`operator:choiceVault.buyback(${COIN1},${20n * 10n ** 18n})`]);
   assert.ok(rec.calls.every((c) => c.who === "operator" && c.signer === operator.address));
+  // the choice is read first: a holders coin costs one read, never the other vault reads
+  assert.ok(reader.reads.includes(`choiceOf:${COIN2}`));
+  assert.ok(!reader.reads.includes(`choice:${COIN2}`));
   // the same moment is never used twice
   const again = sender({ keeper, operator });
-  await runBarkBuybackPass({ cfg: CFG, coins, reader, sender: again.s, choice, now, used });
+  await runBarkBuybackPass({ cfg: CFG, coins, reader, sender: again.s, choice, now, used, startedAt });
   assert.equal(again.rec.sent().length, 0);
 });
 
@@ -544,8 +570,30 @@ test("choice-vault buyback: the week cap left and a vault whose operator is not 
     },
   });
   const { rec, s } = sender({ operator });
-  await runBarkBuybackPass({ cfg: CFG, coins: [{ coin: COIN1, pool: POOL1, graduated: false }, { coin: COIN2, pool: POOL2, graduated: false }], reader, sender: s, choice, now, used: new Map() });
+  await runBarkBuybackPass({ cfg: CFG, coins: [{ coin: COIN1, pool: POOL1, graduated: false }, { coin: COIN2, pool: POOL2, graduated: false }], reader, sender: s, choice, now, used: new Map(), startedAt: new Date(now.getTime() - 2 * 86_400_000) });
   assert.deepEqual(rec.sent().map((c) => `${c.fn}(${c.args.join(",")})`), [`buyback(${COIN1},${5n * 10n ** 18n})`]);
+});
+
+test("choice-vault buyback is restart-safe: a lane started after a moment passed never fires that moment, only later ones", async () => {
+  const { operator } = keys();
+  const secret = "restart-secret";
+  const choice = { ...choiceConfig(DOGE, { EVM_BUYBACK_SEED_SECRET: secret }), perDay: 24 };
+  const now = new Date("2026-10-16T12:00:00Z");
+  const due = dueMomentKey({ masterSecret: secret, chainId: DOGE, campaign: COIN1, now, perDay: 24, used: new Set() });
+  assert.ok(due, "a moment of COIN1 has passed before the restart");
+  const st = { buybackBalance: 50n * 10n ** 18n, maxBuyPerTx: 20n * 10n ** 18n, operator: operator.address };
+  const coins = [{ coin: COIN1, pool: POOL1, graduated: false }];
+  // a fresh lane (empty memory) started now: the moment that passed before the start is missed, not fired
+  const used = new Map<string, Set<string>>();
+  const fresh = sender({ operator });
+  await runBarkBuybackPass({ cfg: CFG, coins, reader: fakeReader({ now: Math.floor(now.getTime() / 1000), choice: { [COIN1]: st } }), sender: fresh.s, choice, now, used, startedAt: now });
+  assert.equal(fresh.rec.calls.length, 0);
+  assert.ok(used.get(COIN1)!.has(due!), "the missed moment is recorded as used");
+  // two days later a new moment has passed: that one fires
+  const later = new Date(now.getTime() + 2 * 86_400_000);
+  const next = sender({ operator });
+  await runBarkBuybackPass({ cfg: CFG, coins, reader: fakeReader({ now: Math.floor(later.getTime() / 1000), choice: { [COIN1]: st } }), sender: next.s, choice, now: later, used, startedAt: now });
+  assert.deepEqual(next.rec.sent().map((c) => `${c.fn}(${c.args.join(",")})`), [`buyback(${COIN1},${20n * 10n ** 18n})`]);
 });
 
 test("route worker lane (operator): scheduled only by its flag, signed only by the operator key, dry run unless DOGEOS_BARK_SEND_6281971", () => {
