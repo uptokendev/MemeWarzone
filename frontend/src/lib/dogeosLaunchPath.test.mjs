@@ -66,6 +66,8 @@ const BASE_ENV = {
   VITE_ROBINHOOD_V3_NATIVE_SWAP_ADAPTER_ADDRESS: RH.ADAPTER,
   VITE_ROBINHOOD_STOCK_ETH_ROUTING: "1",
 };
+// Intentionally dead names: the removed gen-7 / V3 DogeOS path read these. No code reads them any more; they are set
+// only so the refusal tests prove 6281971 gets no V3 route even when a stale env still names them.
 const DOGEOS_ENV = {
   VITE_ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_6281971: BARK.SMART_ROUTER,
   VITE_ROBINHOOD_V3_FACTORY_ADDRESS_6281971: BARK.FACTORY,
@@ -357,6 +359,19 @@ test("6281971 resolves to the gen-8 Barkswap adapter, never to 46630, 56 or 97",
     assert.equal(calls.length, before);
     assert.ok(calls.every((c) => c.body?.chainId === DOGEOS), "every DogeOS preflight names 6281971");
   });
+  // the safety API down or answering garbage: blocked with a reason, never an empty refusal
+  const original = globalThis.fetch;
+  try {
+    for (const fail of [async () => { throw new TypeError("Failed to fetch"); }, async () => new Response("<html>", { status: 502 })]) {
+      globalThis.fetch = fail;
+      const preflight = await bark.launchpadAdapter.getLaunchpadAdapter({ chainId: DOGEOS }).preflightTrade({ side: "buy", walletAddress: USER, campaignAddress: CAMPAIGN, chainId: DOGEOS });
+      assert.equal(preflight.allowed, false);
+      assert.equal(preflight.reasons.length, 1);
+      assert.match(preflight.reasons[0], /safety check did not answer/);
+    }
+  } finally {
+    globalThis.fetch = original;
+  }
 
   // unchanged for the existing chains
   assert.equal(launchpadAdapter.getLaunchpadAdapter({ chainId: 46630 }).chain, "robinhood");

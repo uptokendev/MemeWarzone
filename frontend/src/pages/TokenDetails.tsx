@@ -89,6 +89,7 @@ import {
   gen8PlatformGraduated,
   gen8SpotNative,
   gen8SpotWindowChanges,
+  gen8VenueHolderAddresses,
 } from "@/lib/chart/gen8TokenPage";
 import { evmCurveSpotChanges, fullyDilutedSupplyWhole } from "@/lib/fullyDilutedMarketCap.mjs";
 import { ArenaUpvoteDialog, UpvoteDialog } from "@/components/token/UpvoteDialog";
@@ -1122,6 +1123,8 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
         cfg?.hook,
         cfg?.launcher,
         cfg?.router,
+        // Barkswap (DogeOS): the coin's pool, its plugin and the Bark periphery; nothing on V4.
+        ...gen8VenueHolderAddresses(gen8State),
       ],
     });
   }, [campaign?.campaign, chainIdForStorage, gen8State]);

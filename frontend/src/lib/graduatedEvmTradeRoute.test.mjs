@@ -187,6 +187,16 @@ const MERGE_REAPPLIED = {
  * and must be gone from the file (the gate cannot come back unreviewed). Only these lines leave the "lost" check;
  * the same commits' kept lines (the DOGE buy gas reserve) stay checked.
  */
+/**
+ * The token page lines plan t22 added (DogeOS on Barkswap): the Barkswap venue's holder exclusions (the coin's pool,
+ * plugin and the Bark periphery, chart/gen8TokenPage.ts gen8VenueHolderAddresses, empty on V4). Since t22 the token
+ * page may gain no other line outside the reviewed DogeOS commits: these are the only unreviewed additions allowed.
+ */
+const T22_TOKEN_PAGE_ADDED = [
+  "gen8VenueHolderAddresses,",
+  "// Barkswap (DogeOS): the coin's pool, its plugin and the Bark periphery; nothing on V4.",
+  "...gen8VenueHolderAddresses(gen8State),",
+];
 const B8_REMOVED = {
   "pages/TokenDetails.tsx": [
     "// Graduated-trade surfaces only: DogeOS graduates into MuchFi (V3) and trades through the Robinhood V3 panel,",
@@ -333,8 +343,10 @@ test("bonding and direct-pool code is the starting commit's, untouched", (t) => 
   assert.deepEqual(onlyAdded(baseFile(warRoomPanel, LIVE_BASE), lf(src(warRoomPanel))), []);
   // Added lines stay free there (as before), but a reviewed DogeOS replacement must still be in place (lost).
   for (const [pin, rel] of [[LIVE_BASE, "components/postgrad/RobinhoodWarRoomTradePanel.tsx"], [TOKEN_PAGE_PIN, "pages/TokenDetails.tsx"]]) {
-    const { removed, lost } = unreviewedSince(pin, rel);
+    const { removed, lost, added } = unreviewedSince(pin, rel);
     assert.deepEqual({ removed, lost }, { removed: [], lost: [] }, `${rel}: lost lines outside the reviewed DogeOS hunks`);
+    // t22: the token page's only additions outside the reviewed commits are the Barkswap holder-exclusion hunk.
+    if (rel === "pages/TokenDetails.tsx") assert.deepEqual([...added].sort(), [...T22_TOKEN_PAGE_ADDED].sort(), `${rel}: added lines outside the reviewed DogeOS hunks`);
   }
   // The curve calls with their gas headroom, verbatim.
   const warRoom = src("components/postgrad/WarRoomTradePanel.tsx");

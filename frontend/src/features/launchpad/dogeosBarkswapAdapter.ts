@@ -34,7 +34,8 @@ function refusal(side: TradeSide, reason: string): LaunchpadTradePreflight {
   return { allowed: false, chain: "dogeos", side, reasons: [reason], warnings: [] };
 }
 
-async function postPreflight(side: TradeSide, body: Record<string, unknown>): Promise<any> {
+/** The API's answer, or { error } when it did not answer with a preflight (network down, not JSON, no preflight). */
+async function postPreflight(side: TradeSide, body: Record<string, unknown>): Promise<{ preflight?: any; error?: string }> {
   try {
     const response = await apiFetch(side === "buy" ? "/api/launchpad/preflight-buy" : "/api/launchpad/preflight-sell", {
       method: "POST",
@@ -43,9 +44,11 @@ async function postPreflight(side: TradeSide, body: Record<string, unknown>): Pr
       body: JSON.stringify(body),
     });
     const payload = await response.json().catch(() => null);
-    return payload && typeof payload === "object" ? payload : { preflight: null };
-  } catch {
-    return { preflight: null };
+    const preflight = payload?.preflight && typeof payload.preflight === "object" ? payload.preflight : null;
+    if (!preflight) return { error: `HTTP ${response.status}` };
+    return { preflight };
+  } catch (error) {
+    return { error: String((error as Error)?.message || error || "network error") };
   }
 }
 
@@ -81,8 +84,10 @@ export function createDogeosBarkswapLaunchpadAdapter(): LaunchpadAdapter {
         };
       }
       // Always 6281971: a DogeOS coin is never checked as another chain's.
-      const payload = await postPreflight(side, { walletAddress: wallet, campaignAddress: campaign, chainId: DOGEOS_TESTNET_CHAIN_ID });
-      const preflight = payload?.preflight && typeof payload.preflight === "object" ? payload.preflight : payload;
+      const { preflight, error } = await postPreflight(side, { walletAddress: wallet, campaignAddress: campaign, chainId: DOGEOS_TESTNET_CHAIN_ID });
+      if (!preflight) {
+        return { ...refusal(side, `The safety check did not answer (${error}). Try again.`), lookupErrors: [String(error)] };
+      }
       return {
         allowed: Boolean(preflight?.allowed),
         chain: "dogeos",

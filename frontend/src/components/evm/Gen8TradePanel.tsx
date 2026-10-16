@@ -24,6 +24,7 @@ import {
   isGen8BarkAppConfig,
   quoteGen8Trade,
 } from "@/lib/evmGen8Client.mjs";
+import { barkRecordFromState } from "@/lib/barkswapSwap.mjs";
 import { gen8FormatPriceImpact, gen8UsesSizedSlippage } from "../../../shared/evmGen8Swap.mjs";
 import {
   BSC_PROTECTED_RPC_DEFAULT,
@@ -200,7 +201,8 @@ export function Gen8TradePanel({
     }
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      quoteGen8Trade({ provider: readProvider, cfg, token, side, amountIn: amountRaw, slippageBps: slippageArg, sender: side === "buy" && escrowBuy ? cfg.escrow : null })
+      // Barkswap: the coin's fixed launch record comes from the API state, so a keystroke reads no launcher or plugin.
+      quoteGen8Trade({ provider: readProvider, cfg, token, side, amountIn: amountRaw, slippageBps: slippageArg, sender: side === "buy" && escrowBuy ? cfg.escrow : null, ...(bark ? { record: barkRecordFromState(state) } : {}) })
         .then((q: Quote) => {
           if (!cancelled) setQuote(q);
         })

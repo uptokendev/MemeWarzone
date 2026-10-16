@@ -81,6 +81,11 @@ export const BARK_CHOICE_VAULT_APP_ABI = Object.freeze([
 export const BARK_RESERVE_LOCK_APP_ABI = Object.freeze(["function release(address coin) returns (uint256 amount)"]);
 
 const ROUTER_IFACE = new Interface(BARKSWAP_SWAP_ROUTER_ABI);
+
+/** A sell while the price sits at the launch price: QuoterV2 / the router refuse a limit equal to the price. */
+export const BARK_NOTHING_TO_SELL = "No coins can be sold back at the launch price yet.";
+/** A buy the pool cannot fill in full: never sent, so no DOGE can stay in the router. */
+export const BARK_BUY_NOT_FILLED = "Only part of this buy can fill in the pool now. Buy a smaller amount.";
 const LAUNCHER_IFACE = new Interface(BARK_LAUNCHER_APP_ABI);
 
 // ------------------------------------------------------------------ Barkswap periphery per chain
@@ -246,6 +251,7 @@ export function barkQuoteParams({ side, wNative, coin, launcher, amountIn, limit
  */
 export function buildBarkTradeCall({ cfg, quote, account, deadline }) {
   if (!cfg?.router?.address || !cfg?.wNative || !cfg?.launcher) throw new Error("Trading on Barkswap is not set up on this chain yet.");
+  if (quote.side === "buy" && quote.partial) throw new Error(BARK_BUY_NOT_FILLED);
   const common = { router: cfg.router.address, wNative: cfg.wNative, coin: quote.coin, launcher: cfg.launcher, amountIn: quote.amountIn, minOut: quote.minOut, deadline, limitSqrtPrice: quote.limitSqrtPrice };
   const call = quote.side === "buy" ? buildBarkBuyCall({ ...common, recipient: account }) : buildBarkSellCall({ ...common, seller: account });
   assertBarkTradeShape(decodeBarkRouterCall(call.data), { side: quote.side, wNative: cfg.wNative });
@@ -331,6 +337,30 @@ export async function readBarkPoolRecord({ provider, cfg, token }) {
   };
 }
 
+/**
+ * The coin's pool record from the API's Barkswap state (GET /api/evm/campaign-state: token, openAt, latched,
+ * gen8.pool / tickStart / tickGrad), so a quote per keystroke reads no launcher or plugin. These fields are fixed at
+ * launch (latched only changes once); null for anything that is not a complete Barkswap state.
+ */
+export function barkRecordFromState(state) {
+  const g = state?.gen8;
+  if (g?.venue !== GEN8_VENUE_BARKSWAP || !isAddr(g.pool) || !isAddr(state?.token) || g.tickStart == null || g.tickGrad == null) return null;
+  const openAt = Number(state.openAt ?? state.tradeFee?.openAt ?? 0);
+  return {
+    venue: GEN8_VENUE_BARKSWAP,
+    poolId: null,
+    poolKey: null,
+    pool: getAddress(g.pool),
+    coin: getAddress(state.token),
+    openAt,
+    launchTime: openAt,
+    graduated: Boolean(state.latched),
+    tickStart: Number(g.tickStart),
+    tickGrad: Number(g.tickGrad),
+    fees: { ...GEN8_RATES },
+  };
+}
+
 /** lens.progress(coin) with its fields as BigInt / boolean, or null without a lens or when it does not answer. */
 export async function readBarkProgress({ provider, cfg, coin }) {
   if (!cfg?.lens) return null;
@@ -398,18 +428,27 @@ export async function quoteBarkTrade({ provider, cfg, token, side, amountIn, sli
   const progress = await readBarkProgress({ provider, cfg, coin: pool.coin });
   const postPhase = progress ? progress.postPhase : pool.graduated;
   const limitSqrtPrice = side === "sell" ? barkSellLimitSqrtPrice(pool.tickStart) : 0n;
+  // At the launch price a sell has nothing to fill (and a limit equal to the price reverts in QuoterV2 and the router).
+  if (side === "sell" && progress && !progress.postPhase && (progress.coinsSoldFromA === 0n || progress.sqrtPriceX96 <= limitSqrtPrice)) {
+    throw new Error(BARK_NOTHING_TO_SELL);
+  }
   const quoter = new Contract(cfg.quoter, BARKSWAP_QUOTER_V2_ABI, provider);
   const params = (n) => barkQuoteParams({ side, wNative: cfg.wNative, coin: pool.coin, launcher: cfg.launcher, amountIn: n, limitSqrtPrice });
   const refIn = gen8ReferenceAmount(amount);
   const [feeBps, quotedRaw, refRaw] = await Promise.all([
     readBarkFeeBps({ provider, cfg, coin: pool.coin, sender: swapSender, record: pool, postPhase }),
-    quoter.quoteExactInputSingle.staticCall(params(amount)),
+    quoter.quoteExactInputSingle.staticCall(params(amount)).catch((error) => {
+      // without a lens the launch-price case shows up here, as QuoterV2's revert on the sell's limit
+      if (side === "sell") throw new Error(BARK_NOTHING_TO_SELL);
+      throw error;
+    }),
     refIn == null ? null : quoter.quoteExactInputSingle.staticCall(params(refIn)).catch(() => null),
   ]);
   const quoted = barkQuoteResult(quotedRaw);
   const ref = refRaw ? barkQuoteResult(refRaw) : null;
   const amountInUsed = quoted.amountIn > 0n && quoted.amountIn < amount ? quoted.amountIn : amount;
-  if (side === "sell" && (quoted.amountIn === 0n || quoted.amountOut === 0n)) throw new Error(GEN8_REVERTS["0x2fcb916e"].message);
+  if (side === "buy" && amountInUsed < amount) throw new Error(BARK_BUY_NOT_FILLED);
+  if (side === "sell" && (quoted.amountIn === 0n || quoted.amountOut === 0n)) throw new Error(BARK_NOTHING_TO_SELL);
   const priceImpactBps = gen8PriceImpactBps({ amountIn: amountInUsed, amountOut: quoted.amountOut, refIn: ref ? ref.amountIn : null, refOut: ref ? ref.amountOut : null });
   const slippageAuto = slippageBps === "auto";
   const slippage = slippageAuto ? gen8SizedSlippageBps({ chainId: cfg.chainId, priceImpactBps }) : Number(slippageBps);

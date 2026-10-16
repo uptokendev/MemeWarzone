@@ -75,8 +75,10 @@ import {
 } from "../../shared/evmGen8Swap.mjs";
 import { gasWithHeadroom, legacyGasPriceFor } from "./evmGasHeadroom.mjs";
 import {
+  BARK_BUY_NOT_FILLED,
   BARK_CHOICE_VAULT_APP_ABI,
   BARK_LAUNCHER_APP_ABI,
+  BARK_NOTHING_TO_SELL,
   BARK_RESERVE_LOCK_APP_ABI,
   assertBarkCreateAuthorization,
   barkFirstBuyOnPlan,
@@ -749,18 +751,30 @@ export async function claimGen8HookCreatorFees({ signer, chainId, cfg, poolId, t
   return sendGen8Call({ signer, chainId, contract: hook, method: "claimCreator", args: [poolId, ethers.getAddress(to)] });
 }
 
+/** The Bark creator hand-over runs on the launcher (keep coins) or the Bark choice vault: that contract's ABI, else a refusal. */
+function barkCreatorTargetAbi(cfg, target) {
+  const to = target && ethers.isAddress(target) ? ethers.getAddress(target) : null;
+  if (to && isGen8BarkAppConfig(cfg) && to === cfg.launcher) return BARK_LAUNCHER_APP_ABI;
+  if (to && isGen8BarkAppConfig(cfg) && cfg.choiceVault && to === cfg.choiceVault) return BARK_CHOICE_VAULT_APP_ABI;
+  throw new Error("The creator role of this coin is held by another contract. Reload the page.");
+}
+
 /** Two-step creator transfer: on the hook for keep coins, in the choice vault for holders / split / buyback coins. */
-export async function proposeGen8Creator({ signer, chainId, target, poolId, next }) {
+export async function proposeGen8Creator({ signer, chainId, target, poolId, next, cfg = null }) {
   // Barkswap: the launcher (keep coins) or the Bark choice vault, both keyed by the coin (`poolId`).
   if (gen8VenueFor(chainId) === GEN8_VENUE_BARKSWAP) {
-    return sendBarkCall({ signer, chainId, to: target, abi: BARK_CHOICE_VAULT_APP_ABI, method: "proposeCreator", args: [ethers.getAddress(poolId), next ? ethers.getAddress(next) : ethers.ZeroAddress] });
+    const abi = barkCreatorTargetAbi(cfg || gen8AppConfig(chainId), target);
+    return sendBarkCall({ signer, chainId, to: target, abi, method: "proposeCreator", args: [ethers.getAddress(poolId), next ? ethers.getAddress(next) : ethers.ZeroAddress] });
   }
   const c = new Contract(target, ["function proposeCreator(bytes32 id, address next)"], signer);
   return sendGen8Call({ signer, chainId, contract: c, method: "proposeCreator", args: [poolId, next ? ethers.getAddress(next) : ethers.ZeroAddress] });
 }
 
-export async function acceptGen8Creator({ signer, chainId, target, poolId }) {
-  if (gen8VenueFor(chainId) === GEN8_VENUE_BARKSWAP) return sendBarkCall({ signer, chainId, to: target, abi: BARK_CHOICE_VAULT_APP_ABI, method: "acceptCreator", args: [ethers.getAddress(poolId)] });
+export async function acceptGen8Creator({ signer, chainId, target, poolId, cfg = null }) {
+  if (gen8VenueFor(chainId) === GEN8_VENUE_BARKSWAP) {
+    const abi = barkCreatorTargetAbi(cfg || gen8AppConfig(chainId), target);
+    return sendBarkCall({ signer, chainId, to: target, abi, method: "acceptCreator", args: [ethers.getAddress(poolId)] });
+  }
   const c = new Contract(target, ["function acceptCreator(bytes32 id)"], signer);
   return sendGen8Call({ signer, chainId, contract: c, method: "acceptCreator", args: [poolId] });
 }
@@ -916,5 +930,7 @@ export function gen8ErrorMessage(error) {
   for (const [name, words] of Object.entries(GEN8_ERROR_WORDS)) if (text.includes(name)) return words;
   for (const e of Object.values(GEN8_REVERTS)) if (text.includes(e.name)) return e.message;
   if (/user rejected|denied/i.test(text)) return "You rejected the request in your wallet.";
+  // Barkswap quote refusals (barkswapSwap.mjs) are already in plain words.
+  for (const words of [BARK_NOTHING_TO_SELL, BARK_BUY_NOT_FILLED]) if (text === words) return words;
   return null;
 }

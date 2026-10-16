@@ -381,6 +381,47 @@ test("before openAt no quote is made: the plugin would refuse every trade (Tradi
   await assert.rejects(bark.quoteBarkTrade({ provider: chain.provider, cfg: cfg(), token: COIN, side: "buy", amountIn: WAD }), /not opened yet/);
 });
 
+test("a sell at the launch price (nothing sold from A yet) is refused before QuoterV2, which would revert", async () => {
+  const start = BigInt(LAUNCH.sqrtStart);
+  const chain = fakeChain({
+    progress: [false, false, 0, start, 0n, 850_000_000n * WAD, 0n, 0n],
+    quote: () => assert.fail("no quote at the launch price"),
+  });
+  await assert.rejects(bark.quoteBarkTrade({ provider: chain.provider, cfg: cfg(), token: COIN, side: "sell", amountIn: WAD }), /launch price/);
+  assert.ok(!chain.calls.some((c) => c.fn === "quoteExactInputSingle"));
+  // without a lens the quoter's revert on a sell gets the same words, not "No quote for this amount"
+  const noLens = { ...cfg(), lens: null };
+  const reverting = fakeChain({ quote: () => { throw new Error("invalid limit"); } });
+  await assert.rejects(bark.quoteBarkTrade({ provider: reverting.provider, cfg: noLens, token: COIN, side: "sell", amountIn: WAD }), /launch price/);
+});
+
+test("a buy the pool cannot fill in full is refused: no DOGE may stay in the router", async () => {
+  const chain = fakeChain({ quote: (p) => [10n ** 24n, p.amountIn / 2n, 1n, 0, 1n, 0] });
+  await assert.rejects(bark.quoteBarkTrade({ provider: chain.provider, cfg: cfg(), token: COIN, side: "buy", amountIn: 4n * WAD }), /buy a smaller amount/i);
+  const partialBuy = { side: "buy", coin: COIN, amountIn: 4n * WAD, amountInUsed: 2n * WAD, partial: true, minOut: 1n, limitSqrtPrice: 0n };
+  assert.throws(() => bark.buildBarkTradeCall({ cfg: cfg(), quote: partialBuy, account: TRADER, deadline: 1n }), /buy a smaller amount/i);
+});
+
+test("a quote can reuse the coin's record from the API state: no launcher or plugin read per keystroke", async () => {
+  const state = {
+    token: COIN,
+    openAt: OPEN_AT,
+    latched: false,
+    gen8: { venue: "barkswap", pool: POOL, plugin: PLUGIN, launcher: LAUNCHER, tickStart: LAUNCH.tickStart, tickGrad: LAUNCH.tickGrad },
+  };
+  const record = bark.barkRecordFromState(state);
+  assert.equal(record.coin, COIN);
+  assert.equal(record.pool, POOL);
+  assert.equal(record.tickStart, LAUNCH.tickStart);
+  assert.equal(record.openAt, OPEN_AT);
+  assert.equal(bark.barkRecordFromState({ ...state, gen8: { ...state.gen8, venue: "v4" } }), null);
+  assert.equal(bark.barkRecordFromState({ ...state, gen8: { ...state.gen8, pool: null } }), null);
+  const chain = fakeChain({ quote: (p) => [p.amountIn * 19n, p.amountIn, 1n, 0, 1n, 0] });
+  const q = await bark.quoteBarkTrade({ provider: chain.provider, cfg: cfg(), token: COIN, side: "buy", amountIn: WAD, record });
+  assert.equal(q.amountOut, 19n * WAD);
+  assert.ok(!chain.calls.some((c) => c.fn === "launches" || c.fn === "pools"), chain.calls.map((c) => c.fn).join(","));
+});
+
 // ------------------------------------------------------------------ the gen-8 client's Barkswap branch
 
 test("gen8AppConfig(6281971) is the Barkswap venue: launcher + plugin, Barkswap's router / quoter / WDOGE, nothing of BNB or Robinhood", () => {
@@ -572,6 +613,25 @@ test("trades through the gen-8 client on 6281971 go to Barkswap's router; a sell
   assertOnlyDogeos(esc.calls, esc.sent);
 });
 
+test("creator hand-over encodes with the ABI of the contract it is sent to (launcher or choice vault)", async () => {
+  const c = cfg();
+  for (const [target, iface] of [[LAUNCHER, REAL.launcher], [VAULT, REAL.choiceVault]]) {
+    const chain = fakeChain();
+    await client.proposeGen8Creator({ signer: chain.signer, chainId: DOGE, target, poolId: COIN, next: TRADER, cfg: c });
+    await client.acceptGen8Creator({ signer: chain.signer, chainId: DOGE, target, poolId: COIN, cfg: c });
+    assert.deepEqual(chain.sent.map((t) => ethers.getAddress(t.to)), [target, target]);
+    const p = iface.parseTransaction({ data: chain.sent[0].data });
+    assert.equal(p.name, "proposeCreator");
+    assert.deepEqual([p.args[0], p.args[1]], [COIN, TRADER]);
+    assert.equal(iface.parseTransaction({ data: chain.sent[1].data }).name, "acceptCreator");
+  }
+  // any other target is refused before the wallet opens
+  const chain = fakeChain();
+  await assert.rejects(client.proposeGen8Creator({ signer: chain.signer, chainId: DOGE, target: ESCROW, poolId: COIN, next: TRADER, cfg: c }), /creator/);
+  await assert.rejects(client.acceptGen8Creator({ signer: chain.signer, chainId: DOGE, target: ESCROW, poolId: COIN, cfg: c }), /creator/);
+  assert.equal(chain.sent.length, 0);
+});
+
 test("the pool record, fee and sell cap of a 6281971 coin come from the Bark launcher, plugin and lens", async () => {
   const chain = fakeChain();
   const c = cfg();
@@ -585,4 +645,11 @@ test("the pool record, fee and sell cap of a 6281971 coin come from the Bark lau
   assert.equal(cap, (98n * 1_000_000n * WAD * 1_000_000n) / 980_000n);
   assert.equal(sqrtAtTick(LAUNCH.tickStart), BigInt(LAUNCH.sqrtStart));
   assertOnlyDogeos(chain.calls);
+});
+
+test("the panel shows the Barkswap refusals in their own words (gen8ErrorMessage), not 'No quote for this amount'", () => {
+  for (const words of [bark.BARK_NOTHING_TO_SELL, bark.BARK_BUY_NOT_FILLED]) {
+    assert.equal(client.gen8ErrorMessage(new Error(words)), words);
+  }
+  assert.equal(client.gen8ErrorMessage(new Error("something else entirely")), null);
 });
