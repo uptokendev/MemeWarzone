@@ -58,7 +58,8 @@ must pass after every merge.
   `venue 'gen8'` / `execution_source 'gen8_v4'`. Conversion swaps write no trade/accrual row; sell accruals are t19's.
 - Ingestion depth: DogeOS money rows (accruals, reward events, route runs, holder census) read to **20 blocks below
   `latest`** (founder 2026-10-15; `EVM_GEN8_MONEY_DEPTH_6281971` floor 17 = Chikyū's max reorg); display rows follow
-  `latest` (`realtime-indexer/src/evm/evmGen8Config.ts` `GEN8_MONEY_DEPTH`).
+  `latest` (`realtime-indexer/src/evm/evmGen8Config.ts` `GEN8_MONEY_DEPTH`). Cadence (since the release/evm-gen8 merge
+  `ed508ed3a`): display every 4 s fast / 15 s idle, money lane once a minute, so accrual rows can lag ~60 s.
 - Bark attribution (t19, `evmGen8BarkAttribution.ts`): `evm_gen8_bark_sell_fees` = one row per sell's coin fee,
   `evm_gen8_bark_credits` = one row per DOGE amount a launcher log credited to the router bucket; route runs read the credits.
 - Migration `db/migrations/20261015_000010_dogeos_barkswap.sql` (the two tables, an accrual index, side-pool venue
