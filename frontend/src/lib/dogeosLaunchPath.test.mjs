@@ -700,3 +700,41 @@ test("Create's direct-deploy gate follows the bnbContracts readiness of the conf
   const client = read("lib/launchpadClient.ts");
   assert.match(client, /const factoryAddress = isDogeosChainId\(evmReadChainId\) \? "" : bnbAddresses\.launchFactory;/);
 });
+
+// Gate 2 I2: the create page's creator-eligibility read and PushDraftLive ask getScheduledFactoryAddress for the
+// chain's scheduled (gen-7) factory. DogeOS has none (launchpad.factoryAddress is ""), so the unsuffixed BNB-era names
+// must never answer for 6281971. 56/97 keep the unsuffixed fallback; Robinhood keeps exactly what it reads today.
+const BNB_SCHEDULED = addr(0x5601);
+const BNB_SCHEDULED_LAUNCH = addr(0x5602);
+const SCHEDULED_97 = addr(0x9701);
+const scheduledHarness = (name, extra) =>
+  loadHarness(name, { ...BASE_ENV, ...BARK_APP_ENV, ...extra }, `export * from "./scheduledFactoryConfig.ts";`);
+
+test("6281971 never resolves to the unsuffixed BNB scheduled factory; 56/97 and Robinhood keep their reads", async () => {
+  const both = await scheduledHarness("dogeos-scheduled-both", {
+    VITE_SCHEDULED_FACTORY_ADDRESS: BNB_SCHEDULED,
+    VITE_SCHEDULED_LAUNCH_FACTORY_ADDRESS: BNB_SCHEDULED_LAUNCH,
+    VITE_SCHEDULED_FACTORY_ADDRESS_97: SCHEDULED_97,
+  });
+  const launchOnly = await scheduledHarness("dogeos-scheduled-launch-only", { VITE_SCHEDULED_LAUNCH_FACTORY_ADDRESS: BNB_SCHEDULED_LAUNCH });
+  for (const m of [both, launchOnly]) {
+    // what the create page and PushDraftLive pass on DogeOS: launchpad.factoryAddress = ""
+    assert.equal(m.getScheduledFactoryAddress(DOGEOS, ""), "");
+    assert.equal(m.getScheduledFactoryAddress(DOGEOS, null), "");
+    assert.equal(m.getScheduledFactoryAddress(DOGEOS), "");
+  }
+  // BNB: the per-chain name first, then the unsuffixed ones (unchanged)
+  assert.equal(both.getScheduledFactoryAddress(97, ""), SCHEDULED_97);
+  assert.equal(both.getScheduledFactoryAddress(56, ""), BNB_SCHEDULED);
+  assert.equal(launchOnly.getScheduledFactoryAddress(56, ""), BNB_SCHEDULED_LAUNCH);
+  assert.equal(launchOnly.getScheduledFactoryAddress(97, ""), BNB_SCHEDULED_LAUNCH);
+  // Robinhood reads what it read before this fix (the unsuffixed names apply to it today)
+  for (const rh of [4663, RH_TESTNET]) {
+    assert.equal(both.getScheduledFactoryAddress(rh, ""), BNB_SCHEDULED, String(rh));
+    assert.equal(launchOnly.getScheduledFactoryAddress(rh, RH.FACTORY), BNB_SCHEDULED_LAUNCH, String(rh));
+  }
+  // the obsolete BSC testnet factory stays refused on 97
+  const obsolete = await scheduledHarness("dogeos-scheduled-obsolete", { VITE_SCHEDULED_FACTORY_ADDRESS: both.OBSOLETE_BSC_TESTNET_SCHEDULED_FACTORY });
+  assert.equal(obsolete.getScheduledFactoryAddress(97, ""), "");
+  assert.equal(obsolete.getScheduledFactoryAddress(56, ""), both.OBSOLETE_BSC_TESTNET_SCHEDULED_FACTORY);
+});
