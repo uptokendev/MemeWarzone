@@ -352,7 +352,8 @@ export function choiceVaultCapsInDoge(ethCaps, { ethUsd8, dogeUsd8 }) {
 
 /**
  * Chikyū writes the repo manifest and verification JSON. A fork run never writes into the repo: it writes to
- * forkDir (a temp directory), or to the DOGEOS_TESTNET_MANIFEST override, which only a fork may use.
+ * forkDir (a temp directory), or to the DOGEOS_TESTNET_MANIFEST override, which only a fork may use and which must
+ * also lie outside the repo.
  */
 export function dogeosPartialPath(manifest) {
   return `${String(manifest).replace(/\.json$/i, "")}${DOGEOS_PARTIAL_SUFFIX}`;
@@ -364,6 +365,12 @@ export function dogeosManifestOfPartial(partial) {
   return `${String(partial).slice(0, -DOGEOS_PARTIAL_SUFFIX.length)}.json`;
 }
 
+/** True when `dir` is the repo root or anything under it. */
+function insideRepo(root, dir) {
+  const rel = path.relative(path.resolve(root), path.resolve(dir));
+  return !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
 export function dogeosOutputPaths({ mode, root, forkDir, manifestOverride }) {
   const override = String(manifestOverride || "").trim();
   if (mode === "chikyu") {
@@ -373,8 +380,11 @@ export function dogeosOutputPaths({ mode, root, forkDir, manifestOverride }) {
   }
   if (mode === "chikyu-fork") {
     if (!forkDir) throw new Error("a fork run needs a forkDir (temp directory) for its outputs");
-    const rel = path.relative(path.resolve(root), path.resolve(forkDir));
-    if (!rel.startsWith("..") && !path.isAbsolute(rel)) throw new Error(`refusing: fork output dir ${forkDir} is inside the repo`);
+    if (insideRepo(root, forkDir)) throw new Error(`refusing: fork output dir ${forkDir} is inside the repo`);
+    // The override's directory gets the same refusal: a fork must never write the real manifest or anything in the repo.
+    if (override && insideRepo(root, path.dirname(path.resolve(override)))) {
+      throw new Error(`refusing: the ${DOGEOS_MANIFEST_OVERRIDE_ENV} fork manifest ${override} is inside the repo`);
+    }
     const manifest = override ? path.resolve(override) : path.join(forkDir, path.basename(DOGEOS_MANIFEST_PATH));
     return { manifest, verification: path.join(path.dirname(manifest), path.basename(DOGEOS_VERIFICATION_PATH)), partial: dogeosPartialPath(manifest) };
   }

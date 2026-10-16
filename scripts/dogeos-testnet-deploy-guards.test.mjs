@@ -496,6 +496,14 @@ test("output paths: a fork run never writes into the repo", () => {
   });
   assert.throws(() => dogeosOutputPaths({ mode: "chikyu-fork", root: ROOT }), /forkDir/);
   assert.throws(() => dogeosOutputPaths({ mode: "chikyu-fork", root: ROOT, forkDir: path.join(ROOT, "deployments") }), /inside the repo/);
+  // Gate 2 I3: the override gets the same refusal, so a fork can never write the real manifest (or anything in the repo)
+  for (const inside of [
+    path.join(ROOT, "deployments", "dogeos", "testnet.bark.json"),
+    path.join(ROOT, "x.json"),
+    path.join(ROOT, "deployments", "dogeos", "sub", "..", "fork.json"),
+  ]) {
+    assert.throws(() => dogeosOutputPaths({ mode: "chikyu-fork", root: ROOT, forkDir: dir, manifestOverride: inside }), /inside the repo/, inside);
+  }
   assert.throws(() => dogeosOutputPaths({ mode: "hardhat", root: ROOT }), /mode/);
 });
 
