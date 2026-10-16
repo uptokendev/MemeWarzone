@@ -17,6 +17,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { ethers } from "ethers";
 import {
+  applyBarkAttributionAt,
   barkAttribute,
   barkCreditSlices,
   barkMoneyLogFromEvent,
@@ -28,7 +29,7 @@ import {
 } from "../evm/evmGen8BarkAttribution.js";
 import { barkBuyAccrual, barkPoolId, decodeBarkLog, ingestGen8BarkRange, type BarkSwapEvent } from "../evm/evmGen8Bark.js";
 import { evmGen8BarkConfig, type Gen8BarkChainConfig } from "../evm/evmGen8Config.js";
-import { BARK_LAUNCHER_ROUTER_FRAGMENTS, ethersRouteChain, runGen8RoutePass, type Gen8RouteChain } from "../evm/evmGen8FeeRouting.js";
+import { BARK_LAUNCHER_ROUTER_FRAGMENTS, ethersRouteChain, recordRoutedRun, runGen8RoutePass, type Gen8RouteChain } from "../evm/evmGen8FeeRouting.js";
 import { gen8TradeSlices, splitterBands, LEAGUE_BPS, BPS } from "../evm/evmGen8Fees.js";
 import { upsertGen8Pool } from "../evm/evmGen8Store.js";
 import { FakeGen8Db, FakeGen8Provider, fakeGen8Sinks, type RecordedLog, type SinkCall } from "./gen8/gen8FakeChain.js";
@@ -199,6 +200,9 @@ test("credit slices: bonding credits take gen-8's percentages of the credited DO
   assert.equal(b.leagueWeekly + b.leagueMonthly + b.recruiter + b.squad + b.airdrop + b.protocol, 1_000_000n);
   const p = barkCreditSlices({ kind: "trade", phase: "post", profile: null, fee: 777n });
   assert.deepEqual([p.leagueWeekly, p.leagueMonthly, p.recruiter, p.squad, p.airdrop, p.protocol], [0n, 0n, 0n, 0n, 0n, 777n]);
+  // a profile-less bonding credit (a surplus; alerts, should never happen) is protocol only, as the aggregate rule sums it
+  const s = barkCreditSlices({ kind: "trade", phase: "bonding", profile: null, fee: 555n });
+  assert.deepEqual([s.leagueWeekly, s.leagueMonthly, s.recruiter, s.squad, s.airdrop, s.protocol], [0n, 0n, 0n, 0n, 0n, 555n]);
 });
 
 // ------------------------------------------------------------------ the real ingest + route pass on an in-memory DB
@@ -257,6 +261,9 @@ class MoneyDb extends FakeGen8Db {
       return done(this.credits.filter((r) => r.chain_id === p[0] && r.hook_address === p[1] && r.run_id === null && before(r, p[2], p[3]))
         .sort((a, b) => byPos(a, b) || a.id - b.id)
         .map((r) => ({ ...r, tx_hash: r.source_tx_hash, log_index: r.source_log_index })));
+    }
+    if (sql.startsWith("select 1 from public.evm_gen8_bark_credits where")) {
+      return done(this.credits.filter((r) => r.chain_id === p[0] && r.hook_address === p[1] && r.run_id === p[2]).slice(0, 1).map(() => ({ "?column?": 1 })));
     }
     if (sql.startsWith("update public.evm_gen8_bark_credits set run_id")) {
       const r = this.credits.find((x) => x.id === p[0] && x.run_id === null);
@@ -328,12 +335,29 @@ function fakeRouteChain(readBack: any, head: number): Gen8RouteChain & { claims:
   return chain;
 }
 
+const CLAIM_BLOCK = Number(claimStep.blockNumber);
+const LAST_BLOCK = Math.max(...recordedLogs().map((l) => l.blockNumber));
+const activityMarks = (calls: SinkCall[]) => calls.filter((c) => c.name === "recordTradeActivity").length;
+const alertKinds = (calls: SinkCall[]) => calls.filter((c) => c.name === "raiseAlert").map((c) => (c.args[0] as any).kind as string);
+
+/** Money ingest up to the claim, then the route pass's dry-run plan of run 1. */
+async function ingestAndPlan() {
+  const db = new MoneyDb();
+  const calls: SinkCall[] = [];
+  await seedPools(db);
+  const ctx = moneyCtx(db, calls);
+  await ingestGen8BarkRange(ctx, 8578740, CLAIM_BLOCK, "money");
+  db.cursors.set(`${DOGE}:gen8-money:${C.MwzBarkPlugin}`, CLAIM_BLOCK + 1);
+  const pass = await runGen8RoutePass({ db, cfg, chain: fakeRouteChain(claimStep.readBack, CLAIM_BLOCK + 30), send: false, alert: async (a) => void calls.push({ name: "alert", args: [a] }) });
+  return { db, calls, ctx, pass, plan: db.runs.find((r) => r.run_id === 1)! };
+}
+
 test("ingest + route pass: the operator's plan from the credits matches routerPaid and pending() to the wei; Routed assigns every credit", async () => {
   const db = new MoneyDb();
   const calls: SinkCall[] = [];
   await seedPools(db);
   const ctx = moneyCtx(db, calls);
-  const claimBlock = Number(claimStep.blockNumber);
+  const claimBlock = CLAIM_BLOCK;
   await ingestGen8BarkRange(ctx, 8578740, claimBlock, "money");
 
   // sell rows at the swap with their coin fee and an expected value; no accrual row for a sell
@@ -352,10 +376,17 @@ test("ingest + route pass: the operator's plan from the credits matches routerPa
   assert.equal(sum(db.credits.filter((c) => c.kind === "trade" && c.phase === "bonding").map((c) => big(c.fee))), big(paid.bondingFees));
   assert.equal(sum(db.credits.filter((c) => c.kind === "graduation").map((c) => big(c.fee))), big(paid.gradFees));
   assert.ok(!calls.some((c) => c.name === "raiseAlert"), JSON.stringify(calls.filter((c) => c.name === "raiseAlert")));
-  // re-running the range writes nothing new (idempotent)
-  const n = db.credits.length;
+  // every non-buyback trade marked once (buys and sells; the conversions are not trades)
+  const marks = activityMarks(calls);
+  assert.equal(marks, logArgs("BarkSwap").filter((l: any) => l.args.kind === "0").length);
+  // re-running the range writes nothing new (idempotent): same credits, same sell states, no second activity mark
+  const credits = JSON.stringify(db.credits);
+  const sellStates = JSON.stringify(db.sellFees);
+  assert.ok(db.sellFees.every((r) => r.booked_coins !== null && big(r.converted_coins) > 0n && big(r.converted_native) > 0n), "every sell booked and (partly) converted");
   await ingestGen8BarkRange(ctx, 8578740, claimBlock, "money");
-  assert.equal(db.credits.length, n);
+  assert.equal(JSON.stringify(db.credits), credits);
+  assert.equal(JSON.stringify(db.sellFees), sellStates, "sell states restated to the same absolute values");
+  assert.equal(activityMarks(calls), marks, "a second money pass over the same range does not count a trade again");
 
   // the route pass plans run 1 against expectedPaid = routerPaid(splitter).amount
   db.cursors.set(`${DOGE}:gen8-money:${C.MwzBarkPlugin}`, claimBlock + 1);
@@ -386,21 +417,83 @@ test("ingest + route pass: the operator's plan from the credits matches routerPa
   assert.equal(confirmed.status, "confirmed");
   assert.deepEqual([confirmed.total, confirmed.bonding_fees, confirmed.grad_fees], [plan.total, plan.bonding_fees, plan.grad_fees]);
   assert.deepEqual([confirmed.weekly_league, confirmed.monthly_league], [plan.weekly_league, plan.monthly_league]);
+
+  // a re-scan of the confirmed Routed (crash mid-range, backfill rewind) is skipped: no false mismatch, nothing moves
+  const before = alertKinds(calls).length;
+  await ingestGen8BarkRange(ctx, claimBlock + 1, LAST_BLOCK, "money");
+  assert.deepEqual(alertKinds(calls).slice(before).filter((k) => k.startsWith("gen8_run")), []);
+  assert.ok(db.credits.every((c) => c.run_id === 1));
 });
 
-test("sell backfill: the money cursor goes back to the start block once, so sells it already passed get their rows", async () => {
+test("Routed equal to our plan: the covered rows match the planned leaves as (key, fee) multisets; one moved wei is caught", async () => {
+  for (const tamper of [false, true]) {
+    const { db, calls, plan } = await ingestAndPlan();
+    if (tamper) {
+      // same keys, same sums (B, G, T unchanged), but 1 wei moved between two bonding credits: only a multiset of
+      // (key, fee) sees it (a deduplicated key set would not)
+      const [a, b] = db.credits.filter((c) => c.kind === "trade" && c.phase === "bonding" && big(c.fee) > 0n);
+      a!.fee = String(big(a!.fee) - 1n);
+      b!.fee = String(big(b!.fee) + 1n);
+    }
+    const claim = logArgs("RouterClaimed")[0];
+    const caller = lc(fx.steps.at(-1).from);
+    await recordRoutedRun(db, cfg, {
+      kind: "Routed", address: C.MwzBarkFeeSplitter, blockNumber: LAST_BLOCK, txHash: `0x${"9a".repeat(32)}`, logIndex: 2, runId: 1n, accrualRoot: plan.accrual_root, caller,
+      run: { total: big(plan.total), bondingFees: big(plan.bonding_fees), gradFees: big(plan.grad_fees), weeklyLeague: big(plan.weekly_league), monthlyLeague: big(plan.monthly_league), recruiter: big(plan.recruiter), squad: big(plan.squad), airdrop: big(plan.airdrop), protocol: big(plan.protocol) },
+    }, new Date(), async (x) => void calls.push({ name: "raiseAlert", args: [x] }), { [`EVM_GEN8_ROUTER_CLAIMERS_${DOGE}`]: caller });
+    assert.equal(big(claim.args.amount), big(plan.total));
+    const kinds = alertKinds(calls);
+    if (tamper) assert.deepEqual(kinds, ["gen8_run_rows_mismatch"]);
+    else assert.deepEqual(kinds, [], "a Routed that is exactly our plan raises nothing");
+    assert.ok(db.credits.every((c) => c.run_id === 1));
+  }
+});
+
+test("a FeesCollected that the indexed rows cannot explain raises a critical attribution alert", async () => {
+  const db = new MoneyDb();
+  const calls: SinkCall[] = [];
+  await seedPools(db);
+  const ctx = moneyCtx(db, calls);
+  const collect = logArgs("FeesCollected", X)[0];
+  await ingestGen8BarkRange(ctx, 8578740, collect.blockNumber - 1, "money");
+  // the recorded collect, with 5 wei more booked to router bonding than the buys before it add up to
+  const native = big(collect.args.native) + 5n;
+  const nativeBooks = collect.args.nativeBooks.map(big);
+  nativeBooks[1] += 5n;
+  const pool = { poolId: barkPoolId(fx.coins[0].pool), token: X };
+  await applyBarkAttributionAt(db, cfg, pool, { kind: "collect", coin: X, txHash: lc(collect.transactionHash), logIndex: collect.logIndex, blockNumber: collect.blockNumber, blockTime: new Date(), native, coins: big(collect.args.coins), nativeBooks, coinBooks: collect.args.coinBooks.map(big) }, async (a) => void calls.push({ name: "raiseAlert", args: [a] }));
+  const alerts = calls.filter((c) => c.name === "raiseAlert").map((c) => c.args[0] as any);
+  assert.equal(alerts.length, 2, "apportion differs, and router bonding WDOGE above the indexed buys");
+  assert.ok(alerts.every((a) => a.kind === "gen8_bark_attribution_mismatch" && a.severity === "critical"));
+  // the credits still add up to the book (the surplus is a credit of its own), so a run stays exact
+  const atLog = db.credits.filter((c) => c.tx_hash === lc(collect.transactionHash) && c.book === "router_bonding");
+  assert.equal(sum(atLog.map((c) => big(c.fee))), nativeBooks[1]);
+});
+
+test("sell backfill: the money cursor goes back to the start block once; trades the old pass marked are not marked again", async () => {
   const db = new FakeGen8Db();
   const money = `${DOGE}:gen8-money:${C.MwzBarkPlugin}`;
+  const marker = `${DOGE}:${GEN8_BARK_ATTRIBUTION_MARKER}:${C.MwzBarkPlugin}`;
   db.cursors.set(money, 8_600_000);
-  await ensureBarkAttributionBackfill(db, cfg);
+  assert.equal(await ensureBarkAttributionBackfill(db, cfg), 8_600_000, "activity is marked again only from where the old pass stopped");
   assert.equal(db.cursors.get(money), cfg.startBlock);
-  assert.equal(db.cursors.get(`${DOGE}:${GEN8_BARK_ATTRIBUTION_MARKER}:${C.MwzBarkPlugin}`), 1);
+  assert.equal(db.cursors.get(marker), 8_600_000);
   db.cursors.set(money, 8_700_000);
-  await ensureBarkAttributionBackfill(db, cfg);
+  assert.equal(await ensureBarkAttributionBackfill(db, cfg), 8_600_000);
   assert.equal(db.cursors.get(money), 8_700_000, "only once");
   const fresh = new FakeGen8Db();
-  await ensureBarkAttributionBackfill(fresh, cfg);
+  assert.equal(await ensureBarkAttributionBackfill(fresh, cfg), cfg.startBlock);
   assert.equal(fresh.cursors.get(money), undefined, "a chain never indexed starts at its start block anyway");
+
+  // the rewound pass: swaps below the boundary (already counted by the old pass) are not counted again, sells get rows
+  const mdb = new MoneyDb();
+  const calls: SinkCall[] = [];
+  await seedPools(mdb);
+  const boundary = Number(logArgs("BarkSwap", Y)[0].blockNumber);
+  await ingestGen8BarkRange({ ...moneyCtx(mdb, calls), activityFromBlock: boundary } as any, 8578740, LAST_BLOCK, "money");
+  const trades = logArgs("BarkSwap").filter((l: any) => l.args.kind === "0");
+  assert.equal(activityMarks(calls), trades.filter((l: any) => l.blockNumber >= boundary).length);
+  assert.equal(mdb.sellFees.length, trades.filter((l: any) => l.args.buy === false).length, "every sell has its row, below the boundary too");
 });
 
 test("route chain on Barkswap: reads routerPaid / routerOwed / parked from the launcher and sends claimRouter there with the operator key", async () => {

@@ -432,7 +432,11 @@ export function barkJoinedSwap(e: BarkSwapEvent, pool: Pick<Gen8PoolRow, "poolId
 
 /** DOGE/USD for the market_stats USD columns; null = none (the columns stay as they are). */
 export type BarkUsdReference = { priceUsd: number; healthy: boolean; updatedAt: Date | null; error: string | null };
-export type Gen8BarkCtx = Gen8Ctx & { usdReference?: () => Promise<BarkUsdReference | null> };
+export type Gen8BarkCtx = Gen8Ctx & {
+  usdReference?: () => Promise<BarkUsdReference | null>;
+  /** The trade-activity counter is marked only for swaps at or above this block (ensureBarkAttributionBackfill). */
+  activityFromBlock?: number;
+};
 
 function barkConfig(ctx: Gen8Ctx): Gen8BarkChainConfig {
   if (ctx.cfg.venue !== "barkswap") throw new Error(`gen8: chain ${ctx.cfg.chainId} is not on the barkswap venue`);
@@ -637,19 +641,24 @@ async function applyBarkSwap(ctx: Gen8BarkCtx, pool: Gen8PoolRow, e: BarkSwapEve
     // expected value; it becomes DOGE per conversion (spec section 3 "Attribution for D1", evmGen8BarkAttribution.ts).
     const phase = e.phase === BARK_PHASE_POST ? "post" : "bonding";
     const profile = phase === "bonding" ? (isBuyback ? "standard_unlinked" : await gen8LinkedProfile(db, cfg, policy, tx, e.sender, blockTime)) : null;
+    let fresh: boolean;
     if (e.buy) {
       const accrual = barkBuyAccrual(cfg, pool, e, tx.from, blockTime, profile);
-      await insertGen8Accrual(db, accrual);
+      fresh = await insertGen8Accrual(db, accrual);
       if (phase === "bonding" && accrual.slices.fee > 0n) await upsertGen8RewardEvent(db, accrual);
     } else {
+      // the plugin already caps creatorAmount at netFee (MwzBarkPlugin._book); the caps here are defensive only
       const routerCoins = e.netFee > e.creatorAmount ? e.netFee - e.creatorAmount : 0n;
-      await insertBarkSellFee(db, {
+      fresh = await insertBarkSellFee(db, {
         chainId: cfg.chainId, hook: cfg.plugin.address, txHash: e.txHash, logIndex: e.logIndex, poolId: pool.poolId, token: pool.token, blockNumber: e.blockNumber, blockTime,
         phase, trader: tx.from, swapSender: e.sender, profile, grossFeeCoins: e.grossFee, netFeeCoins: e.netFee, creatorCoins: e.creatorAmount < e.netFee ? e.creatorAmount : e.netFee,
         routerCoins, expectedNative: barkCoinsAtFill(routerCoins, e),
       });
     }
-    if (!isBuyback) {
+    // The activity mark adds to a counter (markWalletActivityDb tradeDelta 1): only for a swap whose money row is new,
+    // so a re-scanned range (a crash mid-range) never counts a trade twice, and not below activityFromBlock (the t19
+    // backfill rewind: t18 marked those swaps already, sells included, whose sell rows are new now).
+    if (!isBuyback && fresh && e.blockNumber >= (ctx.activityFromBlock ?? 0)) {
       try {
         await sinks.recordTradeActivity(tx.from, blockTime);
       } catch (error) {
@@ -678,7 +687,8 @@ async function applyBarkSwap(ctx: Gen8BarkCtx, pool: Gen8PoolRow, e: BarkSwapEve
 export function barkBuyAccrual(cfg: Gen8BarkChainConfig, pool: Pick<Gen8PoolRow, "poolId" | "token">, e: BarkSwapEvent, trader: string, blockTime: Date, profile: Gen8AccrualRow["profile"]): Gen8AccrualRow {
   const graduated = e.phase === BARK_PHASE_POST;
   // B10: if an admin raised the cut so far that the net fee is below the creator amount, the creator is paid first
-  // and the router part is what remains (never negative).
+  // and the router part is what remains (never negative). The plugin already caps BarkSwap.creatorAmount at netFee
+  // (MwzBarkPlugin._book); this cap is defensive only.
   const creatorShare = e.creatorAmount < e.netFee ? e.creatorAmount : e.netFee;
   return {
     chainId: cfg.chainId, hook: cfg.plugin.address, poolId: pool.poolId, token: pool.token, txHash: e.txHash, logIndex: e.logIndex, swapLogIndex: e.logIndex,
@@ -802,9 +812,9 @@ export function gen8BarkLogSpan(env: NodeJS.ProcessEnv = process.env): number {
 /** One display + money pass (evmGen8Pool.ts runGen8ChainOnce) with the Barkswap ingest and maths. */
 export async function runGen8BarkChainOnce(ctx: Gen8BarkCtx, opts: { maxBlocks?: number } = {}) {
   // t19: once, the money cursor goes back to the start block so sells t18's money pass passed get their rows
-  await ensureBarkAttributionBackfill(ctx.db, barkConfig(ctx));
+  const activityFromBlock = await ensureBarkAttributionBackfill(ctx.db, barkConfig(ctx));
   const span = Math.min(GEN8_BARK_MAX_LOG_SPAN, opts.maxBlocks ?? gen8BarkLogSpan(ctx.env));
-  return runGen8ChainOnce({ ...ctx, ops: GEN8_BARK_OPS }, { maxBlocks: span, ingest: ingestGen8BarkRange });
+  return runGen8ChainOnce({ ...ctx, ops: GEN8_BARK_OPS, activityFromBlock } as Gen8BarkCtx, { maxBlocks: span, ingest: ingestGen8BarkRange });
 }
 
 let started = false;

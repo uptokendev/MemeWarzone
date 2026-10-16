@@ -199,6 +199,14 @@ export async function recordRoutedRun(db: Queryable, cfg: Gen8AnyChainConfig, e:
     [cfg.chainId, splitter, runId],
   );
   const planned = prior.rows[0];
+  if (cfg.venue === "barkswap" && planned?.status === "confirmed") {
+    // A re-scan of a confirmed run (a crash mid-range, or the t19 backfill rewind): its credits are assigned already,
+    // so the unrouted rows before its claim are gone and a recount would report a false mismatch. Only when no credit
+    // carries the run (a crash between the upsert and the assignment) does it go on and assign them. V4 keeps its
+    // behaviour (its money cursor is never rewound; only a crash mid-range re-scans a confirmed run there).
+    const assigned = await db.query(`select 1 from public.evm_gen8_bark_credits where chain_id = $1 and hook_address = $2 and run_id = $3 limit 1`, [cfg.chainId, gen8CoreAddress(cfg), runId]);
+    if (assigned.rows.length) return;
+  }
   // F11: every Routed is compared with our plan; a run nobody planned, or one that differs, is a critical alert (a
   // stolen operator key or the Safe routing by hand). A re-scan of an already confirmed run compares nothing.
   if (!planned || planned.status !== "confirmed") {
@@ -243,10 +251,11 @@ export async function recordRoutedRun(db: Queryable, cfg: Gen8AnyChainConfig, e:
     await alert?.({ severity: "critical", kind: "gen8_run_rows_mismatch", chainId: cfg.chainId, subject: String(runId), title: `Gen-8 run ${runId}: indexed rows differ from the run on chain ${cfg.chainId}`, message: `rows B ${sums.B} G ${sums.G} T ${sums.T}; Routed B ${r.bondingFees} G ${r.gradFees} T ${r.total}. Should never happen.` });
   }
   if (planned && Array.isArray(planned.leaves) && String(planned.accrual_root || "").toLowerCase() === e.accrualRoot.toLowerCase()) {
-    const plannedKeys = new Set(planned.leaves.filter((l: any) => l.kind !== 3).map((l: any) => `${String(l.txHash).toLowerCase()}:${Number(l.logIndex)}`));
-    const actualKeys = new Set(rows.map((x) => `${String(x.tx_hash).toLowerCase()}:${Number(x.log_index)}`));
-    if (plannedKeys.size !== actualKeys.size || [...actualKeys].some((k) => !plannedKeys.has(k))) {
-      await alert?.({ severity: "critical", kind: "gen8_run_rows_mismatch", chainId: cfg.chainId, subject: `${runId}:root`, title: `Gen-8 run ${runId}: covered rows differ from its accrualRoot`, message: `planned ${plannedKeys.size} rows, covered ${actualKeys.size}. Should never happen.` });
+    // (key, fee) multisets, not key sets: on Barkswap one sell converted twice before a claim is two rows with one key
+    const plannedKeys = planned.leaves.filter((l: any) => l.kind !== 3).map((l: any) => `${String(l.txHash).toLowerCase()}:${Number(l.logIndex)}:${big(l.fee)}`).sort();
+    const actualKeys = rows.map((x) => `${String(x.tx_hash).toLowerCase()}:${Number(x.log_index)}:${big(x.fee)}`).sort();
+    if (plannedKeys.length !== actualKeys.length || plannedKeys.some((k: string, i: number) => k !== actualKeys[i])) {
+      await alert?.({ severity: "critical", kind: "gen8_run_rows_mismatch", chainId: cfg.chainId, subject: `${runId}:root`, title: `Gen-8 run ${runId}: covered rows differ from its accrualRoot`, message: `planned ${plannedKeys.length} rows, covered ${actualKeys.length}. Should never happen.` });
     }
   }
   if (cfg.venue === "barkswap") {

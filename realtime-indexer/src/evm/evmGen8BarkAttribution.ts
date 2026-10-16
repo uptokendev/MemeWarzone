@@ -335,10 +335,15 @@ export function barkAttribute(input: { buys: BarkBuySource[]; sells: BarkSellSou
   return { credits, sells, coinBooks, anomalies };
 }
 
-/** The per-credit slices (B11): bonding on the credited DOGE by the source's profile, post = protocol, graduation bps. */
+/**
+ * The per-credit slices (B11): bonding on the credited DOGE by the source's profile, post = protocol, graduation bps.
+ * A credit with no profile (a surplus: no trader; in the bonding book it should never happen and alerts) is protocol
+ * only, like a post credit: the run's aggregate rule (addToSums) gives a profile-less row no recruiter / squad /
+ * airdrop share either.
+ */
 export function barkCreditSlices(c: { kind: "trade" | "graduation"; phase: BarkPhase; profile: Gen8Profile | null; fee: bigint }): Gen8Slices {
   if (c.kind === "graduation") return gen8GraduationSlices({ gradFee: c.fee, profile: c.profile || "standard_unlinked" });
-  return gen8TradeSlices({ fee: c.fee, creatorShare: 0n, graduated: c.phase === "post", profile: c.profile || "standard_unlinked" });
+  return gen8TradeSlices({ fee: c.fee, creatorShare: 0n, graduated: c.phase === "post" || !c.profile, profile: c.profile || "standard_unlinked" });
 }
 
 const big = (v: unknown) => BigInt(String(v ?? "0"));
@@ -360,17 +365,19 @@ export type BarkSellFeeRow = {
   grossFeeCoins: bigint; netFeeCoins: bigint; creatorCoins: bigint; routerCoins: bigint; expectedNative: bigint;
 };
 
-/** A sell's row at the swap (idempotent on the swap log). */
-export async function insertBarkSellFee(db: Queryable, r: BarkSellFeeRow) {
-  await db.query(
+/** A sell's row at the swap (idempotent on the swap log). Returns whether it is new (gates the activity counter). */
+export async function insertBarkSellFee(db: Queryable, r: BarkSellFeeRow): Promise<boolean> {
+  const res = await db.query(
     `insert into public.evm_gen8_bark_sell_fees(chain_id, hook_address, tx_hash, log_index, pool_id, token_address, block_number, block_time, phase, trader, swap_sender, profile, gross_fee_coins, net_fee_coins, creator_coins, router_coins, expected_native)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
-     on conflict (chain_id, tx_hash, log_index) do nothing`,
+     on conflict (chain_id, tx_hash, log_index) do nothing
+     returning 1`,
     [
       r.chainId, r.hook, r.txHash, r.logIndex, r.poolId, r.token, r.blockNumber, r.blockTime, r.phase, r.trader, r.swapSender, r.profile,
       r.grossFeeCoins.toString(), r.netFeeCoins.toString(), r.creatorCoins.toString(), r.routerCoins.toString(), r.expectedNative.toString(),
     ],
   );
+  return (res.rowCount ?? res.rows.length) > 0;
 }
 
 type CreditRow = {
@@ -476,11 +483,15 @@ export const GEN8_BARK_ATTRIBUTION_MARKER = "gen8-bark-attribution-v1";
 
 /**
  * t18's money pass wrote no sell rows. Once per plugin, before the first pass with this code, the money cursor goes
- * back to the start block, so every sell (and every collect / conversion) it already passed is attributed. Everything
- * else the money pass writes is idempotent (accruals, events, graduation credits: on conflict do nothing; reward_events
- * upserts; a confirmed run compares nothing again).
+ * back to the start block, so every sell (and every collect / conversion) it already passed is attributed. What the
+ * re-scan writes again: accruals, sell rows, events and credits insert on conflict do nothing; reward_events and sell
+ * states are upserted / restated as absolute values; the trade-activity counter (markWalletActivityDb tradeDelta 1, not
+ * idempotent) is marked only for a swap whose money row is new AND at or above the marker's block (t18 already marked
+ * every swap below the money cursor it had reached, sells included, whose rows are new now; evmGen8Bark.ts
+ * applyBarkSwap); a Routed already confirmed with its credits assigned is skipped (recordRoutedRun).
+ * Returns the marker: the first block whose trades the old money pass had not marked (startBlock when nothing was).
  */
-export async function ensureBarkAttributionBackfill(db: Queryable, cfg: Gen8BarkChainConfig) {
+export async function ensureBarkAttributionBackfill(db: Queryable, cfg: Gen8BarkChainConfig): Promise<number> {
   const marker = `${GEN8_BARK_ATTRIBUTION_MARKER}:${cfg.plugin.address}`;
   const read = async (cursor: string) => {
     const r = await db.query(`select last_indexed_block from public.indexer_state where chain_id = $1 and cursor = $2`, [cfg.chainId, cursor]);
@@ -492,11 +503,21 @@ export async function ensureBarkAttributionBackfill(db: Queryable, cfg: Gen8Bark
        on conflict (chain_id, cursor) do update set last_indexed_block = excluded.last_indexed_block, updated_at = now()`,
       [cfg.chainId, cursor, next],
     );
-  if ((await read(marker)) !== null) return false;
+  const done = await read(marker);
+  if (done !== null) return done;
   const moneyCursor = `gen8-money:${cfg.plugin.address}`;
   const money = await read(moneyCursor);
   const rewound = money !== null && money > cfg.startBlock;
-  if (rewound) await set(moneyCursor, cfg.startBlock);
-  await set(marker, 1);
-  return rewound;
+  const activityFrom = rewound ? money : cfg.startBlock;
+  if (!rewound) {
+    await set(marker, activityFrom);
+    return activityFrom;
+  }
+  // one statement: the rewind never happens without its activity boundary, nor the marker without the rewind
+  await db.query(
+    `insert into public.indexer_state(chain_id, cursor, last_indexed_block) values ($1,$2,$3),($1,$4,$5)
+     on conflict (chain_id, cursor) do update set last_indexed_block = excluded.last_indexed_block, updated_at = now()`,
+    [cfg.chainId, marker, activityFrom, moneyCursor, cfg.startBlock],
+  );
+  return activityFrom;
 }

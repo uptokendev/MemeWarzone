@@ -8,7 +8,9 @@
  * After graduation the router part (fee - creatorShare) is protocol in full (audit 10.2). Graduation fee G: recruiter /
  * squad / airdrop 1500 / 250 / 0 (linked), 1750 / 250 / 0 (OG), 0 / 0 / 1750 (unlinked), by the creator's profile
  * stored at launch; protocol the rest. Barkswap (6281971) takes the same bps of the router part instead (B11,
- * gen8RouterBaseSlices; its route runs read evmGen8BarkAttribution.ts credits).
+ * gen8RouterBaseSlices; its route runs read evmGen8BarkAttribution.ts credits). There a buy's per-trade reward_events
+ * slices are on its plugin router amount, so they can exceed what its collect credited (and the run routes) by up to
+ * a wei or so per collect (Algebra's floor rounding): the same class as V4's per-trade floors below.
  *
  * Per run (money): MwzFeeSplitter.route(runId, recruiter, squad, airdrop, root) checks
  *   rsaMin <= recruiter + squad + airdrop <= rsaMax and squad <= squadMax, from bands(B, G) of the run totals.

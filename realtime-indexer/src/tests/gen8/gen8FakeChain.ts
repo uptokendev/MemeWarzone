@@ -52,6 +52,11 @@ export class FakeGen8Db implements Queryable {
       const v = this.cursors.get(`${p[0]}:${p[1]}`);
       return done(v === undefined ? [] : [{ last_indexed_block: v }]);
     }
+    if (sql.startsWith("insert into public.indexer_state(chain_id, cursor, last_indexed_block) values ($1,$2,$3),($1,$4,$5)")) {
+      this.cursors.set(`${p[0]}:${p[1]}`, Number(p[2]));
+      this.cursors.set(`${p[0]}:${p[3]}`, Number(p[4]));
+      return done([]);
+    }
     if (sql.startsWith("insert into public.indexer_state")) {
       const key = `${p[0]}:${p[1]}`;
       const next = Number(p[2]);
