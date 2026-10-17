@@ -5,15 +5,16 @@ description: Let your community buy and sell your Solana coin on your own websit
 
 With the MemeWarzone swap box, people can buy and sell your coin straight from your own website, with their own wallet. You copy a few lines of code into your site and the box appears. You do not need to be a developer.
 
-It works for two kinds of Solana coins:
+It works for:
 
-- **Coins launched on MemeWarzone**, while they are on their bonding curve. Trades pay the same fees as on MemeWarzone and you get the same creator share.
-- **Imported coins.** Every swap pays a 1% fee. **Half of it, 0.5% of every swap, goes to the coin's creator.** The other half is MemeWarzone's.
+- **Coins launched on MemeWarzone on Solana**, while they are on their bonding curve. Trades pay the same fees as on MemeWarzone and you get the same creator share.
+- **Imported Solana coins.** Every swap pays a 1% fee. **Half of it, 0.5% of every swap, goes to the coin's creator.** The other half is MemeWarzone's.
+- **Gen-8 coins on BNB Chain and Robinhood Chain.** Partner sites can show the widget for those coins. Trades go through the coin's Uniswap V4 pool and pay the same fees as on MemeWarzone: 2% before graduation, 1% after (0.5% of the trade amount to the creator).
 
 ## What you need
 
-- A Solana coin: launched on MemeWarzone (on its bonding curve) or imported. BNB Chain and Robinhood Chain come later.
-- Your coin's mint address (its contract address on Solana).
+- A coin the widget supports: a Solana coin launched on MemeWarzone (on its bonding curve) or imported, or a gen-8 coin on BNB Chain or Robinhood Chain.
+- Your coin's mint or contract address.
 - A website where you can add your own HTML code. Most site builders have a block for this, usually called **Custom HTML**, **Embed code** or **Code**.
 
 ## Add the swap box in 3 steps
@@ -79,7 +80,7 @@ Example with both:
 
 - **Wallets:** the box works with Phantom, Solflare and Backpack. Visitors use their own wallet; MemeWarzone never holds their coins.
 - **Prices:** coins launched on MemeWarzone trade on their bonding curve, the same trade as on MemeWarzone. Imported coins are routed by Jupiter, which finds the best price across Solana's markets. Before anyone confirms, the box shows what they get and the fee.
-- **After graduation:** once a coin launched on MemeWarzone leaves its bonding curve, the box shows a link to its MemeWarzone page instead of trading it.
+- **After graduation:** once a Solana coin launched on MemeWarzone leaves its bonding curve, the box shows a link to its MemeWarzone page instead of trading it. A gen-8 coin stays in the same pool, so the box keeps trading it after graduation.
 - **Claim link:** on an imported coin nobody has claimed yet, the box shows "Created this coin? Claim it on MemeWarzone" with a link to the claim. It goes away once the coin is claimed.
 - **Safety:** the box checks every swap before the wallet opens. It only lets the wallet sign the visitor's own swap.
 - **A new website:** if your site is new, Phantom may show "This domain is new or has not been reviewed yet" for a few days. That is Phantom checking your website, not the swap box. It usually goes away by itself. If it stays longer than a week, you can ask Phantom to review your site through the form in [Phantom's guide](https://docs.phantom.com/developer-powertools/domain-and-transaction-warnings).

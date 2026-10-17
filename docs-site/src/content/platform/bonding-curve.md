@@ -7,7 +7,7 @@ A coin launched on MemeWarzone starts trading on its bonding curve. The curve se
 
 ## What the bonding curve phase does
 
-The curve gives a new coin a market from the first second, before any DEX pool exists.
+The curve gives a new coin a market from the first second. On today's launches that is before any DEX pool exists. On gen-8 BNB Chain and Robinhood Chain launches against BNB or ETH, the curve trades inside a Uniswap V4 pool from the first second. Anyone can trade it: the MemeWarzone app, other wallets, trading bots and aggregators.
 
 While a coin is live on its curve, you can:
 
@@ -31,6 +31,10 @@ On BNB Chain the curve trades in BNB and on Robinhood Chain in ETH. The token a 
 
 ## Fees
 
-Trades on the curve pay a 2% trading fee. In the first 60 seconds after launch the fee starts at 90% and falls to 2%, so bots that buy at launch pay for it. The creator's first buy in the launch transaction pays 2%. Read **[Launch Rules](/creators/launch-rules)**.
+Trades on the curve pay a 2% trading fee, paid in BNB or ETH on those chains, never in the coin. In the first 60 seconds after trading opens the fee starts at 90% and falls to 2%, so bots that buy at launch pay for it. The creator's first buy in the launch transaction pays 2%.
+
+On gen-8 the creator can pick an open time up to 30 days ahead. Nobody can trade before that time, and the 90% to 2% fee starts when trading opens.
+
+Read **[Launch Rules](/creators/launch-rules)**.
 
 Read **[Fee Model](/fees)** and **[Fee Routing](/fees/fee-routing)**.

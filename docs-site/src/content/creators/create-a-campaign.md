@@ -9,7 +9,7 @@ A strong launch starts before you press the button. Have your image, text and li
 
 Create walks you through six steps. **Next** stays locked until a step is complete.
 
-1. **Path**: choose **Draft** (a public page first, launch later) or **Direct** (launch now).
+1. **Path**: choose **Draft** (a public page first, then launch) or **Direct** (launch now). On gen-8 BNB Chain and Robinhood Chain launches you can also pick an **open time** up to 30 days ahead. Nobody can trade before that time. This replaces "launch later" for drafts and scheduled launches.
 2. **Identity**: image, name and ticker. The card preview next to the form updates as you type, and Create tells you if the ticker is available.
 3. **Story**: a short description and your socials. Socials are optional.
 4. **Bond**: the market cap at which the coin graduates, $30K (Fast grad) or $50K (Normal), and what happens to your share of the trade fee. On BNB Chain and Robinhood Chain this step also has your optional first buy.
@@ -18,7 +18,9 @@ Create walks you through six steps. **Next** stays locked until a step is comple
 
 ## The Market step
 
-The Market step sets the token your coin pairs with in its DEX pool after graduation. On BNB Chain and Robinhood Chain the curve trades in the chain's own coin, BNB or ETH. On Solana the curve trades in the token you pick here, SOL by default.
+The Market step sets the token your coin pairs with. On BNB Chain and Robinhood Chain the curve trades in the chain's own coin, BNB or ETH. On Solana the curve trades in the token you pick here, SOL by default.
+
+On gen-8 BNB Chain and Robinhood Chain launches against BNB or ETH, the coin trades in a Uniswap V4 pool from the first second. Graduation does not move it to a new pool. Coins paired with a stock or another quote token keep the current rules for now.
 
 - On BNB Chain and Solana you choose from an approved list. SOL or USDC are examples on Solana.
 - On Robinhood Chain you can pair with ETH or an approved stock token.
@@ -59,6 +61,6 @@ After launch your coin appears in **Command Center**, **My coins**, where you al
 
 ## Launch rules
 
-You can buy up to 70% of the supply in the launch transaction. There is no wait between launches and no limit on live coins. Read **[Launch Rules](/creators/launch-rules)** for the market caps, the launch fee, the first buy and the escrow on later creator buys.
+You can buy up to 70% of the supply in the launch transaction. There is no wait between launches and no limit on live coins. Read **[Launch Rules](/creators/launch-rules)** for the market caps, the launch fee, the first buy, the escrow on later creator buys, and the gen-8 open time, fees and reserve rule.
 
 Read **[Promotion and Push Live](/creators/promotion-and-push-live)** and **[Prepare Mode](/prepare-mode)**.
