@@ -40,8 +40,12 @@ Order: gates first, fork rehearsal, then Chikyū. Scripts: `scripts/deploy-dogeo
 guards `scripts/lib/dogeosTestnetDeployGuards.mjs`.
 
 0. **Gates 0-3 passed** (plan t7, t25-t28): audit PASS, full suites, branch review, fork rehearsal with the DOGE
-   budget (`scripts/rehearse-dogeos-bark-fork.ts` and report `reports/dogeos/bark-fork-rehearsal.json`, both still to be written in t27).
-   Fund the deployer, keeper and operator from that budget.
+   budget: `npx hardhat --config hardhat.dogeos-bark-fork.config.ts run scripts/rehearse-dogeos-bark-fork.ts` (t27;
+   both builds current first, see step 1) writes `reports/dogeos/bark-fork-rehearsal.json`: gas per step, each step's
+   L1 data fee from `L1GasPriceOracle.getL1Fee` at the live oracle and at the fork block, per-role totals and
+   `recommendedFunding`. Fund the deployer, keeper, operator and oracle updater from `recommendedFunding.latest`,
+   rerunning the rehearsal shortly before the deploy: the L1 fee moves with Ethereum's fees (see the two oracle
+   sources in the report).
 1. **Build both artifact sets** (the stack refuses stale artifacts):
    `npx hardhat compile && npx hardhat --config hardhat.dogeos-bark-fork.config.ts compile`
 2. **Fork rehearsal of the deploy itself** (no broadcast possible; fork block `DOGEOS_FORK_BLOCK`, default 8,578,734):
