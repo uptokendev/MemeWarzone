@@ -1,0 +1,300 @@
+{
+  "network": "dogeosTestnet",
+  "chainId": 6281971,
+  "kind": "dogeos-testnet-bark",
+  "status": "deployed-paused",
+  "deployedAt": "2026-10-17T10:14:08.179Z",
+  "startBlock": 8659092,
+  "deployer": "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8",
+  "admin": "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8",
+  "owner": "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8",
+  "routeAuthority": "0x4fcD24d620f8eCd298bF4d43CB1cA2F4D23876FF",
+  "operator": "0xca8cc5e31CB5cf4D90aD4585C881c34909C83d1A",
+  "airdropOperator": "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8",
+  "barkswap": {
+    "factory": "0xF3961157f56C983316657f0267B4C04460beE43f",
+    "poolDeployer": "0x4151224471B0EeA41eE4295c632cc61779d339C2",
+    "customPoolEntryPoint": "0x19B1A502Ea56843343E60e44a4a95B3cf4C914f5",
+    "swapRouter": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+    "quoterV2": "0x187b41968063Cb8A04A5f4d2113844EF2Ba21493",
+    "nonfungiblePositionManager": "0xf596329a6c7E03F0708199cB5435f86783DB4302",
+    "wdoge": "0xF6BDB158A5ddF77F1B83bC9074F6a472c58D78aE",
+    "codeHashes": {
+      "factory": "0xbb2129adf82eb524a4a7409ef826c540fbbd2f83866825c537c3542a01ce3e40",
+      "poolDeployer": "0x928c91f34cba233d03874c8dcb676838b0d0b49b8e0b901d8c9a039103658003",
+      "customPoolEntryPoint": "0xa67fd05a3d4ad339ab03332cba8acda32a1686f47aaf3440a2e9cbbd5f2163cd",
+      "swapRouter": "0xa35e040318c34b17c1fea875b854a0eff7d0b714ef185103741d9827daff3b89",
+      "quoterV2": "0xfc122271464cebcb3a0946eec2132154f1b718fcc61a2715057295ab1dd83ded",
+      "nonfungiblePositionManager": "0x692bd83d5948cd33fd0a6d08693ee6011ee5e480130f53983d87a03520cb9941",
+      "wdoge": "0xbd6ed8c4ef62daa1628f9d0259f01f08f1a3a085c71227865442c826cb1f2b5c"
+    }
+  },
+  "oracle": {
+    "dogeUsd": "0x18b264F9EA74485a83b40d886e3ff3F1076eFFee",
+    "graduationOracle": "0x20b1027c6E7fFD1f81f60fEca3993665F248aE90",
+    "maxPriceAge": "3600",
+    "updater": "0x7dBDFe829309B4170346CF7e4496094CD126E9c1",
+    "initialAnswer": "8016000"
+  },
+  "launcherConfig": {
+    "minNativeUsd": "10000000000000000",
+    "maxNativeUsd": "10000000000000000000",
+    "maxOracleAge": "3600"
+  },
+  "vaults": {
+    "weekly": "0xaFcC0D1Ae6503d79740655ebd1629Ef06F65360C",
+    "charity": "0xB01768f553843D989192681FC83989614b1B22dC",
+    "monthly": "0xaa2E9068Aa9DCb53B514dae7DA247794d7b92a8E",
+    "recruiter": "0x2E7D45D16A5a418cf53dbc3931549587F5C1f539",
+    "protocol": "0x807302eDf28ed1484b787a967f05caF1391f74A2",
+    "community": "0x9bd2ea48c110D95Dce06Ce2D79a6DE05086C1eD8",
+    "holderDistributor": "0x5445908F6a103ca42Ea1737e7EA3e32f560a84f6",
+    "airdropDistributor": "0x4bfc59DB7BcB097BA0119704A03864AC31304493",
+    "monthlyCapUsd": "1500000000000000000000000"
+  },
+  "choiceVault": {
+    "holderBatchDelay": "86400",
+    "caps": {
+      "maxBuyPerTx": "5768310878243512974051",
+      "maxBuybackPerCoinWeek": "57683108782435129740518",
+      "minBuyInterval": "21600",
+      "maxImpactBps": "50",
+      "maxHolderBatchPerWeek": "282343637724550898203592"
+    }
+  },
+  "deployed": {
+    "MwzBarkLaunchLib": "0xaeC3D907dB9B3bef52d41B31F47FeE235A00347A",
+    "MwzBarkFeeBooks": "0xD5141A0c9F26e4b8C0FB282cfecCaCe3033ab0C9",
+    "MwzBarkCreatorEscrow": "0xfC8C21d5373Da334565a80487433992d51d2491B",
+    "MwzBarkFeeSplitter": "0x59816E1C741c47bC97f422DA3CcBc699ca0eca2b",
+    "MwzBarkCreatorChoiceVault": "0x77e4aB2755CeDc51603e5cd06B345B8e1739A746",
+    "MwzBarkReserveLock": "0x0628bd90833aB4dEf8cA52a8131d845a59213fCD",
+    "MwzBarkPlugin": "0x29D85333709858a84A215E673769ecC815F11548",
+    "MwzBarkLauncher": "0x66F4D7b8E69f14d1A05fD4c51Ce7459e114aF82C",
+    "MwzBarkLaunchLens": "0xbEeBc4770A61ff83fF20888F059656DF3562BDE2"
+  },
+  "barkNonce0": 9,
+  "wiringSent": [
+    "MwzBarkCreatorChoiceVault.setHolderDistributorOnce",
+    "MwzBarkCreatorChoiceVault.setOperator",
+    "MwzBarkCreatorChoiceVault.setCaps",
+    "RewardDistributor (holders).setBatchOperator",
+    "CommunityRewardsVault.setRewardDistributor",
+    "CommunityRewardsVault.setAirdropOperator",
+    "RewardDistributor (airdrop).setBatchOperator"
+  ],
+  "txs": [
+    {
+      "label": "DogeosTestnetDogeUsdOracle",
+      "nonce": 0,
+      "address": "0x18b264F9EA74485a83b40d886e3ff3F1076eFFee",
+      "hash": "0x9f84c794f7f071f8c0337c6d330c7f4c1b8f8acc27ab4e54b931573f23d621bc",
+      "gasUsed": "495508",
+      "status": "mined"
+    },
+    {
+      "label": "GraduationOracle",
+      "nonce": 1,
+      "address": "0x20b1027c6E7fFD1f81f60fEca3993665F248aE90",
+      "hash": "0x3b869e395ecd696fccd0fc3cdf7717ed1a8de355f2c0f638c0ed86252d6c2c47",
+      "gasUsed": "390881",
+      "status": "mined"
+    },
+    {
+      "label": "TreasuryVaultV2 (weekly)",
+      "nonce": 2,
+      "address": "0xaFcC0D1Ae6503d79740655ebd1629Ef06F65360C",
+      "hash": "0xed46cd1c68e1922589bb19713603ab50d0b6d8547dd6c8848b7c07d4fac6557e",
+      "gasUsed": "1411055",
+      "status": "mined"
+    },
+    {
+      "label": "CharityTreasury",
+      "nonce": 3,
+      "address": "0xB01768f553843D989192681FC83989614b1B22dC",
+      "hash": "0x5c67ec421d68bde63958875d622e13b97683023e941dbb5b32bf6f757d682435",
+      "gasUsed": "245971",
+      "status": "mined"
+    },
+    {
+      "label": "MonthlyLeagueTreasury",
+      "nonce": 4,
+      "address": "0xaa2E9068Aa9DCb53B514dae7DA247794d7b92a8E",
+      "hash": "0xfcbf3cd12ec7bb1a827d557b8e2c8777d34606af0700f5665a6ec2d9ebe456dc",
+      "gasUsed": "1171184",
+      "status": "mined"
+    },
+    {
+      "label": "RecruiterRewardsVault",
+      "nonce": 5,
+      "address": "0x2E7D45D16A5a418cf53dbc3931549587F5C1f539",
+      "hash": "0x4d5a666d06bdc3dbb2014de767df5bb81b252b82305efa6bee967e677576d564",
+      "gasUsed": "576657",
+      "status": "mined"
+    },
+    {
+      "label": "ProtocolRevenueVault",
+      "nonce": 6,
+      "address": "0x807302eDf28ed1484b787a967f05caF1391f74A2",
+      "hash": "0x9e9ae61ef017ef59a88420ff09dcf500d182df6573a92c9fc474e582e23f6706",
+      "gasUsed": "484275",
+      "status": "mined"
+    },
+    {
+      "label": "RewardDistributor (holders)",
+      "nonce": 7,
+      "address": "0x5445908F6a103ca42Ea1737e7EA3e32f560a84f6",
+      "hash": "0x69bdf85e6dcf0fc811257341c80cbec7b958e1818a66070af28a9a9c0f3a0c1a",
+      "gasUsed": "1029195",
+      "status": "mined"
+    },
+    {
+      "label": "RewardDistributor (airdrop)",
+      "nonce": 8,
+      "address": "0x4bfc59DB7BcB097BA0119704A03864AC31304493",
+      "hash": "0x1cef32e4a978d7537b869f7d928bb7c05d1c0c8c18ad58180a2dc19b68e7a85e",
+      "gasUsed": "1029195",
+      "status": "mined"
+    },
+    {
+      "label": "MwzBarkLaunchLib",
+      "nonce": 9,
+      "address": "0xaeC3D907dB9B3bef52d41B31F47FeE235A00347A",
+      "hash": "0xb76ecbbc312cde889561b49e8536aa8c0911d4d8ad28adb8f2a16ddf42ec8748",
+      "gasUsed": "2268271",
+      "status": "mined"
+    },
+    {
+      "label": "MwzBarkFeeBooks",
+      "nonce": 10,
+      "address": "0xD5141A0c9F26e4b8C0FB282cfecCaCe3033ab0C9",
+      "hash": "0xa11b256b85eee36d8a0520fea792f8d36b33c469a71394661ed9d2e9c6a54bf0",
+      "gasUsed": "298339",
+      "status": "mined"
+    },
+    {
+      "label": "CommunityRewardsVault",
+      "nonce": 11,
+      "address": "0x9bd2ea48c110D95Dce06Ce2D79a6DE05086C1eD8",
+      "hash": "0x607ddd863f9226419f27166bfd3d8c7c44e1e6e0cb6d405e498220ba4ada7146",
+      "gasUsed": "673243",
+      "status": "mined"
+    },
+    {
+      "label": "MwzBarkCreatorEscrow",
+      "nonce": 12,
+      "address": "0xfC8C21d5373Da334565a80487433992d51d2491B",
+      "hash": "0xb6bb332f19ef919fcc745b8fef163ef145e6b0d2c88e0332079299a5ad98ff41",
+      "gasUsed": "980387",
+      "status": "mined"
+    },
+    {
+      "label": "MwzBarkFeeSplitter",
+      "nonce": 13,
+      "address": "0x59816E1C741c47bC97f422DA3CcBc699ca0eca2b",
+      "hash": "0xec4aabeccdcb0fea51a523b4caa0e970073a4ebf376ee912c578ab017ed61c2a",
+      "gasUsed": "860308",
+      "status": "mined"
+    },
+    {
+      "label": "MwzBarkCreatorChoiceVault",
+      "nonce": 14,
+      "address": "0x77e4aB2755CeDc51603e5cd06B345B8e1739A746",
+      "hash": "0xea0636e47ddf41216c86ec5d4761ea9fc2b965ecd4bded73295df30186e65ad7",
+      "gasUsed": "2799370",
+      "status": "mined"
+    },
+    {
+      "label": "MwzBarkReserveLock",
+      "nonce": 15,
+      "address": "0x0628bd90833aB4dEf8cA52a8131d845a59213fCD",
+      "hash": "0x6601c3fea8c4f91c503257032048e9d8b85721e306830892953adddcb3254d48",
+      "gasUsed": "640292",
+      "status": "mined"
+    },
+    {
+      "label": "MwzBarkPlugin",
+      "nonce": 16,
+      "address": "0x29D85333709858a84A215E673769ecC815F11548",
+      "hash": "0x1ba72da0584b18789481a6ed531ca1527048ff63c1ba7fe1cb4b86a1f6c3d491",
+      "gasUsed": "2126118",
+      "status": "mined"
+    },
+    {
+      "label": "MwzBarkLauncher",
+      "nonce": 17,
+      "address": "0x66F4D7b8E69f14d1A05fD4c51Ce7459e114aF82C",
+      "hash": "0x871dd1325438544f30488661dc37e0836f98564049ade5ec08826cca0bd5180b",
+      "gasUsed": "5018309",
+      "status": "mined"
+    },
+    {
+      "label": "MwzBarkLaunchLens",
+      "nonce": 18,
+      "address": "0xbEeBc4770A61ff83fF20888F059656DF3562BDE2",
+      "hash": "0xc77399bf92078100e146be2aeede623d251f9fe0a114294b656402d66ac05447",
+      "gasUsed": "1637154",
+      "status": "mined"
+    },
+    {
+      "label": "MwzBarkCreatorChoiceVault.setHolderDistributorOnce",
+      "nonce": 19,
+      "hash": "0xa14c89affa2c4b87535ee109b9603eb74c4a2a6e52c4f3fcf35ea65ae5240f10",
+      "gasUsed": "45012",
+      "status": "mined"
+    },
+    {
+      "label": "MwzBarkCreatorChoiceVault.setOperator",
+      "nonce": 20,
+      "hash": "0x66c57c1a2f2031dbd136c767f2b48fd1cb85f18a9b3904e42366954b7c6c6df1",
+      "gasUsed": "45823",
+      "status": "mined"
+    },
+    {
+      "label": "MwzBarkCreatorChoiceVault.setCaps",
+      "nonce": 21,
+      "hash": "0x0245f64879d13751101c9401e9a6c6eddcfc89307cbecc05fcc873a2e005570b",
+      "gasUsed": "135797",
+      "status": "mined"
+    },
+    {
+      "label": "RewardDistributor (holders).setBatchOperator",
+      "nonce": 22,
+      "hash": "0x8c7cd4e41469020aadfbd0d9bd8190bc09008227b7e922798e123358594f4133",
+      "gasUsed": "47873",
+      "status": "mined"
+    },
+    {
+      "label": "CommunityRewardsVault.setRewardDistributor",
+      "nonce": 23,
+      "hash": "0x0d0fed9f9cff5bd78c1be542b9840fd522d572b731e58bd9cd32ab97da969cb4",
+      "gasUsed": "45496",
+      "status": "mined"
+    },
+    {
+      "label": "CommunityRewardsVault.setAirdropOperator",
+      "nonce": 24,
+      "hash": "0x0eaad890162781f2dcd9d81dc384da7267f6c0f9c639c6dc2c4db510fed8aefe",
+      "gasUsed": "45329",
+      "status": "mined"
+    },
+    {
+      "label": "RewardDistributor (airdrop).setBatchOperator",
+      "nonce": 25,
+      "hash": "0xe98c931406d1f36071c6021ab25f66bd4de17b9b2e31e6bb55409a01a2986cfa",
+      "gasUsed": "47873",
+      "status": "mined"
+    }
+  ],
+  "next": [
+    "verify on L2Scan: npm run verify:dogeos-testnet (reused contracts) and npm run verify:dogeos-bark-testnet (Bark contracts)",
+    "route authority key on the TEST API (the launcher's createSigner)",
+    "authorize the airdrop weeks: node scripts/make-airdrop-setup-calls.mjs --chain 6281971 --skip-wiring ...",
+    "setCreatePaused(false) only with the founder's go (scripts/activate-dogeos-testnet.ts)"
+  ],
+  "deployInputs": {
+    "mode": "chikyu",
+    "dogeUsdSource": "Binance DOGEUSDT at run time: 8016000 (8 dp)",
+    "capsSource": "TESTNET_CAPS (scripts/deploy-robinhood-testnet-gen6-fees.ts, the gen-8 testnet caps) re-priced ETH->DOGE at ETHUSDT 243362000000 / DOGEUSDT 8016000 (8 dp)"
+  }
+}

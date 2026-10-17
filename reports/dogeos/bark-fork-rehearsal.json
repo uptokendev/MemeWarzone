@@ -1,8 +1,8 @@
 {
   "kind": "dogeos-bark-fork-rehearsal",
   "version": 1,
-  "generatedAt": "2026-10-17T09:02:30.922Z",
-  "startedAt": "2026-10-17T09:01:48.760Z",
+  "generatedAt": "2026-10-17T10:11:06.193Z",
+  "startedAt": "2026-10-17T10:10:22.110Z",
   "chainId": 6281971,
   "forkBlock": 8578734,
   "forkRpc": "https://rpc.testnet.dogeos.com",
@@ -20,11 +20,11 @@
     "sources": {
       "latest": {
         "rpc": "https://rpc.testnet.dogeos.com",
-        "blockNumber": 8657696,
-        "blockTimestamp": 1792227710,
+        "blockNumber": 8659068,
+        "blockTimestamp": 1792231826,
         "params": {
-          "l1BaseFee": "2189767041681",
-          "l1BlobBaseFee": "108895634895",
+          "l1BaseFee": "1609035187648",
+          "l1BlobBaseFee": "87130026204",
           "commitScalar": "38720000000",
           "blobScalar": "8000000000",
           "penaltyThreshold": "1515986167",
@@ -66,8 +66,8 @@
       "rawTxBytes": 2208,
       "l1Bytes": 2319,
       "l2FeeWei": "7769807116160",
-      "l1FeeWei": "244708426635948540",
-      "totalWei": "244716196443064700",
+      "l1FeeWei": "179973702353679820",
+      "totalWei": "179981472160795980",
       "l1FeeWeiAtForkBlock": "5613314768279320375",
       "totalWeiAtForkBlock": "5613322538086436535",
       "kind": "deploy"
@@ -80,8 +80,8 @@
       "rawTxBytes": 1924,
       "l1Bytes": 2021,
       "l2FeeWei": "6129056295148",
-      "l1FeeWei": "208103618379819136",
-      "totalWei": "208109747436114284",
+      "l1FeeWei": "153052263822251786",
+      "totalWei": "153058392878546934",
       "l1FeeWeiAtForkBlock": "4773644824751600952",
       "totalWeiAtForkBlock": "4773650953807896100",
       "kind": "deploy"
@@ -94,8 +94,8 @@
       "rawTxBytes": 6553,
       "l1Bytes": 6881,
       "l2FeeWei": "22125494793940",
-      "l1FeeWei": "994998551662316097",
-      "totalWei": "995020677157110037",
+      "l1FeeWei": "731783435662487497",
+      "totalWei": "731805561157281437",
       "l1FeeWeiAtForkBlock": "22824061031505653843",
       "totalWeiAtForkBlock": "22824083157000447783",
       "kind": "deploy"
@@ -108,8 +108,8 @@
       "rawTxBytes": 1177,
       "l1Bytes": 1241,
       "l2FeeWei": "3856851844868",
-      "l1FeeWei": "119494922019056364",
-      "totalWei": "119498778870901232",
+      "l1FeeWei": "87883951623080441",
+      "totalWei": "87887808474925309",
       "l1FeeWeiAtForkBlock": "2741068706644274637",
       "totalWeiAtForkBlock": "2741072563496119505",
       "kind": "deploy"
@@ -122,8 +122,8 @@
       "rawTxBytes": 5661,
       "l1Bytes": 5945,
       "l2FeeWei": "18364291607872",
-      "l1FeeWei": "811987050851207272",
-      "totalWei": "812005415142815144",
+      "l1FeeWei": "597185466041771003",
+      "totalWei": "597203830333378875",
       "l1FeeWeiAtForkBlock": "18625998977041666770",
       "totalWeiAtForkBlock": "18626017341333274642",
       "kind": "deploy"
@@ -136,8 +136,8 @@
       "rawTxBytes": 2632,
       "l1Bytes": 2764,
       "l2FeeWei": "9042044038956",
-      "l1FeeWei": "302202153691868508",
-      "totalWei": "302211195735907464",
+      "l1FeeWei": "222258142912645780",
+      "totalWei": "222267184956684736",
       "l1FeeWeiAtForkBlock": "6932151195790417944",
       "totalWeiAtForkBlock": "6932160237834456900",
       "kind": "deploy"
@@ -150,8 +150,8 @@
       "rawTxBytes": 2219,
       "l1Bytes": 2330,
       "l2FeeWei": "7593484301700",
-      "l1FeeWei": "246088726308705188",
-      "totalWei": "246096319793006888",
+      "l1FeeWei": "180988860049222344",
+      "totalWei": "180996453533524044",
       "l1FeeWeiAtForkBlock": "5644977170119134192",
       "totalWeiAtForkBlock": "5644984763603435892",
       "kind": "deploy"
@@ -164,8 +164,8 @@
       "rawTxBytes": 4632,
       "l1Bytes": 4864,
       "l2FeeWei": "16137888753060",
-      "l1FeeWei": "619301288760621423",
-      "totalWei": "619317426649374483",
+      "l1FeeWei": "455472446710916934",
+      "totalWei": "455488584599669994",
       "l1FeeWeiAtForkBlock": "14206021092138910398",
       "totalWeiAtForkBlock": "14206037230027663458",
       "kind": "deploy"
@@ -178,8 +178,8 @@
       "rawTxBytes": 4632,
       "l1Bytes": 4864,
       "l2FeeWei": "16137888753060",
-      "l1FeeWei": "619301288760621423",
-      "totalWei": "619317426649374483",
+      "l1FeeWei": "455472446710916934",
+      "totalWei": "455488584599669994",
       "l1FeeWeiAtForkBlock": "14206021092138910398",
       "totalWeiAtForkBlock": "14206037230027663458",
       "kind": "deploy"
@@ -192,8 +192,8 @@
       "rawTxBytes": 10379,
       "l1Bytes": 10898,
       "l2FeeWei": "35566734253268",
-      "l1FeeWei": "1950851667893577563",
-      "totalWei": "1950887234627830831",
+      "l1FeeWei": "1434776898533172243",
+      "totalWei": "1434812465267425511",
       "l1FeeWeiAtForkBlock": "44750173210834005615",
       "totalWeiAtForkBlock": "44750208777568258883",
       "kind": "deploy"
@@ -206,8 +206,8 @@
       "rawTxBytes": 1255,
       "l1Bytes": 1319,
       "l2FeeWei": "4677987740612",
-      "l1FeeWei": "127886757536257241",
-      "totalWei": "127891435523997853",
+      "l1FeeWei": "94055826161020360",
+      "totalWei": "94060504148760972",
       "l1FeeWeiAtForkBlock": "2933567244145616957",
       "totalWeiAtForkBlock": "2933571922133357569",
       "kind": "deploy"
@@ -220,8 +220,8 @@
       "rawTxBytes": 3219,
       "l1Bytes": 3380,
       "l2FeeWei": "10556522950244",
-      "l1FeeWei": "387387438923015044",
-      "totalWei": "387397995445965288",
+      "l1FeeWei": "284908666966366655",
+      "totalWei": "284919223489316899",
       "l1FeeWeiAtForkBlock": "8886198411089034817",
       "totalWeiAtForkBlock": "8886208967611985061",
       "kind": "deploy"
@@ -234,8 +234,8 @@
       "rawTxBytes": 4461,
       "l1Bytes": 4685,
       "l2FeeWei": "15372574041796",
-      "l1FeeWei": "589326902571140130",
-      "totalWei": "589342275145181926",
+      "l1FeeWei": "433427430393087072",
+      "totalWei": "433442802967128868",
       "l1FeeWeiAtForkBlock": "13518444996045431259",
       "totalWeiAtForkBlock": "13518460368619473055",
       "kind": "deploy"
@@ -248,8 +248,8 @@
       "rawTxBytes": 4480,
       "l1Bytes": 4704,
       "l2FeeWei": "13489534191968",
-      "l1FeeWei": "592482501009423190",
-      "totalWei": "592495990543615158",
+      "l1FeeWei": "435748252531853021",
+      "totalWei": "435761742066044989",
       "l1FeeWeiAtForkBlock": "13590830600251556727",
       "totalWeiAtForkBlock": "13590844089785748695",
       "kind": "deploy"
@@ -262,8 +262,8 @@
       "rawTxBytes": 13127,
       "l1Bytes": 13784,
       "l2FeeWei": "43894423931960",
-      "l1FeeWei": "2808231338122857121",
-      "totalWei": "2808275232546789081",
+      "l1FeeWei": "2065346902579254598",
+      "totalWei": "2065390797003186558",
       "l1FeeWeiAtForkBlock": "64417423869432533565",
       "totalWeiAtForkBlock": "64417467763856465525",
       "kind": "deploy"
@@ -276,8 +276,8 @@
       "rawTxBytes": 2903,
       "l1Bytes": 3049,
       "l2FeeWei": "10039847711536",
-      "l1FeeWei": "340806113234317861",
-      "totalWei": "340816153082029397",
+      "l1FeeWei": "250649880867392763",
+      "totalWei": "250659920715104299",
       "l1FeeWeiAtForkBlock": "7817679247245981946",
       "totalWeiAtForkBlock": "7817689287093693482",
       "kind": "deploy"
@@ -290,8 +290,8 @@
       "rawTxBytes": 10281,
       "l1Bytes": 10796,
       "l2FeeWei": "33337759860744",
-      "l1FeeWei": "1923159946966355622",
-      "totalWei": "1923193284726216366",
+      "l1FeeWei": "1414410695340540245",
+      "totalWei": "1414444033100400989",
       "l1FeeWeiAtForkBlock": "44114958689712936045",
       "totalWeiAtForkBlock": "44114992027472796789",
       "kind": "deploy"
@@ -304,8 +304,8 @@
       "rawTxBytes": 25224,
       "l1Bytes": 26486,
       "l2FeeWei": "78688567903852",
-      "l1FeeWei": "8277808008621324577",
-      "totalWei": "8277886697189228429",
+      "l1FeeWei": "6088011660100577075",
+      "totalWei": "6088090348668480927",
       "l1FeeWeiAtForkBlock": "189882884633564557456",
       "totalWeiAtForkBlock": "189882963322132461308",
       "kind": "deploy"
@@ -318,8 +318,8 @@
       "rawTxBytes": 7801,
       "l1Bytes": 8192,
       "l2FeeWei": "25670751532632",
-      "l1FeeWei": "1276565525481074718",
-      "totalWei": "1276591196232607350",
+      "l1FeeWei": "938865191837856310",
+      "totalWei": "938890862589388942",
       "l1FeeWeiAtForkBlock": "29282866206808799270",
       "totalWeiAtForkBlock": "29282891877560331902",
       "kind": "deploy"
@@ -332,8 +332,8 @@
       "rawTxBytes": 145,
       "l1Bytes": 209,
       "l2FeeWei": "705793021296",
-      "l1FeeWei": "18276886328369147",
-      "totalWei": "18277592121390443",
+      "l1FeeWei": "13441951898565026",
+      "totalWei": "13442657691586322",
       "l1FeeWeiAtForkBlock": "419249624361425754",
       "totalWeiAtForkBlock": "419250330154447050",
       "kind": "deploy"
@@ -346,8 +346,8 @@
       "rawTxBytes": 178,
       "l1Bytes": 242,
       "l2FeeWei": "718321427588",
-      "l1FeeWei": "21231117718903597",
-      "totalWei": "21231836040331185",
+      "l1FeeWei": "15614676263937732",
+      "totalWei": "15615394585365320",
       "l1FeeWeiAtForkBlock": "487016112509673594",
       "totalWeiAtForkBlock": "487016830831101182",
       "kind": "deploy"
@@ -360,8 +360,8 @@
       "rawTxBytes": 275,
       "l1Bytes": 339,
       "l2FeeWei": "2127994497004",
-      "l1FeeWei": "30022783493368465",
-      "totalWei": "30024911487865469",
+      "l1FeeWei": "22080610686541441",
+      "totalWei": "22082738681038445",
       "l1FeeWeiAtForkBlock": "688686271596584830",
       "totalWeiAtForkBlock": "688688399591081834",
       "kind": "deploy"
@@ -374,8 +374,8 @@
       "rawTxBytes": 145,
       "l1Bytes": 209,
       "l2FeeWei": "750653810284",
-      "l1FeeWei": "18276886328369147",
-      "totalWei": "18277636982179431",
+      "l1FeeWei": "13441951898565026",
+      "totalWei": "13442702552375310",
       "l1FeeWeiAtForkBlock": "419249624361425754",
       "totalWeiAtForkBlock": "419250375015236038",
       "kind": "deploy"
@@ -388,8 +388,8 @@
       "rawTxBytes": 145,
       "l1Bytes": 209,
       "l2FeeWei": "713382193568",
-      "l1FeeWei": "18276886328369147",
-      "totalWei": "18277599710562715",
+      "l1FeeWei": "13441951898565026",
+      "totalWei": "13442665280758594",
       "l1FeeWeiAtForkBlock": "419249624361425754",
       "totalWeiAtForkBlock": "419250337743619322",
       "kind": "deploy"
@@ -402,8 +402,8 @@
       "rawTxBytes": 145,
       "l1Bytes": 209,
       "l2FeeWei": "710763615532",
-      "l1FeeWei": "18276886328369147",
-      "totalWei": "18277597091984679",
+      "l1FeeWei": "13441951898565026",
+      "totalWei": "13442662662180558",
       "l1FeeWeiAtForkBlock": "419249624361425754",
       "totalWeiAtForkBlock": "419250335125041286",
       "kind": "deploy"
@@ -416,8 +416,8 @@
       "rawTxBytes": 145,
       "l1Bytes": 209,
       "l2FeeWei": "750653810284",
-      "l1FeeWei": "18276886328369147",
-      "totalWei": "18277636982179431",
+      "l1FeeWei": "13441951898565026",
+      "totalWei": "13442702552375310",
       "l1FeeWeiAtForkBlock": "419249624361425754",
       "totalWeiAtForkBlock": "419250375015236038",
       "kind": "deploy"
@@ -430,8 +430,8 @@
       "rawTxBytes": 145,
       "l1Bytes": 209,
       "l2FeeWei": "481614517220",
-      "l1FeeWei": "18276886328369147",
-      "totalWei": "18277367942886367",
+      "l1FeeWei": "13441951898565026",
+      "totalWei": "13442433513082246",
       "l1FeeWeiAtForkBlock": "419249624361425754",
       "totalWeiAtForkBlock": "419250105975942974",
       "kind": "deploy"
@@ -444,8 +444,8 @@
       "rawTxBytes": 145,
       "l1Bytes": 209,
       "l2FeeWei": "1842883093240",
-      "l1FeeWei": "18276886328369147",
-      "totalWei": "18278729211462387",
+      "l1FeeWei": "13441951898565026",
+      "totalWei": "13443794781658266",
       "l1FeeWeiAtForkBlock": "419249624361425754",
       "totalWeiAtForkBlock": "419251467244518994",
       "kind": "oraclePush"
@@ -458,8 +458,8 @@
       "rawTxBytes": 1175,
       "l1Bytes": 1239,
       "l2FeeWei": "97851964855728",
-      "l1FeeWei": "119281117292503475",
-      "totalWei": "119378969257359203",
+      "l1FeeWei": "87726706411922736",
+      "totalWei": "87824558376778464",
       "l1FeeWeiAtForkBlock": "2736164285306660820",
       "totalWeiAtForkBlock": "2736262137271516548",
       "kind": "launch"
@@ -472,8 +472,8 @@
       "rawTxBytes": 375,
       "l1Bytes": 439,
       "l2FeeWei": "2682427435776",
-      "l1FeeWei": "39255104578252413",
-      "totalWei": "39257787005688189",
+      "l1FeeWei": "28870630261292018",
+      "totalWei": "28873312688727794",
       "l1FeeWeiAtForkBlock": "900464529516463518",
       "totalWeiAtForkBlock": "900467211943899294",
       "kind": "buy"
@@ -486,8 +486,8 @@
       "rawTxBytes": 375,
       "l1Bytes": 439,
       "l2FeeWei": "2682004072860",
-      "l1FeeWei": "39255104578252413",
-      "totalWei": "39257786582325273",
+      "l1FeeWei": "28870630261292018",
+      "totalWei": "28873312265364878",
       "l1FeeWeiAtForkBlock": "900464529516463518",
       "totalWeiAtForkBlock": "900467211520536378",
       "kind": "buy"
@@ -500,8 +500,8 @@
       "rawTxBytes": 375,
       "l1Bytes": 439,
       "l2FeeWei": "2682364715344",
-      "l1FeeWei": "39255104578252413",
-      "totalWei": "39257786942967757",
+      "l1FeeWei": "28870630261292018",
+      "totalWei": "28873312626007362",
       "l1FeeWeiAtForkBlock": "900464529516463518",
       "totalWeiAtForkBlock": "900467211881178862",
       "kind": "buy"
@@ -514,8 +514,8 @@
       "rawTxBytes": 375,
       "l1Bytes": 439,
       "l2FeeWei": "2682584236856",
-      "l1FeeWei": "39255104578252413",
-      "totalWei": "39257787162489269",
+      "l1FeeWei": "28870630261292018",
+      "totalWei": "28873312845528874",
       "l1FeeWeiAtForkBlock": "900464529516463518",
       "totalWeiAtForkBlock": "900467212100700374",
       "kind": "buy"
@@ -528,8 +528,8 @@
       "rawTxBytes": 375,
       "l1Bytes": 439,
       "l2FeeWei": "2682349035236",
-      "l1FeeWei": "39255104578252413",
-      "totalWei": "39257786927287649",
+      "l1FeeWei": "28870630261292018",
+      "totalWei": "28873312610327254",
       "l1FeeWeiAtForkBlock": "900464529516463518",
       "totalWeiAtForkBlock": "900467211865498754",
       "kind": "buy"
@@ -542,8 +542,8 @@
       "rawTxBytes": 173,
       "l1Bytes": 237,
       "l2FeeWei": "721363368540",
-      "l1FeeWei": "20782307676926890",
-      "totalWei": "20783029040295430",
+      "l1FeeWei": "15284593618160170",
+      "totalWei": "15285314981528710",
       "l1FeeWeiAtForkBlock": "476720954016713820",
       "totalWeiAtForkBlock": "476721675380082360",
       "kind": "approve"
@@ -556,8 +556,8 @@
       "rawTxBytes": 687,
       "l1Bytes": 751,
       "l2FeeWei": "3215284545940",
-      "l1FeeWei": "69161040704837706",
-      "totalWei": "69164255989383646",
+      "l1FeeWei": "50865304171975998",
+      "totalWei": "50868519456521938",
       "l1FeeWeiAtForkBlock": "1586470464115196181",
       "totalWeiAtForkBlock": "1586473679399742121",
       "kind": "sell"
@@ -570,8 +570,8 @@
       "rawTxBytes": 145,
       "l1Bytes": 209,
       "l2FeeWei": "5926437939572",
-      "l1FeeWei": "18276886328369147",
-      "totalWei": "18282812766308719",
+      "l1FeeWei": "13441951898565026",
+      "totalWei": "13447878336504598",
       "l1FeeWeiAtForkBlock": "419249624361425754",
       "totalWeiAtForkBlock": "419255550799365326",
       "kind": "collect"
@@ -584,8 +584,8 @@
       "rawTxBytes": 145,
       "l1Bytes": 209,
       "l2FeeWei": "2797268546768",
-      "l1FeeWei": "18276886328369147",
-      "totalWei": "18279683596915915",
+      "l1FeeWei": "13441951898565026",
+      "totalWei": "13444749167111794",
       "l1FeeWeiAtForkBlock": "419249624361425754",
       "totalWeiAtForkBlock": "419252421629972522",
       "kind": "convert"
@@ -598,8 +598,8 @@
       "rawTxBytes": 376,
       "l1Bytes": 440,
       "l2FeeWei": "6230287072396",
-      "l1FeeWei": "39348292944445076",
-      "totalWei": "39354523231517472",
+      "l1FeeWei": "28939166745754545",
+      "totalWei": "28945397032826941",
       "l1FeeWeiAtForkBlock": "902602157710850566",
       "totalWeiAtForkBlock": "902608387997922962",
       "kind": "buy"
@@ -612,8 +612,8 @@
       "rawTxBytes": 375,
       "l1Bytes": 439,
       "l2FeeWei": "2676343553872",
-      "l1FeeWei": "39255104578252413",
-      "totalWei": "39257780921806285",
+      "l1FeeWei": "28870630261292018",
+      "totalWei": "28873306604845890",
       "l1FeeWeiAtForkBlock": "900464529516463518",
       "totalWeiAtForkBlock": "900467205860017390",
       "kind": "buy"
@@ -626,8 +626,8 @@
       "rawTxBytes": 145,
       "l1Bytes": 209,
       "l2FeeWei": "4575283033212",
-      "l1FeeWei": "18276886328369147",
-      "totalWei": "18281461611402359",
+      "l1FeeWei": "13441951898565026",
+      "totalWei": "13446527181598238",
       "l1FeeWeiAtForkBlock": "419249624361425754",
       "totalWeiAtForkBlock": "419254199644458966",
       "kind": "collect"
@@ -640,8 +640,8 @@
       "rawTxBytes": 173,
       "l1Bytes": 237,
       "l2FeeWei": "551390997820",
-      "l1FeeWei": "20782307676926890",
-      "totalWei": "20782859067924710",
+      "l1FeeWei": "15284593618160170",
+      "totalWei": "15285145009157990",
       "l1FeeWeiAtForkBlock": "476720954016713820",
       "totalWeiAtForkBlock": "476721505407711640",
       "kind": "claimCreator"
@@ -654,8 +654,8 @@
       "rawTxBytes": 113,
       "l1Bytes": 177,
       "l2FeeWei": "1710731143016",
-      "l1FeeWei": "15429994161730299",
-      "totalWei": "15431704892873315",
+      "l1FeeWei": "11348171433072816",
+      "totalWei": "11349882164215832",
       "l1FeeWeiAtForkBlock": "353945367935198698",
       "totalWeiAtForkBlock": "353947078666341714",
       "kind": "claimRouter"
@@ -668,8 +668,8 @@
       "rawTxBytes": 307,
       "l1Bytes": 371,
       "l2FeeWei": "3866730312908",
-      "l1FeeWei": "32958486854113897",
-      "totalWei": "32962353584426805",
+      "l1FeeWei": "24239708393591467",
+      "totalWei": "24243575123904375",
       "l1FeeWeiAtForkBlock": "756027749193820703",
       "totalWeiAtForkBlock": "756031615924133611",
       "kind": "route"
@@ -682,8 +682,8 @@
       "rawTxBytes": 145,
       "l1Bytes": 209,
       "l2FeeWei": "1227987658020",
-      "l1FeeWei": "18276886328369147",
-      "totalWei": "18278114316027167",
+      "l1FeeWei": "13441951898565026",
+      "totalWei": "13443179886223046",
       "l1FeeWeiAtForkBlock": "419249624361425754",
       "totalWeiAtForkBlock": "419250852349083774",
       "kind": "reserveRelease"
@@ -696,8 +696,8 @@
       "rawTxBytes": 181,
       "l1Bytes": 245,
       "l2FeeWei": "3575989750372",
-      "l1FeeWei": "21500609325557460",
-      "totalWei": "21504185315307832",
+      "l1FeeWei": "15812877048722690",
+      "totalWei": "15816453038473062",
       "l1FeeWeiAtForkBlock": "493197923395197163",
       "totalWeiAtForkBlock": "493201499384947535",
       "kind": "escrowBuy"
@@ -710,8 +710,8 @@
       "rawTxBytes": 140,
       "l1Bytes": 204,
       "l2FeeWei": "1147313502360",
-      "l1FeeWei": "17830903031575231",
-      "totalWei": "17832050345077591",
+      "l1FeeWei": "13113948215915751",
+      "totalWei": "13115095529418111",
       "l1FeeWeiAtForkBlock": "409019307977496933",
       "totalWeiAtForkBlock": "409020455290999293",
       "kind": "escrowClaim"
@@ -724,8 +724,8 @@
       "rawTxBytes": 145,
       "l1Bytes": 209,
       "l2FeeWei": "1842883093240",
-      "l1FeeWei": "18276886328369147",
-      "totalWei": "18278729211462387",
+      "l1FeeWei": "13441951898565026",
+      "totalWei": "13443794781658266",
       "l1FeeWeiAtForkBlock": "419249624361425754",
       "totalWeiAtForkBlock": "419251467244518994",
       "kind": "oraclePush"
@@ -738,8 +738,8 @@
       "rawTxBytes": 1175,
       "l1Bytes": 1239,
       "l2FeeWei": "98664225810344",
-      "l1FeeWei": "119281117292503475",
-      "totalWei": "119379781518313819",
+      "l1FeeWei": "87726706411922736",
+      "totalWei": "87825370637733080",
       "l1FeeWeiAtForkBlock": "2736164285306660820",
       "totalWeiAtForkBlock": "2736262949532471164",
       "kind": "launch"
@@ -752,8 +752,8 @@
       "rawTxBytes": 375,
       "l1Bytes": 439,
       "l2FeeWei": "2677111879164",
-      "l1FeeWei": "39255104578252413",
-      "totalWei": "39257781690131577",
+      "l1FeeWei": "28870630261292018",
+      "totalWei": "28873307373171182",
       "l1FeeWeiAtForkBlock": "900464529516463518",
       "totalWeiAtForkBlock": "900467206628342682",
       "kind": "buy"
@@ -766,8 +766,8 @@
       "rawTxBytes": 145,
       "l1Bytes": 209,
       "l2FeeWei": "4231998428768",
-      "l1FeeWei": "18276886328369147",
-      "totalWei": "18281118326797915",
+      "l1FeeWei": "13441951898565026",
+      "totalWei": "13446183896993794",
       "l1FeeWeiAtForkBlock": "419249624361425754",
       "totalWeiAtForkBlock": "419253856359854522",
       "kind": "collect"
@@ -780,8 +780,8 @@
       "rawTxBytes": 145,
       "l1Bytes": 209,
       "l2FeeWei": "1411774203888",
-      "l1FeeWei": "18276886328369147",
-      "totalWei": "18278298102573035",
+      "l1FeeWei": "13441951898565026",
+      "totalWei": "13443363672768914",
       "l1FeeWeiAtForkBlock": "419249624361425754",
       "totalWeiAtForkBlock": "419251036135629642",
       "kind": "pull"
@@ -794,8 +794,8 @@
       "rawTxBytes": 178,
       "l1Bytes": 242,
       "l2FeeWei": "4061681095672",
-      "l1FeeWei": "21231117718903597",
-      "totalWei": "21235179399999269",
+      "l1FeeWei": "15614676263937732",
+      "totalWei": "15618737945033404",
       "l1FeeWeiAtForkBlock": "487016112509673594",
       "totalWeiAtForkBlock": "487020174190769266",
       "kind": "buyback"
@@ -808,8 +808,8 @@
       "rawTxBytes": 1167,
       "l1Bytes": 1231,
       "l2FeeWei": "94914453423008",
-      "l1FeeWei": "118426583657851385",
-      "totalWei": "118521498111274393",
+      "l1FeeWei": "87098229558353319",
+      "totalWei": "87193144011776327",
       "l1FeeWeiAtForkBlock": "2716562319255364570",
       "totalWeiAtForkBlock": "2716657233708787578",
       "kind": "launch"
@@ -822,8 +822,8 @@
       "rawTxBytes": 375,
       "l1Bytes": 439,
       "l2FeeWei": "3952955226800",
-      "l1FeeWei": "39255104578252413",
-      "totalWei": "39259057533479213",
+      "l1FeeWei": "28870630261292018",
+      "totalWei": "28874583216518818",
       "l1FeeWeiAtForkBlock": "900464529516463518",
       "totalWeiAtForkBlock": "900468482471690318",
       "kind": "buy"
@@ -836,8 +836,8 @@
       "rawTxBytes": 173,
       "l1Bytes": 237,
       "l2FeeWei": "721551529836",
-      "l1FeeWei": "20782307676926890",
-      "totalWei": "20783029228456726",
+      "l1FeeWei": "15284593618160170",
+      "totalWei": "15285315169690006",
       "l1FeeWeiAtForkBlock": "476720954016713820",
       "totalWeiAtForkBlock": "476721675568243656",
       "kind": "approve"
@@ -850,8 +850,8 @@
       "rawTxBytes": 687,
       "l1Bytes": 751,
       "l2FeeWei": "3215190465292",
-      "l1FeeWei": "69161040704837706",
-      "totalWei": "69164255895302998",
+      "l1FeeWei": "50865304171975998",
+      "totalWei": "50868519362441290",
       "l1FeeWeiAtForkBlock": "1586470464115196181",
       "totalWeiAtForkBlock": "1586473679305661473",
       "kind": "sell"
@@ -864,8 +864,8 @@
       "rawTxBytes": 145,
       "l1Bytes": 209,
       "l2FeeWei": "5658308092772",
-      "l1FeeWei": "18276886328369147",
-      "totalWei": "18282544636461919",
+      "l1FeeWei": "13441951898565026",
+      "totalWei": "13447610206657798",
       "l1FeeWeiAtForkBlock": "419249624361425754",
       "totalWeiAtForkBlock": "419255282669518526",
       "kind": "collect"
@@ -878,8 +878,8 @@
       "rawTxBytes": 148,
       "l1Bytes": 212,
       "l2FeeWei": "562100511584",
-      "l1FeeWei": "18544681887913336",
-      "totalWei": "18545243988424920",
+      "l1FeeWei": "13638905305473012",
+      "totalWei": "13639467405984596",
       "l1FeeWeiAtForkBlock": "425392529981530753",
       "totalWeiAtForkBlock": "425393092082042337",
       "kind": "external"
@@ -892,8 +892,8 @@
       "rawTxBytes": 376,
       "l1Bytes": 440,
       "l2FeeWei": "2968997089584",
-      "l1FeeWei": "39348292944445076",
-      "totalWei": "39351261941534660",
+      "l1FeeWei": "28939166745754545",
+      "totalWei": "28942135742844129",
       "l1FeeWeiAtForkBlock": "902602157710850566",
       "totalWeiAtForkBlock": "902605126707940150",
       "kind": "buy"
@@ -906,8 +906,8 @@
       "rawTxBytes": 145,
       "l1Bytes": 209,
       "l2FeeWei": "1012731135396",
-      "l1FeeWei": "18276886328369147",
-      "totalWei": "18277899059504543",
+      "l1FeeWei": "13441951898565026",
+      "totalWei": "13442964629700422",
       "l1FeeWeiAtForkBlock": "419249624361425754",
       "totalWeiAtForkBlock": "419250637092561150",
       "kind": "restore"
@@ -920,8 +920,8 @@
       "rawTxBytes": 145,
       "l1Bytes": 209,
       "l2FeeWei": "3092932663216",
-      "l1FeeWei": "18276886328369147",
-      "totalWei": "18279979261032363",
+      "l1FeeWei": "13441951898565026",
+      "totalWei": "13445044831228242",
       "l1FeeWeiAtForkBlock": "419249624361425754",
       "totalWeiAtForkBlock": "419252717294088970",
       "kind": "convert"
@@ -934,8 +934,8 @@
       "rawTxBytes": 145,
       "l1Bytes": 209,
       "l2FeeWei": "3847569220932",
-      "l1FeeWei": "18276886328369147",
-      "totalWei": "18280733897590079",
+      "l1FeeWei": "13441951898565026",
+      "totalWei": "13445799467785958",
       "l1FeeWeiAtForkBlock": "419249624361425754",
       "totalWeiAtForkBlock": "419253471930646686",
       "kind": "graduationFeeFallback"
@@ -949,32 +949,32 @@
       "txs": 27,
       "gas": "24579594",
       "l2FeeWei": "385410688516152",
-      "l1FeeWei": "22601607446611993962",
-      "totalWei": "22601992857300510114",
+      "l1FeeWei": "16622619119539962210",
+      "totalWei": "16623004530228478362",
       "totalWeiAtForkBlock": "518453871508503672266"
     },
     "keeper": {
       "txs": 10,
       "gas": "2154468",
       "l2FeeWei": "33782290922544",
-      "l1FeeWei": "182768863283691470",
-      "totalWei": "182802645574614014",
+      "l1FeeWei": "134419518985650260",
+      "totalWei": "134453301276572804",
       "totalWeiAtForkBlock": "4192530025905180084"
     },
     "operator": {
       "txs": 3,
       "gas": "614737",
       "l2FeeWei": "9639142551596",
-      "l1FeeWei": "69619598734747793",
-      "totalWei": "69629237877299389",
+      "l1FeeWei": "51202556090602015",
+      "totalWei": "51212195233153611",
       "totalWeiAtForkBlock": "1596998868781244591"
     },
     "oracleUpdater": {
       "txs": 2,
       "gas": "235060",
       "l2FeeWei": "3685766186480",
-      "l1FeeWei": "36553772656738294",
-      "totalWei": "36557458422924774",
+      "l1FeeWei": "26883903797130052",
+      "totalWei": "26887589563316532",
       "totalWeiAtForkBlock": "838502934489037988"
     },
     "routeAuthority": {
@@ -989,62 +989,62 @@
       "txs": 6,
       "gas": "18922404",
       "l2FeeWei": "296705338339632",
-      "l1FeeWei": "417102638276917916",
-      "totalWei": "417399343615257548",
+      "l1FeeWei": "306763061264997402",
+      "totalWei": "307059766603337034",
       "totalWeiAtForkBlock": "9568125780596433758"
     },
     "buyer": {
       "txs": 14,
       "gas": "2537662",
       "l2FeeWei": "39790814227496",
-      "l1FeeWei": "572624119278438648",
-      "totalWei": "572663910092666144",
+      "l1FeeWei": "421143171162117570",
+      "totalWei": "421182961976345066",
       "totalWeiAtForkBlock": "13135343178631456774"
     },
     "barkswapAdmin": {
       "txs": 1,
       "gas": "35848",
       "l2FeeWei": "562100511584",
-      "l1FeeWei": "18544681887913336",
-      "totalWei": "18545243988424920",
+      "l1FeeWei": "13638905305473012",
+      "totalWei": "13639467405984596",
       "totalWeiAtForkBlock": "425393092082042337"
     }
   },
   "totals": {
-    "budgetWei": "22890982199175348291",
-    "budgetDoge": "22.890983",
+    "budgetWei": "16835557616301521309",
+    "budgetDoge": "16.835558",
     "budgetWeiAtForkBlock": "525081903337679134929",
     "budgetDogeAtForkBlock": "525.081904",
-    "scope": "the roles we fund (deployer, keeper, operator, oracleUpdater, routeAuthority) for this whole rehearsal; app users (creator, buyers) pay their own: 0.990064 DOGE in this run",
-    "deployerDoge": "22.601993",
+    "scope": "the roles we fund (deployer, keeper, operator, oracleUpdater, routeAuthority) for this whole rehearsal; app users (creator, buyers) pay their own: 0.728243 DOGE in this run",
+    "deployerDoge": "16.623005",
     "deployerDogeAtForkBlock": "518.453872"
   },
   "recommendedFunding": {
     "basis": "3 x (this rehearsal's cost of the role + 7 days x its running cost per day), rounded up to whole DOGE, at the live oracle",
     "latest": {
       "deployer": {
-        "oneOffWei": "22601992857300510114",
+        "oneOffWei": "16623004530228478362",
         "dailyWei": "0",
-        "recommendedWei": "68000000000000000000",
-        "recommendedDoge": "68"
+        "recommendedWei": "50000000000000000000",
+        "recommendedDoge": "50"
       },
       "keeper": {
-        "oneOffWei": "182802645574614014",
-        "dailyWei": "603290758457671247",
-        "recommendedWei": "14000000000000000000",
-        "recommendedDoge": "14"
+        "oneOffWei": "134453301276572804",
+        "dailyWei": "443737922274135254",
+        "recommendedWei": "10000000000000000000",
+        "recommendedDoge": "10"
       },
       "operator": {
-        "oneOffWei": "69629237877299389",
-        "dailyWei": "1246398121055199956",
-        "recommendedWei": "27000000000000000000",
-        "recommendedDoge": "27"
+        "oneOffWei": "51212195233153611",
+        "dailyWei": "916717926695018584",
+        "recommendedWei": "20000000000000000000",
+        "recommendedDoge": "20"
       },
       "oracleUpdater": {
-        "oneOffWei": "36557458422924774",
-        "dailyWei": "1316068503225291864",
-        "recommendedWei": "28000000000000000000",
-        "recommendedDoge": "28"
+        "oneOffWei": "26887589563316532",
+        "dailyWei": "967953224279395152",
+        "recommendedWei": "21000000000000000000",
+        "recommendedDoge": "21"
       },
       "routeAuthority": {
         "oneOffWei": "0",
@@ -1107,38 +1107,38 @@
     },
     "assumptionNote": "testnet activity: 5 active coins (keeper collects each 4x, converts each 2x a day), 2 pulls, 1 reserve release; hourly route runs; 1 buyback coin at its 21,600 s interval; oracle push heartbeat 1,800 s + 24 deviation pushes. Each send is priced at the dearest measured step of its kind.",
     "costPerKindWei": {
-      "deploy": "8277886697189228429",
-      "oraclePush": "18278729211462387",
-      "launch": "119379781518313819",
-      "buy": "39354523231517472",
-      "approve": "20783029228456726",
-      "sell": "69164255989383646",
-      "collect": "18282812766308719",
-      "convert": "18279979261032363",
-      "claimCreator": "20782859067924710",
-      "claimRouter": "15431704892873315",
-      "route": "32962353584426805",
-      "reserveRelease": "18278114316027167",
-      "escrowBuy": "21504185315307832",
-      "escrowClaim": "17832050345077591",
-      "pull": "18278298102573035",
-      "buyback": "21235179399999269",
-      "external": "18545243988424920",
-      "restore": "18277899059504543",
-      "graduationFeeFallback": "18280733897590079"
+      "deploy": "6088090348668480927",
+      "oraclePush": "13443794781658266",
+      "launch": "87825370637733080",
+      "buy": "28945397032826941",
+      "approve": "15285315169690006",
+      "sell": "50868519456521938",
+      "collect": "13447878336504598",
+      "convert": "13445044831228242",
+      "claimCreator": "15285145009157990",
+      "claimRouter": "11349882164215832",
+      "route": "24243575123904375",
+      "reserveRelease": "13443179886223046",
+      "escrowBuy": "15816453038473062",
+      "escrowClaim": "13115095529418111",
+      "pull": "13443363672768914",
+      "buyback": "15618737945033404",
+      "external": "13639467405984596",
+      "restore": "13442964629700422",
+      "graduationFeeFallback": "13445799467785958"
     },
     "latest": {
       "keeper": {
-        "wei": "603290758457671247",
-        "doge": "0.603291"
+        "wei": "443737922274135254",
+        "doge": "0.443738"
       },
       "operator": {
-        "wei": "1246398121055199956",
-        "doge": "1.246399"
+        "wei": "916717926695018584",
+        "doge": "0.916718"
       },
       "oracleUpdater": {
-        "wei": "1316068503225291864",
-        "doge": "1.316069"
+        "wei": "967953224279395152",
+        "doge": "0.967954"
       }
     },
     "atForkBlockOracle": {
@@ -1179,47 +1179,91 @@
     ],
     "reserves": [
       {
-        "name": "buy reserve 0.01 DOGE vs the dearest buy (A: graduating buy (inline 2% fee), buyer 2)",
-        "reserveWei": "10000000000000000",
+        "name": "buy reserve floor 0.050000 DOGE vs the dearest buy (A: graduating buy (inline 2% fee), buyer 2)",
+        "reserveWei": "50000000000000000",
         "gasLimit": "1000000",
         "l2GasPriceWei": "15680108",
-        "l1FeeWei": "39348292944445076",
-        "neededWei": "39363973052445076",
-        "suffices": false,
-        "shortfallWei": "29363973052445076",
+        "l1FeeWei": "28939166745754545",
+        "neededWei": "28954846853754545",
+        "suffices": true,
+        "shortfallWei": "0",
         "oracle": "latest"
       },
       {
-        "name": "launch reserve 0.1 DOGE vs the dearest launch (launch A (keep, creator first buy 5 DOGE))",
-        "reserveWei": "100000000000000000",
+        "name": "launch reserve floor 0.200000 DOGE vs the dearest launch (launch A (keep, creator first buy 5 DOGE))",
+        "reserveWei": "200000000000000000",
         "gasLimit": "7915397",
         "l2GasPriceWei": "15680108",
-        "l1FeeWei": "119281117292503475",
-        "neededWei": "119405231572326351",
-        "suffices": false,
-        "shortfallWei": "19405231572326351",
+        "l1FeeWei": "87726706411922736",
+        "neededWei": "87850820691745612",
+        "suffices": true,
+        "shortfallWei": "0",
         "oracle": "latest"
       },
       {
-        "name": "buy reserve 0.01 DOGE vs the dearest buy (A: graduating buy (inline 2% fee), buyer 2)",
-        "reserveWei": "10000000000000000",
+        "name": "buy reserve live 0.050000 DOGE vs the dearest buy (A: graduating buy (inline 2% fee), buyer 2)",
+        "reserveWei": "50000000000000000",
+        "gasLimit": "1000000",
+        "l2GasPriceWei": "15680108",
+        "l1FeeWei": "28939166745754545",
+        "neededWei": "28954846853754545",
+        "suffices": true,
+        "shortfallWei": "0",
+        "oracle": "latest"
+      },
+      {
+        "name": "launch reserve live 0.200000 DOGE vs the dearest launch (launch A (keep, creator first buy 5 DOGE))",
+        "reserveWei": "200000000000000000",
+        "gasLimit": "7915397",
+        "l2GasPriceWei": "15680108",
+        "l1FeeWei": "87726706411922736",
+        "neededWei": "87850820691745612",
+        "suffices": true,
+        "shortfallWei": "0",
+        "oracle": "latest"
+      },
+      {
+        "name": "buy reserve floor 0.050000 DOGE vs the dearest buy (A: graduating buy (inline 2% fee), buyer 2)",
+        "reserveWei": "50000000000000000",
         "gasLimit": "1000000",
         "l2GasPriceWei": "15680108",
         "l1FeeWei": "902602157710850566",
         "neededWei": "902617837818850566",
         "suffices": false,
-        "shortfallWei": "892617837818850566",
+        "shortfallWei": "852617837818850566",
         "oracle": "forkBlock"
       },
       {
-        "name": "launch reserve 0.1 DOGE vs the dearest launch (launch A (keep, creator first buy 5 DOGE))",
-        "reserveWei": "100000000000000000",
+        "name": "launch reserve floor 0.200000 DOGE vs the dearest launch (launch A (keep, creator first buy 5 DOGE))",
+        "reserveWei": "200000000000000000",
         "gasLimit": "7915397",
         "l2GasPriceWei": "15680108",
         "l1FeeWei": "2736164285306660820",
         "neededWei": "2736288399586483696",
         "suffices": false,
-        "shortfallWei": "2636288399586483696",
+        "shortfallWei": "2536288399586483696",
+        "oracle": "forkBlock"
+      },
+      {
+        "name": "buy reserve live 1.353927 DOGE vs the dearest buy (A: graduating buy (inline 2% fee), buyer 2)",
+        "reserveWei": "1353926756728275849",
+        "gasLimit": "1000000",
+        "l2GasPriceWei": "15680108",
+        "l1FeeWei": "902602157710850566",
+        "neededWei": "902617837818850566",
+        "suffices": true,
+        "shortfallWei": "0",
+        "oracle": "forkBlock"
+      },
+      {
+        "name": "launch reserve live 4.104435 DOGE vs the dearest launch (launch A (keep, creator first buy 5 DOGE))",
+        "reserveWei": "4104434589255991230",
+        "gasLimit": "7915397",
+        "l2GasPriceWei": "15680108",
+        "l1FeeWei": "2736164285306660820",
+        "neededWei": "2736288399586483696",
+        "suffices": true,
+        "shortfallWei": "0",
         "oracle": "forkBlock"
       }
     ]
@@ -1234,14 +1278,14 @@
     "the route authority (create signer) only signed: its nonce is unchanged, 0 DOGE"
   ],
   "chainFacts": {
-    "liveLatestBlock": 8657696,
+    "liveLatestBlock": 8659068,
     "safeTag": {
-      "blockNumber": 8656704,
-      "lagBlocks": 992
+      "blockNumber": 8658077,
+      "lagBlocks": 991
     },
     "finalizedTag": {
-      "blockNumber": 8656553,
-      "lagBlocks": 1143
+      "blockNumber": 8657911,
+      "lagBlocks": 1157
     },
     "liveRpcRetries": 0
   }
