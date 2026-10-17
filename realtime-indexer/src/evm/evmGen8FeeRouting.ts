@@ -250,15 +250,15 @@ export async function recordRoutedRun(db: Queryable, cfg: Gen8AnyChainConfig, e:
   if (sums.B !== r.bondingFees || sums.G !== r.gradFees || sums.T !== r.total) {
     await alert?.({ severity: "critical", kind: "gen8_run_rows_mismatch", chainId: cfg.chainId, subject: String(runId), title: `Gen-8 run ${runId}: indexed rows differ from the run on chain ${cfg.chainId}`, message: `rows B ${sums.B} G ${sums.G} T ${sums.T}; Routed B ${r.bondingFees} G ${r.gradFees} T ${r.total}. Should never happen.` });
   }
-  if (planned && Array.isArray(planned.leaves) && String(planned.accrual_root || "").toLowerCase() === e.accrualRoot.toLowerCase()) {
-    // (key, fee) multisets, not key sets: on Barkswap one sell converted twice before a claim is two rows with one key
-    const plannedKeys = planned.leaves.filter((l: any) => l.kind !== 3).map((l: any) => `${String(l.txHash).toLowerCase()}:${Number(l.logIndex)}:${big(l.fee)}`).sort();
-    const actualKeys = rows.map((x) => `${String(x.tx_hash).toLowerCase()}:${Number(x.log_index)}:${big(x.fee)}`).sort();
-    if (plannedKeys.length !== actualKeys.length || plannedKeys.some((k: string, i: number) => k !== actualKeys[i])) {
-      await alert?.({ severity: "critical", kind: "gen8_run_rows_mismatch", chainId: cfg.chainId, subject: `${runId}:root`, title: `Gen-8 run ${runId}: covered rows differ from its accrualRoot`, message: `planned ${plannedKeys.length} rows, covered ${actualKeys.length}. Should never happen.` });
-    }
-  }
   if (cfg.venue === "barkswap") {
+    if (planned && Array.isArray(planned.leaves) && String(planned.accrual_root || "").toLowerCase() === e.accrualRoot.toLowerCase()) {
+      // (key, fee) multisets, not key sets: on Barkswap one sell converted twice before a claim is two rows with one key
+      const plannedKeys = planned.leaves.filter((l: any) => l.kind !== 3).map((l: any) => `${String(l.txHash).toLowerCase()}:${Number(l.logIndex)}:${big(l.fee)}`).sort();
+      const actualKeys = rows.map((x) => `${String(x.tx_hash).toLowerCase()}:${Number(x.log_index)}:${big(x.fee)}`).sort();
+      if (plannedKeys.length !== actualKeys.length || plannedKeys.some((k: string, i: number) => k !== actualKeys[i])) {
+        await alert?.({ severity: "critical", kind: "gen8_run_rows_mismatch", chainId: cfg.chainId, subject: `${runId}:root`, title: `Gen-8 run ${runId}: covered rows differ from its accrualRoot`, message: `planned ${plannedKeys.length} rows, covered ${actualKeys.length}. Should never happen.` });
+      }
+    }
     for (const row of rows) await db.query(`update public.evm_gen8_bark_credits set run_id = $2 where id = $1 and run_id is null`, [row.id, runId]);
     // the buys and the graduation fee those credits cover (one collect each, so one run each)
     await db.query(
@@ -268,6 +268,13 @@ export async function recordRoutedRun(db: Queryable, cfg: Gen8AnyChainConfig, e:
       [cfg.chainId, gen8CoreAddress(cfg), runId],
     );
     return;
+  }
+  if (planned && Array.isArray(planned.leaves) && String(planned.accrual_root || "").toLowerCase() === e.accrualRoot.toLowerCase()) {
+    const plannedKeys = new Set(planned.leaves.filter((l: any) => l.kind !== 3).map((l: any) => `${String(l.txHash).toLowerCase()}:${Number(l.logIndex)}`));
+    const actualKeys = new Set(rows.map((x) => `${String(x.tx_hash).toLowerCase()}:${Number(x.log_index)}`));
+    if (plannedKeys.size !== actualKeys.size || [...actualKeys].some((k) => !plannedKeys.has(k))) {
+      await alert?.({ severity: "critical", kind: "gen8_run_rows_mismatch", chainId: cfg.chainId, subject: `${runId}:root`, title: `Gen-8 run ${runId}: covered rows differ from its accrualRoot`, message: `planned ${plannedKeys.size} rows, covered ${actualKeys.size}. Should never happen.` });
+    }
   }
   for (const row of rows) await db.query(`update public.evm_gen8_fee_accruals set run_id = $2 where id = $1 and run_id is null`, [row.id, runId]);
 }

@@ -134,3 +134,40 @@ test("head tags: DogeOS display at latest, money at latest minus 20 blocks (foun
   assert.equal(gen8MoneyDepth(DOGE, { EVM_GEN8_MONEY_DEPTH_6281971: "nope" }), 20);
   assert.equal(await gen8MoneyHead(p, DOGE, { EVM_GEN8_MONEY_HEAD_TAG_6281971: "finalized" }), 990);
 });
+
+// Gate 2 Minor 1: the (key, fee) multiset compare of a run's covered rows against its accrualRoot is Barkswap's (one sell
+// converted twice is two credits with one key). A V4 run keeps release/evm-gen8's key-set compare (efba85c63): the same
+// keys are equal whatever fee the planned leaf carries; a missing or extra key is still a critical alert.
+test("recordRoutedRun on V4 compares the covered rows with its accrualRoot by key set, as on release/evm-gen8", async () => {
+  const { recordRoutedRun } = await import("../evm/evmGen8FeeRouting.js");
+  const SPLITTER = "0x000000000000000000000000000000000000beef";
+  const v4: any = {
+    chainId: 97, venue: "v4", launcher: { address: L, startBlock: 1 }, hook: { address: H, startBlock: 1 }, poolManager: PM,
+    splitter: { address: SPLITTER, startBlock: 1 }, choiceVault: null, reserveLock: null, escrow: null, startBlock: 1,
+  };
+  const B = 10n ** 15n;
+  const ROOT = "0x" + "aa".repeat(32);
+  const TX = "0x" + "d1".repeat(32);
+  const runWith = async (leaves: any[]) => {
+    const rows = [{ id: 1, tx_hash: TX, log_index: 1, block_number: 9, kind: "trade", phase: "bonding", trader: L, profile: "standard_unlinked", fee: String(B), router_amount: String(B), league_weekly: "0", league_monthly: "0", recruiter: "0", squad: "0", airdrop: "0", protocol: "0" }];
+    const db = {
+      async query(text: string) {
+        if (text.includes("select status, leaves, accrual_root")) return { rows: [{ status: "sent", leaves, accrual_root: ROOT, total: String(B) }] };
+        if (text.includes("coalesce(sum(total), 0)")) return { rows: [{ t: String(B) }] };
+        if (text.includes("event_name = 'RouterClaimed'")) return { rows: [{ block_number: 10, log_index: 5, tx_hash: "0xc0", args: { amount: String(B), bondingFees: String(B), gradFees: "0" } }] };
+        if (text.includes("from public.evm_gen8_fee_accruals") && text.includes("run_id is null")) return { rows };
+        return { rows: [] };
+      },
+    };
+    const alerts: any[] = [];
+    const run = { total: B, bondingFees: B, gradFees: 0n, weeklyLeague: 0n, monthlyLeague: 0n, recruiter: 0n, squad: 0n, airdrop: 0n, protocol: 0n };
+    await recordRoutedRun(db as any, v4, { kind: "Routed", runId: 1n, accrualRoot: ROOT, caller: L, txHash: "0xr1", blockNumber: 11, logIndex: 0, address: SPLITTER, run } as any, new Date(), async (a: any) => void alerts.push(a), {});
+    return alerts.filter((a) => a.subject === "1:root");
+  };
+  // the same key with another fee on the planned leaf (or none): equal on V4
+  assert.deepEqual(await runWith([{ txHash: TX, logIndex: 1, kind: 0, fee: String(B + 1n) }]), []);
+  assert.deepEqual(await runWith([{ txHash: TX, logIndex: 1, kind: 0 }]), []);
+  // a planned row that was not covered, or a covered row nobody planned: alert
+  assert.equal((await runWith([{ txHash: TX, logIndex: 2, kind: 0, fee: String(B) }])).length, 1);
+  assert.equal((await runWith([{ txHash: TX, logIndex: 1, kind: 0, fee: String(B) }, { txHash: TX, logIndex: 2, kind: 0, fee: "1" }])).length, 1);
+});
