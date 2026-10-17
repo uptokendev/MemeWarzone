@@ -10,10 +10,9 @@
 // hardhat.dogeos-verify.config.ts. It does not import hardhat.config.ts: the root config filters the Bark sources out
 // of every build that uses ./contracts.
 //
-// Verification sends no transaction, so the network has no account and this file reads no key and no config/*.local.
+// Verification sends no transaction, so the network has no account and no private key is loaded; the only secret
+// read is the L2Scan API key, through scripts/lib/dogeosL2scanKey.ts (that one value only).
 // DOGEOS_TESTNET_RPC_URL overrides the public RPC.
-import path from "node:path";
-import * as dotenv from "dotenv";
 import { HardhatUserConfig } from "hardhat/config";
 import bark from "./hardhat.dogeos-bark-fork.config";
 import {
@@ -23,12 +22,11 @@ import {
   DOGEOS_TESTNET_NETWORK_NAME,
   resolveDogeosTestnetRpcUrl,
 } from "./scripts/lib/dogeosNetwork";
+import { dogeosL2scanApiKey } from "./scripts/lib/dogeosL2scanKey";
 
-// L2Scan's Etherscan-style API needs a real key (since 2026-10: 401 "Invalid API Key" without one):
-// DOGEOS_TESTNET_L2SCAN_API_KEY in config/dogeos.local. This config does not import hardhat.config.ts, so it loads
-// that file itself. The placeholder only keeps hardhat-verify from refusing before the request.
-dotenv.config({ path: path.resolve(__dirname, "config/dogeos.local") });
-const l2scanApiKey = String(process.env.DOGEOS_TESTNET_L2SCAN_API_KEY || "").trim() || "l2scan";
+// L2Scan's Etherscan-style API needs a real key (since 2026-10: 401 "Invalid API Key" without one). The helper reads
+// only that one value (env first, else the gitignored local file) and loads no private key into this process.
+const l2scanApiKey = dogeosL2scanApiKey();
 
 const config: HardhatUserConfig = {
   solidity: bark.solidity,

@@ -956,7 +956,13 @@ test("hardhat.dogeos-bark-verify.config.ts: Bark build settings, the dogeosTestn
   assert.match(src, /DOGEOS_TESTNET_EXPLORER_API_URL/);
   assert.match(src, /DOGEOS_TESTNET_NETWORK_NAME/);
   assert.doesNotMatch(src, /from "\.\/hardhat\.config"/, "the root config would filter the Bark sources out of the build");
-  assert.doesNotMatch(src, /PRIVATE_KEY|dogeos\.local|dotenv/, "verification needs no key");
+  assert.doesNotMatch(src, /PRIVATE_KEY|dogeos\.local|dotenv/, "the verify config loads no private key and no local file itself");
+  assert.match(src, /dogeosL2scanApiKey\(\)/, "the L2Scan key (required since 2026-10) comes only through the one-value helper");
+  const helper = fs.readFileSync(path.join(ROOT, "scripts", "lib", "dogeosL2scanKey.ts"), "utf8");
+  assert.match(helper, /dotenv\.parse\(/, "the helper parses the local file instead of loading it into process.env");
+  assert.doesNotMatch(helper, /dotenv\.config\(|process\.env\s*\[[^\]]*\]\s*=|process\.env\.[A-Z_]+\s*=|Object\.assign\(\s*process\.env/, "the helper never writes process.env");
+  assert.doesNotMatch(helper, /PRIVATE_KEY/, "the helper names no private key");
+  assert.match(helper, /\[DOGEOS_L2SCAN_KEY_NAME\]/, "the helper returns only DOGEOS_TESTNET_L2SCAN_API_KEY");
   const legacy = fs.readFileSync(path.join(ROOT, "hardhat.dogeos-verify.config.ts"), "utf8");
   assert.match(legacy, /from "\.\/hardhat\.config"/, "the reused contracts stay on the root 0.8.24 build");
   const fork = fs.readFileSync(path.join(ROOT, "hardhat.dogeos-testnet-fork.config.ts"), "utf8");
