@@ -3,6 +3,7 @@ import type { CurveTradePoint } from "@/hooks/useCurveTrades";
 import { isSolanaChainId } from "@/lib/chainConfig";
 import type { MarketTrade } from "@/lib/marketContinuityApi";
 import { isValidTradeTxHash, normalizeTradeTxHash } from "@/lib/tradeDedupe";
+import { evmFeeFreeTradePrice } from "@/lib/chart/evmFeeFreePrice";
 
 const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const EVM_ADDRESS_RE = /^0x[a-f0-9]{40}$/;
@@ -125,6 +126,8 @@ export function marketTradeToCurvePoint(trade: MarketTrade, chainId: number): Cu
     (trade as MarketTrade & { soldTokensAfterRaw?: string }).soldTokensAfterRaw != null
       ? parseRawAmount((trade as MarketTrade & { soldTokensAfterRaw?: string }).soldTokensAfterRaw)
       : null;
+  const grossRaw = (trade as MarketTrade & { grossRaw?: string | null; gross_raw?: string | null }).grossRaw
+    ?? (trade as MarketTrade & { gross_raw?: string | null }).gross_raw;
   return {
     type: trade.side === "sell" ? "sell" : "buy",
     from: campaignKey(chainId, trade.wallet),
@@ -132,6 +135,7 @@ export function marketTradeToCurvePoint(trade: MarketTrade, chainId: number): Cu
     tokensWei,
     nativeWei,
     pricePerToken: Number.isFinite(price) ? price : 0,
+    feeFreePricePerToken: isSolanaChainId(chainId) ? null : evmFeeFreeTradePrice(grossRaw, tokensWei),
     soldTokensAfterRaw: soldAfter,
     venue: venueFromSource(trade.source, soldAfter),
     timestamp: timestampSec(trade.blockTime),
@@ -197,6 +201,10 @@ export function indexerRowToCurvePoint(
     tokensWei,
     nativeWei,
     pricePerToken,
+    // EVM gen-6/7 rows from the indexer carry gross_raw (the fill without the trade fee).
+    feeFreePricePerToken: isSolanaChainId(chainId)
+      ? null
+      : evmFeeFreeTradePrice(row.gross_raw ?? row.grossRaw, tokensWei, tokenDecimals, nativeDecimals),
     soldTokensAfterRaw,
     venue: venueFromSource(row.venue ?? row.source, soldTokensAfterRaw),
     timestamp: timestampSec(row.block_time ?? row.timestamp ?? row.time ?? row.blockTime ?? row.ts),

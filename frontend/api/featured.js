@@ -151,7 +151,7 @@ ${LIFECYCLE_JOIN}
      -- ATH the same way /api/campaigns reads it (highest 1m candle market cap). Without it the
      -- featured card showed the current market cap as the ATH (K88: $7.12K for $8.11K).
      LEFT JOIN LATERAL (
-       SELECT max(tc.mcap_h) AS ath_mcap, max(tc.h) AS ath_price
+       SELECT max(tc.mcap_h) AS ath_mcap, max(coalesce(tc.price_h, tc.h)) AS ath_price
        FROM token_candles tc
        WHERE tc.chain_id = c.chain_id
          AND tc.campaign_address = c.campaign_address
