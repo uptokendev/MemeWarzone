@@ -12,6 +12,8 @@
 //
 // Verification sends no transaction, so the network has no account and this file reads no key and no config/*.local.
 // DOGEOS_TESTNET_RPC_URL overrides the public RPC.
+import path from "node:path";
+import * as dotenv from "dotenv";
 import { HardhatUserConfig } from "hardhat/config";
 import bark from "./hardhat.dogeos-bark-fork.config";
 import {
@@ -22,7 +24,10 @@ import {
   resolveDogeosTestnetRpcUrl,
 } from "./scripts/lib/dogeosNetwork";
 
-// L2Scan does not need a real key for its Etherscan-style API; hardhat-verify only requires a non-empty value.
+// L2Scan's Etherscan-style API needs a real key (since 2026-10: 401 "Invalid API Key" without one):
+// DOGEOS_TESTNET_L2SCAN_API_KEY in config/dogeos.local. This config does not import hardhat.config.ts, so it loads
+// that file itself. The placeholder only keeps hardhat-verify from refusing before the request.
+dotenv.config({ path: path.resolve(__dirname, "config/dogeos.local") });
 const l2scanApiKey = String(process.env.DOGEOS_TESTNET_L2SCAN_API_KEY || "").trim() || "l2scan";
 
 const config: HardhatUserConfig = {

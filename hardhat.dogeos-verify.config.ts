@@ -15,8 +15,9 @@ import {
   DOGEOS_TESTNET_NETWORK_NAME,
 } from "./scripts/lib/dogeosNetwork";
 
-// L2Scan does not need a real key for its Etherscan-style API; hardhat-verify only requires a
-// non-empty value. Set DOGEOS_TESTNET_L2SCAN_API_KEY if one is ever issued.
+// L2Scan's Etherscan-style API needs a real key (since 2026-10: 401 "Invalid API Key" without one):
+// DOGEOS_TESTNET_L2SCAN_API_KEY in config/dogeos.local (loaded by hardhat.config.ts). The placeholder only keeps
+// hardhat-verify from refusing before the request.
 const l2scanApiKey = String(process.env.DOGEOS_TESTNET_L2SCAN_API_KEY || "").trim() || "l2scan";
 
 const config: HardhatUserConfig = {
@@ -37,6 +38,8 @@ const config: HardhatUserConfig = {
       },
     ],
   },
+  // L2Scan only. Sourcify removed its v1 API (404 "API v1 is removed"), which hardhat-verify still calls.
+  sourcify: { enabled: false },
 };
 
 export default config;
