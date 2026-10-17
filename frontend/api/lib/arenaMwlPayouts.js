@@ -19,7 +19,7 @@ import { ethers } from "ethers";
 
 import { pokerPaidPlaces, pokerPlacesAboveMinimum, pokerSplitRaw, solanaMinPayoutLamports } from "../../shared/pokerPayout.mjs";
 import { isOwnerWallet, ownerWalletIndex } from "../../shared/ownerWallets.mjs";
-import { publicHiddenWhere } from "./publicHiddenSql.js";
+import { probeBlockedCoinsTable, publicHiddenOrBlockedWhere } from "./publicHiddenSql.js";
 
 export const MWL_PAYOUT_CHAIN_IDS = Object.freeze([56, 101, 4663, 97, 46630]);
 export const MWL_CATEGORY = Object.freeze({ mwl_monthly: "mwl", quarterly: "championship" });
@@ -157,12 +157,16 @@ async function ownerWallet(db, chainId, token) {
   return imported.rows[0]?.owner_wallet ? String(imported.rows[0].owner_wallet) : null;
 }
 
-/** True when the coin is one of our hidden test coins (any launch of it on this chain). */
+/**
+ * True when the coin is one of our hidden test coins or has an active block (any launch of it on this
+ * chain). Same rule as the MWL board (arenaLeague.js), so the places shown are the places paid.
+ */
 async function hiddenTestCoin(db, chainId, token) {
+  await probeBlockedCoinsTable(db);
   const result = await db.query(
-    `select 1 from public.campaigns
+    `select 1 from public.campaigns hc
       where chain_id = $1 and (token_address = $2 or lower(coalesce(token_address::text,'')) = lower($2))
-        and ${publicHiddenWhere()}
+        and ${publicHiddenOrBlockedWhere("hc")}
       limit 1`,
     [chainId, token],
   );

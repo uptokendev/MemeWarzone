@@ -8,6 +8,7 @@ import {
   normalizeEmail,
 } from "../../lib/abuseAuth.js";
 import { createAbuseCaseHandlers } from "./cases.js";
+import { createBlockedCoinsHandlers } from "./blockedCoins.js";
 
 function requestPath(req) {
   return String(req.originalUrl || req.url || req.path || "").split("?")[0];
@@ -63,6 +64,7 @@ export function createAbuseAdminHandlers(deps = {}) {
   const cases = createAbuseCaseHandlers({ pool: db, auth });
   const reports = cases.reports;
   const staff = cases.staff;
+  const blockedCoins = createBlockedCoinsHandlers({ pool: db, auth });
 
   async function listGrants(res) {
     const { rows } = await db.query(
@@ -200,7 +202,7 @@ export function createAbuseAdminHandlers(deps = {}) {
     return methodNotAllowed(res);
   }
 
-  return { me, reports, permissions, staff };
+  return { me, reports, permissions, staff, blockedCoins };
 }
 
 export default createAbuseAdminHandlers;

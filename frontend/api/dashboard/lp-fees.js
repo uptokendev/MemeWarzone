@@ -67,7 +67,10 @@ function weiToDecimal(value) {
 // Read-only label: items whose campaign is a hidden test coin get
 // testCoin: true, so the dashboard can list them apart and not count their
 // errors. Nothing else in the payload changes; a failed lookup labels nothing.
-export async function labelTestCoins(chainId, items, { loadKeys = loadPublicHiddenCampaignKeys } = {}) {
+// Test coins only: a blocked coin (lib/blockedCoins.js) is not a test coin here.
+const loadTestCoinKeys = (chainId) => loadPublicHiddenCampaignKeys(chainId, { includeBlocked: false });
+
+export async function labelTestCoins(chainId, items, { loadKeys = loadTestCoinKeys } = {}) {
   if (!Array.isArray(items) || items.length === 0) return items;
   let keys;
   try {

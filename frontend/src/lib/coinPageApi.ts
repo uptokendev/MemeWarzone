@@ -244,3 +244,36 @@ export async function saveStoryText(
     }),
   );
 }
+
+/**
+ * Blocked coins (Command Center -> Abuse, 2026-10-10). hide: the coin is not listed but its page and
+ * trading stay, with a banner. remove: GET /api/coin-page answers 410 and the page shows only a
+ * removed notice. null: not blocked, or the check failed (a failed check never blocks a page).
+ */
+export type CoinBlockState = { mode: "hide" | "remove" } | null;
+
+const BLOCK_CHECK_MS = 60_000;
+const blockChecks = new Map<string, { at: number; promise: Promise<CoinBlockState> }>();
+
+export function checkCoinBlock(chainId: number, address: string): Promise<CoinBlockState> {
+  const id = Number(chainId || 0);
+  const raw = String(address || "").trim();
+  if (!id || !raw) return Promise.resolve(null);
+  const key = `${id}:${isSolanaChainId(id) ? raw : raw.toLowerCase()}`;
+  const hit = blockChecks.get(key);
+  if (hit && Date.now() - hit.at < BLOCK_CHECK_MS) return hit.promise;
+  const promise = (async (): Promise<CoinBlockState> => {
+    try {
+      const qs = new URLSearchParams({ chainId: String(id), token: raw, blockOnly: "1" });
+      const res = await apiFetch(`/api/coin-page?${qs.toString()}`);
+      if (res.status === 410) return { mode: "remove" };
+      if (!res.ok) return null;
+      const body = await res.json().catch(() => null);
+      return body?.block?.mode === "hide" ? { mode: "hide" } : body?.block?.mode === "remove" ? { mode: "remove" } : null;
+    } catch {
+      return null;
+    }
+  })();
+  blockChecks.set(key, { at: Date.now(), promise });
+  return promise;
+}

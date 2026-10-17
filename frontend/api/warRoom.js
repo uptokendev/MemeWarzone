@@ -2,6 +2,7 @@ import { pool } from "../server/db.js";
 import { resolveSolUsdPrice } from "./lib/solUsdPrice.js";
 import { withSolanaLaunchpadMarketCap } from "./lib/solanaCampaignProgress.js";
 import { liveVoteWindowsJoin } from "./lib/liveVoteWindows.js";
+import { publicHiddenOrBlockedWhere } from "./lib/publicHiddenCampaigns.js";
 import { badMethod, getQuery, isAddress, isSolanaAddress, isSolanaChain, json, normalizeAddress as normalizeChainAddress } from "../server/http.js";
 
 const DEFAULT_GRAD_TARGET_BNB = 50;
@@ -174,7 +175,9 @@ function detailPayload(row, watchlist) {
 
 async function fetchWarRoomRows({ chainIds, mode, search, detailAddress, limit, gradTargetBnb }) {
   const params = [chainIds, gradTargetBnb];
-  const filters = ["c.chain_id = any($1::int[])", "c.campaign_address is not null"];
+  // Hidden test coins and blocked coins (Command Center -> Abuse) are not in the War Room: not in the
+  // list, the search or the detail.
+  const filters = ["c.chain_id = any($1::int[])", "c.campaign_address is not null", `not ${publicHiddenOrBlockedWhere("c")}`];
   const searchFilter = buildSearchFilter(search, params);
   const detailFilter = buildDetailFilter(detailAddress, params);
   const modeClause = detailAddress ? null : modeFilter(mode);
@@ -389,7 +392,9 @@ async function fetchWarRoomRows({ chainIds, mode, search, detailAddress, limit, 
 
 async function fetchBasicWarRoomRows({ chainIds, mode, search, detailAddress, limit, gradTargetBnb }) {
   const params = [chainIds, gradTargetBnb];
-  const filters = ["c.chain_id = any($1::int[])", "c.campaign_address is not null"];
+  // Hidden test coins and blocked coins (Command Center -> Abuse) are not in the War Room: not in the
+  // list, the search or the detail.
+  const filters = ["c.chain_id = any($1::int[])", "c.campaign_address is not null", `not ${publicHiddenOrBlockedWhere("c")}`];
   const searchFilter = buildSearchFilter(search, params);
   const detailFilter = buildDetailFilter(detailAddress, params);
   const modeClause = detailAddress ? null : modeFilter(mode);

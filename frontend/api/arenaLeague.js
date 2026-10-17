@@ -16,7 +16,7 @@ import {
   ensureActiveSeason,
 } from "./lib/arenaLeagueScore.js";
 import { utcDay } from "./lib/arenaLeagueScoreMath.js";
-import { publicHiddenWhere } from "./lib/publicHiddenSql.js";
+import { publicHiddenOrBlockedWhere } from "./lib/publicHiddenSql.js";
 import { recordMwlFinalization } from "./lib/arenaMwlRollover.js";
 import { creatorStreakStatus, hasCreatorStreaks, recordCreatorCheckin } from "./lib/creatorStreak.js";
 import {
@@ -119,7 +119,7 @@ async function activeSeason(chainId) {
           select 1 from public.campaigns hc
            where hc.chain_id = $2
              and (hc.token_address = e.token_address or lower(coalesce(hc.token_address::text, '')) = lower(e.token_address))
-             and ${publicHiddenWhere("hc")}
+             and ${publicHiddenOrBlockedWhere("hc")}
         )`,
     [row.id, id],
   );
@@ -329,7 +329,7 @@ async function ownedCheckinCoins(chainId, wallet, seasonId) {
          from public.campaigns c
         where c.chain_id = $1
           and lower(c.creator_address::text) = lower($2)
-          and not (${publicHiddenWhere("c")})
+          and not (${publicHiddenOrBlockedWhere("c")})
        union all
        select i.token_address, i.name, i.symbol, i.created_at as at
          from public.arena_token_imports i

@@ -23,6 +23,7 @@ import { rankFeedPosts } from "../lib/feedRanking.js";
 import { createFeedSessionAuth } from "../lib/feedSessionAuth.js";
 import { loadFollowingAddresses, loadPostEvents } from "../lib/socialTimeline.js";
 import { hasCoinPostLink, notCoinPostSql } from "../lib/coinPostLink.js";
+import { notBlockedCoinSql, probeBlockedCoinsTable } from "../lib/publicHiddenSql.js";
 import { MAX_POST_IMAGES, cleanMediaUrls, hasMediaUrls, mediaUrlsSelect, refreshMediaUrlColumns, rowMediaUrls } from "../lib/postMediaUrls.js";
 import { isSolanaAddress, isSolanaChain } from "../../server/http.js";
 import { contractAddressInBody, isOwnFeedImage } from "../lib/feedPostMedia.js";
@@ -271,6 +272,17 @@ const POST_FROM = `
        ) ai on true
 `;
 
+/**
+ * Blocked coins (Command Center -> Abuse): a post whose coin card is a blocked coin is not shown (the
+ * block soft-deletes the ones that exist when it is made; this also covers later ones). "" until the
+ * blocked_coins table exists.
+ */
+async function notBlockedMentionSql() {
+  await probeBlockedCoinsTable(pool);
+  const sql = notBlockedCoinSql({ chain: "p.mentioned_chain_id", campaign: "p.mentioned_campaign", token: "p.mentioned_token" });
+  return sql === "true" ? "" : ` and ${sql}`;
+}
+
 function postSelect(viewerPlaceholder) {
   const viewer = viewerPlaceholder || "null";
   return `
@@ -318,7 +330,7 @@ select
 async function queryPosts({ limit, authors, viewer, parentId, ranked }) {
   const params = [];
   const viewerSql = viewer ? `$${params.push(viewer)}` : "null";
-  let sql = `${postSelect(viewerSql)} ${POST_FROM} where p.status = 0`;
+  let sql = `${postSelect(viewerSql)} ${POST_FROM} where p.status = 0${await notBlockedMentionSql()}`;
   if (parentId) {
     sql += ` and p.parent_id = $${params.push(parentId)}`;
   } else {
@@ -338,12 +350,13 @@ async function queryPosts({ limit, authors, viewer, parentId, ranked }) {
 async function queryFollowing(viewer, following, limit) {
   const params = [viewer, following, following.map((w) => w.toLowerCase()), limit];
   const shadow = await notCoinPostSql();
+  const notBlocked = await notBlockedMentionSql();
   const sql = `
 with own_posts as (
   ${postSelect("$1")}
   ${POST_FROM}
   where p.status = 0
-    and p.parent_id is null${shadow}
+    and p.parent_id is null${shadow}${notBlocked}
     and (p.author_address = any($2::text[]) or lower(p.author_address) = any($3::text[]))
 ),
 reposted as (
@@ -354,7 +367,7 @@ reposted as (
   ${POST_FROM}
   join public.social_post_reposts rp on rp.post_id = p.id
   ${REPOSTER_PROFILE_LATERAL}
-  where p.status = 0
+  where p.status = 0${notBlocked}
     and (rp.author_address = any($2::text[]) or lower(rp.author_address) = any($3::text[]))
 )
 select * from (
@@ -469,6 +482,7 @@ async function attachSystemEventEngagement(items, viewer) {
 
 async function loadSharedCoinPosts(limit, { before = null, authors = null, viewer = null } = {}) {
   try {
+    await probeBlockedCoinsTable(pool);
     const params = [limit];
     const extra = [
       before ? `and cp.created_at < $${params.push(before)}` : "",
@@ -487,6 +501,7 @@ async function loadSharedCoinPosts(limit, { before = null, authors = null, viewe
             limit 1
          ) c on true
         where cp.status = 0 and cp.share_to_feed = true ${extra}
+          and ${notBlockedCoinSql({ chain: "cp.chain_id", campaign: "c.campaign_address", token: "cp.token_address" })}
         order by cp.created_at desc, cp.id desc
         limit $1`,
       params,
@@ -521,7 +536,7 @@ async function loadSharedCoinPosts(limit, { before = null, authors = null, viewe
 async function queryPostsPage({ before, limit, authors, viewer }) {
   const params = [];
   const viewerSql = viewer ? `$${params.push(viewer)}` : "null";
-  let sql = `${postSelect(viewerSql)} ${POST_FROM} where p.status = 0 and p.parent_id is null${await notCoinPostSql()}`;
+  let sql = `${postSelect(viewerSql)} ${POST_FROM} where p.status = 0 and p.parent_id is null${await notCoinPostSql()}${await notBlockedMentionSql()}`;
   if (before) sql += ` and p.created_at < $${params.push(before)}`;
   if (Array.isArray(authors)) {
     sql += ` and lower(p.author_address) = any($${params.push(authors.map((w) => String(w).toLowerCase()))}::text[])`;
@@ -542,7 +557,7 @@ async function queryRepostsPage({ before, limit, reposters, viewer }) {
     ${POST_FROM}
     join public.social_post_reposts rp on rp.post_id = p.id
     ${REPOSTER_PROFILE_LATERAL}
-    where p.status = 0`;
+    where p.status = 0${await notBlockedMentionSql()}`;
   if (before) sql += ` and rp.created_at < $${params.push(before)}`;
   if (Array.isArray(reposters)) {
     sql += ` and lower(rp.author_address) = any($${params.push(reposters.map((w) => String(w).toLowerCase()))}::text[])`;
@@ -566,7 +581,7 @@ async function queryRepostsPage({ before, limit, reposters, viewer }) {
 async function loadHotPosts({ limit, offset, authors, viewer }) {
   const params = [];
   const viewerSql = viewer ? `$${params.push(viewer)}` : "null";
-  let sql = `${postSelect(viewerSql)} ${POST_FROM} where p.status = 0 and p.parent_id is null and p.created_at > now() - interval '48 hours'${await notCoinPostSql()}`;
+  let sql = `${postSelect(viewerSql)} ${POST_FROM} where p.status = 0 and p.parent_id is null and p.created_at > now() - interval '48 hours'${await notCoinPostSql()}${await notBlockedMentionSql()}`;
   if (Array.isArray(authors)) {
     sql += ` and lower(p.author_address) = any($${params.push(authors.map((w) => String(w).toLowerCase()))}::text[])`;
   }
@@ -705,7 +720,7 @@ async function handleGetOne(req, res) {
   const viewer = String(q.viewer || q.wallet || "").trim();
   const params = [];
   const viewerSql = viewer ? `$${params.push(viewer)}` : "null";
-  const sql = `${postSelect(viewerSql)} ${POST_FROM} where p.status = 0 and p.id = $${params.push(postId)} limit 1`;
+  const sql = `${postSelect(viewerSql)} ${POST_FROM} where p.status = 0${await notBlockedMentionSql()} and p.id = $${params.push(postId)} limit 1`;
   try {
     const { rows } = await pool.query(sql, params);
     if (!rows[0]) return json(res, 404, { error: "Post not found" });

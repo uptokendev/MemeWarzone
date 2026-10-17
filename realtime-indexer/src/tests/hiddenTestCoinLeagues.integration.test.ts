@@ -8,7 +8,14 @@ import test from "node:test";
 import { startThrowawayPostgres } from "../../../scripts/dbc/throwaway-postgres.mjs";
 import { leagueLeaderboard } from "../rewards/leagueLeaderboard.js";
 import { recruiterLeagueStandings } from "../rewards/recruiterLeague.js";
-import { notPublicHiddenCampaignSql, publicHiddenWhere } from "../rewards/publicHiddenSql.js";
+import {
+  notPublicHiddenCampaignSql,
+  notPublicHiddenOrBlockedCampaignSql,
+  probeBlockedCoinsTable,
+  publicHiddenOrBlockedWhere,
+  publicHiddenWhere,
+  setBlockedCoinsTablePresent,
+} from "../rewards/publicHiddenSql.js";
 import { resetCurveTradeGen5ColumnsCache } from "../evm/curveTradeGen5Columns.js";
 // @ts-ignore -- the API's canonical rule, plain JS without imports
 import * as api from "../../../frontend/api/lib/publicHiddenSql.js";
@@ -98,6 +105,18 @@ test("the indexer rule is the API rule", () => {
   assert.equal(publicHiddenWhere(), api.publicHiddenWhere());
   assert.equal(notPublicHiddenCampaignSql("t"), api.notPublicHiddenCampaignSql("t"));
   assert.equal(notPublicHiddenCampaignSql("re", "campaign"), api.notPublicHiddenCampaignSql("re", "campaign"));
+  // Blocked coins (Command Center -> Abuse): the same with the blocked_coins table missing and present.
+  for (const present of [false, true]) {
+    setBlockedCoinsTablePresent(present);
+    api.setBlockedCoinsTablePresent(present);
+    assert.equal(publicHiddenOrBlockedWhere("c"), api.publicHiddenOrBlockedWhere("c"));
+    assert.equal(notPublicHiddenOrBlockedCampaignSql("t"), api.notPublicHiddenOrBlockedCampaignSql("t"));
+    assert.equal(notPublicHiddenOrBlockedCampaignSql("re", "campaign"), api.notPublicHiddenOrBlockedCampaignSql("re", "campaign"));
+  }
+  assert.equal(publicHiddenOrBlockedWhere("c").includes("blocked_coins"), true);
+  setBlockedCoinsTablePresent(null);
+  api.setBlockedCoinsTablePresent(null);
+  assert.equal(publicHiddenOrBlockedWhere("c"), publicHiddenWhere("c"), "no table: exactly the publicHidden rule");
 });
 
 test("biggest_hit: the hidden coin is skipped and the real coins move up", async () => {
@@ -190,4 +209,27 @@ test("recruiter league: only squad wallets that traded in the epoch count toward
   assert.equal(h.linkedWalletCount, 2);
   assert.equal(h.linkedTradersCount, 2);
   assert.ok(standings.indexOf(h) < standings.indexOf(p), "two trading members beat one trading member plus five idle ones");
+});
+
+test("blocked coins: an active block takes a coin out of the league field like publicHidden; a release puts it back", async () => {
+  // Before the migration the table is missing and the board is unchanged (the 42P01 never reaches SQL).
+  assert.equal(await probeBlockedCoinsTable(db), false);
+  const before = await board("biggest_hit");
+  assert.deepEqual(before.map((r) => r.meta.campaign_address), [REAL, REAL2]);
+
+  const fs = await import("node:fs");
+  const migration = fs.readFileSync(new URL("../../../db/migrations/20261010_000020_blocked_coins.sql", import.meta.url), "utf8");
+  await db.query(migration);
+  setBlockedCoinsTablePresent(null);
+  assert.equal(await probeBlockedCoinsTable(db), true);
+
+  await db.query(`insert into public.blocked_coins (chain_id, campaign_address, kind, mode, reason) values ($1, $2, 'abuse', 'hide', 'league test')`, [CHAIN, REAL2]);
+  const blocked = await board("biggest_hit");
+  assert.deepEqual(blocked.map((r) => [r.recipient, r.meta.campaign_address]), [[W2, REAL]]);
+  const earners = new Map((await board("top_earner")).map((r) => [r.recipient, r.score]));
+  assert.equal(earners.has(W3), false, "W3 only traded the blocked coin");
+
+  await db.query(`update public.blocked_coins set released_at = now(), release_reason = 'undo' where reason = 'league test'`);
+  const released = await board("biggest_hit");
+  assert.deepEqual(released.map((r) => r.meta.campaign_address), [REAL, REAL2]);
 });

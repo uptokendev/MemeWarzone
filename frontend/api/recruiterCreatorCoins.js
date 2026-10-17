@@ -1,6 +1,6 @@
 import { pool } from "../server/db.js";
 import { badMethod, json } from "../server/http.js";
-import { publicHiddenWhere } from "./lib/publicHiddenCampaigns.js";
+import { publicHiddenOrBlockedWhere } from "./lib/publicHiddenCampaigns.js";
 
 /**
  * GET /api/recruiters/:code/creator-coins (CO-9, founder 2026-10-03)
@@ -43,7 +43,7 @@ export default async function handler(req, res) {
              on c.creator_address = r.wallet_address or lower(c.creator_address) = r.wallet_key
            left join public.market_stats ms
              on ms.chain_id = c.chain_id and ms.campaign_address = c.campaign_address
-          where not (${publicHiddenWhere("c")})
+          where not (${publicHiddenOrBlockedWhere("c")})
        )
        select (select count(distinct lower(creator_address)) from coins)::int as creator_count,
               chain_id, campaign_address, token_address, name, symbol, logo_uri, market_cap_usd

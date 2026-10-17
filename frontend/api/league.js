@@ -11,7 +11,7 @@ import { verifySolanaLeagueClaimTransaction } from "./lib/solanaLeagueClaimVerif
 import { createFeedSessionAuth } from "./lib/feedSessionAuth.js";
 import { monthlyLeagueTreasuryAddress, monthlyLeagueTreasuryForMonth } from "./lib/evmMonthlyLeagueTreasury.js";
 import { pokerPaidPlaces, pokerPlacesAboveMinimum, pokerSplitRaw, solanaMinPayoutLamports } from "./lib/pokerPayout.mjs";
-import { loadPublicHiddenCampaignKeys, publicHiddenWhere, withoutPublicHidden } from "./lib/publicHiddenCampaigns.js";
+import { loadPublicHiddenCampaignKeys, publicHiddenOrBlockedWhere, withoutPublicHidden } from "./lib/publicHiddenCampaigns.js";
 import { withoutOwnerWallets } from "../shared/ownerWallets.mjs";
 import { MODERATION_CARRY_CATEGORY, leagueExclusionRefusal, leagueRootExclusion, leagueWinnerHold, moderationClaimRefusal, rootLeafRows } from "../shared/moderationHolds.mjs";
 import {
@@ -243,7 +243,7 @@ async function getEpochStats(chainId, periodNorm, epochStartIso, rangeEndIso) {
     `select count(*)::bigint as n
        from public.campaigns c
       where c.chain_id = $1
-        and not ${publicHiddenWhere("c")}
+        and not ${publicHiddenOrBlockedWhere("c")}
         and ($2::timestamptz is null or c.created_at_chain >= $2::timestamptz)
         and ($3::timestamptz is null or c.created_at_chain < $3::timestamptz)`,
     [chainId, epochStartIso ?? null, rangeEndIso ?? null]
@@ -1307,7 +1307,7 @@ export default async function handler(req, res) {
             ) AS unique_buyers
           FROM campaigns c
           WHERE c.chain_id = $1
-            AND NOT ${publicHiddenWhere("c")}
+            AND NOT ${publicHiddenOrBlockedWhere("c")}
             AND c.created_at_chain IS NOT NULL
             AND c.graduated_at_chain IS NOT NULL
             -- Prefer graduated_block when present, but do not drop grads that only have graduated_at_chain.
@@ -1375,7 +1375,7 @@ export default async function handler(req, res) {
             ) AS buy_total_raw
           FROM campaigns c
           WHERE c.chain_id = $1
-            AND NOT ${publicHiddenWhere("c")}
+            AND NOT ${publicHiddenOrBlockedWhere("c")}
             AND c.created_at_chain IS NOT NULL
             AND c.graduated_at_chain IS NOT NULL
             AND ($2::timestamptz IS NULL OR c.graduated_at_chain >= $2::timestamptz)
@@ -1438,7 +1438,7 @@ export default async function handler(req, res) {
             ON c.chain_id = t.chain_id
            AND c.campaign_address = t.campaign_address
           WHERE t.chain_id = $1
-            AND NOT ${publicHiddenWhere("c")}
+            AND NOT ${publicHiddenOrBlockedWhere("c")}
             AND t.side = 'buy'
             AND ($2::timestamptz IS NULL OR t.block_time >= $2::timestamptz)
             AND ($3::timestamptz IS NULL OR t.block_time < $3::timestamptz)
@@ -1518,7 +1518,7 @@ export default async function handler(req, res) {
         JOIN public.campaigns c
           ON c.chain_id = a.chain_id
          AND c.campaign_address = a.campaign_address
-        WHERE NOT ${publicHiddenWhere("c")}
+        WHERE NOT ${publicHiddenOrBlockedWhere("c")}
         ORDER BY
           a.votes_count DESC,
           a.unique_voters DESC,
@@ -1571,7 +1571,7 @@ export default async function handler(req, res) {
           WHERE t.chain_id = $1
             AND t.wallet IS NOT NULL
             -- Trades on a hidden test coin count for nothing (settlement: rewards/leagueLeaderboard.ts).
-            AND NOT ${publicHiddenWhere("c")}
+            AND NOT ${publicHiddenOrBlockedWhere("c")}
             AND ($2::timestamptz IS NULL OR t.block_time >= $2::timestamptz)
             AND ($3::timestamptz IS NULL OR t.block_time < $3::timestamptz)
             AND ${sqlWalletNeq("t.wallet", "c.campaign_address", isSolanaLeagueChain(chainId))}
