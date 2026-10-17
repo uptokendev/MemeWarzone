@@ -8,7 +8,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { ethers } from "ethers";
 
-import { evmGen7DexName } from "./evmGen7.mjs";
+import { evmGen7DexName, evmGen7GraduationTiers } from "./evmGen7.mjs";
+import { GEN7_TARGET_TEST_USD, GEN7_TEST_TARGET_CHAIN_IDS, isGen7TargetAllowed } from "../../shared/evmGen7Curve.mjs";
 import { DOGEOS_DEX_LABEL } from "./dogeosPresentation.mjs";
 
 // DogeOS Chikyu testnet (6281971) launches on gen-8 only (Barkswap venue). Its gen-7 / Robinhood V3 family
@@ -737,4 +738,16 @@ test("6281971 never resolves to the unsuffixed BNB scheduled factory; 56/97 and 
   const obsolete = await scheduledHarness("dogeos-scheduled-obsolete", { VITE_SCHEDULED_FACTORY_ADDRESS: both.OBSOLETE_BSC_TESTNET_SCHEDULED_FACTORY });
   assert.equal(obsolete.getScheduledFactoryAddress(97, ""), "");
   assert.equal(obsolete.getScheduledFactoryAddress(56, ""), both.OBSOLETE_BSC_TESTNET_SCHEDULED_FACTORY);
+});
+
+// Gate 2 Minor 2 (B8: DogeOS leaves every gen-7 path): the gen-7 $150 test target is a LaunchFactoryGen7 rule, and
+// DogeOS has no gen-7 factory, so 6281971 is not a gen-7 test-target chain. 97 and 46630 keep their $150 tier.
+test("the gen-7 $150 test target is 97 and 46630 only; 6281971 has no gen-7 tier", () => {
+  assert.deepEqual([...GEN7_TEST_TARGET_CHAIN_IDS], [97, 46630]);
+  assert.equal(isGen7TargetAllowed(DOGEOS, GEN7_TARGET_TEST_USD), false);
+  for (const id of [97, RH_TESTNET]) assert.equal(isGen7TargetAllowed(id, GEN7_TARGET_TEST_USD), true, String(id));
+  for (const id of [56, 4663]) assert.equal(isGen7TargetAllowed(id, GEN7_TARGET_TEST_USD), false, String(id));
+  assert.deepEqual(evmGen7GraduationTiers(DOGEOS, { testTierEnabled: true }).map((t) => t.label), ["$30K MC", "$50K MC"]);
+  assert.deepEqual(evmGen7GraduationTiers(97, { testTierEnabled: true }).map((t) => t.label), ["$150", "$30K MC", "$50K MC"]);
+  assert.deepEqual(evmGen7GraduationTiers(RH_TESTNET, { testTierEnabled: true }).map((t) => t.label), ["$150", "$30K MC", "$50K MC"]);
 });

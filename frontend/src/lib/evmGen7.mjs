@@ -104,8 +104,8 @@ export const EVM_GEN7_DEFAULT_GRADUATION_TARGET_WEI = GEN7_TARGET_DEFAULT_USD;
 /**
  * The create page's graduation choices for a gen-7 factory: the graduation MARKET CAP, worded like the
  * DBC tiers (src/lib/dbcGraduationTiers.ts). $150 only where the factory accepts it (97, 46630)
- * and the app's test tier is enabled for the chain. GEN7_TEST_TARGET_CHAIN_IDS still lists 6281971, but DogeOS
- * has no gen-7 factory (it launches on gen-8 / Barkswap).
+ * and the app's test tier is enabled for the chain. DogeOS (6281971) has no gen-7 factory and no gen-7 tier (it
+ * launches on gen-8 / Barkswap).
  */
 export function evmGen7GraduationTiers(chainId, { testTierEnabled = false } = {}) {
   const dex = evmGen7DexName(chainId);

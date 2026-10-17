@@ -36,7 +36,8 @@ export const GEN7_DEFAULT_LIQUIDITY_BPS = 1300n;
 export const GEN7_TARGET_FAST_USD = 30_000n * WAD;
 export const GEN7_TARGET_DEFAULT_USD = 50_000n * WAD;
 export const GEN7_TARGET_TEST_USD = 150n * WAD;
-export const GEN7_TEST_TARGET_CHAIN_IDS = Object.freeze([97, 46630, 6281971]);
+// DogeOS has no gen-7 factory (gen-8 / Barkswap only, barkswap spec section 4 Removed B8).
+export const GEN7_TEST_TARGET_CHAIN_IDS = Object.freeze([97, 46630]);
 
 /** Create-page note: same words as the Solana DBC note (DBC_LAUNCH_FEE_NOTE). */
 export const GEN7_LAUNCH_FEE_NOTE =
