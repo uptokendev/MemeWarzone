@@ -133,7 +133,7 @@ export function evmPageNativeUnit(chainId?: number | null): string {
   return "BNB";
 }
 
-/** DEX an EVM coin trades on after graduation: Uniswap on Robinhood, MuchFi on DogeOS, else Topaz (pages/TokenDetails.tsx). */
+/** DEX an EVM coin trades on after graduation: Uniswap on Robinhood, Barkswap on DogeOS, else Topaz (pages/TokenDetails.tsx). */
 export function evmPageDexVenueLabel(chainId?: number | null): string {
   if (isRobinhoodChainId(chainId)) return "Uniswap";
   if (isDogeosChainId(chainId)) return DOGEOS_DEX_LABEL;

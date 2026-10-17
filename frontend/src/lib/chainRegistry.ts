@@ -136,11 +136,11 @@ export const CHAIN_REGISTRY: Readonly<Record<ChainKey, ChainDefinition>> = Objec
     nativeAsset: "DOGE",
     explorerBaseUrl: "https://dogeos-testnet.l2scan.co",
     publicRpcEnvKey: "VITE_PUBLIC_RPC_6281971",
-    deploymentManifest: "deployments/dogeos/testnet.json",
-    // Graduates into MuchFi (a PancakeSwap V3 fork, fee tier 10000). Same gen-7 V3 adapter family as
-    // Robinhood testnet, hence the shared keys; DogeOS deploys MuchFi variants of them.
-    graduationAdapter: "robinhood-dex-testnet",
-    swapAdapter: "robinhood-dex-testnet",
+    // The Bark stack's manifest (scripts/deploy-dogeos-testnet.ts, DOGEOS_MANIFEST_PATH). Gen-8 on Barkswap: the coin
+    // trades and graduates in its own Barkswap (Algebra Integral) custom pool; no Robinhood or gen-7 adapter.
+    deploymentManifest: "deployments/dogeos/testnet.bark.json",
+    graduationAdapter: "barkswap-testnet",
+    swapAdapter: "barkswap-testnet",
     oracleAdapter: "doge-usd-test",
     supportsCreation: false,
   },

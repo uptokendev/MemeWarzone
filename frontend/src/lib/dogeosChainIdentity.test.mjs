@@ -217,7 +217,7 @@ test("WalletConnect RPC map gets the DogeOS RPC when DogeOS is negotiated", () =
   });
 });
 
-test("registry entry dogeos-testnet: evm, test, staging, DOGE/18 via L2Scan, RH-testnet adapters", () => {
+test("registry entry dogeos-testnet: evm, test, staging, DOGE/18 via L2Scan, the Bark manifest and Barkswap adapters", () => {
   const entry = chainRegistry.CHAIN_REGISTRY["dogeos-testnet"];
   assert.ok(entry, "missing dogeos-testnet registry entry");
   assert.deepEqual({ ...entry }, {
@@ -230,9 +230,9 @@ test("registry entry dogeos-testnet: evm, test, staging, DOGE/18 via L2Scan, RH-
     nativeAsset: "DOGE",
     explorerBaseUrl: DOGEOS_EXPLORER,
     publicRpcEnvKey: "VITE_PUBLIC_RPC_6281971",
-    deploymentManifest: "deployments/dogeos/testnet.json",
-    graduationAdapter: "robinhood-dex-testnet",
-    swapAdapter: "robinhood-dex-testnet",
+    deploymentManifest: "deployments/dogeos/testnet.bark.json",
+    graduationAdapter: "barkswap-testnet",
+    swapAdapter: "barkswap-testnet",
     oracleAdapter: "doge-usd-test",
     supportsCreation: false,
   });
