@@ -8,7 +8,9 @@ import { getNativeSymbol, isDogeosChainId, isRobinhoodChainId } from "@/lib/chai
 import { getReadProvider } from "@/lib/readProvider";
 import { GEN7_LAUNCH_FEE_NOTE } from "../../../shared/evmGen7Curve.mjs";
 import { gen8FirstBuyPlan, gen8MaxFirstBuyByBalance, gen8MaxFirstBuyValue, readGen8LaunchPlan } from "@/lib/evmGen8Client.mjs";
-import { DOGE_BUY_GAS_RESERVE_WEI, evmLaunchBalanceMessage, evmLaunchGasReserveWei } from "@/lib/tradeBalanceReserve";
+import { DOGE_LAUNCH_GAS_RESERVE_WEI, evmLaunchBalanceMessage, evmLaunchGasReserveWei } from "@/lib/tradeBalanceReserve";
+import { dogeosLiveGasReserveWei, formatDogeosReserve, type DogeosLaunchStrings } from "@/lib/dogeosGasReserve";
+import { useDogeosGasReserve } from "@/hooks/useDogeosGasReserve";
 import { CreatorFeeChoicePicker, type CreatorFeeChoice } from "@/components/create/CreatorFeeChoicePicker";
 import { parseNativeInput, readEvmNativeBalance } from "@/components/create/EvmGen6LaunchOptions";
 
@@ -23,11 +25,11 @@ function formatNative(wei: bigint, symbol: string) {
 }
 
 /**
- * The launch's gas reserve. DogeOS: ten times the foundation's DOGE buy reserve (the BNB and Robinhood launch reserves are
- * ten times their buy reserves too); a Bark launch is ~6.3M gas plus an L1 data fee in DOGE. Other chains unchanged.
+ * The launch's gas reserve. DogeOS: the 0.2 DOGE floor (plan t34; a Bark launch is ~6.3M gas plus an L1 data fee in DOGE,
+ * and the live amount is max(floor, estimate): useDogeosGasReserve / dogeosLiveGasReserveWei). Other chains unchanged.
  */
 export function gen8LaunchGasReserveWei(chainId: number): bigint {
-  if (isDogeosChainId(chainId)) return DOGE_BUY_GAS_RESERVE_WEI * 10n;
+  if (isDogeosChainId(chainId)) return DOGE_LAUNCH_GAS_RESERVE_WEI;
   return evmLaunchGasReserveWei(isRobinhoodChainId(chainId));
 }
 
@@ -36,23 +38,30 @@ function formatReserve(wei: bigint) {
   return n.toFixed(4).replace(/\.?0+$/, "") || "0";
 }
 
-/** evmLaunchBalanceMessage with the chain's own reserve (DogeOS names its DOGE reserve; other chains unchanged). */
-export function gen8LaunchBalanceMessage(maxFirstBuyWei: bigint, chainId: number): string {
+/**
+ * evmLaunchBalanceMessage with the chain's own reserve. DogeOS names the DOGE it keeps back for network fees: the live
+ * `reserveWei` when given, else the floor. Other chains unchanged (they ignore `reserveWei`).
+ */
+export function gen8LaunchBalanceMessage(maxFirstBuyWei: bigint, chainId: number, reserveWei?: bigint | null): string {
   const symbol = getNativeSymbol(chainId as any);
   if (!isDogeosChainId(chainId)) return evmLaunchBalanceMessage(maxFirstBuyWei, symbol, isRobinhoodChainId(chainId));
-  const reserve = formatReserve(gen8LaunchGasReserveWei(chainId));
-  if (maxFirstBuyWei <= 0n) return `Not enough ${symbol}. A launch needs about ${reserve} ${symbol} for gas.`;
-  return `Not enough ${symbol}. A launch keeps about ${reserve} ${symbol} for gas. Your first buy can be up to ${formatReserve(maxFirstBuyWei)} ${symbol}.`;
+  const reserve = formatDogeosReserve(reserveWei ?? gen8LaunchGasReserveWei(chainId));
+  if (maxFirstBuyWei <= 0n) return `Not enough ${symbol}. A launch needs about ${reserve} ${symbol} for network fees.`;
+  return `Not enough ${symbol}. A launch keeps about ${reserve} ${symbol} for network fees. Your first buy can be up to ${formatReserve(maxFirstBuyWei)} ${symbol}.`;
 }
 
-/** Before the wallet opens on a gen-8 launch: the first buy plus the gas reserve must fit in the balance. */
-export async function assertEvmGen8LaunchBalance(input: { chainId: number; account: string; valueWei: bigint }) {
+/**
+ * Before the wallet opens on a gen-8 launch: the first buy plus the gas reserve must fit in the balance. DogeOS: the live
+ * reserve, priced at the size of this launch's strings when given (plan t34); other chains unchanged.
+ */
+export async function assertEvmGen8LaunchBalance(input: { chainId: number; account: string; valueWei: bigint; launchStrings?: DogeosLaunchStrings | null }) {
   if (input.valueWei <= 0n) return;
   const balance = await readEvmNativeBalance(input.chainId, input.account);
   if (balance == null) return;
-  const reserve = gen8LaunchGasReserveWei(input.chainId);
+  const live = await dogeosLiveGasReserveWei({ chainId: input.chainId, kind: "launch", launchStrings: input.launchStrings });
+  const reserve = live ?? gen8LaunchGasReserveWei(input.chainId);
   if (input.valueWei + reserve > balance) {
-    throw new Error(gen8LaunchBalanceMessage(gen8MaxFirstBuyByBalance({ balanceWei: balance, gasReserveWei: reserve }), input.chainId));
+    throw new Error(gen8LaunchBalanceMessage(gen8MaxFirstBuyByBalance({ balanceWei: balance, gasReserveWei: reserve }), input.chainId, reserve));
   }
 }
 
@@ -98,7 +107,8 @@ export function EvmGen8LaunchOptions({
   onBlockedChange?: (blocked: boolean) => void;
 }) {
   const symbol = getNativeSymbol(chainId as any);
-  const gasReserveWei = gen8LaunchGasReserveWei(chainId);
+  // DogeOS: the live DOGE reserve (the floor until it is read); other chains: their fixed reserve, unchanged.
+  const gasReserveWei = useDogeosGasReserve(chainId, "launch") ?? gen8LaunchGasReserveWei(chainId);
   const [plan, setPlan] = useState<Gen8LaunchPlan | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
   const [balanceWei, setBalanceWei] = useState<bigint | null>(null);
@@ -159,7 +169,7 @@ export function EvmGen8LaunchOptions({
         if (fits < max) max = fits;
       }
       if (max <= 0n) {
-        toast.error(gen8LaunchBalanceMessage(0n, chainId));
+        toast.error(gen8LaunchBalanceMessage(0n, chainId, gasReserveWei));
         return;
       }
       const step = 10n ** 12n;
@@ -194,7 +204,7 @@ export function EvmGen8LaunchOptions({
           </Button>
         </div>
         {overBalance && maxByBalance != null ? (
-          <p className="mt-1 text-xs text-orange-300">{gen8LaunchBalanceMessage(maxByBalance, chainId)}</p>
+          <p className="mt-1 text-xs text-orange-300">{gen8LaunchBalanceMessage(maxByBalance, chainId, gasReserveWei)}</p>
         ) : balanceWei != null ? (
           <p className="mt-1 text-xs text-muted-foreground">
             Balance {formatNative(balanceWei, symbol)}. About {formatNative(gasReserveWei, symbol)} stays in your wallet for gas.

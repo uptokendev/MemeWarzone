@@ -485,10 +485,10 @@ test("token page entry, war-room row and trade panel keep 6281971 instead of def
   assert.doesNotMatch(panel, />ETH</);
 });
 
-test("buy gas reserve: 0.01 DOGE on 6281971 (L2 gas + L1 data fee); Robinhood and BNB unchanged", async () => {
+test("buy gas reserve: the 0.05 DOGE floor on 6281971 (L2 gas + L1 data fee; live amount: dogeosGasReserve.test.mjs); Robinhood and BNB unchanged", async () => {
   const { tradeBalanceReserve: r } = await fullHarness();
-  assert.equal(r.DOGE_BUY_GAS_RESERVE_WEI, 10n ** 16n);
-  assert.equal(r.evmBuyGasReserveWeiForChain(DOGEOS), 10n ** 16n);
+  assert.equal(r.DOGE_BUY_GAS_RESERVE_WEI, 5n * 10n ** 16n);
+  assert.equal(r.evmBuyGasReserveWeiForChain(DOGEOS), 5n * 10n ** 16n);
   assert.equal(r.evmBuyGasReserveWeiForChain(46630), 200_000_000_000_000n);
   assert.equal(r.evmBuyGasReserveWeiForChain(4663), 200_000_000_000_000n);
   assert.equal(r.evmBuyGasReserveWeiForChain(97), 500_000_000_000_000n);

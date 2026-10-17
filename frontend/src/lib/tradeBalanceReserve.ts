@@ -1,4 +1,5 @@
 import { isDogeosChainId, isRobinhoodChainId } from "@/lib/chainConfig";
+import { DOGE_BUY_RESERVE_FLOOR_WEI, DOGE_LAUNCH_RESERVE_FLOOR_WEI } from "../../shared/dogeosGasReserve.mjs";
 
 // What a buy must leave in the wallet, used by MAX / % presets and the check
 // before signing.
@@ -16,16 +17,17 @@ export const SOLANA_BUY_FEE_RESERVE_SOL = 0.005;
 export const BNB_BUY_GAS_RESERVE_WEI = 500_000_000_000_000n; // 0.0005 BNB
 export const ETH_BUY_GAS_RESERVE_WEI = 200_000_000_000_000n; // 0.0002 ETH (Robinhood chain)
 
-// DogeOS Chikyu (6281971): L2 gas is cheap, but every tx also pays an L1 data fee that is material in DOGE
-// (getL1Fee read ~0.00028 DOGE for a 4-byte payload; a buy is hundreds of bytes), so the Robinhood ETH amount
-// is far too small as a DOGE amount.
-export const DOGE_BUY_GAS_RESERVE_WEI = 10_000_000_000_000_000n; // 0.01 DOGE (DogeOS)
+// DogeOS Chikyu (6281971): L2 gas is cheap, but every tx also pays an L1 data fee that is material in DOGE and swings
+// with Ethereum's fees (t27 rehearsal: a 440-byte buy 0.039 DOGE on 2026-10-15, 0.90 DOGE a day earlier). These are
+// the floors (plan t34): a DogeOS buy or launch keeps back max(floor, live estimate), src/lib/dogeosGasReserve.ts.
+export const DOGE_BUY_GAS_RESERVE_WEI: bigint = DOGE_BUY_RESERVE_FLOOR_WEI; // 0.05 DOGE (DogeOS)
+export const DOGE_LAUNCH_GAS_RESERVE_WEI: bigint = DOGE_LAUNCH_RESERVE_FLOOR_WEI; // 0.2 DOGE (DogeOS)
 
 export function evmBuyGasReserveWei(isRobinhood: boolean): bigint {
   return isRobinhood ? ETH_BUY_GAS_RESERVE_WEI : BNB_BUY_GAS_RESERVE_WEI;
 }
 
-/** Chain-aware buy gas reserve: DOGE on DogeOS, else exactly evmBuyGasReserveWei(isRobinhood). */
+/** Chain-aware buy gas reserve: the DOGE floor on DogeOS (the live amount: dogeosGasReserve.ts), else exactly evmBuyGasReserveWei(isRobinhood). */
 export function evmBuyGasReserveWeiForChain(chainId?: number | null): bigint {
   if (isDogeosChainId(chainId)) return DOGE_BUY_GAS_RESERVE_WEI;
   return evmBuyGasReserveWei(isRobinhoodChainId(chainId));

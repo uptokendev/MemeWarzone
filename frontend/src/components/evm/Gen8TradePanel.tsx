@@ -7,6 +7,8 @@ import { useWallet } from "@/contexts/WalletContext";
 import { getNativeSymbol, isDogeosChainId, isRobinhoodChainId, type SupportedChainId } from "@/lib/chainConfig";
 import { getReadProvider } from "@/lib/readProvider";
 import { evmBuyGasReserveWei, evmBuyGasReserveWeiForChain } from "@/lib/tradeBalanceReserve";
+import { dogeosBuyReserveMessage, dogeosLiveGasReserveWei } from "@/lib/dogeosGasReserve";
+import { useDogeosGasReserve } from "@/hooks/useDogeosGasReserve";
 import { DBC_CREATOR_LOCK_COPY } from "../../../shared/dbcEconomics.mjs";
 import {
   GEN8_AUTO_SLIPPAGE,
@@ -251,8 +253,10 @@ export function Gen8TradePanel({
   // Safety read of the wallet balance and the sell cap. A new pool price refreshes them through spotKey.
   useEffect(() => setVisibleInterval(() => setBalanceTick((n) => n + 1), GEN8_COIN_POLL_MS), []);
 
-  // DogeOS pays gas in DOGE, with an L1 data fee on top (the foundation's DOGE reserve); other chains unchanged.
-  const gasReserve = dogeos ? evmBuyGasReserveWeiForChain(chainId) : evmBuyGasReserveWei(robinhood);
+  // DogeOS pays gas in DOGE, with an L1 data fee on top: the live DOGE reserve (plan t34; the floor until it is read).
+  // Other chains unchanged.
+  const dogeosGasReserve = useDogeosGasReserve(chainId, "buy");
+  const gasReserve = dogeos ? (dogeosGasReserve ?? evmBuyGasReserveWeiForChain(chainId)) : evmBuyGasReserveWei(robinhood);
   const overBalance = Boolean(
     balances && amountRaw && (side === "buy" ? amountRaw + gasReserve > balances.nativeRaw : amountRaw > balances.tokenRaw),
   );
@@ -275,12 +279,20 @@ export function Gen8TradePanel({
       return;
     }
     if (overBalance) {
-      toast.error(side === "buy" ? `Not enough ${native}. Keep about ${ethers.formatEther(gasReserve)} ${native} for gas.` : "Amount is above your balance.");
+      toast.error(side === "buy" ? (dogeos ? dogeosBuyReserveMessage(gasReserve, native) : `Not enough ${native}. Keep about ${ethers.formatEther(gasReserve)} ${native} for gas.`) : "Amount is above your balance.");
       return;
     }
     setBusy(true);
     setStep(null);
     try {
+      // DogeOS: the reserve read again just before signing (reused for 30 s), so a jump in the L1 fee is caught here.
+      if (dogeos && side === "buy" && balances) {
+        const fresh = (await dogeosLiveGasReserveWei({ chainId, kind: "buy", provider: readProvider })) ?? gasReserve;
+        if (amountRaw + fresh > balances.nativeRaw) {
+          toast.error(dogeosBuyReserveMessage(fresh, native));
+          return;
+        }
+      }
       if (!wallet.signer || !wallet.account) throw new Error(`Connect the ${native} wallet first.`);
       let signer = wallet.signer as any;
       if (Number(wallet.chainId) !== Number(chainId)) {
@@ -479,7 +491,7 @@ export function Gen8TradePanel({
         ) : null}
         {quoteError && !quote ? <p className="mt-2 text-center text-xs text-mw-down">{quoteError}</p> : null}
         {overSellCap ? <p className="mt-2 text-center text-xs text-mw-down">This sell is larger than the bonding range can take back. Sell a smaller amount.</p> : null}
-        {overBalance ? <p className="mt-2 text-center text-xs text-mw-down">{side === "buy" ? `Not enough ${native} (about ${ethers.formatEther(gasReserve)} ${native} stays for gas).` : "Amount is above your balance."}</p> : null}
+        {overBalance ? <p className="mt-2 text-center text-xs text-mw-down">{side === "buy" ? (dogeos ? dogeosBuyReserveMessage(gasReserve, native) : `Not enough ${native} (about ${ethers.formatEther(gasReserve)} ${native} stays for gas).`) : "Amount is above your balance."}</p> : null}
         {twoApprovals ? (
           <p className="mt-2 text-center text-xs text-mw-muted" data-gen8-first-sell="true">{GEN8_FIRST_SELL_NOTE}</p>
         ) : null}

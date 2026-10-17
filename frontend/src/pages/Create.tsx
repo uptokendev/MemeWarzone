@@ -1133,7 +1133,19 @@ const Create = () => {
       if (gen8Native && evmGen8Launcher) {
         // Before the wallet opens: the first buy priced on the launcher's plan now, and the balance with gas.
         await freshEvmGen8FirstBuyCheck({ chainId: Number(chainId), launcher: evmGen8Launcher, targetUsd: graduationTargetWei, valueWei: gen8FirstBuyWei });
-        await assertEvmGen8LaunchBalance({ chainId: Number(chainId), account: wallet.account || "", valueWei: gen8FirstBuyWei });
+        // DogeOS prices the launch at its own size (plan t34); the logo is not uploaded yet, so it is priced at the rehearsal's.
+        await assertEvmGen8LaunchBalance({
+          chainId: Number(chainId),
+          account: wallet.account || "",
+          valueWei: gen8FirstBuyWei,
+          launchStrings: {
+            name: formData.name,
+            symbol: normalizedTicker,
+            xAccount: normalizeSocialUrl(formData.twitter, "x"),
+            website: normalizeSocialUrl(formData.website, "website"),
+            extraLink: normalizeSocialUrl(formData.otherLink, "other"),
+          },
+        });
       }
       const logoUrl = await uploadLogo();
       let campaignAddress = "";

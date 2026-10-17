@@ -851,7 +851,20 @@ export default function PushDraftLive() {
       const deployAuth = await signDraftAction({ signer: wallet.signer, walletAddress: wallet.account, chainId, action: "deploy_draft", draftId: draft.id });
       const firstBuyValueWei = parseNativeInput(evmFirstBuyInput);
       await freshEvmGen8FirstBuyCheck({ chainId, launcher: gen8Launcher, targetUsd: graduationTargetWei, valueWei: firstBuyValueWei });
-      await assertEvmGen8LaunchBalance({ chainId, account: wallet.account, valueWei: firstBuyValueWei });
+      // DogeOS prices the launch at the size of the strings it sends (plan t34).
+      await assertEvmGen8LaunchBalance({
+        chainId,
+        account: wallet.account,
+        valueWei: firstBuyValueWei,
+        launchStrings: {
+          name: draft.name,
+          symbol: draft.ticker.toUpperCase(),
+          logoURI,
+          xAccount: draft.xUrl || bundle?.promotion?.xUrl || "",
+          website: draft.websiteUrl || bundle?.promotion?.websiteUrl || "",
+          extraLink: draft.otherUrl || "",
+        },
+      });
       const created = await createGen8Campaign({
         signer: wallet.signer as any,
         account: wallet.account,

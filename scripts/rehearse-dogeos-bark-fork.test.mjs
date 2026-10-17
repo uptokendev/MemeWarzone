@@ -215,3 +215,21 @@ test("validateReport: accepts a complete report; refuses a missing field, an emp
   assert.throws(() => validateReport({ ...sampleReport(), failedSteps: [{ name: "x", error: "boom" }] }), /failed step x/);
   assert.throws(() => validateReport({ ...sampleReport(), note: "0x" + "11".repeat(32) }), /32-byte hex/);
 });
+
+test("app reserves: the rehearsal reads the app's DogeOS floors and live estimate from the frontend module, never a copy (t34)", async () => {
+  const budget = await import("./lib/dogeosBarkBudget.mjs");
+  const app = await import("../frontend/shared/dogeosGasReserve.mjs");
+  for (const name of ["DOGE_BUY_RESERVE_FLOOR_WEI", "DOGE_LAUNCH_RESERVE_FLOOR_WEI", "DOGEOS_BUY_GAS_LIMIT", "DOGEOS_LAUNCH_GAS_LIMIT", "L1_MARGIN", "dogeosReserveFromFees", "l1MarginBytes", "paddedForL1"]) {
+    assert.equal(budget[name], app[name], name);
+  }
+  assert.equal(budget.DOGE_BUY_RESERVE_FLOOR_WEI, 5n * 10n ** 16n);
+  assert.equal(budget.DOGE_LAUNCH_RESERVE_FLOOR_WEI, 2n * 10n ** 17n);
+  const { readFileSync } = await import("node:fs");
+  const script = readFileSync(new URL("./rehearse-dogeos-bark-fork.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(script, /APP_(BUY|LAUNCH)_RESERVE_WEI/);
+  assert.doesNotMatch(script, /reserveWei: 10n \*\*/);
+  assert.match(script, /reserveWei: buyFloor/);
+  assert.match(script, /reserveWei: launchFloor/);
+  assert.match(script, /budget\.dogeosReserveFromFees\(\{ kind: "buy"/);
+  assert.match(script, /budget\.dogeosReserveFromFees\(\{ kind: "launch"/);
+});

@@ -14,12 +14,20 @@ export const BLOCK_GAS_LIMIT = 10_000_000n;
 export const LAUNCH_GAS_GATE = 7_000_000n;
 
 /**
- * Margin added to a transaction's raw bytes before getL1Fee (MINORS: "add margin to raw-tx bytes for L1 fee"). The
- * fork's raw transaction differs from the real one in nonce, gas limit, fee fields and signature, and a real launch
- * carries user-chosen strings (name, symbol, links) that may be longer than the rehearsal's: at least 64 bytes, or 5%
- * of the raw length when that is more.
+ * The L1-fee byte margin and padding (L1_MARGIN, l1MarginBytes, paddedForL1) and the app's DogeOS reserve rules (floors,
+ * the x1.5 live estimate) live in frontend/shared/dogeosGasReserve.mjs, so the rehearsal and the app use the same numbers
+ * (barkswap plan t34).
  */
-export const L1_MARGIN = Object.freeze({ minBytes: 64, pct: 5 });
+export {
+  DOGE_BUY_RESERVE_FLOOR_WEI,
+  DOGE_LAUNCH_RESERVE_FLOOR_WEI,
+  DOGEOS_BUY_GAS_LIMIT,
+  DOGEOS_LAUNCH_GAS_LIMIT,
+  L1_MARGIN,
+  dogeosReserveFromFees,
+  l1MarginBytes,
+  paddedForL1,
+} from "../../frontend/shared/dogeosGasReserve.mjs";
 
 /** Roles we fund (spec "Roles and keys (B9)"), in report order. */
 export const BUDGET_ROLES = Object.freeze(["deployer", "keeper", "operator", "oracleUpdater", "routeAuthority"]);
@@ -30,35 +38,6 @@ const ALL_ROLES = new Set([...BUDGET_ROLES, ...OTHER_ROLES]);
 function assertBig(name, v) {
   if (typeof v !== "bigint") throw new TypeError(`${name} must be a bigint`);
   if (v < 0n) throw new RangeError(`${name} is negative`);
-}
-
-/** Bytes of margin for a raw transaction of `len` bytes. */
-export function l1MarginBytes(len, margin = L1_MARGIN) {
-  if (!Number.isSafeInteger(len) || len < 0) throw new RangeError(`bad raw length ${len}`);
-  return Math.max(margin.minBytes, Math.ceil((len * margin.pct) / 100));
-}
-
-/**
- * `rawHex` with the margin appended. The filler is deterministic and incompressible-looking (xorshift bytes, never
- * zero): Chikyū's oracle prices by size and compressibility (a repeated byte is cheaper than random bytes of the same
- * length), so the filler must not be a cheap pattern.
- */
-export function paddedForL1(rawHex, margin = L1_MARGIN) {
-  if (typeof rawHex !== "string" || !/^0x(?:[0-9a-fA-F]{2})*$/.test(rawHex)) throw new TypeError("rawHex must be 0x-prefixed whole-byte hex");
-  const len = (rawHex.length - 2) / 2;
-  const extra = l1MarginBytes(len, margin);
-  let x = 0x9e3779b9 ^ len;
-  let out = "";
-  for (let i = 0; i < extra; i++) {
-    x ^= x << 13;
-    x >>>= 0;
-    x ^= x >>> 17;
-    x ^= x << 5;
-    x >>>= 0;
-    const b = (x & 0xff) || 0x5a;
-    out += b.toString(16).padStart(2, "0");
-  }
-  return rawHex + out;
 }
 
 /** One transaction's DOGE cost: L2 execution (gas used x the L2 gas price) plus the L1 data fee. */

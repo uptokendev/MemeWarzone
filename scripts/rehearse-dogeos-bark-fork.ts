@@ -78,9 +78,11 @@ const IERC20 = "@openzeppelin/contracts/token/ERC20/IERC20.sol:IERC20";
 /** The app's gas floors (frontend/src/lib/evmGen8Client.mjs BARK_LAUNCH_GAS_FLOOR / BARK_TRADE_GAS_FLOOR). */
 const APP_LAUNCH_GAS_FLOOR = 7_000_000n;
 const APP_TRADE_GAS_FLOOR = 1_000_000n;
-/** The app's DOGE reserves: DOGE_BUY_GAS_RESERVE_WEI (tradeBalanceReserve.ts) and 10x that for a launch (EvmGen8LaunchOptions.tsx). */
-const APP_BUY_RESERVE_WEI = 10n ** 16n;
-const APP_LAUNCH_RESERVE_WEI = 10n ** 17n;
+/**
+ * The app's DOGE reserves come from the budget module, which re-exports frontend/shared/dogeosGasReserve.mjs (plan t34):
+ * the floors (DOGE_BUY_RESERVE_FLOOR_WEI / DOGE_LAUNCH_RESERVE_FLOOR_WEI) and the live estimate the app keeps back,
+ * max(floor, (L1 fee + gas limit x price) x 1.5). No copy of the numbers here.
+ */
 /** Binance stand-in for the deploy's run-time prices (reproducible run; gas does not depend on them): DOGE $0.25, ETH $3000. */
 const PRICES: Record<string, string> = { DOGEUSDT: "0.25000000", ETHUSDT: "3000.00000000" };
 const DOGE_USD_ANSWER = 25_000_000n;
@@ -512,9 +514,19 @@ async function main() {
     for (const [src, key] of [["latest", "l1FeeWei"], ["forkBlock", "l1FeeWeiAtForkBlock"]] as const) {
       const wb = worst(buysOnly, key);
       const wl = worst(launches, key);
+      const buyFloor: bigint = budget.DOGE_BUY_RESERVE_FLOOR_WEI;
+      const launchFloor: bigint = budget.DOGE_LAUNCH_RESERVE_FLOOR_WEI;
+      // What the app keeps back at this oracle: its live estimate on the step's L1 fee (the app prices a payload of the
+      // same size), never below the floor.
+      const buyLive: bigint = budget.dogeosReserveFromFees({ kind: "buy", l1FeeWei: BigInt(wb[key]), gasLimit: budget.DOGEOS_BUY_GAS_LIMIT, gasPriceWei: l2Price });
+      const launchLive: bigint = budget.dogeosReserveFromFees({ kind: "launch", l1FeeWei: BigInt(wl[key]), gasLimit: budget.DOGEOS_LAUNCH_GAS_LIMIT, gasPriceWei: l2Price });
+      const buyIn = { gasUsed: maxGas(buysOnly), floor: APP_TRADE_GAS_FLOOR, l2GasPriceWei: l2Price, l1FeeWei: BigInt(wb[key]) };
+      const launchIn = { gasUsed: maxGas(launches), floor: APP_LAUNCH_GAS_FLOOR, l2GasPriceWei: l2Price, l1FeeWei: BigInt(wl[key]) };
       verdicts.reserves.push(
-        { ...budget.reserveVerdict({ name: `buy reserve 0.01 DOGE vs the dearest buy (${wb.name})`, reserveWei: APP_BUY_RESERVE_WEI, gasUsed: maxGas(buysOnly), floor: APP_TRADE_GAS_FLOOR, l2GasPriceWei: l2Price, l1FeeWei: BigInt(wb[key]) }), oracle: src },
-        { ...budget.reserveVerdict({ name: `launch reserve 0.1 DOGE vs the dearest launch (${wl.name})`, reserveWei: APP_LAUNCH_RESERVE_WEI, gasUsed: maxGas(launches), floor: APP_LAUNCH_GAS_FLOOR, l2GasPriceWei: l2Price, l1FeeWei: BigInt(wl[key]) }), oracle: src },
+        { ...budget.reserveVerdict({ name: `buy reserve floor ${budget.formatDoge(buyFloor)} DOGE vs the dearest buy (${wb.name})`, reserveWei: buyFloor, ...buyIn }), oracle: src },
+        { ...budget.reserveVerdict({ name: `launch reserve floor ${budget.formatDoge(launchFloor)} DOGE vs the dearest launch (${wl.name})`, reserveWei: launchFloor, ...launchIn }), oracle: src },
+        { ...budget.reserveVerdict({ name: `buy reserve live ${budget.formatDoge(buyLive)} DOGE vs the dearest buy (${wb.name})`, reserveWei: buyLive, ...buyIn }), oracle: src },
+        { ...budget.reserveVerdict({ name: `launch reserve live ${budget.formatDoge(launchLive)} DOGE vs the dearest launch (${wl.name})`, reserveWei: launchLive, ...launchIn }), oracle: src },
       );
     }
   }
