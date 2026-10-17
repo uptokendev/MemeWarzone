@@ -246,6 +246,14 @@ File inventory for every task (paths, line ranges, REMOVE/KEEP/ADAPT calls): `do
 - A fresh task reviewer reviews t27's script and report (they come after the t26 branch review).
 **Verify:** reviewer verdict "Approved"
 
+### Task 34: Live DOGE gas reserve for DogeOS buys and launches            [id: t34]
+**Depends-on:** [t27]
+**TDD:** required
+**Files:** `frontend/shared/dogeosGasReserve.mjs` (+ test), `frontend/src/lib/dogeosGasReserve.ts` (+ test), `frontend/src/hooks/useDogeosGasReserve.ts`, `frontend/src/lib/tradeBalanceReserve.ts`, `frontend/src/components/create/EvmGen8LaunchOptions.tsx`, `frontend/src/components/evm/Gen8TradePanel.tsx`, `frontend/src/pages/Create.tsx`, `frontend/src/pages/PushDraftLive.tsx`, `frontend/src/lib/dogeosLaunchPath.test.mjs`, `frontend/src/lib/graduatedEvmTradeRoute.test.mjs` (reviewed-commit entry), `scripts/lib/dogeosBarkBudget.mjs`, `scripts/rehearse-dogeos-bark-fork.ts` (+ test)
+- t27 report (`reports/dogeos/bark-fork-rehearsal.json`, t28 review: Important): the fixed reserves are too small, since the L1 data fee swings ~25× (buy 0.039 / launch 0.119 DOGE on 2026-10-15 vs 0.01 / 0.1 reserves; 0.90 / 2.74 at the 2026-10-14 oracle). Plan amendment 2026-10-17.
+- Founder decision A (2026-10-17): before a DogeOS buy or launch, keep back max(floor, (`getL1Fee`(representative raw tx + margin) + gasLimit × gasPrice) × 1.5), read on the chain's read provider and cached 30 s; floors 0.05 DOGE (buy) and 0.2 DOGE (launch), and the floor when the read fails. DogeOS only; BNB / Robinhood / Solana reserves unchanged. The rehearsal reads the same floors and rule (no hardcoded copy).
+**Verify:** `cd frontend && node --test shared/dogeosGasReserve.test.mjs src/lib/dogeosGasReserve.test.mjs src/lib/dogeosLaunchPath.test.mjs src/lib/barkswapSwap.test.mjs src/lib/evmGen7Wiring.test.mjs src/lib/evmGen6Wiring.test.mjs` → pass; `node --test scripts/rehearse-dogeos-bark-fork.test.mjs scripts/dogeos-chain-list-guard.test.mjs` → pass; `npx tsc --noEmit -p tsconfig.app.json` app error count stays 86
+
 ### Task 29: FOUNDER-GATED — deploy to Chikyū            [id: t29]
 **Depends-on:** [t28]
 **TDD:** waived (on-chain deploy)
@@ -261,7 +269,7 @@ File inventory for every task (paths, line ranges, REMOVE/KEEP/ADAPT calls): `do
 **Verify:** TEST API `/health` and the indexer health show 6281971 with the Bark launcher/plugin configured
 
 ### Task 31: FOUNDER-GATED — testnet canary            [id: t31]
-**Depends-on:** [t30]
+**Depends-on:** [t30, t34]
 **TDD:** waived (live testnet run)
 **Files:** `reports/dogeos/bark-canary.json`
 - Spec §5 Deployment 3. **Stop and ask the founder for an explicit go first.** One coin graduated by 5+ buyer wallets the founder funds; the gate-3 lifecycle on Chikyū; the TEST app shows it.

@@ -159,11 +159,13 @@ const LIVE_BASE = "cedff5be";
 const GAS_HEADROOM_PIN = "9fd750fb2";
 const TOKEN_PAGE_PIN = "296459392";
 /**
- * The reviewed DogeOS (6281971) commits per file (plan t12 / t13). Every line a file lost or gained since its pin must
- * be a line one of these commits itself removed or added in that file; anything else is an unreviewed edit and fails.
+ * The reviewed DogeOS (6281971) commits per file (plan t12 / t13; tradeBalanceReserve.ts also barkswap plan t34,
+ * 8586d465b: the DOGE buy reserve became the 0.05 DOGE floor of the live reserve, plus the 0.2 DOGE launch floor). Every
+ * line a file lost or gained since its pin must be a line one of these commits itself removed or added in that file;
+ * anything else is an unreviewed edit and fails.
  */
 const DOGEOS_REVIEWED = {
-  "lib/tradeBalanceReserve.ts": ["0d2eb7938"],
+  "lib/tradeBalanceReserve.ts": ["0d2eb7938", "8586d465b"],
   "components/postgrad/RobinhoodWarRoomTradePanel.tsx": ["50f618a50", "0d2eb7938"],
   "pages/TokenDetails.tsx": ["f0b60bc36", "054c6b63f", "79bdad1a6", "0d2eb7938"],
 };
@@ -321,7 +323,7 @@ test("bonding and direct-pool code is the starting commit's, untouched", (t) => 
   assert.equal(lf(src("lib/evmGasHeadroom.mjs")), baseFile("lib/evmGasHeadroom.mjs", GAS_HEADROOM_PIN), "lib/evmGasHeadroom.mjs");
   // Merged with build/evm-gen7 (release/evm-gen7-live): these three carry gen-7's own edits (the env-selected
   // RobinhoodV3NativeSwapAdapterV2, the gen-7 launch gas reserve) and are exactly gen-7's at the starting commit,
-  // except the reviewed DogeOS 0.01 DOGE buy reserve in tradeBalanceReserve.ts. The Robinhood V3 trade library is
+  // except the reviewed DogeOS DOGE buy / launch reserve floors in tradeBalanceReserve.ts. The Robinhood V3 trade library is
   // the starting commit's again: the MuchFi V3 trade branch (isV3TradeChainId, DogeOS-only env names, fee 10000)
   // was removed by plan t12 (spec section 4 "Removed (B8)"). No other line of either file may differ.
   for (const rel of ["lib/arenaImportedRobinhood.ts", "lib/robinhoodV3Trade.ts"]) {
