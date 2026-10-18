@@ -68,9 +68,9 @@ export function lockerAddressFor(chainId, env = process.env) {
 function rpcUrl(chainId, env) {
   const perChain = String(env[`ROBINHOOD_RPC_HTTP_${chainId}`] || env[`BSC_RPC_HTTP_${chainId}`] || env[`VITE_PUBLIC_RPC_${chainId}`] || "").trim();
   if (perChain) return perChain.split(",")[0].trim();
-  if (chainId === 4663) return String(env.ROBINHOOD_MAINNET_RPC_URL || "https://rpc.mainnet.chain.robinhood.com").trim();
+  if (chainId === 4663) return String(env.ROBINHOOD_MAINNET_RPC_URL || "").trim();
   if (chainId === 46630) return String(env.ROBINHOOD_TESTNET_RPC_URL || "https://rpc.testnet.chain.robinhood.com").trim();
-  if (chainId === 56) return String(env.BSC_RPC_HTTP || "https://bsc-dataseed.binance.org").trim();
+  if (chainId === 56) return String(env.BSC_RPC_HTTP || "").trim();
   return "";
 }
 

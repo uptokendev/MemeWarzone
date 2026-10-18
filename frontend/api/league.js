@@ -315,15 +315,16 @@ function getRpcUrl(chainId) {
   ).trim();
   if (perChain) return perChain.split(",")[0].trim();
   if (id === 4663) {
-    const rh = String(process.env.ROBINHOOD_MAINNET_RPC_URL || process.env.ROBINHOOD_MAINNET_RPC || "https://rpc.mainnet.chain.robinhood.com").trim();
+    const rh = String(process.env.ROBINHOOD_MAINNET_RPC_URL || process.env.ROBINHOOD_MAINNET_RPC || "").trim();
     if (rh) return rh;
   }
   if (id === 46630) {
     const rh = String(process.env.ROBINHOOD_TESTNET_RPC_URL || process.env.ROBINHOOD_TESTNET_RPC || "https://rpc.testnet.chain.robinhood.com").trim();
     if (rh) return rh;
   }
+  // Chain 97 must not read the unscoped BSC_RPC_HTTP name. That name is a chain-56 alias.
   const fallback = String(process.env.BSC_RPC_HTTP || "").trim();
-  if (fallback && (id === 56 || id === 97)) return fallback;
+  if (fallback && id === 56) return fallback;
   throw new Error(`Missing RPC env (BSC_RPC_HTTP_${id} or ROBINHOOD_RPC_HTTP_${id})`);
 }
 

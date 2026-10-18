@@ -19,13 +19,13 @@ test("Robinhood testnet server RPC candidates prefer managed/local env before pu
   assert.equal(urls.filter((url) => url === "https://rpc.testnet.chain.robinhood.com").length, 1);
 });
 
-test("Robinhood mainnet has a public fallback but no accidental BNB fallback", () => {
+test("Robinhood mainnet is skipped when its RPC env is empty", () => {
   delete process.env.ROBINHOOD_RPC_HTTP_4663;
   delete process.env.ROBINHOOD_MAINNET_RPC_URL;
+  delete process.env.ROBINHOOD_MAINNET_RPC;
   delete process.env.VITE_PUBLIC_RPC_4663;
   const urls = getRpcUrls(4663);
-  assert.deepEqual(urls, ["https://rpc.mainnet.chain.robinhood.com"]);
-  assert.equal(urls.some((url) => url.includes("binance.org")), false);
+  assert.deepEqual(urls, []);
 });
 
 process.on("exit", () => {

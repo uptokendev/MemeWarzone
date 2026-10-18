@@ -11,11 +11,11 @@ import { createLeagueFeedPublisher } from "./leagueFeed.js";
 import { candleUpsertPayload } from "./candlePublish.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
 import { refreshSolanaMarketStats } from "./solanaMarketStats.js";
+import { solanaConfiguredRpcUrls } from "./solanaRpcConfig.js";
 
 const SOLANA_CHAIN_ID = 101;
 const leagueFeed = createLeagueFeedPublisher({ pool, flushMs: 500 });
 leagueFeed.start();
-const DEFAULT_SOLANA_RPC = "https://api.mainnet-beta.solana.com";
 const METEORA_CP_AMM_PROGRAM_ID = new PublicKey("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
 const NATIVE_MINT = "So11111111111111111111111111111111111111112";
 const LAMPORTS_PER_SOL = 1_000_000_000;
@@ -69,16 +69,8 @@ type MeteoraSwap = {
 
 type PoolPair = { tokenA: string; tokenB: string; tokenDecimals: number; quoteMint: string; quoteDecimals: number };
 
-function parseRpcList(value: string): string[] {
-  return String(value || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
 function solanaRpcUrls(): string[] {
-  const configured = String(ENV.SOLANA_RPC_HTTP || process.env.SOLANA_RPC_URL || "").trim();
-  return parseRpcList(configured || DEFAULT_SOLANA_RPC);
+  return solanaConfiguredRpcUrls();
 }
 
 async function rpc<T>(method: string, params: unknown[]): Promise<T> {
@@ -964,6 +956,10 @@ let started = false;
 export function startMeteoraSwapIndexerLoop() {
   if (started) return;
   started = true;
+  if (!solanaRpcUrls().length) {
+    console.log("[meteora-indexer] skipped: no Solana RPC configured");
+    return;
+  }
   console.log("[meteora-indexer] enabled", {
     chainId: SOLANA_CHAIN_ID,
     programId: METEORA_CP_AMM_PROGRAM_ID.toBase58(),

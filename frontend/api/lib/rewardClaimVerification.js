@@ -28,7 +28,7 @@ function rpcUrlForChain(chainId) {
     : [process.env[`BSC_RPC_HTTP_${chain}`]];
   const perChain = String(perChainCandidates.find(Boolean) || "").trim();
   if (perChain) return perChain.split(",").map((value) => value.trim()).find(Boolean) || "";
-  if (chain === 56 || chain === 97) {
+  if (chain === 56) {
     const fallback = String(process.env.BSC_RPC_HTTP || "").trim();
     if (fallback) return fallback.split(",").map((value) => value.trim()).find(Boolean) || "";
   }

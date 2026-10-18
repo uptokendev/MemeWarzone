@@ -64,7 +64,7 @@ export function solanaImportSwapRpcUrls(env = process.env) {
       if (url && !/devnet|testnet/i.test(url) && !urls.includes(url)) urls.push(url);
     }
   }
-  urls.push("https://api.mainnet-beta.solana.com");
+  if (urls.length) urls.push("https://api.mainnet-beta.solana.com");
   return [...new Set(urls)];
 }
 

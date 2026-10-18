@@ -187,7 +187,7 @@ test("the first pass stops at the item cap and at the call budget; older chunks 
 
 test("rpc urls come from the same env names as the import scanner", () => {
   assert.equal(evmImportRpcUrl(56, { BSC_RPC_URL: "https://x" }), "https://x");
-  assert.equal(evmImportRpcUrl(4663, {}), "https://rpc.mainnet.chain.robinhood.com");
+  assert.equal(evmImportRpcUrl(4663, {}), "");
   assert.equal(evmImportRpcUrl(1, {}), "");
 });
 

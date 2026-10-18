@@ -152,7 +152,7 @@ function solanaRpcUrlFor(item, env = process.env) {
   if (item.solanaCluster === "devnet") {
     return String(env.SOLANA_DEVNET_RPC_URL || (runtime === "devnet" ? env.SOLANA_RPC_URL : "") || "https://api.devnet.solana.com").trim();
   }
-  return String(env.SOLANA_MAINNET_RPC_URL || (runtime !== "devnet" ? env.SOLANA_RPC_URL : "") || "https://api.mainnet-beta.solana.com").trim();
+  return String(env.SOLANA_MAINNET_RPC_URL || (runtime !== "devnet" ? env.SOLANA_RPC_URL : "") || "").trim();
 }
 
 async function solanaRpc(url, method, params, fetchImpl = fetch) {
@@ -289,6 +289,7 @@ export function token2022BindingRisks(data) {
 async function solanaMintSource(item, { fetchImpl = fetch } = {}) {
   if (item.identityKind === "NATIVE") return { exists: true, native: true, decimals: 9, tokenProgram: "native" };
   const url = solanaRpcUrlFor(item);
+  if (!url) return { skipped: true, reason: "no-solana-rpc" };
   const result = await solanaRpc(url, "getAccountInfo", [item.contractAddressOrMint, { encoding: "base64", commitment: "confirmed" }], fetchImpl);
   const encoded = result?.value?.data?.[0];
   if (!encoded) return { exists: false };

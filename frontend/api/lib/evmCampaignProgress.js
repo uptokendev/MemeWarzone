@@ -1,6 +1,7 @@
 import { ethers } from "ethers";
 import { gen8Progress } from "../../shared/evmGen8.mjs";
 import { gen8ConfigFor } from "./evmGen8Config.js";
+import { getRpcUrl } from "./getServerReadProvider.js";
 
 /**
  * BNB / Robinhood bonding progress for the campaign list, exactly as Token Details computes it
@@ -19,20 +20,16 @@ const CAMPAIGN_ABI = [
 ];
 
 function rpcUrl(chainId) {
-  const perChain = String(process.env[`ROBINHOOD_RPC_HTTP_${chainId}`] || process.env[`BSC_RPC_HTTP_${chainId}`] || process.env[`VITE_PUBLIC_RPC_${chainId}`] || "").trim();
-  if (perChain) return perChain.split(",")[0].trim();
-  if (chainId === 4663) return String(process.env.ROBINHOOD_MAINNET_RPC_URL || "https://rpc.mainnet.chain.robinhood.com").trim();
-  if (chainId === 46630) return String(process.env.ROBINHOOD_TESTNET_RPC_URL || "https://rpc.testnet.chain.robinhood.com").trim();
-  if (chainId === 56) return String(process.env.BSC_RPC_HTTP || "https://bsc-dataseed.binance.org").trim();
-  if (chainId === 97) return String(process.env.BSC_TESTNET_RPC_HTTP || "https://data-seed-prebsc-1-s1.binance.org:8545").trim();
-  return "";
+  return getRpcUrl(chainId);
 }
 
 const providers = new Map();
 function providerFor(chainId) {
+  const url = rpcUrl(chainId);
+  if (!url) return null;
   if (!providers.has(chainId)) {
     const network = ethers.Network.from(chainId);
-    providers.set(chainId, new ethers.JsonRpcProvider(rpcUrl(chainId), network, { staticNetwork: network }));
+    providers.set(chainId, new ethers.JsonRpcProvider(url, network, { staticNetwork: network }));
   }
   return providers.get(chainId);
 }
@@ -41,6 +38,7 @@ const pctOf = (num, den) => (den > 0n ? Number((num * 1_000_000n) / den) / 10_00
 
 async function progressFor(chainId, address) {
   const provider = providerFor(chainId);
+  if (!provider) return null;
   const campaign = new ethers.Contract(address, CAMPAIGN_ABI, provider);
   const robinhood = chainId === 4663 || chainId === 46630;
   const [sold, curveSupply, balance, nativeTarget] = await Promise.all([
@@ -79,8 +77,9 @@ export async function gen8ItemProgress(item, { readLens = null, env = process.en
   const cfg = gen8ConfigFor(item.chainId, env);
   if (!cfg?.lens) return null;
   const read = readLens || (async (chainId, lens, poolId) => {
-    if (!rpcUrl(Number(chainId))) return null;
-    const c = new ethers.Contract(lens, LENS_PROGRESS_ABI, providerFor(Number(chainId)));
+    const provider = providerFor(Number(chainId));
+    if (!provider) return null;
+    const c = new ethers.Contract(lens, LENS_PROGRESS_ABI, provider);
     return c.progress(poolId);
   });
   try {

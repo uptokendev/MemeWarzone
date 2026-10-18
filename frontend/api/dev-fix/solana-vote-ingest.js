@@ -285,7 +285,6 @@ function solanaRpcUrls() {
     process.env.SOLANA_RPC_URL,
     process.env.SOLANA_RPC_HTTP,
     process.env.VITE_SOLANA_RPC,
-    "https://api.mainnet-beta.solana.com",
   ]
     .map((value) => String(value || "").trim())
     .filter(Boolean);
