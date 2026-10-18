@@ -81,6 +81,40 @@ test("chain 46630 uses Robinhood Chain Testnet, ETH, and no BNB or Topaz copy", 
   assert.doesNotMatch(copy, /BNB Smart Chain|BNB Testnet|BNB-compatible wallet|BNB launch route|BNB launch services|Topaz|WBNB/);
 });
 
+test("a gen-8 launcher is ready without the gen-6 factory and does not say Topaz", () => {
+  const result = buildEvmLaunchpadSafetyStatus({
+    chainId: 97,
+    factoryAddress: "",
+    hasSigner: true,
+    hasAccount: true,
+    walletChainId: 97,
+    contractReadiness: readiness(97, { configured: false }),
+    gen8: { active: true, ready: true, message: "" },
+  });
+  const copy = allCopy(result);
+  assert.equal(result.protocolStatus, "ready");
+  assert.match(copy, /Uniswap graduation/);
+  assert.match(copy, /same Uniswap pool/);
+  assert.doesNotMatch(copy, /Topaz/);
+});
+
+test("a gen-8 launcher that is not ready names the missing env", () => {
+  const message = "BNB Testnet launch contracts are incomplete. Missing VITE_EVM_GEN8_HOOK_97.";
+  const result = buildEvmLaunchpadSafetyStatus({
+    chainId: 97,
+    factoryAddress: "",
+    hasSigner: true,
+    hasAccount: true,
+    walletChainId: 97,
+    contractReadiness: readiness(97, { configured: false }),
+    gen8: { active: true, ready: false, message },
+  });
+  const copy = allCopy(result);
+  assert.equal(result.protocolStatus, "unavailable");
+  assert.match(copy, /VITE_EVM_GEN8_HOOK_97/);
+  assert.doesNotMatch(copy, /Topaz/);
+});
+
 test("Robinhood missing contracts fail closed without BNB fallback", () => {
   for (const chainId of [4663, 46630]) {
     const result = status(chainId, false);

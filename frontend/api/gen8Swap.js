@@ -46,6 +46,7 @@ import {
   permitFromJson,
 } from "../shared/evmGen8Swap.mjs";
 import { gen8ConfigFor } from "./lib/evmGen8Config.js";
+import { gen8LaunchReadiness, gen8TradeGap } from "../shared/gen8LaunchReadiness.mjs";
 import { evmFingerprint } from "./lib/importSwapFingerprint.js";
 
 const HOOK_ABI = [
@@ -86,10 +87,19 @@ async function defaultPartnerDeps() {
 /** The chain's gen-8 swap setup for the API: hook, lens, router (+ layout), quoter. Throws when missing. */
 export function gen8SwapSetup(chainId, env = process.env) {
   const cfg = gen8ConfigFor(chainId, env);
-  if (!cfg) throw new Gen8SwapError(400, "GEN8_NOT_CONFIGURED", "Generation 8 coins are not set up on this chain.");
+  if (!cfg) {
+    const gap = gen8LaunchReadiness(chainId, env, { vite: false, scope: "create" });
+    throw new Gen8SwapError(400, "GEN8_NOT_CONFIGURED", gap.message || "Generation 8 coins are not set up on this chain.");
+  }
   const router = gen8RouterFor(chainId, env);
   const quoter = gen8QuoterFor(chainId, env);
-  if (!router || !quoter) throw new Gen8SwapError(503, "GEN8_ROUTER_NOT_CONFIGURED", "No Uniswap router or quoter is configured for this chain.");
+  if (!router || !quoter) {
+    const gap = gen8TradeGap(chainId, env, { vite: false });
+    const names = gap.missing.filter((item) => !String(item.env).includes("HOOK")).map((item) => item.env);
+    const listed = (names.length ? names : gap.missing.map((item) => item.env)).join(", ");
+    const detail = listed ? ` Missing ${listed}.` : "";
+    throw new Gen8SwapError(503, "GEN8_ROUTER_NOT_CONFIGURED", `No Uniswap router or quoter is configured for this chain.${detail}`);
+  }
   return { ...cfg, router, quoter };
 }
 

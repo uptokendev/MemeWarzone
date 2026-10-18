@@ -27,6 +27,7 @@ import {
   readGen8SellSetup,
 } from "@/lib/evmGen8Client.mjs";
 import { gen8FormatAmount, gen8FormatPriceImpact, gen8UsesSizedSlippage } from "../../../shared/evmGen8Swap.mjs";
+import { gen8TradeGap } from "../../../shared/gen8LaunchReadiness.mjs";
 import {
   BSC_PROTECTED_RPC_DEFAULT,
   addProtectedBscRpc,
@@ -95,14 +96,16 @@ export function Gen8TradePanel({
   const robinhood = isRobinhoodChainId(chainId);
   const cfg = useMemo(() => gen8AppConfig(chainId), [chainId]);
   const setupError = useMemo(() => {
+    const gap = () => gen8TradeGap(chainId, import.meta.env, { vite: true });
+    if (!cfg?.hook) return gap().message || "Trading for this coin is not set up in this app yet.";
     try {
       assertGen8HookMatches(cfg, state.gen8?.hook);
-      if (!cfg?.router || !cfg?.quoter) return "Trading for this coin is not set up on this chain yet.";
+      if (!cfg.router || !cfg.quoter) return gap().message || "Trading for this coin is not set up on this chain yet.";
       return null;
     } catch (error) {
       return String((error as Error)?.message || "Trading for this coin is not set up in this app yet.");
     }
-  }, [cfg, state.gen8?.hook]);
+  }, [cfg, chainId, state.gen8?.hook]);
   const token = state.token;
   const account = wallet.account ? String(wallet.account) : null;
   const viewerIsCreator = Boolean(account && state.creator && account.toLowerCase() === String(state.creator).toLowerCase());

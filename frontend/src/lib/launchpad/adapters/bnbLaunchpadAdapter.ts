@@ -13,6 +13,7 @@ export function getEvmLaunchpadSafetyStatus(params: {
   hasAccount: boolean;
   walletChainId?: number;
   contractReadiness?: BnbContractReadiness;
+  gen8?: { active: boolean; ready: boolean; message: string } | null;
 }): LaunchpadSafetyStatus {
   const readiness = params.contractReadiness ?? getBnbContractReadiness(params.chainId);
   return buildEvmLaunchpadSafetyStatus({

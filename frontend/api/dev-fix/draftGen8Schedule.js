@@ -12,6 +12,7 @@
 import { assertScheduleWindow, parseUnixSeconds } from "../../shared/dbcSchedule.mjs";
 import { GEN8_TARGET_DEFAULT_USD, isGen8TargetAllowed } from "../../shared/evmGen8.mjs";
 import { gen8ConfigFor } from "../lib/evmGen8Config.js";
+import { gen8LaunchReadiness } from "../../shared/gen8LaunchReadiness.mjs";
 import { strictEvmWallet } from "../lib/evmGen8StrictWallet.js";
 import { refuseCreateIfCanaryBlocked } from "../lib/createCanary.js";
 import { json } from "../../server/http.js";
@@ -44,7 +45,10 @@ export class Gen8ScheduleError extends Error {
  */
 export async function scheduleGen8Draft({ body, row, db, env = process.env, nowSec = Math.floor(Date.now() / 1000), notify = null }) {
   const chainId = Number(row.chain_id);
-  if (!gen8ConfigFor(chainId, env)) throw new Gen8ScheduleError(400, "GEN8_NOT_CONFIGURED", "Generation 8 launches are not configured on this chain.");
+  if (!gen8ConfigFor(chainId, env)) {
+    const gap = gen8LaunchReadiness(chainId, env, { vite: false, scope: "create" });
+    throw new Gen8ScheduleError(400, "GEN8_NOT_CONFIGURED", gap.message || "Generation 8 launches are not configured on this chain.");
+  }
   if (String(row.campaign_address || "").trim()) throw new Gen8ScheduleError(409, "DRAFT_ALREADY_DEPLOYED", "This draft is already live.");
   if (!["promotion_published", "ready_to_launch", "scheduled"].includes(String(row.status || ""))) {
     throw new Gen8ScheduleError(409, "DRAFT_NOT_READY", "Publish the promotion page before setting a launch time.");

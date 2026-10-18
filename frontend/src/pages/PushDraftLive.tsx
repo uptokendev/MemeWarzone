@@ -71,7 +71,8 @@ import { submitDbcCreateTransaction } from "@/lib/dbcCreateSubmit";
 import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
 import { isScheduleLocked } from "../../shared/dbcSchedule.mjs";
 import { EvmGen8LaunchOptions, assertEvmGen8LaunchBalance, freshEvmGen8FirstBuyCheck } from "@/components/create/EvmGen8LaunchOptions";
-import { GEN8_DEFAULT_GRADUATION_TARGET_WEI, gen8GraduationTiers, gen8LauncherFor } from "@/lib/evmGen8Client.mjs";
+import { GEN8_DEFAULT_GRADUATION_TARGET_WEI, gen8GraduationTiers } from "@/lib/evmGen8Client.mjs";
+import { gen8LaunchReadiness } from "../../shared/gen8LaunchReadiness.mjs";
 import { createGen8Campaign } from "@/lib/evmGen8Create";
 
 const DRAFT_PUSH_LIVE_ENABLED = ["1", "true", "yes", "on"].includes(
@@ -301,8 +302,12 @@ export default function PushDraftLive() {
   // Generation 8 (founder 2026-10-12): an EVM draft launches on the chain's gen-8 launcher once
   // VITE_EVM_GEN8_LAUNCHER_<chainId> is set. The launcher has no trading-open time, so a timed launch keeps the
   // time on the draft (nothing on chain) and the creator launches at or after it, as Solana DBC drafts do.
-  const gen8Launcher: string | null =
-    draft && !draftIsSolana && String((draft as { launchType?: string }).launchType || "") !== "dbc" ? gen8LauncherFor(Number(draft.chainId)) : null;
+  const gen8Launch = useMemo(() => {
+    if (!draft || draftIsSolana || String((draft as { launchType?: string }).launchType || "") === "dbc") return null;
+    return gen8LaunchReadiness(Number(draft.chainId), import.meta.env, { vite: true, scope: "launch" });
+  }, [draft, draftIsSolana]);
+  const gen8Launcher: string | null = gen8Launch?.launcher || null;
+  const gen8Active = Boolean(gen8Launch?.active);
   const gen8Draft = Boolean(gen8Launcher);
   const gen8Tiers = useMemo(
     () => (gen8Draft && draft ? gen8GraduationTiers(Number(draft.chainId), { testTierEnabled: isTestGraduationTierEnabled(Number(draft.chainId)) }) : null),
@@ -892,7 +897,10 @@ export default function PushDraftLive() {
     if (!DRAFT_PUSH_LIVE_ENABLED) return toast.error("Launching is temporarily unavailable. Your draft remains saved. Please try again later.");
     if (isDbcLaunchEnabled() && String((draft as any).launchType || "") === "dbc") return deployDbc();
     if (draftIsSolana) return deploySolanaV4();
-    if (gen8Draft) return deployGen8();
+    if (gen8Active) {
+      if (!gen8Launch?.ready) return toast.error(gen8Launch?.message || "Generation 8 launch contracts are incomplete.");
+      return deployGen8();
+    }
     if (!wallet.account || !wallet.signer) return toast.error("Connect the draft owner wallet first.");
     if (!ownerConnected) return toast.error("Only the draft owner wallet can deploy this draft.");
     if (Number(wallet.chainId) !== Number(draft.chainId)) return toast.error(`Switch your wallet to ${chainLabel}.`);
@@ -1063,8 +1071,8 @@ export default function PushDraftLive() {
   const dbcDue = dbcDraft && Boolean(draft.scheduledLaunchAt) && !dbcLocked;
   // A first buy the launch would refuse (over 70%) or could not pay for also blocks the button.
   const dbcFirstBuyBlocked = Boolean(dbcDraft && (dbcFirstBuyQuote?.exceedsCap || dbcFirstBuyOverBalance));
-  const blocked = gen8Draft
-    ? submitting || !DRAFT_PUSH_LIVE_ENABLED || !canPushLive(draft.status, { dbc: true }) || evmGen8FirstBuyBlocked
+  const blocked = gen8Active
+    ? submitting || !DRAFT_PUSH_LIVE_ENABLED || !gen8Launch?.ready || !canPushLive(draft.status, { dbc: true }) || evmGen8FirstBuyBlocked
     : submitting || !DRAFT_PUSH_LIVE_ENABLED || !canPushLive(draft.status, { dbc: dbcDraft, due: dbcDue }) || (draftIsSolana ? !ownerConnected : false) || (dbcDraft && mode === "now" && dbcLocked) || dbcFirstBuyBlocked || (evmGen7 && !dbcDraft && evmGen7FirstBuyBlocked);
   const timerDraft = dbcDraft;
 
@@ -1241,7 +1249,7 @@ export default function PushDraftLive() {
           </div>
         ) : null}
 
-        {evmGen6 && !dbcDraft && !gen8Draft ? (
+        {evmGen6 && !dbcDraft && !gen8Active ? (
           <div className="mt-4">
             <EvmGen6LaunchOptions
               chainId={Number(draft.chainId)}
@@ -1270,11 +1278,12 @@ export default function PushDraftLive() {
           <p className="mt-4 text-sm text-mw-muted">{dbcDraft ? "Your wallet confirms one Solana transaction when you launch. The coin trades from that moment." : "Your wallet will confirm the Solana launch transaction. Trading becomes available according to the launch time you selected."}</p>
         ) : null}
         {!DRAFT_PUSH_LIVE_ENABLED ? <p className="mt-4 text-sm text-mw-accent-soft">Draft deployment is temporarily unavailable. Your draft remains saved.</p> : null}
+        {gen8Active && !gen8Launch?.ready ? <p className="mt-4 text-sm text-mw-accent-soft">{gen8Launch?.message}</p> : null}
 
         <Button onClick={deploy} disabled={blocked} className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-5 h-auto min-h-[54px] w-full whitespace-normal py-3 text-center text-[17px]">
           {submitting
             ? "Confirming Deployment..."
-            : gen8Draft
+            : gen8Active
                   ? `Launch ${deployTierLabel} coin now`
             : dbcDraft && mode === "scheduled"
               ? "Set launch time"
