@@ -39,6 +39,34 @@ test("refusals", async () => {
   await code({ db: fakeDb(false) }, "DRAFT_ALREADY_DEPLOYED");
 });
 
+test("$150 is stored on the gen-8 testnets and refused on mainnet", async () => {
+  const target = (150n * 10n ** 18n).toString();
+  const env = {
+    ...ENV,
+    EVM_GEN8_LAUNCHER_97: ENV.EVM_GEN8_LAUNCHER_56,
+    EVM_GEN8_HOOK_97: ENV.EVM_GEN8_HOOK_56,
+    EVM_GEN8_POOL_MANAGER_97: ENV.EVM_GEN8_LAUNCHER_56,
+    EVM_GEN8_LAUNCHER_46630: ENV.EVM_GEN8_LAUNCHER_56,
+    EVM_GEN8_HOOK_46630: ENV.EVM_GEN8_HOOK_56,
+    EVM_GEN8_POOL_MANAGER_46630: ENV.EVM_GEN8_LAUNCHER_56,
+    EVM_GEN8_LAUNCHER_4663: ENV.EVM_GEN8_LAUNCHER_56,
+    EVM_GEN8_HOOK_4663: ENV.EVM_GEN8_HOOK_56,
+  };
+  const body = { scheduledLaunchAt: NOW + 3600, graduationTargetWei: target };
+  for (const chainId of [97, 46630]) {
+    const db = fakeDb();
+    await scheduleGen8Draft({ body, row: row({ chain_id: chainId }), db, env, nowSec: NOW });
+    assert.equal(db.calls[0].params[2], target, String(chainId));
+  }
+  for (const chainId of [56, 4663]) {
+    await assert.rejects(
+      scheduleGen8Draft({ body, row: row({ chain_id: chainId }), db: fakeDb(), env, nowSec: NOW }),
+      (error) => error instanceof Gen8ScheduleError && error.code === "GEN8_TARGET_UNSUPPORTED",
+      String(chainId),
+    );
+  }
+});
+
 test("audit B-02 / F7: the gen-8 schedule refuses loose wallet forms and non-canary creators", async () => {
   const { refuseGen8ScheduleForCanary } = await import("./draftGen8Schedule.js");
   const CANARY = "0x9999999999999999999999999999999999999999";

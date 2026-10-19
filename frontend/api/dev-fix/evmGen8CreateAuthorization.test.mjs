@@ -48,6 +48,7 @@ test("request parsing: targets, fee choice, first buy, metadata hash", () => {
   err(() => parseGen8CreateRequest({ campaignRequest: request({ graduationTarget: (15_000n * 10n ** 18n).toString() }) }, 97, baseEnv), "GEN8_TARGET_UNSUPPORTED");
   err(() => parseGen8CreateRequest({ campaignRequest: request({ graduationTarget: GEN8_TARGET_TEST_USD.toString() }) }, 97, baseEnv), "GEN8_TARGET_UNSUPPORTED");
   err(() => parseGen8CreateRequest({ campaignRequest: request({ graduationTarget: GEN8_TARGET_TEST_USD.toString() }) }, 56, { ...baseEnv, ENABLE_TEST_GRADUATION_THRESHOLD: "1" }), "GEN8_TARGET_UNSUPPORTED");
+  err(() => parseGen8CreateRequest({ campaignRequest: request({ graduationTarget: GEN8_TARGET_TEST_USD.toString() }) }, 4663, { ...baseEnv, ENABLE_TEST_GRADUATION_THRESHOLD: "1" }), "GEN8_TARGET_UNSUPPORTED");
   assert.equal(parseGen8CreateRequest({ campaignRequest: request({ graduationTarget: GEN8_TARGET_TEST_USD.toString() }) }, 97, { ...baseEnv, ENABLE_TEST_GRADUATION_THRESHOLD: "1" }).fields.targetUsd, GEN8_TARGET_TEST_USD);
   err(() => parseGen8CreateRequest({ campaignRequest: request({ feeChoice: "split" }) }, 97, baseEnv), "GEN8_FEE_CHOICE_INVALID");
   err(() => parseGen8CreateRequest({ campaignRequest: request({ feeChoice: "burn" }) }, 97, baseEnv), "GEN8_FEE_CHOICE_INVALID");
