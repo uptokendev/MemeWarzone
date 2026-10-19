@@ -1,7 +1,9 @@
 /**
  * The gen-8 amount field is a whole-coin or whole-native decimal. The wei of that string
  * is 18 decimals and nothing else. A sell typed in native is solved into coins, then the
- * same exact-input sell sends those coins. The field text is never a second scale of itself.
+ * same exact-input sell sends those coins. A buy typed in coins is solved into native,
+ * then the same exact-input buy sends that native. The field text is never a second scale
+ * of itself.
  */
 
 export function gen8TypedAmountWei(text, decimals = 18) {
@@ -62,6 +64,23 @@ export function gen8SpotSellCoins({ targetNativeWei, nativePerCoinWei, feeBps = 
   if (gross == null || price <= 0n) return null;
   const coins = (gross * 10n ** 18n + price - 1n) / price;
   return coins > 0n ? coins : null;
+}
+
+/**
+ * First native guess for an exact-input buy that should receive `targetCoinWei`.
+ * The hook takes the fee out of the native in: curve = g * 10000 / (10000 + bps).
+ * `nativePerCoinWei` is native wei per 1e18 coin units. The quote then corrects this.
+ */
+export function gen8SpotBuyNative({ targetCoinWei, nativePerCoinWei, feeBps = 0 }) {
+  const coins = BigInt(targetCoinWei);
+  const price = BigInt(nativePerCoinWei);
+  const bps = BigInt(feeBps);
+  if (coins <= 0n || price <= 0n || bps < 0n || bps >= 10_000n) return null;
+  const curve = (coins * price + 10n ** 18n - 1n) / 10n ** 18n;
+  if (curve <= 0n) return null;
+  if (bps === 0n) return curve;
+  const gross = (curve * (10_000n + bps) + 10_000n - 1n) / 10_000n;
+  return gross > 0n ? gross : null;
 }
 
 /** Next coin guess after one exact-input quote. Null when the quote cannot be scaled. */

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
-import { gen8FormatAmountField, gen8MaxCoinWei, gen8ScaleSellCoins, gen8SpotSellCoins, gen8TypedAmountWei } from "./gen8TradeAmount.mjs";
+import { gen8BuyFeeSplit } from "./evmGen8Swap.mjs";
+import { gen8FormatAmountField, gen8MaxCoinWei, gen8ScaleSellCoins, gen8SpotBuyNative, gen8SpotSellCoins, gen8TypedAmountWei } from "./gen8TradeAmount.mjs";
 
 const SOLD = 2_000_000_000_000_000n;
 const BOUGHT = 9_656_964_904_134_925_090_398_129n;
@@ -33,9 +34,13 @@ test("0.002 coins is exactly 2e15 wei, and MAX sends the wei written in the fiel
   assert.match(panel, /gen8MaxCoinWei\(balances\.tokenRaw, maxSellable\)/);
   assert.match(panel, /gen8FormatAmountField\(cap, 18\)/);
   assert.match(panel, /gen8SpotSellCoins\(/);
+  assert.match(panel, /gen8SpotBuyNative\(/);
   assert.match(panel, /gen8ScaleSellCoins\(/);
   assert.match(panel, /amountIn: tradeAmountIn/);
   assert.match(panel, /data-gen8-sell-coins/);
+  assert.match(panel, /data-gen8-buy-native/);
+  assert.match(panel, /aria-label="Amount unit"/);
+  assert.doesNotMatch(panel, /side === "sell" \? \(\s*<span className="flex shrink-0 gap-1"/);
   assert.doesNotMatch(panel, /amountIn: amountRaw/);
   assert.doesNotMatch(panel, /parseUnitsSafe/);
   assert.doesNotMatch(panel, /formatUnits\(cap/);
@@ -55,4 +60,28 @@ test("0.002 BNB at the YCC spot is millions of coins, not 0.002 coins", () => {
   assert.equal(gen8ScaleSellCoins({ coinIn: 2_000n, quotedOut: 1_000n, targetOut: 1_000n }), 2_000n);
   assert.equal(gen8ScaleSellCoins({ coinIn: 2_000n, quotedOut: 0n, targetOut: 1_000n }), null);
   assert.equal(gen8SpotSellCoins({ targetNativeWei: 0n, nativePerCoinWei: priceWei, feeBps: 100 }), null);
+});
+
+test("0.002 coins on a buy is the native spent, not 0.002 BNB", () => {
+  const coins = 2_000_000_000_000_000n;
+  const priceWei = 455_183_624n;
+  const native = gen8SpotBuyNative({ targetCoinWei: coins, nativePerCoinWei: priceWei, feeBps: 100 });
+  assert.equal(native, 919_472n);
+  assert.notEqual(native, coins);
+  const spot = (coins * priceWei + 10n ** 18n - 1n) / 10n ** 18n;
+  const split = gen8BuyFeeSplit(native, 100);
+  assert.ok(split.curveWei >= spot);
+  assert.ok(split.feeWei > 0n);
+  assert.equal(split.curveWei + split.feeWei, native);
+  const one = gen8SpotBuyNative({ targetCoinWei: 10n ** 18n, nativePerCoinWei: priceWei, feeBps: 100 });
+  assert.ok(one != null && one > priceWei);
+  const oneSplit = gen8BuyFeeSplit(one, 100);
+  assert.ok(oneSplit.curveWei >= priceWei);
+  const quotedCoins = (oneSplit.curveWei * 10n ** 18n) / priceWei;
+  const scaled = gen8ScaleSellCoins({ coinIn: one, quotedOut: quotedCoins, targetOut: 10n ** 18n });
+  assert.ok(scaled != null && scaled > 0n);
+  assert.equal(gen8SpotBuyNative({ targetCoinWei: 0n, nativePerCoinWei: priceWei, feeBps: 100 }), null);
+  assert.equal(gen8SpotBuyNative({ targetCoinWei: coins, nativePerCoinWei: 0n, feeBps: 100 }), null);
+  assert.equal(gen8SpotBuyNative({ targetCoinWei: coins, nativePerCoinWei: priceWei, feeBps: 10_000 }), null);
+  assert.equal(gen8SpotBuyNative({ targetCoinWei: coins, nativePerCoinWei: priceWei, feeBps: 0 }), spot);
 });

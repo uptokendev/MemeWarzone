@@ -9,7 +9,7 @@ import { getReadProvider } from "@/lib/readProvider";
 import { evmBuyGasReserveWei } from "@/lib/tradeBalanceReserve";
 import { GEN8_CREATOR_BUY_ESCROW_COPY } from "../../../shared/gen8EscrowSchedule.mjs";
 import { nativePerCoinWei } from "../../../shared/evmGen8.mjs";
-import { gen8FormatAmountField, gen8MaxCoinWei, gen8ScaleSellCoins, gen8SpotSellCoins, gen8TypedAmountWei } from "../../../shared/gen8TradeAmount.mjs";
+import { gen8FormatAmountField, gen8MaxCoinWei, gen8ScaleSellCoins, gen8SpotBuyNative, gen8SpotSellCoins, gen8TypedAmountWei } from "../../../shared/gen8TradeAmount.mjs";
 import {
   GEN8_AUTO_SLIPPAGE,
   GEN8_DEFAULT_SLIPPAGE_BPS,
@@ -116,7 +116,7 @@ export function Gen8TradePanel({
   const escrowBuy = viewerIsCreator && Boolean(cfg?.escrow);
   const [side, setSide] = useState<"buy" | "sell">(initialSide);
   const [amount, setAmount] = useState("");
-  const [sellDenom, setSellDenom] = useState<"BNB" | "TOKEN">("BNB");
+  const [amountDenom, setAmountDenom] = useState<"BNB" | "TOKEN">("BNB");
   const [solvedCoins, setSolvedCoins] = useState<bigint | null>(null);
   const [pinnedCoins, setPinnedCoins] = useState<bigint | null>(null);
   const [shortNative, setShortNative] = useState(false);
@@ -187,21 +187,52 @@ export function Gen8TradePanel({
     };
   }, [readProvider, cfg, state.gen8?.poolId, state.gen8?.tickStart, state.graduation?.phase, balanceTick, spotKey]);
 
+  const gasReserve = evmBuyGasReserveWei(robinhood);
   const amountRaw = gen8TypedAmountWei(amount, 18);
-  const sellingNative = side === "sell" && sellDenom === "BNB";
-  const coinIn = side !== "sell" ? null : sellDenom === "TOKEN" ? amountRaw : (pinnedCoins ?? solvedCoins);
-  const tradeAmountIn = side === "buy" ? amountRaw : coinIn;
+  // Native sell solves coins to send. Coin buy solves native to spend. Both stay exact-input.
+  const solving = (side === "sell" && amountDenom === "BNB") || (side === "buy" && amountDenom === "TOKEN");
+  const sellingNative = side === "sell" && amountDenom === "BNB";
+  const buyingCoins = side === "buy" && amountDenom === "TOKEN";
+  const tradeAmountIn = solving ? (pinnedCoins ?? solvedCoins) : amountRaw;
   const overSellCap = Boolean(side === "sell" && tradeAmountIn && maxSellable != null && tradeAmountIn > maxSellable);
   const balanceRaw = balances?.tokenRaw ?? null;
+  const nativeBalance = balances?.nativeRaw ?? null;
 
-  function chooseSellDenom(next: "BNB" | "TOKEN") {
-    if (next === sellDenom) return;
-    setSellDenom(next);
+  function chooseAmountDenom(next: "BNB" | "TOKEN") {
+    if (next === amountDenom) return;
+    setAmountDenom(next);
     setAmount("");
     setPinnedCoins(null);
     setSolvedCoins(null);
     setShortNative(false);
     setQuote(null);
+  }
+
+  function fillMax() {
+    if (side === "sell") {
+      if (!balances || balances.tokenRaw <= 0n) return;
+      const cap = gen8MaxCoinWei(balances.tokenRaw, maxSellable);
+      if (!cap) return;
+      if (amountDenom !== "BNB") {
+        setPinnedCoins(null);
+        setAmount(gen8FormatAmountField(cap, 18));
+        return;
+      }
+      setAmount("");
+      setPinnedCoins(cap);
+      return;
+    }
+    if (!balances || balances.nativeRaw <= gasReserve) return;
+    const cap = balances.nativeRaw - gasReserve;
+    if (amountDenom === "BNB") {
+      setPinnedCoins(null);
+      setSolvedCoins(null);
+      setShortNative(false);
+      setAmount(gen8FormatAmountField(cap, 18));
+      return;
+    }
+    setAmount("");
+    setPinnedCoins(cap);
   }
 
   // Before the first prompt: a first sell of this coin still needs both one-time approvals.
@@ -227,12 +258,12 @@ export function Gen8TradePanel({
     };
   }, [side, account, readProvider, cfg, tradeAmountIn, token, tradingOpen, spotKey]);
 
-  // Live quote. Buy and a coin sell are exact input of the typed wei. A native sell
-  // solves the coins that receive about that native, then quotes that exact input.
-  // The router call stays exact input of those coins.
+  // Live quote. A coin sell and a native buy are exact input of the typed wei.
+  // A native sell solves the coins that receive about that native. A coin buy solves
+  // the native that receives about those coins. The router call stays exact input.
   useEffect(() => {
     setQuoteError(null);
-    const pinned = sellingNative ? pinnedCoins : null;
+    const pinned = solving ? pinnedCoins : null;
     if (!pinned) {
       setQuote(null);
       setSolvedCoins(null);
@@ -243,17 +274,25 @@ export function Gen8TradePanel({
       return;
     }
     if (!pinned && !amountRaw) return;
-    if (side === "sell" && sellDenom === "TOKEN" && amountRaw && maxSellable != null && amountRaw > maxSellable) {
+    if (side === "sell" && amountDenom === "TOKEN" && amountRaw && maxSellable != null && amountRaw > maxSellable) {
       setQuoteError("This sell is larger than the bonding range can take back. Sell a smaller amount.");
       return;
     }
     let cancelled = false;
     const timer = window.setTimeout(() => {
+      const quoteExact = (sideNow: "buy" | "sell", amountIn: bigint) =>
+        quoteGen8Trade({
+          provider: readProvider,
+          cfg,
+          token,
+          side: sideNow,
+          amountIn,
+          slippageBps: slippageArg,
+          sender: sideNow === "buy" && escrowBuy ? cfg.escrow : null,
+        });
       const quoteCoins = async () => {
-        if (side === "sell" && sellDenom === "BNB") {
-          if (pinned && pinned > 0n) {
-            return quoteGen8Trade({ provider: readProvider, cfg, token, side: "sell", amountIn: pinned, slippageBps: slippageArg });
-          }
+        if (side === "sell" && amountDenom === "BNB") {
+          if (pinned && pinned > 0n) return quoteExact("sell", pinned);
           const spotWei = gen8SellSpotWei(state.market);
           if (!spotWei) throw new Error("No price for this coin yet.");
           const feeBps = Number(state.tradeFee?.currentBps ?? (graduated ? 100 : 200));
@@ -266,24 +305,46 @@ export function Gen8TradePanel({
             return next > 0n ? next : value;
           };
           coins = clamp(coins);
-          let q = await quoteGen8Trade({ provider: readProvider, cfg, token, side: "sell", amountIn: coins, slippageBps: slippageArg });
+          let q = await quoteExact("sell", coins);
           for (let i = 0; i < 2; i += 1) {
             const next = gen8ScaleSellCoins({ coinIn: q.amountIn, quotedOut: q.amountOut, targetOut: amountRaw });
             if (!next || next === q.amountIn) break;
             const clamped = clamp(next);
             if (clamped === q.amountIn) break;
-            q = await quoteGen8Trade({ provider: readProvider, cfg, token, side: "sell", amountIn: clamped, slippageBps: slippageArg });
+            q = await quoteExact("sell", clamped);
             if (clamped !== next) break;
           }
           return q;
         }
-        return quoteGen8Trade({ provider: readProvider, cfg, token, side, amountIn: tradeAmountIn, slippageBps: slippageArg, sender: side === "buy" && escrowBuy ? cfg.escrow : null });
+        if (side === "buy" && amountDenom === "TOKEN") {
+          if (pinned && pinned > 0n) return quoteExact("buy", pinned);
+          const spotWei = gen8SellSpotWei(state.market);
+          if (!spotWei) throw new Error("No price for this coin yet.");
+          const feeBps = Number(state.tradeFee?.currentBps ?? (graduated ? 100 : 200));
+          let nativeIn = gen8SpotBuyNative({ targetCoinWei: amountRaw, nativePerCoinWei: spotWei, feeBps });
+          if (!nativeIn) throw new Error("Enter an amount.");
+          const spendable = nativeBalance != null && nativeBalance > gasReserve ? nativeBalance - gasReserve : null;
+          const clamp = (value: bigint) => (spendable != null && spendable > 0n && value > spendable ? spendable : value);
+          nativeIn = clamp(nativeIn);
+          let q = await quoteExact("buy", nativeIn);
+          for (let i = 0; i < 2; i += 1) {
+            const next = gen8ScaleSellCoins({ coinIn: q.amountIn, quotedOut: q.amountOut, targetOut: amountRaw });
+            if (!next || next === q.amountIn) break;
+            const clamped = clamp(next);
+            if (clamped === q.amountIn) break;
+            q = await quoteExact("buy", clamped);
+            if (clamped !== next) break;
+          }
+          return q;
+        }
+        if (!tradeAmountIn) throw new Error("Enter an amount.");
+        return quoteExact(side, tradeAmountIn);
       };
       quoteCoins()
         .then((q: Quote) => {
           if (cancelled) return;
           setQuote(q);
-          if (side === "sell" && sellDenom === "BNB") {
+          if ((side === "sell" && amountDenom === "BNB") || (side === "buy" && amountDenom === "TOKEN")) {
             setSolvedCoins(q.amountIn);
             if (pinned) {
               setShortNative(false);
@@ -310,12 +371,11 @@ export function Gen8TradePanel({
       window.clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setupError, amount, amountRaw, side, sellDenom, pinnedCoins, sellingNative, token, readProvider, cfg, escrowBuy, state.market?.priceNativeWeiPerCoin, state.tradeFee?.currentBps, slippageArg, tradingOpen, maxSellable, balanceRaw, spotKey, graduated]);
+  }, [setupError, amount, amountRaw, side, amountDenom, pinnedCoins, solving, token, readProvider, cfg, escrowBuy, state.market?.priceNativeWeiPerCoin, state.tradeFee?.currentBps, slippageArg, tradingOpen, maxSellable, balanceRaw, nativeBalance, gasReserve, spotKey, graduated]);
 
   // Safety read of the wallet balance and the sell cap. A new pool price refreshes them through spotKey.
   useEffect(() => setVisibleInterval(() => setBalanceTick((n) => n + 1), GEN8_COIN_POLL_MS), []);
 
-  const gasReserve = evmBuyGasReserveWei(robinhood);
   const overBalance = Boolean(
     balances && tradeAmountIn && (side === "buy" ? tradeAmountIn + gasReserve > balances.nativeRaw : tradeAmountIn > balances.tokenRaw),
   );
@@ -338,7 +398,7 @@ export function Gen8TradePanel({
       return;
     }
     if (shortNative) {
-      toast.error(`That is more ${native} than this sell can return.`);
+      toast.error(side === "buy" ? "That is more coins than this buy can return." : `That is more ${native} than this sell can return.`);
       return;
     }
     if (overBalance) {
@@ -418,13 +478,14 @@ export function Gen8TradePanel({
     );
   }
 
-  const unit = side === "buy" || sellingNative ? native : symbol || "token";
-  const amountLabel = side === "sell" ? (sellingNative ? `Amount in ${native}` : "Amount in coins") : `Uniswap pool${graduated ? ", graduated" : ""}`;
+  const unit = amountDenom === "BNB" ? native : symbol || "token";
+  const amountLabel = amountDenom === "BNB" ? `Amount in ${native}` : "Amount in coins";
+  const showMax = side === "sell" ? Boolean(balances && balances.tokenRaw > 0n) : Boolean(balances && balances.nativeRaw > gasReserve);
   const chip = "rounded-md border px-2 py-0.5 font-mw-mono text-[11px]";
   const row = "flex items-center justify-between gap-2";
   const feeBps = quote?.feeBps ?? countdown?.bps ?? state.tradeFee?.currentBps ?? (graduated ? 100 : 200);
   return (
-    <div className="flex flex-col gap-3.5 font-mw-body text-mw-text" data-gen8-trade-panel={graduated ? "graduated" : "bonding"} data-gen8-sell-denom={side === "sell" ? sellDenom : undefined}>
+    <div className="flex flex-col gap-3.5 font-mw-body text-mw-text" data-gen8-trade-panel={graduated ? "graduated" : "bonding"} data-gen8-amount-denom={amountDenom} data-gen8-sell-denom={side === "sell" ? amountDenom : undefined}>
       <div className={cp.segList} role="tablist" aria-label="Buy or sell">
         <button type="button" role="tab" aria-selected={side === "buy"} data-state={side === "buy" ? "active" : "inactive"} className={cp.segBuy} onClick={() => { setSide("buy"); setAmount(""); setPinnedCoins(null); setSolvedCoins(null); setShortNative(false); }}>
           Buy
@@ -437,32 +498,14 @@ export function Gen8TradePanel({
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
             <span className="min-w-0 truncate text-xs text-mw-muted">{amountLabel}</span>
-            {side === "sell" ? (
-              <span className="flex shrink-0 gap-1" role="group" aria-label="Sell amount unit">
-                <button type="button" aria-pressed={sellDenom === "BNB"} className={`${chip} ${sellDenom === "BNB" ? "border-mw-text text-mw-text" : "border-mw-border text-mw-muted"}`} onClick={() => chooseSellDenom("BNB")}>{native}</button>
-                <button type="button" aria-pressed={sellDenom === "TOKEN"} className={`${chip} ${sellDenom === "TOKEN" ? "border-mw-text text-mw-text" : "border-mw-border text-mw-muted"}`} onClick={() => chooseSellDenom("TOKEN")}>{symbol || "Coins"}</button>
-              </span>
-            ) : null}
+            <span className="flex shrink-0 gap-1" role="group" aria-label="Amount unit">
+              <button type="button" aria-pressed={amountDenom === "BNB"} className={`${chip} ${amountDenom === "BNB" ? "border-mw-text text-mw-text" : "border-mw-border text-mw-muted"}`} onClick={() => chooseAmountDenom("BNB")}>{native}</button>
+              <button type="button" aria-pressed={amountDenom === "TOKEN"} className={`${chip} ${amountDenom === "TOKEN" ? "border-mw-text text-mw-text" : "border-mw-border text-mw-muted"}`} onClick={() => chooseAmountDenom("TOKEN")}>{symbol || "Coins"}</button>
+            </span>
           </div>
           <div className="flex items-center gap-2">
-            {side === "sell" && balances && balances.tokenRaw > 0n ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className={cp.smallButton}
-                onClick={() => {
-                  const cap = gen8MaxCoinWei(balances.tokenRaw, maxSellable);
-                  if (!cap) return;
-                  if (sellDenom !== "BNB") {
-                    setPinnedCoins(null);
-                    setAmount(gen8FormatAmountField(cap, 18));
-                    return;
-                  }
-                  setAmount("");
-                  setPinnedCoins(cap);
-                }}
-              >
+            {showMax ? (
+              <Button type="button" variant="ghost" size="sm" className={cp.smallButton} onClick={fillMax}>
                 MAX
               </Button>
             ) : null}
@@ -489,7 +532,7 @@ export function Gen8TradePanel({
           </div>
         </div>
         <div className="relative">
-          <input value={amount} onChange={(event) => { setPinnedCoins(null); setSolvedCoins(null); setQuote(null); setShortNative(false); setAmount(event.target.value); }} inputMode="decimal" aria-label={side === "sell" ? amountLabel : `Amount (${unit})`} className={cp.amountInput} placeholder="0" />
+          <input value={amount} onChange={(event) => { setPinnedCoins(null); setSolvedCoins(null); setQuote(null); setShortNative(false); setAmount(event.target.value); }} inputMode="decimal" aria-label={amountLabel} className={cp.amountInput} placeholder="0" />
           <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 font-mw-mono text-sm text-mw-muted">{unit}</span>
         </div>
         <div className={`${cp.inset} mt-3 flex flex-col gap-1.5 p-3 text-sm`} data-gen8-quote={quote ? "true" : undefined}>
@@ -501,6 +544,12 @@ export function Gen8TradePanel({
             <div className={row} data-gen8-sell-coins="true">
               <span className="text-mw-muted">Sells</span>
               <span className="font-mw-mono text-mw-text">{quote ? `${gen8FormatAmount(quote.amountIn)} ${symbol || "tokens"}` : "—"}</span>
+            </div>
+          ) : null}
+          {buyingCoins ? (
+            <div className={row} data-gen8-buy-native="true">
+              <span className="text-mw-muted">Spends</span>
+              <span className="font-mw-mono text-mw-text">{quote ? `${gen8FormatAmount(quote.amountIn)} ${native}` : "—"}</span>
             </div>
           ) : null}
           <div className={row}>
@@ -565,7 +614,7 @@ export function Gen8TradePanel({
           </div>
         ) : null}
         {quoteError && !quote ? <p className="mt-2 text-center text-xs text-mw-down">{quoteError}</p> : null}
-        {shortNative && quote ? <p className="mt-2 text-center text-xs text-mw-down">That is more than this sell can return. The most is {gen8FormatAmount(quote.amountOut)} {native}.</p> : null}
+        {shortNative && quote ? <p className="mt-2 text-center text-xs text-mw-down">{side === "buy" ? `That is more coins than this buy can return. The most is ${gen8FormatAmount(quote.amountOut)} ${symbol || "tokens"}.` : `That is more than this sell can return. The most is ${gen8FormatAmount(quote.amountOut)} ${native}.`}</p> : null}
         {overSellCap ? <p className="mt-2 text-center text-xs text-mw-down">This sell is larger than the bonding range can take back. Sell a smaller amount.</p> : null}
         {overBalance ? <p className="mt-2 text-center text-xs text-mw-down">{side === "buy" ? `Not enough ${native} (about ${ethers.formatEther(gasReserve)} ${native} stays for gas).` : "Amount is above your balance."}</p> : null}
         {twoApprovals ? (
