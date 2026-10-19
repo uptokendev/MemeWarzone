@@ -102,6 +102,47 @@ function liveAgreesWithClose(close: number, liveValue: number): boolean {
   return diff <= 1e-12 || diff / scale <= 1e-6;
 }
 
+/**
+ * A gen-8 bucket stores one pool spot, so open, high, low and close are equal and the
+ * candle has no body. Solana opens the next bucket at the previous close (dbcIndexer),
+ * and buildCandles does the same. Link only a flat bar. A bar that already has a range
+ * is left alone, so Solana wicks stay as stored.
+ */
+export function continueFlatCandleBodies(rows: CanonicalCandleRow[]): CanonicalCandleRow[] {
+  if (rows.length < 2) return rows;
+  const out: CanonicalCandleRow[] = [rows[0]];
+  for (let i = 1; i < rows.length; i += 1) {
+    const row = rows[i];
+    const prev = out[out.length - 1];
+    const flat = row.open === row.high && row.high === row.low && row.low === row.close;
+    if (!flat || !(prev.close > 0)) {
+      out.push(row);
+      continue;
+    }
+    const open = prev.close;
+    const close = row.close;
+    out.push({
+      ...row,
+      open,
+      high: Math.max(row.high, open, close),
+      low: Math.min(row.low, open, close),
+    });
+  }
+  return out;
+}
+
+/** Shrink the price-axis step when a coin's spot is below the default minMove (gen-8 BNB per whole coin is ~1e-10). */
+export function priceAxisMinMove(values: number[], fallback: number): number {
+  let min = Infinity;
+  for (const value of values) {
+    if (value > 0 && value < min) min = value;
+  }
+  if (!Number.isFinite(min) || min >= fallback) return fallback;
+  const move = 10 ** (Math.floor(Math.log10(min)) - 2);
+  if (!Number.isFinite(move) || move <= 0 || move >= fallback) return fallback;
+  return move;
+}
+
 function patchLast(rows: CanonicalCandleRow[], liveValue: number): CanonicalCandleRow[] {
   return rows.map((row, index) => {
     if (index !== rows.length - 1) return row;
@@ -163,6 +204,11 @@ export function assembleMarketCapCandles(input: {
   supplyWhole?: number | null;
   /** Fully diluted coins: see marketCandlesForChart. */
   fixedSupplyWhole?: number | null;
+  /**
+   * Gen-8 only. Flat indexer spots become candle bodies the way Solana stores them.
+   * Leave this off for every other chart: a Solana bar already has its open.
+   */
+  continueFlatBodies?: boolean;
 }): CanonicalCandleRow[] {
   if (!input.historyReady) return [];
   const canonical = marketCandlesForChart(
@@ -173,7 +219,8 @@ export function assembleMarketCapCandles(input: {
     input.supplyWhole,
     input.fixedSupplyWhole,
   );
-  const rows = canonical.length ? canonical : input.fallbackRows || [];
+  const chosen = canonical.length ? canonical : input.fallbackRows || [];
+  const rows = input.continueFlatBodies ? continueFlatCandleBodies(chosen) : chosen;
   if (!rows.length) return [];
   const liveNative = Number(input.liveMcapNative);
   if (!Number.isFinite(liveNative) || liveNative <= 0) return rows;

@@ -5812,6 +5812,7 @@ const toSeconds = (ts: number): number => {
                   resolution={marketResolution}
                   onResolutionChange={setMarketResolution}
                   denomination={displayDenom}
+                  continueFlatBodies={Boolean(gen8State)}
                   historyReady={!unifiedMarket.loading}
                   loading={unifiedMarket.loading || ((marketTradePoints?.length ?? 0) === 0 && liveCurveLoading)}
                   error={unifiedMarket.error || ((marketTradePoints?.length ?? 0) > 0 ? null : liveCurveError || topazMarket.error)}

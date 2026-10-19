@@ -4,8 +4,10 @@ import type { MarketCandle } from "../marketContinuityApi.ts";
 import {
   assembleMarketCapCandles,
   canonicalAthNativeFromCandles,
+  continueFlatCandleBodies,
   marketCandlesForChart,
   patchActiveLatestBucket,
+  priceAxisMinMove,
   shouldEstablishChartRange,
 } from "./canonicalChartCandles.ts";
 
@@ -376,4 +378,58 @@ test("a fully diluted coin's first candle opens at start price x supply, not at 
     supplyWhole: 681_160, fixedSupplyWhole: supply,
   });
   assert.equal(assembled.length, 2, "the live value agrees with the last close: no bridge candle");
+});
+
+test("gen-8 flat spots draw a body from the previous close, in market cap and in price", () => {
+  // YCC 1m on chain 97: three indexer rows, each o=h=l=c because one spot was stored.
+  // The chart then had only the last-price line. Solana opens the next bar at the previous close.
+  const supply = 1_000_000_000;
+  const usd = 721;
+  const p1 = "0.000000000369495624";
+  const p2 = "0.000000000455183624";
+  const flat = (bucket: string, price: string) => {
+    const mcap = String(Number(price) * supply);
+    return candle({
+      bucket_start: bucket,
+      o: price, h: price, l: price, c: price,
+      price_o: price, price_h: price, price_l: price, price_c: price,
+      mcap_o: mcap, mcap_h: mcap, mcap_l: mcap, mcap_c: mcap,
+    });
+  };
+  const rows = [
+    flat("2026-10-18T23:59:00.000Z", p1),
+    flat("2026-10-19T00:01:00.000Z", p2),
+    flat("2026-10-19T00:02:00.000Z", p2),
+  ];
+  const plain = assembleMarketCapCandles({
+    marketCandles: rows, denomination: "USD", nativeUsd: usd, historyReady: true,
+    intervalSeconds: 60, nowSec: Date.parse("2026-10-19T00:02:30Z") / 1000,
+    fixedSupplyWhole: supply,
+  });
+  assert.equal(plain[0].open, plain[0].close);
+  assert.equal(plain[1].open, plain[1].close);
+  const linked = assembleMarketCapCandles({
+    marketCandles: rows, denomination: "USD", nativeUsd: usd, historyReady: true,
+    intervalSeconds: 60, nowSec: Date.parse("2026-10-19T00:02:30Z") / 1000,
+    fixedSupplyWhole: supply,
+    continueFlatBodies: true,
+  });
+  const grad = Number(p1) * supply * usd;
+  const later = Number(p2) * supply * usd;
+  assert.ok(Math.abs(linked[0].close - grad) < 1e-4);
+  assert.equal(linked[0].open, linked[0].close, "graduation print stays on its own bar");
+  assert.equal(linked[1].open, linked[0].close);
+  assert.ok(Math.abs(linked[1].close - later) < 1e-4);
+  assert.ok(linked[1].high > linked[1].low, "the move is a candle body");
+  assert.equal(linked[2].open, linked[1].close);
+  assert.equal(linked[2].open, linked[2].close, "a spot that did not move stays flat");
+  const price = continueFlatCandleBodies(marketCandlesForChart(rows, "price", "BNB", 0));
+  assert.equal(price[1].open, price[0].close);
+  assert.ok(price[1].close > price[1].open);
+  assert.ok(priceAxisMinMove(price.flatMap((row) => [row.open, row.close]), 1e-8) < 1e-10);
+  const ranged = continueFlatCandleBodies([
+    { time: 1, open: 10, high: 12, low: 9, close: 11 },
+    { time: 2, open: 11, high: 15, low: 11, close: 14 },
+  ]);
+  assert.deepEqual(ranged[1], { time: 2, open: 11, high: 15, low: 11, close: 14 });
 });

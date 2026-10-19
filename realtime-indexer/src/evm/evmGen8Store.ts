@@ -276,6 +276,8 @@ export function gen8PlatformStatus(pool: Pick<Gen8PoolRow, "graduatedBlock" | "l
 /**
  * One candle row per timeframe with the canonical columns (pool spot price, exact: canonical_version 4 like the
  * materializer). phase bonding: source_mask 1 and bonding_* counters; dex: source_mask | 2 and dex_* counters.
+ * A new bucket opens at the previous close, the same rule as Solana DBC candles. One spot in a bucket is then
+ * a body from the prior spot instead of a zero-height bar. The first bucket of a coin has no prior close.
  */
 export async function upsertGen8Candle(db: Queryable, input: {
   chainId: number; token: string; timeframe: string; bucketStart: Date; price: number; mcap: number; volume: number;
@@ -283,12 +285,28 @@ export async function upsertGen8Candle(db: Queryable, input: {
 }) {
   const dex = input.phase === "dex";
   const r = await db.query(
-    `insert into public.token_candles(
+    `with prev as (
+       select c, mcap_c from public.token_candles
+        where chain_id = $1 and campaign_address = $2 and timeframe = $3 and bucket_start < $4
+        order by bucket_start desc
+        limit 1
+     ), opening as (
+       select coalesce((select c from prev), $5::numeric) as o,
+              coalesce((select mcap_c from prev), $14::numeric) as mo
+     )
+     insert into public.token_candles(
        chain_id, campaign_address, timeframe, bucket_start, o, h, l, c, volume_bnb, trades_count,
        source_mask, bonding_trade_count, dex_trade_count, bonding_volume_bnb, dex_volume_bnb,
        last_block_number, last_log_index, price_o, price_h, price_l, price_c, mcap_o, mcap_h, mcap_l, mcap_c,
        canonical_version, canonical_updated_at, updated_at
-     ) values ($1,$2,$3,$4,$5,$5,$5,$5,$6,1,$7,$8,$9,$10,$11,$12,$13,$5,$5,$5,$5,$14,$14,$14,$14,4,now(),now())
+     )
+     select $1,$2,$3,$4,
+            opening.o, greatest(opening.o, $5::numeric), least(opening.o, $5::numeric), $5::numeric,
+            $6, 1, $7,$8,$9,$10,$11, $12,$13,
+            opening.o, greatest(opening.o, $5::numeric), least(opening.o, $5::numeric), $5::numeric,
+            opening.mo, greatest(opening.mo, $14::numeric), least(opening.mo, $14::numeric), $14::numeric,
+            4, now(), now()
+       from opening
      on conflict (chain_id, campaign_address, timeframe, bucket_start) do update set
        h = greatest(public.token_candles.h, excluded.h),
        l = least(public.token_candles.l, excluded.l),
