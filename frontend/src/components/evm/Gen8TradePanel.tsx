@@ -8,7 +8,8 @@ import { getNativeSymbol, isRobinhoodChainId, type SupportedChainId } from "@/li
 import { getReadProvider } from "@/lib/readProvider";
 import { evmBuyGasReserveWei } from "@/lib/tradeBalanceReserve";
 import { GEN8_CREATOR_BUY_ESCROW_COPY } from "../../../shared/gen8EscrowSchedule.mjs";
-import { gen8FormatAmountField, gen8MaxCoinWei, gen8TypedAmountWei } from "../../../shared/gen8TradeAmount.mjs";
+import { nativePerCoinWei } from "../../../shared/evmGen8.mjs";
+import { gen8FormatAmountField, gen8MaxCoinWei, gen8ScaleSellCoins, gen8SpotSellCoins, gen8TypedAmountWei } from "../../../shared/gen8TradeAmount.mjs";
 import {
   GEN8_AUTO_SLIPPAGE,
   GEN8_DEFAULT_SLIPPAGE_BPS,
@@ -57,6 +58,19 @@ type Quote = {
 
 const ERC20_BALANCE = ["function balanceOf(address) view returns (uint256)"];
 
+function gen8SellSpotWei(market: { priceNativeWeiPerCoin?: string | null; sqrtPriceX96?: string | null } | null | undefined): bigint | null {
+  const raw = String(market?.priceNativeWeiPerCoin || "").trim();
+  if (/^\d+$/.test(raw) && raw !== "0") return BigInt(raw);
+  const sqrt = String(market?.sqrtPriceX96 || "").trim();
+  if (!/^\d+$/.test(sqrt) || sqrt === "0") return null;
+  try {
+    const wei = nativePerCoinWei(BigInt(sqrt));
+    return wei > 0n ? wei : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Slippage choices on BNB Chain (the sized default first); Robinhood keeps its flat 1% (F13). */
 const BNB_SLIPPAGE_CHOICES: Array<typeof GEN8_AUTO_SLIPPAGE | number> = [GEN8_AUTO_SLIPPAGE, 50, 100, 300];
 /** Price impact from which the panel shows it in red. */
@@ -102,6 +116,10 @@ export function Gen8TradePanel({
   const escrowBuy = viewerIsCreator && Boolean(cfg?.escrow);
   const [side, setSide] = useState<"buy" | "sell">(initialSide);
   const [amount, setAmount] = useState("");
+  const [sellDenom, setSellDenom] = useState<"BNB" | "TOKEN">("BNB");
+  const [solvedCoins, setSolvedCoins] = useState<bigint | null>(null);
+  const [pinnedCoins, setPinnedCoins] = useState<bigint | null>(null);
+  const [shortNative, setShortNative] = useState(false);
   const [quote, setQuote] = useState<Quote | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -170,18 +188,32 @@ export function Gen8TradePanel({
   }, [readProvider, cfg, state.gen8?.poolId, state.gen8?.tickStart, state.graduation?.phase, balanceTick, spotKey]);
 
   const amountRaw = gen8TypedAmountWei(amount, 18);
-  const overSellCap = Boolean(side === "sell" && amountRaw && maxSellable != null && amountRaw > maxSellable);
+  const sellingNative = side === "sell" && sellDenom === "BNB";
+  const coinIn = side !== "sell" ? null : sellDenom === "TOKEN" ? amountRaw : (pinnedCoins ?? solvedCoins);
+  const tradeAmountIn = side === "buy" ? amountRaw : coinIn;
+  const overSellCap = Boolean(side === "sell" && tradeAmountIn && maxSellable != null && tradeAmountIn > maxSellable);
+  const balanceRaw = balances?.tokenRaw ?? null;
+
+  function chooseSellDenom(next: "BNB" | "TOKEN") {
+    if (next === sellDenom) return;
+    setSellDenom(next);
+    setAmount("");
+    setPinnedCoins(null);
+    setSolvedCoins(null);
+    setShortNative(false);
+    setQuote(null);
+  }
 
   // Before the first prompt: a first sell of this coin still needs both one-time approvals.
   // Read once per quoted amount. The sell itself does not read the allowance again between transactions.
   useEffect(() => {
-    if (side !== "sell" || !account || !readProvider || !cfg?.router || !amountRaw || !tradingOpen) {
+    if (side !== "sell" || !account || !readProvider || !cfg?.router || !tradeAmountIn || !tradingOpen) {
       setTwoApprovals(false);
       return;
     }
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      readGen8SellSetup({ provider: readProvider, owner: account, token, amountIn: amountRaw, router: cfg.router.address })
+      readGen8SellSetup({ provider: readProvider, owner: account, token, amountIn: tradeAmountIn, router: cfg.router.address })
         .then((setup) => {
           if (!cancelled) setTwoApprovals(Boolean(setup?.approval && setup?.permit2Approval));
         })
@@ -193,27 +225,83 @@ export function Gen8TradePanel({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [side, account, readProvider, cfg, amountRaw, token, tradingOpen, spotKey]);
+  }, [side, account, readProvider, cfg, tradeAmountIn, token, tradingOpen, spotKey]);
 
-  // Live quote (exact input): what you receive, the price impact, the minimum at the slippage (sized from the impact on
-  // BNB Chain, 1% on Robinhood), the fee and the creator's part.
+  // Live quote. Buy and a coin sell are exact input of the typed wei. A native sell
+  // solves the coins that receive about that native, then quotes that exact input.
+  // The router call stays exact input of those coins.
   useEffect(() => {
     setQuoteError(null);
-    if (setupError || !amountRaw || !readProvider || !cfg || !tradingOpen || overSellCap) {
+    const pinned = sellingNative ? pinnedCoins : null;
+    if (!pinned) {
       setQuote(null);
+      setSolvedCoins(null);
+      setShortNative(false);
+    }
+    if (setupError || !readProvider || !cfg || !tradingOpen) {
       if (!tradingOpen) setQuoteError(null);
-      else if (overSellCap) setQuoteError("This sell is larger than the bonding range can take back. Sell a smaller amount.");
+      return;
+    }
+    if (!pinned && !amountRaw) return;
+    if (side === "sell" && sellDenom === "TOKEN" && amountRaw && maxSellable != null && amountRaw > maxSellable) {
+      setQuoteError("This sell is larger than the bonding range can take back. Sell a smaller amount.");
       return;
     }
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      quoteGen8Trade({ provider: readProvider, cfg, token, side, amountIn: amountRaw, slippageBps: slippageArg, sender: side === "buy" && escrowBuy ? cfg.escrow : null })
+      const quoteCoins = async () => {
+        if (side === "sell" && sellDenom === "BNB") {
+          if (pinned && pinned > 0n) {
+            return quoteGen8Trade({ provider: readProvider, cfg, token, side: "sell", amountIn: pinned, slippageBps: slippageArg });
+          }
+          const spotWei = gen8SellSpotWei(state.market);
+          if (!spotWei) throw new Error("No price for this coin yet.");
+          const feeBps = Number(state.tradeFee?.currentBps ?? (graduated ? 100 : 200));
+          let coins = gen8SpotSellCoins({ targetNativeWei: amountRaw, nativePerCoinWei: spotWei, feeBps });
+          if (!coins) throw new Error("Enter an amount.");
+          const clamp = (value: bigint) => {
+            let next = value;
+            if (maxSellable != null && maxSellable > 0n && next > maxSellable) next = maxSellable;
+            if (balanceRaw != null && balanceRaw > 0n && next > balanceRaw) next = balanceRaw;
+            return next > 0n ? next : value;
+          };
+          coins = clamp(coins);
+          let q = await quoteGen8Trade({ provider: readProvider, cfg, token, side: "sell", amountIn: coins, slippageBps: slippageArg });
+          for (let i = 0; i < 2; i += 1) {
+            const next = gen8ScaleSellCoins({ coinIn: q.amountIn, quotedOut: q.amountOut, targetOut: amountRaw });
+            if (!next || next === q.amountIn) break;
+            const clamped = clamp(next);
+            if (clamped === q.amountIn) break;
+            q = await quoteGen8Trade({ provider: readProvider, cfg, token, side: "sell", amountIn: clamped, slippageBps: slippageArg });
+            if (clamped !== next) break;
+          }
+          return q;
+        }
+        return quoteGen8Trade({ provider: readProvider, cfg, token, side, amountIn: tradeAmountIn, slippageBps: slippageArg, sender: side === "buy" && escrowBuy ? cfg.escrow : null });
+      };
+      quoteCoins()
         .then((q: Quote) => {
-          if (!cancelled) setQuote(q);
+          if (cancelled) return;
+          setQuote(q);
+          if (side === "sell" && sellDenom === "BNB") {
+            setSolvedCoins(q.amountIn);
+            if (pinned) {
+              setShortNative(false);
+              const shown = gen8FormatAmountField(q.amountOut, 18);
+              setAmount((prev) => (prev === shown ? prev : shown));
+            } else {
+              setShortNative(q.amountOut * 100n < amountRaw * 99n);
+            }
+          } else {
+            setSolvedCoins(null);
+            setShortNative(false);
+          }
         })
         .catch((error: any) => {
           if (cancelled) return;
           setQuote(null);
+          setSolvedCoins(null);
+          setShortNative(false);
           setQuoteError(gen8ErrorMessage(error) || "No quote for this amount.");
         });
     }, 400);
@@ -222,18 +310,18 @@ export function Gen8TradePanel({
       window.clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setupError, amount, side, token, readProvider, cfg, escrowBuy, state.graduation?.phase, slippageArg, tradingOpen, overSellCap, spotKey]);
+  }, [setupError, amount, amountRaw, side, sellDenom, pinnedCoins, sellingNative, token, readProvider, cfg, escrowBuy, state.market?.priceNativeWeiPerCoin, state.tradeFee?.currentBps, slippageArg, tradingOpen, maxSellable, balanceRaw, spotKey, graduated]);
 
   // Safety read of the wallet balance and the sell cap. A new pool price refreshes them through spotKey.
   useEffect(() => setVisibleInterval(() => setBalanceTick((n) => n + 1), GEN8_COIN_POLL_MS), []);
 
   const gasReserve = evmBuyGasReserveWei(robinhood);
   const overBalance = Boolean(
-    balances && amountRaw && (side === "buy" ? amountRaw + gasReserve > balances.nativeRaw : amountRaw > balances.tokenRaw),
+    balances && tradeAmountIn && (side === "buy" ? tradeAmountIn + gasReserve > balances.nativeRaw : tradeAmountIn > balances.tokenRaw),
   );
 
   async function trade() {
-    if (!amountRaw) {
+    if (!tradeAmountIn) {
       toast.error("Enter an amount.");
       return;
     }
@@ -247,6 +335,10 @@ export function Gen8TradePanel({
     }
     if (overSellCap) {
       toast.error("This sell is larger than the bonding range can take back. Sell a smaller amount.");
+      return;
+    }
+    if (shortNative) {
+      toast.error(`That is more ${native} than this sell can return.`);
       return;
     }
     if (overBalance) {
@@ -276,11 +368,13 @@ export function Gen8TradePanel({
       };
       const result =
         side === "buy" && escrowBuy
-          ? await executeGen8EscrowBuy({ signer, chainId, cfg, token, amountIn: amountRaw, slippageBps: slippageArg, readProvider, onReceipt })
-          : await executeGen8Trade({ signer, chainId, cfg, token, side, amountIn: amountRaw, slippageBps: slippageArg, readProvider, onStep, onReceipt });
+          ? await executeGen8EscrowBuy({ signer, chainId, cfg, token, amountIn: tradeAmountIn, slippageBps: slippageArg, readProvider, onReceipt })
+          : await executeGen8Trade({ signer, chainId, cfg, token, side, amountIn: tradeAmountIn, slippageBps: slippageArg, readProvider, onStep, onReceipt });
       const txHash = result.receipt?.hash ?? null;
       toast.success(`${side === "buy" ? "Buy" : "Sell"} confirmed: ${String(result.receipt?.hash || "").slice(0, 10)}…`);
       setAmount("");
+      setPinnedCoins(null);
+      setSolvedCoins(null);
       setQuote(null);
       setBalanceTick((n) => n + 1);
       onTraded?.({ side, txHash });
@@ -324,22 +418,32 @@ export function Gen8TradePanel({
     );
   }
 
-  const unit = side === "buy" ? native : symbol || "token";
+  const unit = side === "buy" || sellingNative ? native : symbol || "token";
+  const amountLabel = side === "sell" ? (sellingNative ? `Amount in ${native}` : "Amount in coins") : `Uniswap pool${graduated ? ", graduated" : ""}`;
+  const chip = "rounded-md border px-2 py-0.5 font-mw-mono text-[11px]";
   const row = "flex items-center justify-between gap-2";
   const feeBps = quote?.feeBps ?? countdown?.bps ?? state.tradeFee?.currentBps ?? (graduated ? 100 : 200);
   return (
-    <div className="flex flex-col gap-3.5 font-mw-body text-mw-text" data-gen8-trade-panel={graduated ? "graduated" : "bonding"}>
+    <div className="flex flex-col gap-3.5 font-mw-body text-mw-text" data-gen8-trade-panel={graduated ? "graduated" : "bonding"} data-gen8-sell-denom={side === "sell" ? sellDenom : undefined}>
       <div className={cp.segList} role="tablist" aria-label="Buy or sell">
-        <button type="button" role="tab" aria-selected={side === "buy"} data-state={side === "buy" ? "active" : "inactive"} className={cp.segBuy} onClick={() => { setSide("buy"); setAmount(""); }}>
+        <button type="button" role="tab" aria-selected={side === "buy"} data-state={side === "buy" ? "active" : "inactive"} className={cp.segBuy} onClick={() => { setSide("buy"); setAmount(""); setPinnedCoins(null); setSolvedCoins(null); setShortNative(false); }}>
           Buy
         </button>
-        <button type="button" role="tab" aria-selected={side === "sell"} data-state={side === "sell" ? "active" : "inactive"} className={cp.segSell} onClick={() => { setSide("sell"); setAmount(""); }}>
+        <button type="button" role="tab" aria-selected={side === "sell"} data-state={side === "sell" ? "active" : "inactive"} className={cp.segSell} onClick={() => { setSide("sell"); setAmount(""); setPinnedCoins(null); setSolvedCoins(null); setShortNative(false); }}>
           Sell
         </button>
       </div>
       <div>
         <div className="mb-2 flex items-center justify-between gap-2">
-          <span className="min-w-0 truncate text-xs text-mw-muted">{side === "sell" ? "Amount in coins" : `Uniswap pool${graduated ? ", graduated" : ""}`}</span>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="min-w-0 truncate text-xs text-mw-muted">{amountLabel}</span>
+            {side === "sell" ? (
+              <span className="flex shrink-0 gap-1" role="group" aria-label="Sell amount unit">
+                <button type="button" aria-pressed={sellDenom === "BNB"} className={`${chip} ${sellDenom === "BNB" ? "border-mw-text text-mw-text" : "border-mw-border text-mw-muted"}`} onClick={() => chooseSellDenom("BNB")}>{native}</button>
+                <button type="button" aria-pressed={sellDenom === "TOKEN"} className={`${chip} ${sellDenom === "TOKEN" ? "border-mw-text text-mw-text" : "border-mw-border text-mw-muted"}`} onClick={() => chooseSellDenom("TOKEN")}>{symbol || "Coins"}</button>
+              </span>
+            ) : null}
+          </div>
           <div className="flex items-center gap-2">
             {side === "sell" && balances && balances.tokenRaw > 0n ? (
               <Button
@@ -349,7 +453,14 @@ export function Gen8TradePanel({
                 className={cp.smallButton}
                 onClick={() => {
                   const cap = gen8MaxCoinWei(balances.tokenRaw, maxSellable);
-                  if (cap) setAmount(gen8FormatAmountField(cap, 18));
+                  if (!cap) return;
+                  if (sellDenom !== "BNB") {
+                    setPinnedCoins(null);
+                    setAmount(gen8FormatAmountField(cap, 18));
+                    return;
+                  }
+                  setAmount("");
+                  setPinnedCoins(cap);
                 }}
               >
                 MAX
@@ -378,7 +489,7 @@ export function Gen8TradePanel({
           </div>
         </div>
         <div className="relative">
-          <input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" aria-label={side === "sell" ? "Amount in coins" : `Amount (${unit})`} className={cp.amountInput} placeholder="0" />
+          <input value={amount} onChange={(event) => { setPinnedCoins(null); setSolvedCoins(null); setQuote(null); setShortNative(false); setAmount(event.target.value); }} inputMode="decimal" aria-label={side === "sell" ? amountLabel : `Amount (${unit})`} className={cp.amountInput} placeholder="0" />
           <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 font-mw-mono text-sm text-mw-muted">{unit}</span>
         </div>
         <div className={`${cp.inset} mt-3 flex flex-col gap-1.5 p-3 text-sm`} data-gen8-quote={quote ? "true" : undefined}>
@@ -386,6 +497,12 @@ export function Gen8TradePanel({
             <span className="text-mw-muted">Balance</span>
             <span className="font-mw-mono text-mw-text">{balances ? (side === "buy" ? `${gen8FormatAmount(balances.nativeRaw)} ${native}` : `${gen8FormatAmount(balances.tokenRaw)} ${symbol || "tokens"}`) : "—"}</span>
           </div>
+          {sellingNative ? (
+            <div className={row} data-gen8-sell-coins="true">
+              <span className="text-mw-muted">Sells</span>
+              <span className="font-mw-mono text-mw-text">{quote ? `${gen8FormatAmount(quote.amountIn)} ${symbol || "tokens"}` : "—"}</span>
+            </div>
+          ) : null}
           <div className={row}>
             <span className="text-mw-muted">Receive</span>
             <span className="font-mw-mono font-bold text-mw-text">{quote ? (side === "buy" ? `${gen8FormatAmount(quote.amountOut)} ${symbol || "tokens"}` : `${gen8FormatAmount(quote.amountOut)} ${native}`) : "—"}</span>
@@ -448,6 +565,7 @@ export function Gen8TradePanel({
           </div>
         ) : null}
         {quoteError && !quote ? <p className="mt-2 text-center text-xs text-mw-down">{quoteError}</p> : null}
+        {shortNative && quote ? <p className="mt-2 text-center text-xs text-mw-down">That is more than this sell can return. The most is {gen8FormatAmount(quote.amountOut)} {native}.</p> : null}
         {overSellCap ? <p className="mt-2 text-center text-xs text-mw-down">This sell is larger than the bonding range can take back. Sell a smaller amount.</p> : null}
         {overBalance ? <p className="mt-2 text-center text-xs text-mw-down">{side === "buy" ? `Not enough ${native} (about ${ethers.formatEther(gasReserve)} ${native} stays for gas).` : "Amount is above your balance."}</p> : null}
         {twoApprovals ? (
@@ -459,7 +577,7 @@ export function Gen8TradePanel({
       </div>
       <Button
         className={`min-h-12 w-full rounded-[10px] font-mw-body text-base font-bold disabled:opacity-50 ${side === "buy" ? "border border-mw-buy bg-mw-buy text-[#04140A] hover:bg-[#15913F]" : "border border-mw-sell bg-mw-sell text-[#FFF1F3] hover:bg-[#C81A40]"}`}
-        disabled={account ? busy || !tradingOpen || !amountRaw || !quote || overBalance || overSellCap : false}
+        disabled={account ? busy || !tradingOpen || !tradeAmountIn || !quote || overBalance || overSellCap || shortNative : false}
         onClick={() => {
           if (!account) {
             try {

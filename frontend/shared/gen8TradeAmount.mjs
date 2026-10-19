@@ -1,6 +1,7 @@
 /**
- * The gen-8 amount field is a whole-coin or whole-native decimal. The wei sent is that
- * string at 18 decimals, nothing else: not the displayed rounding, not a price, not a second scale.
+ * The gen-8 amount field is a whole-coin or whole-native decimal. The wei of that string
+ * is 18 decimals and nothing else. A sell typed in native is solved into coins, then the
+ * same exact-input sell sends those coins. The field text is never a second scale of itself.
  */
 
 export function gen8TypedAmountWei(text, decimals = 18) {
@@ -38,4 +39,38 @@ export function gen8MaxCoinWei(balanceWei, maxSellableWei) {
   const cap = BigInt(maxSellableWei);
   if (cap <= 0n) return null;
   return cap < balance ? cap : balance;
+}
+
+/** Curve payout that leaves `net` after a fee of `feeBps`. The hook takes the fee out of a sell's payout. */
+export function gen8GrossForNet(netWei, feeBps = 0) {
+  const net = BigInt(netWei);
+  const bps = BigInt(feeBps);
+  if (net <= 0n) return null;
+  if (bps <= 0n) return net;
+  if (bps >= 10_000n) return null;
+  const keep = 10_000n - bps;
+  return (net * 10_000n + keep - 1n) / keep;
+}
+
+/**
+ * First coin guess for an exact-input sell that should receive `targetNativeWei`.
+ * `nativePerCoinWei` is native wei per 1e18 coin units. The quote then corrects this.
+ */
+export function gen8SpotSellCoins({ targetNativeWei, nativePerCoinWei, feeBps = 0 }) {
+  const gross = gen8GrossForNet(targetNativeWei, feeBps);
+  const price = BigInt(nativePerCoinWei);
+  if (gross == null || price <= 0n) return null;
+  const coins = (gross * 10n ** 18n + price - 1n) / price;
+  return coins > 0n ? coins : null;
+}
+
+/** Next coin guess after one exact-input quote. Null when the quote cannot be scaled. */
+export function gen8ScaleSellCoins({ coinIn, quotedOut, targetOut }) {
+  const coins = BigInt(coinIn);
+  const quoted = BigInt(quotedOut);
+  const target = BigInt(targetOut);
+  if (coins <= 0n || quoted <= 0n || target <= 0n) return null;
+  if (quoted === target) return coins;
+  const scaled = target > quoted ? (coins * target + quoted - 1n) / quoted : (coins * target) / quoted;
+  return scaled > 0n ? scaled : null;
 }
