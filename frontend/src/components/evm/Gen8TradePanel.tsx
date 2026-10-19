@@ -8,6 +8,7 @@ import { getNativeSymbol, isRobinhoodChainId, type SupportedChainId } from "@/li
 import { getReadProvider } from "@/lib/readProvider";
 import { evmBuyGasReserveWei } from "@/lib/tradeBalanceReserve";
 import { GEN8_CREATOR_BUY_ESCROW_COPY } from "../../../shared/gen8EscrowSchedule.mjs";
+import { gen8FormatAmountField, gen8MaxCoinWei, gen8TypedAmountWei } from "../../../shared/gen8TradeAmount.mjs";
 import {
   GEN8_AUTO_SLIPPAGE,
   GEN8_DEFAULT_SLIPPAGE_BPS,
@@ -55,17 +56,6 @@ type Quote = {
 };
 
 const ERC20_BALANCE = ["function balanceOf(address) view returns (uint256)"];
-
-function parseUnitsSafe(text: string, decimals: number): bigint | null {
-  const v = String(text || "").trim().replace(",", ".");
-  if (!v || !(Number(v) > 0)) return null;
-  try {
-    const raw = ethers.parseUnits(v, decimals);
-    return raw > 0n ? raw : null;
-  } catch {
-    return null;
-  }
-}
 
 /** Slippage choices on BNB Chain (the sized default first); Robinhood keeps its flat 1% (F13). */
 const BNB_SLIPPAGE_CHOICES: Array<typeof GEN8_AUTO_SLIPPAGE | number> = [GEN8_AUTO_SLIPPAGE, 50, 100, 300];
@@ -179,7 +169,7 @@ export function Gen8TradePanel({
     };
   }, [readProvider, cfg, state.gen8?.poolId, state.gen8?.tickStart, state.graduation?.phase, balanceTick, spotKey]);
 
-  const amountRaw = parseUnitsSafe(amount, 18);
+  const amountRaw = gen8TypedAmountWei(amount, 18);
   const overSellCap = Boolean(side === "sell" && amountRaw && maxSellable != null && amountRaw > maxSellable);
 
   // Before the first prompt: a first sell of this coin still needs both one-time approvals.
@@ -349,7 +339,7 @@ export function Gen8TradePanel({
       </div>
       <div>
         <div className="mb-2 flex items-center justify-between gap-2">
-          <span className="min-w-0 truncate text-xs text-mw-muted">Uniswap pool{graduated ? ", graduated" : ""}</span>
+          <span className="min-w-0 truncate text-xs text-mw-muted">{side === "sell" ? "Amount in coins" : `Uniswap pool${graduated ? ", graduated" : ""}`}</span>
           <div className="flex items-center gap-2">
             {side === "sell" && balances && balances.tokenRaw > 0n ? (
               <Button
@@ -358,8 +348,8 @@ export function Gen8TradePanel({
                 size="sm"
                 className={cp.smallButton}
                 onClick={() => {
-                  const cap = maxSellable != null && maxSellable < balances.tokenRaw ? maxSellable : balances.tokenRaw;
-                  setAmount(ethers.formatUnits(cap, 18));
+                  const cap = gen8MaxCoinWei(balances.tokenRaw, maxSellable);
+                  if (cap) setAmount(gen8FormatAmountField(cap, 18));
                 }}
               >
                 MAX
@@ -388,7 +378,7 @@ export function Gen8TradePanel({
           </div>
         </div>
         <div className="relative">
-          <input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" aria-label={`Amount (${unit})`} className={cp.amountInput} placeholder="0" />
+          <input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" aria-label={side === "sell" ? "Amount in coins" : `Amount (${unit})`} className={cp.amountInput} placeholder="0" />
           <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 font-mw-mono text-sm text-mw-muted">{unit}</span>
         </div>
         <div className={`${cp.inset} mt-3 flex flex-col gap-1.5 p-3 text-sm`} data-gen8-quote={quote ? "true" : undefined}>
