@@ -8,6 +8,7 @@ import { liveVoteWindowsJoin } from "./lib/liveVoteWindows.js";
 import { gen8ConfigFor } from "./lib/evmGen8Config.js";
 import { gen8Tables } from "./lib/evmGen8Schema.js";
 import { GEN8_CURVE_VENUE, GEN8_TRADE_PATH, gen8PlatformStatus } from "../shared/evmGen8.mjs";
+import { tradingNotOpenSql } from "./lib/publicHiddenSql.js";
 
 /**
  * Market cap of EVM generation 6/5 coins is fully diluted (founder decision 2026-10-01): price x total
@@ -350,7 +351,7 @@ async function fetchBasicCampaignRows({ chainId, limit, cursor, effectiveStatus,
   const DEX_TRADING_SQL = dexTradingSqlFor({ gen8Phase, gen8Joined: false });
   const ACTIVE = activeSqlFor({ gen8Phase, gen8Joined: false });
   const params = [chainId];
-  let where = "where c.chain_id = $1 and c.campaign_address is not null";
+  let where = `where c.chain_id = $1 and c.campaign_address is not null and not (${tradingNotOpenSql("c", { gen8OpenAt: gen8Phase })})`;
 
   if (searchRaw) {
     params.push(`%${searchRaw}%`);
@@ -668,6 +669,7 @@ export default async function handler(req, res) {
          )
         ${liveVoteWindowsJoin("va.chain_id", "va.campaign_address")}
         where c.chain_id = $1
+          and not (${tradingNotOpenSql("c", { gen8OpenAt: gen8Phase })})
           and ($3::text is null or (
             c.name ilike $3
             or c.symbol ilike $3

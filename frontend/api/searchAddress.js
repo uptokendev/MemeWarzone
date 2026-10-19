@@ -12,7 +12,7 @@
  */
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, json } from "../server/http.js";
-import { publicHiddenWhere } from "./lib/publicHiddenSql.js";
+import { publicHiddenWhere, tradingNotOpenSql } from "./lib/publicHiddenSql.js";
 import { gen8Tables } from "./lib/evmGen8Schema.js";
 import { gen8PlatformGraduatedColumn } from "./lib/evmGen8PlatformSql.js";
 
@@ -34,6 +34,7 @@ export function searchAddressCampaignsSql(gen8On) {
                  then (lower(c.token_address) = $1 or lower(c.campaign_address) = $1) and c.chain_id not in (101, 102)
                  else (c.token_address = $1 or c.campaign_address = $1) and c.chain_id in (101, 102) end)
        and not (${publicHiddenWhere("c")})
+       and not (${tradingNotOpenSql("c", { gen8OpenAt: gen8On })})
      order by c.created_at desc nulls last
      limit 10`;
 }

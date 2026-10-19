@@ -74,6 +74,8 @@ import { EvmGen8LaunchOptions, assertEvmGen8LaunchBalance, freshEvmGen8FirstBuyC
 import { GEN8_DEFAULT_GRADUATION_TARGET_WEI, gen8GraduationTiers } from "@/lib/evmGen8Client.mjs";
 import { gen8LaunchReadiness } from "../../shared/gen8LaunchReadiness.mjs";
 import { createGen8Campaign } from "@/lib/evmGen8Create";
+import { timestampSeconds } from "@/lib/scheduledLaunchApi";
+import { gen8DeployLanding } from "../../shared/gen8TimedDeploy.mjs";
 
 const DRAFT_PUSH_LIVE_ENABLED = ["1", "true", "yes", "on"].includes(
   String(import.meta.env.VITE_DRAFT_PUSH_LIVE_ENABLED || import.meta.env.VITE_ENABLE_DRAFT_PUSH_LIVE || "")
@@ -875,6 +877,13 @@ export default function PushDraftLive() {
         firstBuyValueWei,
         openAt,
       });
+      const landing = gen8DeployLanding({
+        openAt,
+        slug: draft.slug,
+        tokenAddress: created.tokenAddress,
+        chainId,
+        nowSec: Math.floor(Date.now() / 1000),
+      });
       await markDraftDeployment({
         draftId: draft.id,
         auth: deployAuth,
@@ -882,9 +891,14 @@ export default function PushDraftLive() {
         tokenAddress: created.tokenAddress,
         deployTxHash: created.txHash || "",
         factoryAddress: gen8Launcher,
+        scheduledLaunchAt: landing.scheduledLaunchAt,
       });
-      toast.success(openAt > 0 ? `${deployTierLabel} coin is live. Trading opens at ${new Date(openAt * 1000).toLocaleString()}.` : `${deployTierLabel} coin is live.`);
-      navigate(`/token/${created.tokenAddress}?chainId=${chainId}`);
+      toast.success(
+        landing.scheduledLaunchAt
+          ? `${deployTierLabel} coin is created. Trading stays closed until ${new Date(landing.scheduledLaunchAt * 1000).toLocaleString()}.`
+          : `${deployTierLabel} coin is live.`,
+      );
+      navigate(landing.path);
     } catch (err: any) {
       toast.error(String(err?.shortMessage || err?.message || `We couldn’t deploy your coin on ${chainLabel}. Your draft remains saved. Please try again.`));
     } finally {
@@ -894,11 +908,21 @@ export default function PushDraftLive() {
 
   const deploy = async () => {
     if (!draft) return;
+    const open = timestampSeconds(draft.scheduledLaunchAt);
+    if ((draft.campaignAddress || draft.tokenAddress) && open && open > Math.floor(Date.now() / 1000)) {
+      navigate(`/prepare/${draft.slug}`);
+      return;
+    }
     if (!DRAFT_PUSH_LIVE_ENABLED) return toast.error("Launching is temporarily unavailable. Your draft remains saved. Please try again later.");
     if (isDbcLaunchEnabled() && String((draft as any).launchType || "") === "dbc") return deployDbc();
     if (draftIsSolana) return deploySolanaV4();
     if (gen8Active) {
       if (!gen8Launch?.ready) return toast.error(gen8Launch?.message || "Generation 8 launch contracts are incomplete.");
+      const existing = draft.tokenAddress || draft.campaignAddress;
+      if (existing) {
+        navigate(`/token/${existing}?chainId=${draft.chainId}`);
+        return;
+      }
       return deployGen8();
     }
     if (!wallet.account || !wallet.signer) return toast.error("Connect the draft owner wallet first.");
@@ -1069,6 +1093,13 @@ export default function PushDraftLive() {
   const dbcDraft = isDbcLaunchEnabled() && String((draft as { launchType?: string }).launchType || "") === "dbc";
   const dbcLocked = dbcDraft && isScheduleLocked(draft.scheduledLaunchAt, Date.now());
   const dbcDue = dbcDraft && Boolean(draft.scheduledLaunchAt) && !dbcLocked;
+  const scheduledOpenAt = timestampSeconds(draft.scheduledLaunchAt);
+  const waitingOnTimer = Boolean(
+    (draft.campaignAddress || draft.tokenAddress) &&
+      scheduledOpenAt &&
+      scheduledOpenAt > Math.floor(Date.now() / 1000),
+  );
+  const gen8Existing = Boolean(gen8Active && (draft.tokenAddress || draft.campaignAddress) && !waitingOnTimer);
   // A first buy the launch would refuse (over 70%) or could not pay for also blocks the button.
   const dbcFirstBuyBlocked = Boolean(dbcDraft && (dbcFirstBuyQuote?.exceedsCap || dbcFirstBuyOverBalance));
   const blocked = gen8Active
@@ -1280,10 +1311,14 @@ export default function PushDraftLive() {
         {!DRAFT_PUSH_LIVE_ENABLED ? <p className="mt-4 text-sm text-mw-accent-soft">Draft deployment is temporarily unavailable. Your draft remains saved.</p> : null}
         {gen8Active && !gen8Launch?.ready ? <p className="mt-4 text-sm text-mw-accent-soft">{gen8Launch?.message}</p> : null}
 
-        <Button onClick={deploy} disabled={blocked} className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-5 h-auto min-h-[54px] w-full whitespace-normal py-3 text-center text-[17px]">
+        <Button onClick={deploy} disabled={waitingOnTimer ? false : blocked} className="mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50 mt-5 h-auto min-h-[54px] w-full whitespace-normal py-3 text-center text-[17px]">
           {submitting
             ? "Confirming Deployment..."
-            : gen8Active
+            : waitingOnTimer
+              ? `Trading opens ${new Date((scheduledOpenAt || 0) * 1000).toLocaleString()}`
+              : gen8Existing
+                ? "Open coin page"
+                : gen8Active
                   ? `Launch ${deployTierLabel} coin now`
             : dbcDraft && mode === "scheduled"
               ? "Set launch time"

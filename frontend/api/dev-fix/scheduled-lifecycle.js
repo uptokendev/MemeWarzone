@@ -1,4 +1,5 @@
 import { isSolanaChain } from "../../server/http.js";
+import { gen8Tables, isSchemaMissingError } from "../lib/evmGen8Schema.js";
 
 const PUBLIC_LIFECYCLE_STATUSES = ["scheduled", "deployed"];
 
@@ -161,5 +162,48 @@ export async function listPublicCampaignLifecycleDrafts(
       limit $${params.length}`,
     params,
   );
-  return result.rows.map(mapLifecycleDraftRow).filter(Boolean);
+  const drafts = result.rows.map(mapLifecycleDraftRow).filter(Boolean);
+  if (!drafts.length) return drafts;
+  return attachFutureGen8OpenAt(pool, drafts);
+}
+
+// A gen-8 pool can be closed by openAt even when the draft was marked deployed.
+// The promotion page and the coin-page gate read gen8OpenAt from this list.
+async function attachFutureGen8OpenAt(pool, drafts) {
+  let phase = false;
+  try {
+    phase = Boolean((await gen8Tables(pool)).phase);
+  } catch {
+    return drafts;
+  }
+  if (!phase) return drafts;
+  const tokens = [];
+  for (const draft of drafts) {
+    for (const value of [draft.tokenAddress, draft.campaignAddress]) {
+      const addr = String(value || "").trim().toLowerCase();
+      if (/^0x[0-9a-f]{40}$/.test(addr)) tokens.push(addr);
+    }
+  }
+  if (!tokens.length) return drafts;
+  let rows = [];
+  try {
+    const found = await pool.query(
+      `select chain_id, lower(token_address) as token, open_at
+         from public.evm_gen8_pools
+        where open_at > now()
+          and lower(token_address) = any($1::text[])`,
+      [tokens],
+    );
+    rows = found.rows || [];
+  } catch (error) {
+    if (isSchemaMissingError(error)) return drafts;
+    throw error;
+  }
+  const openByKey = new Map(rows.map((row) => [`${Number(row.chain_id)}:${row.token}`, row.open_at]));
+  return drafts.map((draft) => {
+    const token = String(draft.tokenAddress || "").trim().toLowerCase();
+    const campaign = String(draft.campaignAddress || "").trim().toLowerCase();
+    const open = openByKey.get(`${Number(draft.chainId)}:${token}`) || openByKey.get(`${Number(draft.chainId)}:${campaign}`);
+    return open ? { ...draft, gen8OpenAt: iso(open) } : draft;
+  });
 }
