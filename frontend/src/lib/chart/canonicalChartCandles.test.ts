@@ -6,6 +6,7 @@ import {
   canonicalAthNativeFromCandles,
   continueFlatCandleBodies,
   marketCandlesForChart,
+  openFlatCandleAt,
   patchActiveLatestBucket,
   priceAxisMinMove,
   shouldEstablishChartRange,
@@ -432,4 +433,48 @@ test("gen-8 flat spots draw a body from the previous close, in market cap and in
     { time: 2, open: 11, high: 15, low: 11, close: 14 },
   ]);
   assert.deepEqual(ranged[1], { time: 2, open: 11, high: 15, low: 11, close: 14 });
+});
+
+test("the gen-8 graduation buy opens at the launch spot instead of a speck at the fill", () => {
+  // YCC chain 97: tickStart 260100 is 5.064834e-12 BNB per coin (~$3.65 FDV at $721).
+  // The creator buy that graduated the coin stored only the after-spot, a doji near $266.
+  const supply = 1_000_000_000;
+  const usd = 721;
+  const launch = 5.064834e-12;
+  const p1 = "0.000000000369495624";
+  const p2 = "0.000000000455183624";
+  const flat = (bucket: string, price: string) => {
+    const mcap = String(Number(price) * supply);
+    return candle({
+      bucket_start: bucket,
+      o: price, h: price, l: price, c: price,
+      price_o: price, price_h: price, price_l: price, price_c: price,
+      mcap_o: mcap, mcap_h: mcap, mcap_l: mcap, mcap_c: mcap,
+    });
+  };
+  const rows = [
+    flat("2026-10-18T23:59:00.000Z", p1),
+    flat("2026-10-19T00:01:00.000Z", p2),
+    flat("2026-10-19T00:02:00.000Z", p2),
+  ];
+  const linked = assembleMarketCapCandles({
+    marketCandles: rows, denomination: "USD", nativeUsd: usd, historyReady: true,
+    intervalSeconds: 60, nowSec: Date.parse("2026-10-19T00:02:30Z") / 1000,
+    fixedSupplyWhole: supply, continueFlatBodies: true, launchPriceNative: launch,
+  });
+  const launchMcap = launch * supply * usd;
+  const grad = Number(p1) * supply * usd;
+  const later = Number(p2) * supply * usd;
+  assert.ok(Math.abs(linked[0].open - launchMcap) < 1e-4, "opens at the launch FDV");
+  assert.ok(Math.abs(linked[0].close - grad) < 1e-4, "closes at the graduation spot");
+  assert.ok(linked[0].high > linked[0].low, "the curve trade is a candle");
+  assert.equal(linked[0].low, Math.min(launchMcap, grad));
+  assert.equal(linked[1].open, linked[0].close, "the next bar still starts at the graduation close");
+  assert.ok(Math.abs(linked[1].close - later) < 1e-4);
+  assert.equal(linked[2].open, linked[2].close, "a spot that did not move stays flat");
+  const price = continueFlatCandleBodies(openFlatCandleAt(marketCandlesForChart(rows, "price", "BNB", 0), launch));
+  assert.ok(Math.abs(price[0].open - launch) < 1e-18);
+  assert.equal(price[1].open, price[0].close);
+  const alreadyRanged = openFlatCandleAt([{ time: 1, open: 10, high: 12, low: 9, close: 11 }], launch);
+  assert.equal(alreadyRanged[0].open, 10);
 });

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   GEN8_FDV_WHOLE,
   gen8HolderExcludeList,
+  gen8LaunchPriceNative,
   gen8LensNative,
   gen8MarketCapNative,
   gen8PlatformGraduated,
@@ -18,6 +19,14 @@ const G8DIR_CANDLES = [
   { bucket_start: "2026-10-12T14:29:56.000Z", price_c: "0.000000000160168193", c: "0.000000000160168193" },
   { bucket_start: "2026-10-12T14:30:05.000Z", price_c: "0.000000000160163783", c: "0.000000000160163783" },
 ];
+
+test("YCC launch price is the spot at tickStart 260100", () => {
+  const price = gen8LaunchPriceNative(260100);
+  assert.ok(price != null && price > 0);
+  assert.ok(Math.abs(price - 5.064834e-12) / 5.064834e-12 < 1e-6);
+  assert.equal(gen8LaunchPriceNative(null), null);
+  assert.equal(gen8LaunchPriceNative(887273), null);
+});
 
 test("G8DIR window change is spot to spot, not the fill-to-fill 977%", () => {
   const changes = gen8SpotWindowChanges({

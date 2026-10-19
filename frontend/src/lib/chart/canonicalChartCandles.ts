@@ -108,6 +108,31 @@ function liveAgreesWithClose(close: number, liveValue: number): boolean {
  * and buildCandles does the same. Link only a flat bar. A bar that already has a range
  * is left alone, so Solana wicks stay as stored.
  */
+/**
+ * The first gen-8 bucket stores the spot after the swap. A buy that runs from the launch
+ * tick through graduation is then a flat speck at the top of that move. Open that flat
+ * first bar at the launch spot. A bar that already has a range is left alone, and a
+ * missing launch spot leaves the row as stored.
+ */
+export function openFlatCandleAt(rows: CanonicalCandleRow[], start: number | null | undefined): CanonicalCandleRow[] {
+  if (!rows.length) return rows;
+  const open = Number(start);
+  if (!Number.isFinite(open) || open <= 0) return rows;
+  const first = rows[0];
+  const flat = first.open === first.high && first.high === first.low && first.low === first.close;
+  if (!flat || !(first.close > 0) || first.close === open) return rows;
+  const close = first.close;
+  return [
+    {
+      ...first,
+      open,
+      high: Math.max(first.high, open, close),
+      low: Math.min(first.low, open, close),
+    },
+    ...rows.slice(1),
+  ];
+}
+
 export function continueFlatCandleBodies(rows: CanonicalCandleRow[]): CanonicalCandleRow[] {
   if (rows.length < 2) return rows;
   const out: CanonicalCandleRow[] = [rows[0]];
@@ -209,6 +234,11 @@ export function assembleMarketCapCandles(input: {
    * Leave this off for every other chart: a Solana bar already has its open.
    */
   continueFlatBodies?: boolean;
+  /**
+   * Gen-8 launch price in native per whole coin. With continueFlatBodies, the first
+   * flat bar opens here (price x fully diluted supply) so the curve trade has a body.
+   */
+  launchPriceNative?: number | null;
 }): CanonicalCandleRow[] {
   if (!input.historyReady) return [];
   const canonical = marketCandlesForChart(
@@ -220,7 +250,15 @@ export function assembleMarketCapCandles(input: {
     input.fixedSupplyWhole,
   );
   const chosen = canonical.length ? canonical : input.fallbackRows || [];
-  const rows = input.continueFlatBodies ? continueFlatCandleBodies(chosen) : chosen;
+  const launchPrice = Number(input.launchPriceNative);
+  const fixed = Number(input.fixedSupplyWhole);
+  let flatOpen: number | null = null;
+  if (input.continueFlatBodies && Number.isFinite(launchPrice) && launchPrice > 0 && Number.isFinite(fixed) && fixed > 0) {
+    const nativeMcap = launchPrice * fixed;
+    flatOpen = input.denomination === "USD" && input.nativeUsd > 0 ? nativeMcap * input.nativeUsd : nativeMcap;
+  }
+  const opened = openFlatCandleAt(chosen, flatOpen);
+  const rows = input.continueFlatBodies ? continueFlatCandleBodies(opened) : opened;
   if (!rows.length) return [];
   const liveNative = Number(input.liveMcapNative);
   if (!Number.isFinite(liveNative) || liveNative <= 0) return rows;

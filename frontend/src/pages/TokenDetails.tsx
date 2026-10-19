@@ -83,6 +83,7 @@ import {
   gen8LensNative,
   gen8MarketCapNative,
   gen8PlatformGraduated,
+  gen8LaunchPriceNative,
   gen8SpotNative,
   gen8SpotWindowChanges,
 } from "@/lib/chart/gen8TokenPage";
@@ -5818,6 +5819,7 @@ const toSeconds = (ts: number): number => {
                   onResolutionChange={setMarketResolution}
                   denomination={displayDenom}
                   continueFlatBodies={Boolean(gen8State)}
+                  launchPriceNative={gen8State ? gen8LaunchPriceNative(gen8State.gen8?.tickStart) : null}
                   historyReady={!unifiedMarket.loading}
                   loading={unifiedMarket.loading || ((marketTradePoints?.length ?? 0) === 0 && liveCurveLoading)}
                   error={unifiedMarket.error || ((marketTradePoints?.length ?? 0) > 0 ? null : liveCurveError || topazMarket.error)}

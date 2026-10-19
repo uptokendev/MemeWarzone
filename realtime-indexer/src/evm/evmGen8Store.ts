@@ -277,11 +277,13 @@ export function gen8PlatformStatus(pool: Pick<Gen8PoolRow, "graduatedBlock" | "l
  * One candle row per timeframe with the canonical columns (pool spot price, exact: canonical_version 4 like the
  * materializer). phase bonding: source_mask 1 and bonding_* counters; dex: source_mask | 2 and dex_* counters.
  * A new bucket opens at the previous close, the same rule as Solana DBC candles. One spot in a bucket is then
- * a body from the prior spot instead of a zero-height bar. The first bucket of a coin has no prior close.
+ * a body from the prior spot instead of a zero-height bar. The first bucket has no prior close, so it opens
+ * at the launch spot (tickStart) when that is passed. The close stays the spot after the swap.
  */
 export async function upsertGen8Candle(db: Queryable, input: {
   chainId: number; token: string; timeframe: string; bucketStart: Date; price: number; mcap: number; volume: number;
   blockNumber: number; logIndex: number; phase: "bonding" | "dex";
+  openPrice?: number | null; openMcap?: number | null;
 }) {
   const dex = input.phase === "dex";
   const r = await db.query(
@@ -291,8 +293,8 @@ export async function upsertGen8Candle(db: Queryable, input: {
         order by bucket_start desc
         limit 1
      ), opening as (
-       select coalesce((select c from prev), $5::numeric) as o,
-              coalesce((select mcap_c from prev), $14::numeric) as mo
+       select coalesce((select c from prev), $15::numeric, $5::numeric) as o,
+              coalesce((select mcap_c from prev), $16::numeric, $14::numeric) as mo
      )
      insert into public.token_candles(
        chain_id, campaign_address, timeframe, bucket_start, o, h, l, c, volume_bnb, trades_count,
@@ -344,6 +346,8 @@ export async function upsertGen8Candle(db: Queryable, input: {
       input.chainId, input.token, input.timeframe, input.bucketStart, input.price, input.volume,
       dex ? 2 : 1, dex ? 0 : 1, dex ? 1 : 0, dex ? 0 : input.volume, dex ? input.volume : 0,
       input.blockNumber, input.logIndex, input.mcap,
+      input.openPrice != null && Number.isFinite(input.openPrice) ? input.openPrice : null,
+      input.openMcap != null && Number.isFinite(input.openMcap) ? input.openMcap : null,
     ],
   );
   return r.rows[0] || null;

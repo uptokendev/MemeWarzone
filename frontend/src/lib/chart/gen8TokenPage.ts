@@ -1,11 +1,28 @@
 /**
  * Generation-8 coin page inputs. The shared chart already works for Solana when the page
  * feeds pool spot, fully diluted supply, and indexer candles. Gen-8 has no campaign
- * contract, so these helpers read the lens and the candle spots instead. They do not
- * touch curve math.
+ * contract, so these helpers read the lens and the candle spots instead. The launch
+ * price is the pool spot at tickStart. They do not replay swaps.
  */
 
+import { nativePerCoinWei, sqrtAtTick } from "../../../shared/evmGen8.mjs";
+
 export const GEN8_FDV_WHOLE = 1_000_000_000;
+
+/** Native per whole coin at the pool's launch tick. The first candle opens here. */
+export function gen8LaunchPriceNative(tickStart: number | null | undefined): number | null {
+  if (tickStart == null) return null;
+  const tick = Number(tickStart);
+  if (!Number.isInteger(tick)) return null;
+  try {
+    const wei = nativePerCoinWei(sqrtAtTick(tick));
+    if (wei <= 0n) return null;
+    const price = Number(wei) / 1e18;
+    return Number.isFinite(price) && price > 0 ? price : null;
+  } catch {
+    return null;
+  }
+}
 
 const DEAD = "0x000000000000000000000000000000000000dead";
 /** Same Pancake Infinity vaults the indexer census excludes. Chain 97 has none. */

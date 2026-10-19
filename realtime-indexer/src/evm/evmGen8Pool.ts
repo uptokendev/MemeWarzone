@@ -369,6 +369,20 @@ async function linkedProfile(db: Queryable, cfg: Gen8ChainConfig, policy: Gen8Li
   return gen8LinkCheck(policy, { txFrom: tx.from, txTo: tx.to, swapSender, distinctSwapSenders: n }).linkable ? profile : "standard_unlinked";
 }
 
+/** Spot at tickStart. The first candle opens here. The close is the spot after the swap. */
+function launchOpen(pool: Gen8PoolRow): { price: number; mcap: number } | null {
+  if (!Number.isInteger(pool.tickStart)) return null;
+  try {
+    const sqrt = sqrtAtTick(pool.tickStart);
+    const price = nativePerCoin(sqrt);
+    const mcap = rawToDecimal(marketCapWei(sqrt));
+    if (!(price > 0) || !(mcap > 0) || !Number.isFinite(price) || !Number.isFinite(mcap)) return null;
+    return { price, mcap };
+  } catch {
+    return null;
+  }
+}
+
 /** The pool's price state after a swap, from Swap.sqrtPriceX96 (exact; never the fill VWAP). */
 function priceState(pool: Gen8PoolRow, sqrtPriceX96: bigint, graduated: boolean) {
   const price = nativePerCoin(sqrtPriceX96);
@@ -473,9 +487,10 @@ async function applyTrade(ctx: Ctx, pool: Gen8PoolRow, j: JoinedSwap, tx: TxInfo
 
   const phaseKey = table === "curve_trades" ? "bonding" : "dex";
   const candles: any[] = [];
+  const launch = launchOpen(pool);
   for (const { tf, bucketStart } of sinks.timeframes) {
     const b = bucketStart(tsSec);
-    const c = await upsertGen8Candle(db, { chainId: cfg.chainId, token: pool.token, timeframe: tf, bucketStart: new Date(b * 1000), price: state.price, mcap: state.mcap, volume: curveDec, blockNumber: j.swap.blockNumber, logIndex: j.swap.logIndex, phase: phaseKey });
+    const c = await upsertGen8Candle(db, { chainId: cfg.chainId, token: pool.token, timeframe: tf, bucketStart: new Date(b * 1000), price: state.price, mcap: state.mcap, volume: curveDec, blockNumber: j.swap.blockNumber, logIndex: j.swap.logIndex, phase: phaseKey, openPrice: launch?.price ?? null, openMcap: launch?.mcap ?? null });
     if (c) candles.push({ tf, b, c });
   }
 
@@ -877,12 +892,13 @@ async function rebuildGen8Candles(ctx: Ctx, pool: Gen8PoolRow, since: Date) {
   const starts = sinks.timeframes.map(({ tf, bucketStart }) => ({ tf, bucketStart, from: bucketStart(sinceSec) }));
   const earliest = Math.min(...starts.map((s) => s.from));
   const swaps = await loadGen8SwapsSince(db, cfg.chainId, pool.token, new Date(earliest * 1000));
+  const launch = launchOpen(pool);
   for (const { tf, bucketStart, from } of starts) {
     await deleteGen8Candles(db, cfg.chainId, pool.token, tf, new Date(from * 1000));
     for (const w of swaps) {
       const ts = Math.floor(w.blockTime.getTime() / 1000);
       if (ts < from) continue;
-      await upsertGen8Candle(db, { chainId: cfg.chainId, token: pool.token, timeframe: tf, bucketStart: new Date(bucketStart(ts) * 1000), price: w.price, mcap: w.mcap, volume: w.volume, blockNumber: w.blockNumber, logIndex: w.logIndex, phase: w.phase === "post" ? "dex" : "bonding" });
+      await upsertGen8Candle(db, { chainId: cfg.chainId, token: pool.token, timeframe: tf, bucketStart: new Date(bucketStart(ts) * 1000), price: w.price, mcap: w.mcap, volume: w.volume, blockNumber: w.blockNumber, logIndex: w.logIndex, phase: w.phase === "post" ? "dex" : "bonding", openPrice: launch?.price ?? null, openMcap: launch?.mcap ?? null });
     }
   }
 }

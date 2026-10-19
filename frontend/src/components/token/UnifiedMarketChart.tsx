@@ -27,6 +27,7 @@ import {
   assembleMarketCapCandles,
   continueFlatCandleBodies,
   marketCandlesForChart,
+  openFlatCandleAt,
   patchActiveLatestBucket,
   priceAxisMinMove,
   shouldEstablishChartRange,
@@ -101,6 +102,11 @@ export type UnifiedMarketChartProps = {
    * to the previous close so the move is a candle body, the way Solana stores its bars.
    */
   continueFlatBodies?: boolean;
+  /**
+   * Gen-8 launch price in native per whole coin. The first flat bar opens here, so the
+   * buy that leaves the launch tick is a candle instead of a speck at the fill price.
+   */
+  launchPriceNative?: number | null;
 };
 
 type CreatorTradePin = {
@@ -477,6 +483,7 @@ export function UnifiedMarketChart({
   onExpandedChange,
   showExpand = true,
   continueFlatBodies = false,
+  launchPriceNative = null,
 }: UnifiedMarketChartProps) {
   const solana = isSolanaChainId(chainId);
   const nativeSymbol = getNativeSymbol(chainId);
@@ -622,13 +629,20 @@ export function UnifiedMarketChart({
           supplyWhole: postBurnSupply(marketState, tokenDecimals) || liveSupplyWhole || null,
           fixedSupplyWhole,
           continueFlatBodies,
+          launchPriceNative,
         }),
       );
     }
 
     const fromServer = marketCandlesForChart(marketCandles, metric, denomination, nativeUsd);
     const authoritative = fromServer.length ? fromServer : tradeFallback;
-    const linked = continueFlatBodies ? continueFlatCandleBodies(authoritative) : authoritative;
+    const launchPrice = Number(launchPriceNative);
+    const priceOpen = continueFlatBodies && Number.isFinite(launchPrice) && launchPrice > 0
+      ? (denomination === "USD" && nativeUsd > 0 ? launchPrice * nativeUsd : launchPrice)
+      : null;
+    const linked = continueFlatBodies
+      ? continueFlatCandleBodies(openFlatCandleAt(authoritative, priceOpen))
+      : authoritative;
     const canPatchLivePrice =
       Number.isFinite(livePrice) && livePrice > 0 && (denomination !== "USD" || nativeUsd > 0);
     if (!canPatchLivePrice) return toChartRows(linked);
@@ -656,6 +670,7 @@ export function UnifiedMarketChart({
     seriesPoints,
     solana,
     continueFlatBodies,
+    launchPriceNative,
     waitingForUsd,
   ]);
 
