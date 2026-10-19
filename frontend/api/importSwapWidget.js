@@ -25,7 +25,13 @@ const WINDOW_MS = 60_000;
 export const WIDGET_REQUESTS_PER_MINUTE = Math.max(10, Number(process.env.WIDGET_REQUESTS_PER_MINUTE || 120));
 
 function solanaConnection() {
-  const url = String(process.env.SOLANA_RPC_URL || process.env.VITE_SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com").trim();
+  const url = String(process.env.SOLANA_RPC_URL || process.env.VITE_SOLANA_RPC_URL || process.env.SOLANA_RPC_HTTP || "").trim();
+  if (!url) {
+    const error = new Error("Solana RPC is not configured");
+    error.status = 503;
+    error.code = "SOLANA_RPC_UNAVAILABLE";
+    throw error;
+  }
   return new Connection(url, "confirmed");
 }
 

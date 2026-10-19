@@ -29,6 +29,7 @@ import {
   rawRpcCall,
 } from "./rpcProvider.js";
 import { resolveMarketIdentity, resolveMarketIdentityOrPassthrough } from "./marketIdentity.js";
+import { queryTokenTrades } from "./tokenTradeList.js";
 import { runGraduationReconcilerOnce } from "./graduationReconciler.js";
 import { ensureDexPoolForCampaign } from "./marketApi.js";
 import { registerLpFeesRoutes } from "./lpFeesRoutes.js";
@@ -590,6 +591,14 @@ app.post("/internal/indexer/run", wrap(async (req, res) => {
   res.status(status).json(result);
 }));
 
+/** A posted gen-8 fill wakes the display poll. It does not run the gen-7 campaign scanner. */
+async function wakeIfGen8Campaign(chainId: number, campaign: string, txHash: string): Promise<boolean> {
+  const { wakeGen8Campaign } = await import("./evm/evmGen8Pool.js");
+  const woke = await wakeGen8Campaign(pool, chainId, campaign);
+  if (woke) console.log("[gen8] fast poll", { chainId, campaign, txHash });
+  return woke;
+}
+
 app.post("/api/token/:campaign/ingest-tx", wrap(async (req, res) => {
   const chainId = Number(req.query.chainId || req.body?.chainId || ENV.DEFAULT_EVM_CHAIN_ID);
   const identity = await resolveMarketIdentityOrPassthrough(chainId, String(req.params.campaign || ""));
@@ -612,6 +621,9 @@ app.post("/api/token/:campaign/ingest-tx", wrap(async (req, res) => {
     return res.json(result);
   }
   const evmHash = txHash.toLowerCase();
+  if (/^0x[a-f0-9]{40}$/.test(campaign) && /^0x[a-f0-9]{64}$/.test(evmHash) && await wakeIfGen8Campaign(chainId, campaign, evmHash)) {
+    return res.json({ ok: true, skipped: "gen8_fast" });
+  }
   if (!Number.isFinite(chainId) || (chainId !== 56 && chainId !== 97)) {
     return res.status(400).json({ ok: false, error: "Invalid chainId" });
   }
@@ -640,6 +652,9 @@ app.post("/internal/indexer/ingest-tx", wrap(async (req, res) => {
   }
   if (!/^0x[a-f0-9]{64}$/.test(txHash)) {
     return res.status(400).json({ ok: false, error: "Invalid tx hash" });
+  }
+  if (await wakeIfGen8Campaign(chainId, campaign, txHash)) {
+    return res.json({ ok: true, skipped: "gen8_fast" });
   }
 
   const result = await ingestCampaignTransaction({ chainId, campaignAddress: campaign, txHash });
@@ -2340,19 +2355,7 @@ async function handleTokenTrades(req: any, res: any) {
 
   // Fast path: never block the HTTP response on multi-minute getLogs backfills.
   // AWTT-style empty history used to hang /trades for 90s+ and starve the UI.
-  const r = await pool.query(
-    `select
-       tx_hash, log_index, block_number, block_time,
-       side, wallet,
-       token_amount_raw, bnb_amount_raw,
-       token_amount, bnb_amount, price_bnb,
-       sold_tokens_after_raw
-     from public.curve_trades
-     where chain_id=$1 and campaign_address=$2
-     order by block_number desc, log_index desc
-     limit $3`,
-    [chainId, campaign, limit],
-  );
+  const r = await queryTokenTrades(pool, chainId, campaign, limit);
 
   if ((r.rowCount ?? 0) > 0) {
     const items = r.rows.map((row: Record<string, unknown>) => serializeCurveTradeRow(row));
@@ -2416,19 +2419,7 @@ async function handleTokenTrades(req: any, res: any) {
     // keep campaign
   }
 
-  const r2 = await pool.query(
-    `select
-       tx_hash, log_index, block_number, block_time,
-       side, wallet,
-       token_amount_raw, bnb_amount_raw,
-       token_amount, bnb_amount, price_bnb,
-       sold_tokens_after_raw
-     from public.curve_trades
-     where chain_id=$1 and campaign_address=$2
-     order by block_number desc, log_index desc
-     limit $3`,
-    [chainId, campaign, limit],
-  );
+  const r2 = await queryTokenTrades(pool, chainId, campaign, limit);
 
   res.json(r2.rows.map((row: Record<string, unknown>) => serializeCurveTradeRow(row)));
 }

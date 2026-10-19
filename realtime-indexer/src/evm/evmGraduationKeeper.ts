@@ -491,7 +491,7 @@ export async function listKeeperCampaigns(db: Queryable, chainId: number, opts: 
        left join public.evm_campaign_gen5_state s
          on s.chain_id = c.chain_id and s.campaign_address = c.campaign_address
       where c.chain_id = $1
-        and coalesce(c.campaign_generation, 0) >= 5
+        and coalesce(c.campaign_generation, 0) >= 5 and coalesce(c.campaign_generation, 0) <> 8
         and (
           s.graduation_stage = 'pending'
           or (s.graduation_stage = 'graduated' and s.protocol_fee_escrowed_raw > s.protocol_fee_flushed_raw)
@@ -534,7 +534,7 @@ export async function listHarvestTargets(
         and e.event_name = 'GraduationPoolRegistered'
         and lower(e.contract_address) = any($2::text[])
         and e.campaign_address is not null
-        and coalesce(c.campaign_generation, 0) >= 5
+        and coalesce(c.campaign_generation, 0) >= 5 and coalesce(c.campaign_generation, 0) <> 8
         and (last.at is null or last.at <= now() - make_interval(secs => $3::double precision))
       order by last.at nulls first, e.block_number, e.log_index
       limit $4`,
@@ -572,7 +572,7 @@ export async function listTradingDueCandidates(
        left join public.evm_campaign_gen5_state s
          on s.chain_id = c.chain_id and s.campaign_address = c.campaign_address
       where c.chain_id = $1
-        and coalesce(c.campaign_generation, 0) >= 5
+        and coalesce(c.campaign_generation, 0) >= 5 and coalesce(c.campaign_generation, 0) <> 8
         and coalesce(s.graduation_stage, 'trading') = 'trading'
         and c.graduated_block is null
       group by c.campaign_address

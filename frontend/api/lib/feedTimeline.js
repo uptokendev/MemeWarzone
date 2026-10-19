@@ -6,7 +6,8 @@
  * api/feed/posts.js next to the post SELECT.
  */
 import { pool } from "../../server/db.js";
-import { publicHiddenWhere } from "./publicHiddenCampaigns.js";
+import { publicHiddenWhere, publicLaunchAtSql, tradingNotOpenSql } from "./publicHiddenCampaigns.js";
+import { gen8Tables } from "./evmGen8Schema.js";
 
 export const FEED_PAGE_SIZE = 30;
 
@@ -117,13 +118,16 @@ async function safe(fn) {
 
 export function loadDeployEvents({ before, limit, authors }) {
   return safe(async () => {
+    const gen8OpenAt = Boolean((await gen8Tables(pool)).phase);
+    const atSql = publicLaunchAtSql("c", { gen8OpenAt });
     const params = [];
     const sql = `
       select c.chain_id, c.campaign_address, c.token_address, c.creator_address, c.name, c.symbol, c.logo_uri,
-             coalesce(c.created_at_chain, c.created_at) as at
+             ${atSql} as at
         from public.campaigns c
        where c.campaign_address is not null and not (${publicHiddenWhere("c")})
-         ${beforeFilter("coalesce(c.created_at_chain, c.created_at)", before, params)}
+         and not (${tradingNotOpenSql("c", { gen8OpenAt })})
+         ${beforeFilter(atSql, before, params)}
          ${authorFilter("c.creator_address", authors, params)}
        order by at desc
        limit $${params.push(limit)}`;

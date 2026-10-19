@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 const requireFromIndexer = createRequire(new URL("../../realtime-indexer/package.json", import.meta.url));
 const { Pool } = requireFromIndexer("pg");
 
-const PORT = Number(process.env.DBC_THROWAY_PG_PORT || 55432);
+const DEFAULT_PORT = Number(process.env.DBC_THROWAY_PG_PORT || 55432);
 const PG_BIN = process.env.DBC_PG_BIN || "/usr/lib/postgresql/14/bin";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -24,7 +24,9 @@ function run(bin, args, opts = {}) {
   return result.stdout;
 }
 
-export async function startThrowawayPostgres() {
+/** `extraFiles`: more SQL files (repo-relative or absolute) applied after the DBC schema, in order (gen-8 indexer tests). */
+export async function startThrowawayPostgres(opts = {}) {
+  const PORT = Number(opts.port || DEFAULT_PORT);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mwz-dbc-pg-"));
   run("initdb", ["-D", dir, "--auth=trust", "-U", "postgres", "--no-instructions"]);
   fs.appendFileSync(path.join(dir, "pg_hba.conf"), "\nhost all all 127.0.0.1/32 trust\nhost all all ::1/128 trust\n");
@@ -65,6 +67,7 @@ export async function startThrowawayPostgres() {
   apply(path.join(ROOT, "db/migrations/20260929_000009_dbc_quote_binding.sql"));
   apply(path.join(ROOT, "db/migrations/20260929_000010_dbc_payout_quote.sql"));
   apply(path.join(ROOT, "db/migrations/20260929_000011_campaign_drafts_dbc_quote.sql"));
+  for (const file of opts.extraFiles || []) apply(path.isAbsolute(file) ? file : path.join(ROOT, file));
   } catch (error) {
     abort(error);
   }

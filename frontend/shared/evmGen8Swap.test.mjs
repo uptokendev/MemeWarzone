@@ -1,0 +1,281 @@
+// Encoders for gen-8 swaps through the UniversalRouter (shared/evmGen8Swap.mjs): every call is decoded back and
+// compared field by field, for both router layouts, buys and sells, exact input and output, with and without a
+// Permit2 permit. Execution against the real routers is in src/lib/evmGen8Client.chain.test.mjs (local forks).
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { AbiCoder, Interface, Wallet, getAddress, verifyTypedData } from "ethers";
+import {
+  GEN8_KNOWN_ROUTERS,
+  GEN8_REFERRER_APP,
+  GEN8_REFERRER_WIDGET,
+  GEN8_ROUTER_ALLOWANCE_SECONDS,
+  GEN8_SWAP_DEADLINE_SECONDS,
+  PERMIT2_ADDRESS,
+  UR_COMMANDS,
+  UR_MSG_SENDER,
+  UR_NATIVE,
+  assertGen8NativeRefund,
+  buildGen8RouterCall,
+  decodeGen8RouterCall,
+  encodeGen8V4SwapInput,
+  gen8BuyFeeSplit,
+  gen8CreatorShareWei,
+  gen8HookData,
+  gen8MinOut,
+  GEN8_DEFAULT_SLIPPAGE_BPS,
+  GEN8_SIZED_SLIPPAGE,
+  gen8FormatAmount,
+  gen8FormatPriceImpact,
+  gen8PermitTypedData,
+  gen8PriceImpactBps,
+  gen8QuoterFor,
+  gen8ReferenceAmount,
+  gen8SizedSlippageBps,
+  gen8UsesSizedSlippage,
+  gen8RouterFor,
+  gen8RouterAllowanceCovers,
+  gen8SellFeeSplit,
+  gen8SellSetup,
+  permitFromJson,
+  permitToJson,
+} from "./evmGen8Swap.mjs";
+import { gen8PoolKey } from "./evmGen8.mjs";
+
+const TOKEN = getAddress("0x1111111111111111111111111111111111111111");
+const HOOK = getAddress("0x00000000000000000000000000000000000028ec");
+const ROUTER = getAddress("0xDc264714F68d84CF29BC605589405E78bDBE7C9f");
+const KEY = gen8PoolKey(TOKEN, HOOK);
+const ZERO = "0x0000000000000000000000000000000000000000";
+const coder = AbiCoder.defaultAbiCoder();
+
+test("router per chain: defaults pinned to their layout; env overrides; an unknown router needs its layout", () => {
+  assert.deepEqual(gen8RouterFor(56), { address: GEN8_KNOWN_ROUTERS[56][0].address, layout: "v2.1", label: "UniversalRouter 2.1.2" });
+  assert.equal(gen8RouterFor(4663).address, getAddress("0x8876789976decbfcbbbe364623c63652db8c0904"));
+  assert.equal(gen8RouterFor(4663).layout, "v2.1");
+  assert.equal(gen8RouterFor(97), null, "testnets: env only");
+  const v20 = gen8RouterFor(56, { VITE_EVM_GEN8_UNIVERSAL_ROUTER_56: "0x1906c1d672b88cd1b9ac7593301ca990f94eae07" });
+  assert.deepEqual([v20.address, v20.layout], [getAddress("0x1906c1d672b88cd1b9ac7593301ca990f94eae07"), "v2.0"]);
+  // a known router named with the wrong layout keeps its proven layout
+  assert.equal(gen8RouterFor(56, { EVM_GEN8_UNIVERSAL_ROUTER_56: "0x1906c1d672b88cd1b9ac7593301ca990f94eae07", EVM_GEN8_UNIVERSAL_ROUTER_LAYOUT_56: "v2.1" }).layout, "v2.0");
+  assert.equal(gen8RouterFor(97, { EVM_GEN8_UNIVERSAL_ROUTER_97: "0x00000000000000000000000000000000000000a1" }), null, "unknown router without a layout");
+  assert.deepEqual(gen8RouterFor(97, { EVM_GEN8_UNIVERSAL_ROUTER_97: "0x00000000000000000000000000000000000000a1", EVM_GEN8_UNIVERSAL_ROUTER_LAYOUT_97: "v2.0" }).layout, "v2.0");
+  assert.equal(gen8RouterFor(56, { EVM_GEN8_UNIVERSAL_ROUTER_56: "not-an-address" }), null);
+  assert.equal(gen8QuoterFor(56), getAddress("0x9f75dd27d6664c475b90e105573e550ff69437b0"));
+  assert.equal(gen8QuoterFor(97), null);
+  assert.equal(gen8QuoterFor(97, { VITE_EVM_GEN8_V4_QUOTER_97: "0x00000000000000000000000000000000000000b2" }), getAddress("0x00000000000000000000000000000000000000b2"));
+});
+
+for (const layout of ["v2.0", "v2.1"]) {
+  test(`${layout}: exact-input buy decodes back to one V4 swap native -> coin with SETTLE_ALL / TAKE_ALL bounds`, () => {
+    const call = buildGen8RouterCall({ router: ROUTER, layout, poolKey: KEY, side: "buy", amount: 10n ** 17n, limit: 123_456n, deadline: 1_900_000_000n });
+    assert.equal(call.to, ROUTER);
+    assert.equal(call.value, 10n ** 17n);
+    assert.equal(call.commands, "0x10");
+    const d = decodeGen8RouterCall(call.data, layout);
+    assert.deepEqual(d.commands, [UR_COMMANDS.V4_SWAP]);
+    assert.equal(d.deadline, 1_900_000_000n);
+    assert.equal(d.permit, null);
+    assert.equal(d.sweep, null);
+    assert.deepEqual(d.swap.poolKey, KEY);
+    assert.equal(d.swap.exactIn, true);
+    assert.equal(d.swap.zeroForOne, true);
+    assert.equal(d.swap.amount, 10n ** 17n);
+    assert.equal(d.swap.limit, 123_456n);
+    assert.equal(d.swap.hopPriceX36, layout === "v2.0" ? null : 0n, "0 = no per-hop price check");
+    assert.deepEqual(d.swap.settle, { currency: ZERO, amount: 10n ** 17n });
+    assert.deepEqual(d.swap.take, { currency: TOKEN, amount: 123_456n });
+    assert.equal(d.swap.hookData, gen8HookData(GEN8_REFERRER_APP));
+  });
+
+  test(`${layout}: sell with a Permit2 permit: PERMIT2_PERMIT then V4_SWAP coin -> native, value 0`, () => {
+    const permit = { permitSingle: { details: { token: TOKEN, amount: 5n * 10n ** 24n, expiration: 1_900_001_800n, nonce: 3n }, spender: ROUTER, sigDeadline: 1_900_001_800n }, signature: "0x" + "ab".repeat(65) };
+    const call = buildGen8RouterCall({ router: ROUTER, layout, poolKey: KEY, side: "sell", amount: 5n * 10n ** 24n, limit: 7n, deadline: 1_900_000_000n, permit, hookData: gen8HookData(GEN8_REFERRER_WIDGET) });
+    assert.equal(call.value, 0n);
+    assert.equal(call.commands, "0x0a10");
+    const d = decodeGen8RouterCall(call.data, layout);
+    assert.deepEqual(d.commands, [UR_COMMANDS.PERMIT2_PERMIT, UR_COMMANDS.V4_SWAP]);
+    assert.deepEqual(d.permit, permit);
+    assert.equal(d.swap.zeroForOne, false);
+    assert.deepEqual(d.swap.settle, { currency: TOKEN, amount: 5n * 10n ** 24n });
+    assert.deepEqual(d.swap.take, { currency: ZERO, amount: 7n });
+    assert.equal(d.swap.hookData, gen8HookData(GEN8_REFERRER_WIDGET));
+  });
+
+  test(`${layout}: exact-output buy settles at most the limit and sweeps unspent native back to the sender`, () => {
+    const call = buildGen8RouterCall({ router: ROUTER, layout, poolKey: KEY, side: "buy", exactIn: false, amount: 10n ** 24n, limit: 5n * 10n ** 17n, deadline: 1n });
+    assert.equal(call.value, 5n * 10n ** 17n);
+    const d = decodeGen8RouterCall(call.data, layout);
+    assert.deepEqual(d.commands, [UR_COMMANDS.V4_SWAP, UR_COMMANDS.SWEEP]);
+    assert.equal(d.swap.exactIn, false);
+    assert.deepEqual(d.swap.settle, { currency: ZERO, amount: 5n * 10n ** 17n });
+    assert.deepEqual(d.swap.take, { currency: TOKEN, amount: 10n ** 24n });
+    assert.deepEqual(d.sweep, { token: ZERO, recipient: UR_MSG_SENDER, amountMin: 0n });
+  });
+}
+
+test("F14: exact-output native buy ends with SWEEP(address(0) = native, address(1) = msg.sender, 0), byte for byte", () => {
+  for (const layout of ["v2.0", "v2.1"]) {
+    const call = buildGen8RouterCall({ router: ROUTER, layout, poolKey: KEY, side: "buy", exactIn: false, amount: 10n ** 24n, limit: 5n * 10n ** 17n, deadline: 1n });
+    assert.equal(call.commands, "0x1004", "V4_SWAP (0x10) then SWEEP (0x04)");
+    assert.equal(call.inputs.length, 2);
+    assert.equal(call.inputs[1], `0x${"00".repeat(32)}${"00".repeat(31)}01${"00".repeat(32)}`, "abi.encode(address(0), address(1), uint256(0))");
+    assert.equal(UR_NATIVE, ZERO);
+    assert.equal(UR_MSG_SENDER, "0x0000000000000000000000000000000000000001");
+    assert.doesNotThrow(() => assertGen8NativeRefund(decodeGen8RouterCall(call.data, layout)));
+  }
+  // exact-input buys and sells need no sweep: the router is paid exactly what it settles
+  const buy = buildGen8RouterCall({ router: ROUTER, layout: "v2.1", poolKey: KEY, side: "buy", amount: 1n, limit: 0n, deadline: 1n });
+  assert.doesNotThrow(() => assertGen8NativeRefund(decodeGen8RouterCall(buy.data, "v2.1")));
+  const sell = buildGen8RouterCall({ router: ROUTER, layout: "v2.1", poolKey: KEY, side: "sell", exactIn: false, amount: 1n, limit: 9n, deadline: 1n });
+  assert.equal(sell.commands, "0x10", "an exact-output sell pays coins, no native to sweep");
+  assert.doesNotThrow(() => assertGen8NativeRefund(decodeGen8RouterCall(sell.data, "v2.1")));
+});
+
+test("F14 guard: a hand-built exact-output native buy without the SWEEP, or sweeping elsewhere, is refused", () => {
+  const noSweep = { commands: [UR_COMMANDS.V4_SWAP], swap: { exactIn: false, zeroForOne: true }, sweep: null };
+  assert.throws(() => assertGen8NativeRefund(noSweep), /sweep unspent native/);
+  const elsewhere = { commands: [UR_COMMANDS.V4_SWAP, UR_COMMANDS.SWEEP], swap: { exactIn: false, zeroForOne: true }, sweep: { token: ZERO, recipient: getAddress("0x0000000000000000000000000000000000000002"), amountMin: 0n } };
+  assert.throws(() => assertGen8NativeRefund(elsewhere), /sweep unspent native/, "address(2) = the router itself");
+});
+
+test("the two layouts are not interchangeable: the v2.1 single params carry one more word", () => {
+  const a = encodeGen8V4SwapInput({ layout: "v2.0", poolKey: KEY, side: "buy", amount: 1n, limit: 0n });
+  const b = encodeGen8V4SwapInput({ layout: "v2.1", poolKey: KEY, side: "buy", amount: 1n, limit: 0n });
+  const [, pa] = coder.decode(["bytes", "bytes[]"], a);
+  const [, pb] = coder.decode(["bytes", "bytes[]"], b);
+  assert.equal((pb[0].length - pa[0].length) / 2, 32);
+  assert.throws(() => decodeGen8RouterCall(buildGen8RouterCall({ router: ROUTER, layout: "v2.0", poolKey: KEY, side: "buy", amount: 1n, limit: 0n, deadline: 1n }).data, "v2.1"));
+});
+
+test("refusals: unknown layout, coin as currency0, zero amount, a permit on a buy, slippage out of range", () => {
+  assert.throws(() => encodeGen8V4SwapInput({ layout: "v3", poolKey: KEY, side: "buy", amount: 1n, limit: 0n }), /layout/);
+  assert.throws(() => encodeGen8V4SwapInput({ layout: "v2.1", poolKey: { ...KEY, currency0: TOKEN, currency1: ZERO }, side: "buy", amount: 1n, limit: 0n }), /native/);
+  assert.throws(() => encodeGen8V4SwapInput({ layout: "v2.1", poolKey: KEY, side: "buy", amount: 0n, limit: 0n }), /positive/);
+  assert.throws(() => buildGen8RouterCall({ router: ROUTER, layout: "v2.1", poolKey: KEY, side: "buy", amount: 1n, limit: 0n, deadline: 1n, permit: { permitSingle: {}, signature: "0x" } }), /sell/);
+  assert.throws(() => gen8MinOut(100n, 6000), /slippage/);
+  assert.equal(gen8MinOut(10_000n, 100), 9_900n);
+});
+
+test("a sell's one-time setup: max approval to Permit2 and one router allowance, then nothing", () => {
+  const now = 1_700_000_000;
+  const amount = 5n * 10n ** 21n;
+  const max256 = (1n << 256n) - 1n;
+  const max160 = (1n << 160n) - 1n;
+  const erc20 = new Interface(["function approve(address spender, uint256 value) returns (bool)"]);
+  const permit2 = new Interface(["function approve(address token, address spender, uint160 amount, uint48 expiration)"]);
+  const both = gen8SellSetup({ token: TOKEN, router: ROUTER, erc20Allowance: 0n, permit2Allowance: [0n, 0n, 0n], amountIn: amount, nowSec: now });
+  assert.equal(both.approval.to, TOKEN);
+  assert.equal(both.approval.value, "0");
+  const approved = erc20.decodeFunctionData("approve", both.approval.data);
+  assert.equal(approved[0], PERMIT2_ADDRESS);
+  assert.equal(approved[1], max256);
+  assert.equal(both.permit2Approval.to, PERMIT2_ADDRESS);
+  assert.equal(both.permit2Approval.value, "0");
+  const allowed = permit2.decodeFunctionData("approve", both.permit2Approval.data);
+  assert.equal(allowed[0], TOKEN);
+  assert.equal(allowed[1], ROUTER);
+  assert.equal(allowed[2], max160);
+  assert.equal(allowed[3], BigInt(now) + BigInt(GEN8_ROUTER_ALLOWANCE_SECONDS));
+
+  const covered = { amount: max160, expiration: BigInt(now) + BigInt(GEN8_SWAP_DEADLINE_SECONDS) + 1n };
+  assert.equal(gen8SellSetup({ token: TOKEN, router: ROUTER, erc20Allowance: max256, permit2Allowance: covered, amountIn: amount, nowSec: now }), null);
+  const short = gen8SellSetup({ token: TOKEN, router: ROUTER, erc20Allowance: max256, permit2Allowance: { amount, expiration: BigInt(now) + BigInt(GEN8_SWAP_DEADLINE_SECONDS) }, amountIn: amount, nowSec: now });
+  assert.equal(short.approval, null);
+  assert.ok(short.permit2Approval, "an allowance that dies before the swap deadline is refreshed");
+  const exact = gen8SellSetup({ token: TOKEN, router: ROUTER, erc20Allowance: amount, permit2Allowance: covered, amountIn: amount, nowSec: now });
+  assert.ok(exact.approval, "an exact ERC20 approval is raised to the max once");
+  assert.equal(exact.permit2Approval, null);
+  assert.equal(gen8RouterAllowanceCovers({ amount: amount - 1n, expiration: BigInt(now) + 10n ** 9n }, amount, now), false);
+});
+
+test("Permit2 typed data: signed by the wallet, recovers, round-trips through JSON", async () => {
+  const w = Wallet.createRandom();
+  const typed = gen8PermitTypedData({ chainId: 56, token: TOKEN, amount: 42n * 10n ** 18n, nonce: 7n, spender: ROUTER, nowSec: 1_000 });
+  assert.equal(typed.domain.verifyingContract, PERMIT2_ADDRESS);
+  assert.equal(typed.message.details.expiration, 2_800n);
+  assert.equal(typed.message.sigDeadline, 2_800n);
+  const signature = await w.signTypedData(typed.domain, typed.types, typed.message);
+  assert.equal(verifyTypedData(typed.domain, typed.types, typed.message, signature), w.address);
+  const permit = { permitSingle: typed.message, signature };
+  assert.deepEqual(permitFromJson(JSON.parse(JSON.stringify(permitToJson(permit)))), permit);
+});
+
+test("fee split for quotes: the hook's exact-input buy split and the gross-for-net of a sell (MwzFeeMath)", () => {
+  assert.deepEqual(gen8BuyFeeSplit(10_200n, 200), { curveWei: 10_000n, feeWei: 200n });
+  assert.deepEqual(gen8BuyFeeSplit(10n ** 18n, 9000), { curveWei: (10n ** 18n * 10_000n) / 19_000n, feeWei: 10n ** 18n - (10n ** 18n * 10_000n) / 19_000n });
+  for (const rate of [100, 200, 4567, 9000]) {
+    for (const net of [1n, 999n, 10n ** 15n + 7n, 12_345_678_901_234_567n]) {
+      const { curveWei: p, feeWei } = gen8SellFeeSplit(net, rate);
+      assert.equal(p - (p * BigInt(rate)) / 10_000n, net, "payout minus the hook's fee is the net");
+      assert.ok(p - 1n - ((p - 1n) * BigInt(rate)) / 10_000n < net, "smallest such payout");
+      assert.equal(feeWei, p - net);
+    }
+  }
+  assert.equal(gen8CreatorShareWei({ graduated: false, curveWei: 10_000n, feeWei: 200n }), 11n, "560 bps of the bonding fee");
+  assert.equal(gen8CreatorShareWei({ graduated: true, curveWei: 10_000n, feeWei: 100n }), 50n, "0.5% of volume after graduation");
+});
+
+test("F13 price impact: execution rate against a 1/1000 reference quote of the same pool, fee cancels out", () => {
+  // reference: 1e15 in -> 2e21 out (2,000,000 per unit); trade 1e18 in -> 1.9e24 out: 5% worse
+  assert.equal(gen8PriceImpactBps({ amountIn: 10n ** 18n, amountOut: 19n * 10n ** 23n, refIn: 10n ** 15n, refOut: 2n * 10n ** 21n }), 500);
+  // same rate: no impact; a better rate than the reference (rounding) floors at 0
+  assert.equal(gen8PriceImpactBps({ amountIn: 1000n, amountOut: 2000n, refIn: 10n, refOut: 20n }), 0);
+  assert.equal(gen8PriceImpactBps({ amountIn: 1000n, amountOut: 2100n, refIn: 10n, refOut: 20n }), 0);
+  // the fee scales both quotes alike: 2% off both outputs gives the same impact
+  const a = gen8PriceImpactBps({ amountIn: 10n ** 18n, amountOut: 19n * 10n ** 23n, refIn: 10n ** 15n, refOut: 2n * 10n ** 21n });
+  const b = gen8PriceImpactBps({ amountIn: 10n ** 18n, amountOut: (19n * 10n ** 23n * 98n) / 100n, refIn: 10n ** 15n, refOut: (2n * 10n ** 21n * 98n) / 100n });
+  assert.equal(a, b);
+  assert.equal(gen8PriceImpactBps({ amountIn: 1n, amountOut: 1n, refIn: null, refOut: null }), null, "no reference: unknown");
+  assert.equal(gen8PriceImpactBps({ amountIn: 10n, amountOut: 0n, refIn: 1n, refOut: 5n }), 10_000);
+  assert.equal(gen8ReferenceAmount(10n ** 18n), 10n ** 15n);
+  assert.equal(gen8ReferenceAmount(10n ** 11n), null, "too small to price to 0.01%");
+  assert.deepEqual([gen8FormatPriceImpact(null), gen8FormatPriceImpact(0), gen8FormatPriceImpact(245), gen8FormatPriceImpact(10_000)], ["-", "<0.01%", "2.45%", "100.00%"]);
+  // 60,000 out against a 61 wei reference is one wei of rounding, not 1.65%.
+  assert.equal(gen8PriceImpactBps({ amountIn: 10n ** 15n, amountOut: 60_000n, refIn: 10n ** 12n, refOut: 61n }), 0);
+});
+
+test("tiny quote amounts keep significant digits, down to 0.000001", () => {
+  assert.equal(gen8FormatAmount(0n), "0");
+  assert.equal(gen8FormatAmount(1n), "< 0.000001");
+  assert.equal(gen8FormatAmount(10n ** 12n - 1n), "< 0.000001");
+  assert.equal(gen8FormatAmount(10n ** 12n), "0.000001");
+  assert.equal(gen8FormatAmount(15n * 10n ** 11n), "0.0000015");
+  assert.equal(gen8FormatAmount(10n ** 18n), "1");
+  assert.equal(gen8FormatAmount(15n * 10n ** 17n), "1.5");
+  assert.equal(gen8FormatAmount(1_234_567_890_123_456_789n), "1.234568");
+  assert.equal(gen8FormatAmount(1_234_567n * 10n ** 18n), "1,234,567");
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const panel = fs.readFileSync(path.join(here, "../src/components/evm/Gen8TradePanel.tsx"), "utf8");
+  const widget = fs.readFileSync(path.join(here, "../src/widget/gen8Widget.ts"), "utf8");
+  assert.match(panel, /gen8FormatAmount\(quote\.amountOut\)/);
+  assert.match(panel, /gen8FormatAmount\(quote\.feeWei\)/);
+  assert.match(panel, /gen8FormatAmount\(quote\.minOut\)/);
+  assert.match(panel, /gen8FormatAmount\(quote\.creatorShareWei\)/);
+  assert.doesNotMatch(panel, /maximumFractionDigits/);
+  assert.match(widget, /gen8FormatAmount\(q\.amountOut\)/);
+  assert.match(widget, /gen8FormatAmount\(q\.feeNativeRaw\)/);
+  assert.doesNotMatch(widget, /evmGen8Swap\.mjs/);
+});
+
+test("F13 sized slippage: BNB Chain 0.3% + impact / 10, between 0.3% and 1%; Robinhood keeps 1%", () => {
+  assert.deepEqual(GEN8_SIZED_SLIPPAGE, { baseBps: 30, impactDivisor: 10, minBps: 30, maxBps: 100 });
+  assert.equal(GEN8_DEFAULT_SLIPPAGE_BPS, 100);
+  for (const chainId of [56, 97]) {
+    assert.equal(gen8UsesSizedSlippage(chainId), true);
+    assert.equal(gen8SizedSlippageBps({ chainId, priceImpactBps: 0 }), 30);
+    assert.equal(gen8SizedSlippageBps({ chainId, priceImpactBps: 1 }), 31, "rounded up");
+    assert.equal(gen8SizedSlippageBps({ chainId, priceImpactBps: 100 }), 40, "1% impact -> 0.4%");
+    assert.equal(gen8SizedSlippageBps({ chainId, priceImpactBps: 500 }), 80, "5% impact -> 0.8%");
+    assert.equal(gen8SizedSlippageBps({ chainId, priceImpactBps: 700 }), 100);
+    assert.equal(gen8SizedSlippageBps({ chainId, priceImpactBps: 5000 }), 100, "capped at the old flat 1%");
+    assert.equal(gen8SizedSlippageBps({ chainId, priceImpactBps: null }), 100, "unknown impact: the flat default");
+  }
+  for (const chainId of [4663, 46630, 31337]) {
+    assert.equal(gen8UsesSizedSlippage(chainId), false);
+    assert.equal(gen8SizedSlippageBps({ chainId, priceImpactBps: 0 }), 100);
+    assert.equal(gen8SizedSlippageBps({ chainId, priceImpactBps: 2000 }), 100);
+  }
+});

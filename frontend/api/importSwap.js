@@ -22,6 +22,8 @@
 import { Connection, PublicKey, VersionedTransaction } from "@solana/web3.js";
 import { badMethod, json, readJson } from "../server/http.js";
 import { evmFingerprint, recordFingerprint, solanaFingerprintFromBuilt } from "./lib/importSwapFingerprint.js";
+import { gen8ConfigFor } from "./lib/evmGen8Config.js";
+import { findGen8Coin } from "./lib/evmGen8Coins.js";
 
 export const IMPORT_SWAP_FEE_BPS = Math.max(0, Math.min(200, Number(process.env.IMPORT_SWAP_FEE_BPS || 50)));
 
@@ -151,7 +153,13 @@ export function solanaFeeAccount(owner = SOLANA_FEE_OWNER) {
 }
 
 function solanaConnection() {
-  const url = String(process.env.SOLANA_RPC_URL || process.env.VITE_SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com").trim();
+  const url = String(process.env.SOLANA_RPC_URL || process.env.VITE_SOLANA_RPC_URL || process.env.SOLANA_RPC_HTTP || "").trim();
+  if (!url) {
+    const error = new Error("Solana RPC is not configured");
+    error.status = 503;
+    error.code = "SOLANA_RPC_UNAVAILABLE";
+    throw error;
+  }
   return new Connection(url, "confirmed");
 }
 
@@ -274,7 +282,7 @@ async function dbPool() {
 }
 
 /** { id, feeAccount } for an active partner on this chain (feeAccount only when it checks out), else null. */
-async function readPartner(partnerId, chainId) {
+export async function readPartner(partnerId, chainId) {
   const id = String(partnerId || "").trim().toLowerCase();
   if (!id || !/^[a-z0-9][a-z0-9-]{1,40}$/.test(id)) return null;
   if (chainId === 101 && !SOLANA_IMPORT_FEE_COLLECTOR) return null; // no split on Solana: nothing to share
@@ -304,7 +312,7 @@ async function readPartner(partnerId, chainId) {
 }
 
 /** Best effort: a failed write only means the swap is not attributed to the partner. */
-async function rememberPartnerSwap(input) {
+export async function rememberPartnerSwap(input) {
   try {
     await recordFingerprint(await dbPool(), input);
   } catch (error) {
@@ -442,11 +450,32 @@ function readSwapInput(body) {
   return { chainId, side, token: chainId === 56 ? token.toLowerCase() : token };
 }
 
+/**
+ * D9: a MemeWarzone generation 8 coin never takes the import route; it trades in its own Uniswap V4 pool before and
+ * after graduation (1% hook fee, no import fee on top). Only asked where gen-8 is configured for the chain.
+ * Returns the 409 body, or null.
+ */
+export async function gen8ImportRouteRefusal(input, deps = {}) {
+  if (input.chainId === 101 || !(deps.gen8Config || gen8ConfigFor)(input.chainId)) return null;
+  const coin = await (deps.findCoin || findGen8Coin)({ chainId: input.chainId, address: input.token, db: deps.db === undefined ? await dbPool().catch(() => null) : deps.db });
+  if (!coin) return null;
+  return {
+    ok: false,
+    error: "This coin trades in its own MemeWarzone pool, not through the import route.",
+    code: "GEN8_POOL_ROUTE",
+    tradePath: coin.tradePath,
+    poolId: coin.poolId,
+    poolKey: coin.poolKey,
+  };
+}
+
 export async function importSwapQuote(req, res) {
   if (req.method !== "POST") return badMethod(res);
   try {
     const body = await readJson(req);
     const input = readSwapInput(body);
+    const gen8Refusal = await gen8ImportRouteRefusal(input);
+    if (gen8Refusal) return json(res, 409, gen8Refusal);
     const amountRaw = positiveRaw(body.amountRaw);
     if (!amountRaw) return json(res, 400, { ok: false, error: "amountRaw must be a positive integer" });
     const quote = input.chainId === 101
@@ -464,6 +493,8 @@ export async function importSwapBuild(req, res) {
   try {
     const body = await readJson(req);
     const input = readSwapInput(body);
+    const gen8Refusal = await gen8ImportRouteRefusal(input);
+    if (gen8Refusal) return json(res, 409, gen8Refusal);
     const wallet = String(body.wallet || "").trim();
     if (input.chainId === 101 ? !isSolanaAddress(wallet) : !isEvmAddress(wallet)) return json(res, 400, { ok: false, error: "Invalid wallet" });
     const built = input.chainId === 101

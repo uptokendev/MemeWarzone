@@ -680,6 +680,7 @@ async function runOnce(provider: ethers.JsonRpcProvider): Promise<{ head: number
     `select campaign_address, token_address, created_block
      from public.campaigns
      where chain_id=$1 and coalesce(indexing_enabled,true)=true
+       and coalesce(factory_generation,0) <> 8
      order by created_block asc, campaign_address asc`,
     [CHAIN_ID],
   );

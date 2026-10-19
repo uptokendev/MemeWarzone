@@ -182,6 +182,8 @@ export default async function handler(req, res) {
       const row = byCampaign.get(key);
       const scheduledMs = row?.scheduled_launch_at ? new Date(row.scheduled_launch_at).getTime() : NaN;
       if (Number.isFinite(scheduledMs) && scheduledMs > now) continue;
+      const gen8Open = Number(item?.gen8?.openAt);
+      if (item?.gen8 && item.gen8.tradingOpen === false && Number.isFinite(gen8Open) && gen8Open * 1000 > now) continue;
       seen.add(key);
       items.push(applyLifecycle(item, row));
     }

@@ -3,10 +3,7 @@ import { pool } from "../../server/db.js";
 import { getQuery, json, readJson } from "../../server/http.js";
 import { getRpcUrls, getServerReadProvider } from "../lib/getServerReadProvider.js";
 import { CREATE_CANARY_CODE, CREATE_CANARY_MESSAGE, createCanaryRefusalBody, isCreateAllowedForWallet } from "../lib/createCanary.js";
-import {
-  creatorClusterFundingDetectorConfigured,
-  detectDirectCreatorFunding,
-} from "./creator-cluster-detector.js";
+import { creatorClusterFundingDetectorConfigured } from "./creator-cluster-detector.js";
 import * as legacySecurity from "./security.js";
 
 export * from "./security.js";
@@ -18,18 +15,12 @@ const CAMPAIGN_PROTECTION_ABI = [
   "function creatorBuyLockUntil() view returns (uint256)",
   "function creatorBuyCapWei() view returns (uint256)",
   "function creatorBoughtWei() view returns (uint256)",
-  "function riskRegistry() view returns (address)",
   "function launchAt() view returns (uint64)",
 ];
 // Generation 5 campaigns (docs/evm-launch C4) have no creator buy lock: a creator buy is escrowed
 // (20% at 30 days, then 20% every 7 days). currentTradeFeeBps (C2) exists only on generation 5.
 const GEN5_CAMPAIGN_PROBE_ABI = ["function currentTradeFeeBps() view returns (uint256)"];
 
-const RISK_REGISTRY_ABI = [
-  "function getWalletRisk(address wallet) view returns (uint8 riskLevel,bool restricted,bytes32 clusterId)",
-];
-
-const ZERO_CLUSTER = `0x${"0".repeat(64)}`;
 const BUY_EXACT_TOKENS_ACTION = 0;
 const BUY_EXACT_BNB_ACTION = 1;
 const RESERVATION_GRACE_SECONDS = 2 * 60;
@@ -43,11 +34,6 @@ function normalizeAddress(value) {
   if (!ethers.isAddress(raw)) return "";
   const normalized = ethers.getAddress(raw);
   return normalized === ethers.ZeroAddress ? "" : normalized;
-}
-
-function normalizeClusterId(value) {
-  const raw = String(value || "").trim().toLowerCase();
-  return /^0x[0-9a-f]{64}$/.test(raw) && raw !== ZERO_CLUSTER ? raw : null;
 }
 
 function formatTierLabel(tier) {
@@ -180,37 +166,24 @@ export async function readCreatorBuyLock(campaign, campaignAddress, provider) {
   }
 }
 
-async function readOnchainCreatorProtection({ chainId, campaignAddress, walletAddress }) {
-  if (!getRpcUrls(chainId).length) throw new Error("RPC URL is not configured for creator-cluster protection.");
+async function readOnchainCreatorProtection({ chainId, campaignAddress }) {
+  if (!getRpcUrls(chainId).length) throw new Error("RPC URL is not configured for the creator buy lock.");
 
   const provider = await getServerReadProvider(chainId);
   const campaign = new ethers.Contract(campaignAddress, CAMPAIGN_PROTECTION_ABI, provider);
-  const [creatorRaw, lockRead, capWeiRaw, boughtWeiRaw, riskRegistryRaw, launchAtRaw] = await Promise.all([
+  // BNB no longer applies wallet-cluster or direct-funding links. Only the creator
+  // wallet itself is locked, and only for that wallet's own buy cap.
+  const [creatorRaw, lockRead, capWeiRaw, boughtWeiRaw, launchAtRaw] = await Promise.all([
     campaign.creator(),
     readCreatorBuyLock(campaign, campaignAddress, provider),
     campaign.creatorBuyCapWei(),
     campaign.creatorBoughtWei(),
-    campaign.riskRegistry(),
     campaign.launchAt(),
   ]);
   const lockUntilRaw = lockRead.lockUntil;
 
   const creator = normalizeAddress(creatorRaw);
   if (!creator) throw new Error("Campaign returned an invalid creator address.");
-  const riskRegistry = normalizeAddress(riskRegistryRaw);
-  let buyerClusterId = null;
-  let creatorClusterId = null;
-
-  const directCreator = normalizeAddress(walletAddress).toLowerCase() === creator.toLowerCase();
-  if (riskRegistry && !directCreator) {
-    const registry = new ethers.Contract(riskRegistry, RISK_REGISTRY_ABI, provider);
-    const [buyerRisk, creatorRisk] = await Promise.all([
-      registry.getWalletRisk(walletAddress),
-      registry.getWalletRisk(creator),
-    ]);
-    buyerClusterId = normalizeClusterId(buyerRisk.clusterId ?? buyerRisk[2]);
-    creatorClusterId = normalizeClusterId(creatorRisk.clusterId ?? creatorRisk[2]);
-  }
 
   return {
     creator,
@@ -219,9 +192,9 @@ async function readOnchainCreatorProtection({ chainId, campaignAddress, walletAd
     creatorBuyCapWei: BigInt(capWeiRaw).toString(),
     creatorBoughtWei: BigInt(boughtWeiRaw).toString(),
     launchAt: Number(launchAtRaw),
-    riskRegistry: riskRegistry || null,
-    buyerClusterId,
-    creatorClusterId,
+    riskRegistry: null,
+    buyerClusterId: null,
+    creatorClusterId: null,
   };
 }
 
@@ -305,7 +278,7 @@ export async function evaluateTradePreflight({ walletAddress, campaignAddress, c
   if (!isCreatorBuyAction(action)) return base;
 
   try {
-    const onChain = await readOnchainCreatorProtection({ chainId, campaignAddress: campaign, walletAddress: wallet });
+    const onChain = await readOnchainCreatorProtection({ chainId, campaignAddress: campaign });
     const directCreator = wallet.toLowerCase() === onChain.creator.toLowerCase();
     let creatorProfile = null;
     try {
@@ -315,69 +288,15 @@ export async function evaluateTradePreflight({ walletAddress, campaignAddress, c
       console.warn("[security-current-time] creator profile lookup unavailable; enforcing direct creator lock from chain", error);
     }
     const { tier, tierNumber } = formatTierLabel(creatorProfile?.tier || creatorProfile?.creator?.tier);
-    let dbBuyerClusterId = String(base?.walletRisk?.clusterId || base?.cluster?.id || "").trim() || null;
-    let dbCreatorClusterId = String(creatorProfile?.creator?.clusterId || creatorProfile?.cluster?.id || "").trim() || null;
-    const onChainClusterMatch = Boolean(
-      onChain.buyerClusterId &&
-      onChain.creatorClusterId &&
-      onChain.buyerClusterId === onChain.creatorClusterId,
-    );
-    let databaseClusterMatch = Boolean(
-      dbBuyerClusterId &&
-      dbCreatorClusterId &&
-      dbBuyerClusterId === dbCreatorClusterId,
-    );
-    let fundingDetection = null;
-
-    if (!directCreator && !onChainClusterMatch && !databaseClusterMatch) {
-      // Soft-fail funding indexer: never block unrelated buyers when the worker/DB is lagging.
-      // Still hard-block when funding evidence proves a creator link (even if persist fails — handled below).
-      try {
-        fundingDetection = await detectDirectCreatorFunding({
-          chainId: Number(chainId),
-          creatorAddress: onChain.creator,
-          walletAddress: wallet,
-          launchAt: onChain.launchAt,
-        });
-      } catch (fundingError) {
-        fundingDetection = {
-          linked: false,
-          available: false,
-          funding: null,
-          clusterId: null,
-          error: String(fundingError?.shortMessage || fundingError?.message || fundingError),
-          provider: "rpc_indexer",
-        };
-      }
-      if (fundingDetection?.linked && fundingDetection?.clusterId) {
-        dbBuyerClusterId = fundingDetection.clusterId;
-        dbCreatorClusterId = fundingDetection.clusterId;
-        databaseClusterMatch = true;
-      }
-    }
-
-    const directFundingMatch = Boolean(fundingDetection?.linked);
-    const creatorLinked = directCreator || onChainClusterMatch || databaseClusterMatch || directFundingMatch;
     const lockActive = onChain.creatorBuyLockUntil > Math.floor(Date.now() / 1000);
     const unlockAt = onChain.creatorBuyLockUntil > 0
       ? new Date(onChain.creatorBuyLockUntil * 1000).toISOString()
       : null;
-    const relationship = directCreator
-      ? "creator"
-      : directFundingMatch
-        ? "direct_creator_funding"
-        : creatorLinked
-          ? "confirmed_cluster"
-          : null;
-    const detectorWarning = !creatorLinked && fundingDetection && !fundingDetection.available
-      ? `Direct creator-funding detection is unavailable: ${fundingDetection.error || "unknown explorer error"}`
-      : null;
-
     const protection = {
-      code: creatorLinked && lockActive ? (directCreator ? "CREATOR_BUY_LOCKED" : "CREATOR_CLUSTER_BUY_LOCKED") : null,
+      code: directCreator && lockActive ? "CREATOR_BUY_LOCKED" : null,
       creatorWallet: onChain.creator,
-      creatorLinked,
-      relationship,
+      creatorLinked: directCreator,
+      relationship: directCreator ? "creator" : null,
       tier,
       tierNumber,
       unlockAt,
@@ -387,58 +306,27 @@ export async function evaluateTradePreflight({ walletAddress, campaignAddress, c
       creatorBuyCapWei: onChain.creatorBuyCapWei,
       creatorBoughtWei: onChain.creatorBoughtWei,
       launchAt: onChain.launchAt,
-      buyerClusterId: onChain.buyerClusterId || dbBuyerClusterId,
-      creatorClusterId: onChain.creatorClusterId || dbCreatorClusterId,
-      buyerDatabaseClusterId: dbBuyerClusterId,
-      creatorDatabaseClusterId: dbCreatorClusterId,
-      directFunding: fundingDetection?.funding || null,
-      detectorAvailable: fundingDetection ? Boolean(fundingDetection.available) : creatorClusterFundingDetectorConfigured(),
-      source: onChainClusterMatch
-        ? "onchain"
-        : databaseClusterMatch
-          ? directFundingMatch ? "direct_funding" : "database"
-          : directFundingMatch
-            ? "direct_funding"
-            : directCreator
-              ? "creator_address"
-              : "none",
+      buyerClusterId: null,
+      creatorClusterId: null,
+      buyerDatabaseClusterId: null,
+      creatorDatabaseClusterId: null,
+      directFunding: null,
+      detectorAvailable: false,
+      source: directCreator ? "creator_address" : "none",
     };
 
-    if (directFundingMatch && !fundingDetection.available && !lockActive) {
-      return {
-        ...base,
-        allowed: false,
-        code: "CREATOR_CLUSTER_CHECK_UNAVAILABLE",
-        reasons: ["A direct creator-funding relationship was detected but could not be persisted safely. Trading authorization was not issued."],
-        creatorProtection: {
-          ...protection,
-          code: "CREATOR_CLUSTER_CHECK_UNAVAILABLE",
-          error: fundingDetection.error || "Cluster persistence failed.",
-        },
-      };
+    if (!directCreator || !lockActive) {
+      return { ...base, creatorProtection: protection };
     }
-
-    if (!creatorLinked || !lockActive) {
-      return {
-        ...base,
-        warnings: detectorWarning
-          ? [...(Array.isArray(base?.warnings) ? base.warnings : []), detectorWarning]
-          : base?.warnings || [],
-        creatorProtection: protection,
-      };
-    }
-
-    const reason = directCreator
-      ? `Tier ${tierNumber} creators cannot buy their own campaign until ${unlockAt}.`
-      : relationship === "direct_creator_funding"
-        ? `This wallet received BNB directly from the Tier ${tierNumber} campaign creator and cannot buy this campaign until ${unlockAt}.`
-        : `This wallet is linked to the Tier ${tierNumber} campaign creator and cannot buy this campaign until ${unlockAt}.`;
 
     return {
       ...base,
       allowed: false,
       code: protection.code,
-      reasons: [reason, ...(Array.isArray(base?.reasons) ? base.reasons : [])],
+      reasons: [
+        `Tier ${tierNumber} creators cannot buy their own campaign until ${unlockAt}.`,
+        ...(Array.isArray(base?.reasons) ? base.reasons : []),
+      ],
       creatorProtection: protection,
     };
   } catch (error) {
@@ -447,7 +335,7 @@ export async function evaluateTradePreflight({ walletAddress, campaignAddress, c
         ...base,
         warnings: [
           ...(Array.isArray(base?.warnings) ? base.warnings : []),
-          "Legacy campaign generation does not expose creator-cluster protection fields.",
+          "Legacy campaign generation does not expose the creator buy lock.",
         ],
         creatorProtection: {
           code: null,
@@ -458,12 +346,12 @@ export async function evaluateTradePreflight({ walletAddress, campaignAddress, c
       };
     }
 
-    console.error("[security-current-time] creator cluster protection check failed", error);
+    console.error("[security-current-time] creator buy lock check failed", error);
     return {
       ...base,
       allowed: false,
       code: "CREATOR_CLUSTER_CHECK_UNAVAILABLE",
-      reasons: ["Creator-cluster protection could not be verified. Trading authorization was not issued."],
+      reasons: ["The creator buy lock could not be verified. Trading authorization was not issued."],
       creatorProtection: {
         code: "CREATOR_CLUSTER_CHECK_UNAVAILABLE",
         error: String(error?.shortMessage || error?.message || error),
@@ -499,7 +387,7 @@ export async function reserveCreatorClusterBuyAuthorization({
       allowed: false,
       status: 503,
       code: "CREATOR_CLUSTER_CAP_CHECK_UNAVAILABLE",
-      error: "Creator-cluster cap protection received invalid campaign or wallet data.",
+      error: "Creator buy cap protection received invalid campaign or wallet data.",
       creatorProtection: {
         ...protection,
         code: "CREATOR_CLUSTER_CAP_CHECK_UNAVAILABLE",
@@ -507,12 +395,8 @@ export async function reserveCreatorClusterBuyAuthorization({
     };
   }
 
-  const databaseClusterId = String(
-    protection.creatorDatabaseClusterId ||
-      protection.creatorClusterId ||
-      "",
-  ).trim();
-  const clusterKey = databaseClusterId || `creator:${creatorWallet.toLowerCase()}`;
+  // The reservation row still uses cluster_key. It is only this creator wallet.
+  const clusterKey = `creator:${creatorWallet.toLowerCase()}`;
   let client = null;
 
   try {
@@ -528,25 +412,6 @@ export async function reserveCreatorClusterBuyAuthorization({
       [Number(chainId), campaign, clusterKey],
     );
 
-    const linkedConfirmedResult = await client.query(
-      `select coalesce(sum(
-                case when ct.bnb_amount_raw ~ '^[0-9]+$' then ct.bnb_amount_raw::numeric else 0 end
-              ), 0)::text as total_wei
-         from public.curve_trades ct
-         left join public.wallet_risk_profiles wrp
-           on lower(wrp.wallet_address) = lower(ct.wallet)
-         left join public.cluster_members cm
-           on lower(cm.wallet_address) = lower(ct.wallet)
-          and cm.cluster_id = $4
-        where ct.chain_id = $1
-          and lower(ct.campaign_address) = lower($2)
-          and lower(ct.side) = 'buy'
-          and lower(ct.wallet) <> lower($3)
-          and $4 <> ''
-          and (wrp.cluster_id = $4 or cm.cluster_id = $4)`,
-      [Number(chainId), campaign, creatorWallet, databaseClusterId],
-    );
-
     const reservationResult = await client.query(
       `select coalesce(sum(amount_wei), 0)::text as total_wei
          from public.creator_cluster_buy_reservations
@@ -557,9 +422,7 @@ export async function reserveCreatorClusterBuyAuthorization({
       [Number(chainId), campaign, clusterKey],
     );
 
-    const onchainCreatorWei = BigInt(protection.creatorBoughtWei || 0);
-    const linkedConfirmedWei = BigInt(linkedConfirmedResult.rows[0]?.total_wei || 0);
-    const confirmedWei = onchainCreatorWei + linkedConfirmedWei;
+    const confirmedWei = BigInt(protection.creatorBoughtWei || 0);
     const reservedWei = BigInt(reservationResult.rows[0]?.total_wei || 0);
     const nextTotalWei = confirmedWei + reservedWei + requestedWei;
     const remainingBeforeWei = capWei > confirmedWei + reservedWei ? capWei - confirmedWei - reservedWei : 0n;
@@ -570,7 +433,7 @@ export async function reserveCreatorClusterBuyAuthorization({
         allowed: false,
         status: 403,
         code: "CREATOR_CLUSTER_BUY_CAP_EXCEEDED",
-        error: "This buy would exceed the creator cluster's combined purchase allowance.",
+        error: "This buy would exceed the creator wallet's purchase allowance.",
         creatorProtection: {
           ...protection,
           code: "CREATOR_CLUSTER_BUY_CAP_EXCEEDED",
@@ -630,12 +493,12 @@ export async function reserveCreatorClusterBuyAuthorization({
         // ignore rollback failures
       }
     }
-    console.error("[security-current-time] creator cluster cap reservation failed", error);
+    console.error("[security-current-time] creator buy cap reservation failed", error);
     return {
       allowed: false,
       status: 503,
       code: "CREATOR_CLUSTER_CAP_CHECK_UNAVAILABLE",
-      error: "Creator-cluster cap protection could not be verified. Trading authorization was not issued.",
+      error: "The creator buy cap could not be verified. Trading authorization was not issued.",
       creatorProtection: {
         ...protection,
         code: "CREATOR_CLUSTER_CAP_CHECK_UNAVAILABLE",

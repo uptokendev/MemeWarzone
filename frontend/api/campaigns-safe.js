@@ -1,5 +1,6 @@
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, json, defaultPublicChainId} from "../server/http.js";
+import { gen8PhaseRuleOn, gen8PlatformGraduatedColumn, graduatedSqlFor } from "./lib/evmGen8PlatformSql.js";
 
 function toInt(value, fallback) {
   const n = Number(value);
@@ -16,6 +17,7 @@ function isMissingSchema(error) {
 
 function mapCampaignRow(row) {
   const graduatedAt = row.graduated_at_chain ? String(row.graduated_at_chain) : null;
+  const graduated = row.gen8_platform_graduated != null ? Boolean(row.gen8_platform_graduated) : Boolean(graduatedAt);
   return {
     chainId: Number(row.chain_id),
     campaignAddress: String(row.campaign_address || "").toLowerCase(),
@@ -26,9 +28,9 @@ function mapCampaignRow(row) {
     logoUri: row.logo_uri ?? null,
     createdAtChain: row.created_at_chain ? String(row.created_at_chain) : null,
     graduatedAtChain: graduatedAt,
-    isDexTrading: Boolean(graduatedAt),
+    isDexTrading: graduated,
     isActive: Boolean(row.is_active),
-    status: graduatedAt ? "graduated" : row.is_active ? "live" : "ended",
+    status: graduated ? "graduated" : row.is_active ? "live" : "ended",
     lastActivityAt: row.created_at_chain ? String(row.created_at_chain) : null,
     lastPriceBnb: null,
     soldTokens: null,
@@ -55,6 +57,7 @@ function emptyCampaigns(res, warning) {
 }
 
 async function fetchBasicCampaigns({ chainId, limit, cursor, status, search }) {
+  const gen8On = await gen8PhaseRuleOn(pool, chainId);
   const params = [chainId];
   let where = "where c.chain_id = $1 and c.campaign_address is not null";
 
@@ -64,11 +67,11 @@ async function fetchBasicCampaigns({ chainId, limit, cursor, status, search }) {
   }
 
   if (status === "live") {
-    where += " and c.is_active = true and c.graduated_at_chain is null";
+    where += gen8On ? ` and c.is_active = true and not (${graduatedSqlFor("c.", true)})` : " and c.is_active = true and c.graduated_at_chain is null";
   } else if (status === "graduated") {
-    where += " and c.graduated_at_chain is not null";
+    where += gen8On ? ` and ${graduatedSqlFor("c.", true)}` : " and c.graduated_at_chain is not null";
   } else if (status === "ended") {
-    where += " and c.is_active = false and c.graduated_at_chain is null";
+    where += gen8On ? ` and c.is_active = false and not (${graduatedSqlFor("c.", true)})` : " and c.is_active = false and c.graduated_at_chain is null";
   }
 
   params.push(cursor, limit);
@@ -84,7 +87,7 @@ async function fetchBasicCampaigns({ chainId, limit, cursor, status, search }) {
        c.logo_uri,
        c.created_at_chain,
        c.graduated_at_chain,
-       c.is_active
+       c.is_active${gen8PlatformGraduatedColumn("c.", gen8On)}
      from public.campaigns c
      ${where}
      order by c.created_at_chain desc nulls last, c.campaign_address asc

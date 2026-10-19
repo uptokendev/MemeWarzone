@@ -169,11 +169,11 @@ async function checkRpcHeadBlock() {
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean),
-    ...String(process.env.BSC_RPC_HTTP || "")
+    ...String(process.env.VITE_PUBLIC_RPC_97 || "")
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean),
-    "https://data-seed-prebsc-1-s1.binance.org:8545/",
+    "https://bsc-testnet-rpc.publicnode.com",
   ];
   // de-dupe
   const urls = [...new Set(candidates)];

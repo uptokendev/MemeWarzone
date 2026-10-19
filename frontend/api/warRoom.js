@@ -3,6 +3,9 @@ import { resolveSolUsdPrice } from "./lib/solUsdPrice.js";
 import { withSolanaLaunchpadMarketCap } from "./lib/solanaCampaignProgress.js";
 import { liveVoteWindowsJoin } from "./lib/liveVoteWindows.js";
 import { badMethod, getQuery, isAddress, isSolanaAddress, isSolanaChain, json, normalizeAddress as normalizeChainAddress } from "../server/http.js";
+import { gen8PhaseRuleOn, gen8PlatformGraduatedColumn, graduatedSqlFor } from "./lib/evmGen8PlatformSql.js";
+import { tradingNotOpenSql } from "./lib/publicHiddenSql.js";
+import { gen8Tables } from "./lib/evmGen8Schema.js";
 
 const DEFAULT_GRAD_TARGET_BNB = 50;
 const BNB_CHAIN_ID = 56;
@@ -75,10 +78,21 @@ function buildDetailFilter(detailAddress, params) {
   return `(c.campaign_address::text = $${idx} or lower(c.campaign_address::text) = lower($${idx}))`;
 }
 
-function modeFilter(mode) {
-  if (mode === "graduated") return "c.graduated_at_chain is not null";
-  if (mode === "draft") return "coalesce(c.is_active, false) = false and c.graduated_at_chain is null";
+function modeFilter(mode, gen8On) {
+  if (mode === "graduated") return graduatedSqlFor("c.", gen8On);
+  if (mode === "draft") return `coalesce(c.is_active, false) = false and ${gen8On ? `not (${graduatedSqlFor("c.", true)})` : "c.graduated_at_chain is null"}`;
   return null;
+}
+
+function isPlatformGraduated(row) {
+  if (row.gen8PlatformGraduated != null) return Boolean(row.gen8PlatformGraduated);
+  if (row.gen8_platform_graduated != null) return Boolean(row.gen8_platform_graduated);
+  return Boolean(row.graduatedAtChain);
+}
+
+async function gen8RuleForChains(chainIds) {
+  const flags = await Promise.all((chainIds || []).map((id) => gen8PhaseRuleOn(pool, id)));
+  return flags.some(Boolean);
 }
 
 function orderByForMode(mode) {
@@ -90,6 +104,7 @@ function orderByForMode(mode) {
 function mapWarRoomRow(row) {
   const chainId = Number(row.chainId);
   const graduatedAt = row.graduatedAtChain ? String(row.graduatedAtChain) : null;
+  const graduated = isPlatformGraduated(row);
   return {
     chainId,
     campaignAddress: normalizeOutputAddress(row.campaignAddress, chainId),
@@ -100,9 +115,9 @@ function mapWarRoomRow(row) {
     logoUri: row.logoUri ?? null,
     createdAtChain: row.createdAtChain ? String(row.createdAtChain) : null,
     graduatedAtChain: graduatedAt,
-    isDexTrading: Boolean(graduatedAt),
+    isDexTrading: graduated,
     isActive: Boolean(row.isActive),
-    status: graduatedAt ? "graduated" : row.isActive ? "live" : "draft",
+    status: graduated ? "graduated" : row.isActive ? "live" : "draft",
     lastActivityAt: row.lastActivityAt ? String(row.lastActivityAt) : null,
     lastPriceBnb: row.lastPriceBnb != null ? String(row.lastPriceBnb) : null,
     soldTokens: row.soldTokens != null ? String(row.soldTokens) : null,
@@ -140,7 +155,7 @@ function detailPayload(row, watchlist) {
   const chainId = Number(row.chainId);
   const campaignAddress = normalizeOutputAddress(row.campaignAddress, chainId);
   const tokenAddress = row.tokenAddress ? normalizeOutputAddress(row.tokenAddress, chainId) : null;
-  const isGraduated = Boolean(row.graduatedAtChain);
+  const isGraduated = isPlatformGraduated(row);
   const isLive = Boolean(row.isActive);
   const eligible = isLive && !isGraduated;
   return {
@@ -173,11 +188,13 @@ function detailPayload(row, watchlist) {
 }
 
 async function fetchWarRoomRows({ chainIds, mode, search, detailAddress, limit, gradTargetBnb }) {
+  const gen8On = await gen8RuleForChains(chainIds);
+  const gen8OpenAt = Boolean((await gen8Tables(pool)).phase);
   const params = [chainIds, gradTargetBnb];
-  const filters = ["c.chain_id = any($1::int[])", "c.campaign_address is not null"];
+  const filters = ["c.chain_id = any($1::int[])", "c.campaign_address is not null", `not (${tradingNotOpenSql("c", { gen8OpenAt })})`];
   const searchFilter = buildSearchFilter(search, params);
   const detailFilter = buildDetailFilter(detailAddress, params);
-  const modeClause = detailAddress ? null : modeFilter(mode);
+  const modeClause = detailAddress ? null : modeFilter(mode, gen8On);
   if (searchFilter) filters.push(searchFilter);
   if (detailFilter) filters.push(detailFilter);
   if (modeClause) filters.push(modeClause);
@@ -196,7 +213,7 @@ async function fetchWarRoomRows({ chainIds, mode, search, detailAddress, limit, 
         c.created_block,
         c.created_at_chain,
         c.graduated_block,
-        c.graduated_at_chain,
+        c.graduated_at_chain${gen8PlatformGraduatedColumn("c.", gen8On)},
         c.is_active,
         ts.last_price_bnb,
         ts.sold_tokens,
@@ -361,7 +378,7 @@ async function fetchWarRoomRows({ chainIds, mode, search, detailAddress, limit, 
       created_at_chain as "createdAtChain",
       graduated_block as "graduatedBlock",
       graduated_at_chain as "graduatedAtChain",
-      is_active as "isActive",
+${gen8On ? `      gen8_platform_graduated as "gen8PlatformGraduated",\n` : ""}      is_active as "isActive",
       last_activity_at as "lastActivityAt",
       current_price_bnb as "lastPriceBnb",
       current_sold_tokens as "soldTokens",
@@ -388,11 +405,13 @@ async function fetchWarRoomRows({ chainIds, mode, search, detailAddress, limit, 
 }
 
 async function fetchBasicWarRoomRows({ chainIds, mode, search, detailAddress, limit, gradTargetBnb }) {
+  const gen8On = await gen8RuleForChains(chainIds);
+  const gen8OpenAt = Boolean((await gen8Tables(pool)).phase);
   const params = [chainIds, gradTargetBnb];
-  const filters = ["c.chain_id = any($1::int[])", "c.campaign_address is not null"];
+  const filters = ["c.chain_id = any($1::int[])", "c.campaign_address is not null", `not (${tradingNotOpenSql("c", { gen8OpenAt })})`];
   const searchFilter = buildSearchFilter(search, params);
   const detailFilter = buildDetailFilter(detailAddress, params);
-  const modeClause = detailAddress ? null : modeFilter(mode);
+  const modeClause = detailAddress ? null : modeFilter(mode, gen8On);
   if (searchFilter) filters.push(searchFilter);
   if (detailFilter) filters.push(detailFilter);
   if (modeClause) filters.push(modeClause);
@@ -410,7 +429,7 @@ async function fetchBasicWarRoomRows({ chainIds, mode, search, detailAddress, li
        c.created_block as "createdBlock",
        c.created_at_chain as "createdAtChain",
        c.graduated_block as "graduatedBlock",
-       c.graduated_at_chain as "graduatedAtChain",
+       c.graduated_at_chain as "graduatedAtChain"${gen8PlatformGraduatedColumn("c.", gen8On)},
        c.is_active as "isActive",
        null::timestamptz as "lastActivityAt",
        null::numeric as "lastPriceBnb",

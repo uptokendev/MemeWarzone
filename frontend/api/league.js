@@ -13,6 +13,8 @@ import { monthlyLeagueTreasuryAddress, monthlyLeagueTreasuryForMonth } from "./l
 import { pokerPaidPlaces, pokerPlacesAboveMinimum, pokerSplitRaw, solanaMinPayoutLamports } from "./lib/pokerPayout.mjs";
 import { loadPublicHiddenCampaignKeys, publicHiddenWhere, withoutPublicHidden } from "./lib/publicHiddenCampaigns.js";
 import { withoutOwnerWallets } from "../shared/ownerWallets.mjs";
+import { gen8ConfigFor } from "./lib/evmGen8Config.js";
+import { gen8CurveRowSql, gen8LeagueRowKeepSql, gen8NettedCurveTradesSql, gen8PotFeeRawSql, gen8TraderNativeRawSql } from "./lib/evmGen8LeagueSql.js";
 import { MODERATION_CARRY_CATEGORY, leagueExclusionRefusal, leagueRootExclusion, leagueWinnerHold, moderationClaimRefusal, rootLeafRows } from "../shared/moderationHolds.mjs";
 import {
   buildMerkleProof as buildSolanaMerkleProof,
@@ -313,15 +315,16 @@ function getRpcUrl(chainId) {
   ).trim();
   if (perChain) return perChain.split(",")[0].trim();
   if (id === 4663) {
-    const rh = String(process.env.ROBINHOOD_MAINNET_RPC_URL || process.env.ROBINHOOD_MAINNET_RPC || "https://rpc.mainnet.chain.robinhood.com").trim();
+    const rh = String(process.env.ROBINHOOD_MAINNET_RPC_URL || process.env.ROBINHOOD_MAINNET_RPC || "").trim();
     if (rh) return rh;
   }
   if (id === 46630) {
     const rh = String(process.env.ROBINHOOD_TESTNET_RPC_URL || process.env.ROBINHOOD_TESTNET_RPC || "https://rpc.testnet.chain.robinhood.com").trim();
     if (rh) return rh;
   }
+  // Chain 97 must not read the unscoped BSC_RPC_HTTP name. That name is a chain-56 alias.
   const fallback = String(process.env.BSC_RPC_HTTP || "").trim();
-  if (fallback && (id === 56 || id === 97)) return fallback;
+  if (fallback && id === 56) return fallback;
   throw new Error(`Missing RPC env (BSC_RPC_HTTP_${id} or ROBINHOOD_RPC_HTTP_${id})`);
 }
 
@@ -464,19 +467,24 @@ function pokerPrizeForField(prize, pokerPlaces, fieldSize, chainId = null) {
   };
 }
 
-async function computeTotalLeagueFeeRawInRange(chainId, startIso, endIso, protocolFeeBps, leagueFeeBps) {
+export async function computeTotalLeagueFeeRawInRange(chainId, startIso, endIso, protocolFeeBps, leagueFeeBps) {
   // IMPORTANT:
   // curve_trades.bnb_amount_raw is:
   // - buy: total paid = gross + floor(gross * protocolFeeBps / 10000)
   // - sell: net payout = gross - floor(gross * protocolFeeBps / 10000)
   // We invert to gross using an integer-safe candidate +/- 2 wei check, then compute:
   // league_fee = floor(gross * leagueFeeBps / 10000)
+  // Generation 8 rows (only where gen-8 is configured): bnb_amount_raw is the curve amount, not the trader-side
+  // figure this inversion assumes, and the fee rate varies (launch window, 2%); their league share is taken from the
+  // recorded fee, as settlement (finalizeEpochWinners) does. Without gen-8 the SQL is the pre-gen-8 text.
+  const gen8 = Boolean(gen8ConfigFor(chainId));
   const { rows } = await pool.query(
     `
     WITH trades AS (
       SELECT
         t.side,
-        t.bnb_amount_raw::numeric AS amt
+        t.bnb_amount_raw::numeric AS amt${gen8 ? `,
+        ${gen8PotFeeRawSql("t")} AS gen8_fee_raw` : ""}
       FROM public.curve_trades t
       WHERE t.chain_id = $1
         AND ($2::timestamptz IS NULL OR t.block_time >= $2::timestamptz)
@@ -490,7 +498,8 @@ async function computeTotalLeagueFeeRawInRange(chainId, startIso, endIso, protoc
     base AS (
       SELECT
         side,
-        amt,
+        amt,${gen8 ? `
+        gen8_fee_raw,` : ""}
         floor((amt * 10000) / (10000 + $4)) AS buy_g0,
         ceiling((amt * 10000) / (10000 - $4)) AS sell_g0
       FROM trades
@@ -519,11 +528,15 @@ async function computeTotalLeagueFeeRawInRange(chainId, startIso, endIso, protoc
               ELSE sell_g0
             END
           )
-        END AS gross
+        END AS gross${gen8 ? `,
+        gen8_fee_raw` : ""}
       FROM base
     ),
     fees AS (
-      SELECT floor((gross * $5) / 10000) AS league_fee
+      SELECT ${gen8 ? `CASE
+               WHEN gen8_fee_raw IS NOT NULL THEN floor((gen8_fee_raw * $5) / NULLIF($4, 0))
+               ELSE floor((gross * $5) / 10000)
+             END` : "floor((gross * $5) / 10000)"} AS league_fee
       FROM calc
     )
     SELECT COALESCE(sum(league_fee), 0)::numeric(78, 0) AS total_league_fee_raw
@@ -1270,6 +1283,20 @@ export default async function handler(req, res) {
     // -------------------------------------------------
     // Fastest Finish
     // -------------------------------------------------
+    // Generation 8 rows (gen-8 configured chains only; elsewhere the SQL is unchanged): trader-side amounts and
+    // league_excluded rows (creator, escrow, buyback) left out, as settlement (leagueLeaderboard.ts) does.
+    const gen8League = Boolean(gen8ConfigFor(chainId));
+    const g8Keep = (alias) => (gen8League ? `\n                AND ${gen8LeagueRowKeepSql(alias)}` : "");
+    const g8Amount = (alias) => (gen8League ? gen8TraderNativeRawSql(alias) : `${alias}.bnb_amount_raw::numeric`);
+    // Wash netting (audit D-L2): gen-8 swaps of one coin by one wallet in one transaction count as one net row. Same
+    // FROM item as settlement (leagueLeaderboard.ts). `plain` is the exact pre-gen-8 text for every other chain.
+    const g8Trades = (plain) => (gen8League ? gen8NettedCurveTradesSql("t") : plain);
+    // Fix round 2026-10-12 (F1): every gen-8 curve_trades row is a bonding trade, also above graduated_block (a latched
+    // coin back in range A), so the "bonding buys only" cutoff of biggest_hit lets gen-8 rows through, as settlement
+    // (leagueLeaderboard.ts biggest_hit, no cutoff) counts them. fastest_finish and perfect_run keep the latch: they
+    // rank the run TO graduation (the event), so their buyers / sells stay those at or before graduated_block.
+    const g8BondingRow = (alias) => (gen8League ? ` OR ${gen8CurveRowSql(alias)}` : "");
+
     if (category === "fastest_finish") {
       const params = [chainId, epochStartIso, rangeEndIso, limit];
       // Mainnet keeps the 25 unique non-creator buyer bar. Testnet (97) uses 0 so a real
@@ -1294,7 +1321,7 @@ export default async function handler(req, res) {
             EXTRACT(EPOCH FROM (c.graduated_at_chain - c.created_at_chain))::bigint AS duration_seconds,
             (
               SELECT ${sqlDistinctWallet("t.wallet", isSolanaLeagueChain(chainId))}
-              FROM curve_trades t
+              FROM ${g8Trades("curve_trades t")}
               WHERE t.chain_id = c.chain_id
                 AND t.campaign_address = c.campaign_address
                 AND t.side = 'buy'
@@ -1303,7 +1330,7 @@ export default async function handler(req, res) {
                 AND (
                   c.creator_address IS NULL
                   OR ${sqlWalletNeq("t.wallet", "c.creator_address", isSolanaLeagueChain(chainId))}
-                )
+                )${g8Keep("t")}
             ) AS unique_buyers
           FROM campaigns c
           WHERE c.chain_id = $1
@@ -1355,23 +1382,23 @@ export default async function handler(req, res) {
             0::int AS sells_count,
             (
               SELECT COUNT(DISTINCT t.wallet)
-              FROM curve_trades t
+              FROM ${g8Trades("curve_trades t")}
               WHERE t.chain_id = c.chain_id
                 AND t.campaign_address = c.campaign_address
                 AND t.side = 'buy'
                 AND t.block_number >= c.created_block
                 AND (c.graduated_block IS NULL OR t.block_number <= c.graduated_block)
-                AND (c.creator_address IS NULL OR ${sqlWalletNeq("t.wallet", "c.creator_address", isSolanaLeagueChain(chainId))})
+                AND (c.creator_address IS NULL OR ${sqlWalletNeq("t.wallet", "c.creator_address", isSolanaLeagueChain(chainId))})${g8Keep("t")}
             ) AS unique_buyers,
             (
-              SELECT COALESCE(SUM(t.bnb_amount_raw::numeric), 0)::numeric(78,0)
-              FROM curve_trades t
+              SELECT COALESCE(SUM(${g8Amount("t")}), 0)::numeric(78,0)
+              FROM ${g8Trades("curve_trades t")}
               WHERE t.chain_id = c.chain_id
                 AND t.campaign_address = c.campaign_address
                 AND t.side = 'buy'
                 AND t.block_number >= c.created_block
                 AND (c.graduated_block IS NULL OR t.block_number <= c.graduated_block)
-                AND (c.creator_address IS NULL OR ${sqlWalletNeq("t.wallet", "c.creator_address", isSolanaLeagueChain(chainId))})
+                AND (c.creator_address IS NULL OR ${sqlWalletNeq("t.wallet", "c.creator_address", isSolanaLeagueChain(chainId))})${g8Keep("t")}
             ) AS buy_total_raw
           FROM campaigns c
           WHERE c.chain_id = $1
@@ -1382,7 +1409,7 @@ export default async function handler(req, res) {
             AND ($3::timestamptz IS NULL OR c.graduated_at_chain < $3::timestamptz)
             AND NOT EXISTS (
               SELECT 1
-              FROM curve_trades t
+              FROM ${g8Trades("curve_trades t")}
               WHERE t.chain_id = c.chain_id
                 AND t.campaign_address = c.campaign_address
                 AND t.side = 'sell'
@@ -1424,16 +1451,16 @@ export default async function handler(req, res) {
             c.fee_recipient_address,
             c.token_address,
             t.wallet AS buyer_address,
-            t.bnb_amount_raw,
+            ${gen8League ? `${g8Amount("t")}::numeric(78,0) AS bnb_amount_raw` : "t.bnb_amount_raw"},
             t.tx_hash,
             t.log_index,
             t.block_number,
             t.block_time,
             ROW_NUMBER() OVER (
               PARTITION BY t.campaign_address
-              ORDER BY t.bnb_amount_raw::numeric DESC NULLS LAST, t.block_number DESC, t.log_index DESC
+              ORDER BY ${g8Amount("t")} DESC NULLS LAST, t.block_number DESC, t.log_index DESC
             ) AS rn
-          FROM curve_trades t
+          FROM ${g8Trades("curve_trades t")}
           JOIN campaigns c
             ON c.chain_id = t.chain_id
            AND c.campaign_address = t.campaign_address
@@ -1445,7 +1472,7 @@ export default async function handler(req, res) {
             AND t.wallet <> c.campaign_address
             AND (c.creator_address IS NULL OR t.wallet <> c.creator_address)
             AND (c.fee_recipient_address IS NULL OR t.wallet <> c.fee_recipient_address)
-            AND (c.graduated_block IS NULL OR c.graduated_block = 0 OR t.block_number <= c.graduated_block)
+            AND (c.graduated_block IS NULL OR c.graduated_block = 0 OR t.block_number <= c.graduated_block${g8BondingRow("t")})${g8Keep("t")}
         )
         SELECT
           COUNT(*) OVER () AS field_count,
@@ -1563,8 +1590,8 @@ export default async function handler(req, res) {
           SELECT
             ${sqlWalletGroup("t.wallet", isSolanaLeagueChain(chainId))} AS wallet,
             t.side,
-            t.bnb_amount_raw::numeric AS bnb_raw
-          FROM public.curve_trades t
+            ${g8Amount("t")} AS bnb_raw
+          FROM ${g8Trades("public.curve_trades t")}
           JOIN public.campaigns c
             ON c.chain_id = t.chain_id
            AND c.campaign_address = t.campaign_address
@@ -1576,7 +1603,7 @@ export default async function handler(req, res) {
             AND ($3::timestamptz IS NULL OR t.block_time < $3::timestamptz)
             AND ${sqlWalletNeq("t.wallet", "c.campaign_address", isSolanaLeagueChain(chainId))}
             AND (c.creator_address IS NULL OR ${sqlWalletNeq("t.wallet", "c.creator_address", isSolanaLeagueChain(chainId))})
-            AND (c.fee_recipient_address IS NULL OR ${sqlWalletNeq("t.wallet", "c.fee_recipient_address", isSolanaLeagueChain(chainId))})
+            AND (c.fee_recipient_address IS NULL OR ${sqlWalletNeq("t.wallet", "c.fee_recipient_address", isSolanaLeagueChain(chainId))})${g8Keep("t")}
         ),
         agg AS (
           SELECT

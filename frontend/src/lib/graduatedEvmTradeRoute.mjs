@@ -57,8 +57,13 @@ export function graduatedImportRouteEnabled(chainId, env = moduleEnv()) {
  *   "bonding"      not graduated: the coin's own bonding-curve path, unchanged
  *   "import"       graduated, import fee route on for the chain: ImportedTradePanel (Kyber / fee router / Universal Router)
  *   "direct-pool"  graduated, switch off (or a chain without a fee route): today's direct pool trade
+ *   "gen8_pool"    generation 8 (factoryGeneration 8, or the API's tradePath "gen8_pool"): the coin's own Uniswap V4
+ *                  pool before and after graduation, never the import route (D9: no import fee on top of the
+ *                  hook's 1%). The API answers the same in /api/campaigns (gen8.tradePath), /api/evm/campaign-state
+ *                  and the 409 GEN8_POOL_ROUTE of /api/imports/swap/*.
  */
-export function graduatedEvmTradeRoute({ chainId, graduated }, env = moduleEnv()) {
+export function graduatedEvmTradeRoute({ chainId, graduated, generation = null }, env = moduleEnv()) {
+  if (Number(generation) === 8) return "gen8_pool";
   if (!graduated) return "bonding";
   return graduatedImportRouteEnabled(chainId, env) ? "import" : "direct-pool";
 }

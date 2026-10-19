@@ -33,6 +33,8 @@ import { SOLANA_BUY_FEE_RESERVE_LAMPORTS, evmBuyGasReserveWei } from "@/lib/trad
 import { ImportedTradePanel } from "@/components/arena/ImportedTradePanel";
 import { graduatedCampaignTradeItem, graduatedImportRouteEnabled } from "@/lib/graduatedEvmTradeRoute.mjs";
 import { ImportedTradePanel as SolanaGraduatedImportPanel } from "@/components/arena/ImportedTradePanel";
+import { Gen8TradePanel } from "@/components/evm/Gen8TradePanel";
+import { useGen8Coin } from "@/hooks/useGen8Coin";
 import { graduatedSolanaTradeItem, graduatedSolanaTradeRoute } from "@/lib/graduatedSolanaTradeRoute.mjs";
 
 const CAMPAIGN_ABI = [
@@ -280,6 +282,9 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
     if (fromCampaign === 56 || fromCampaign === 97) return fromCampaign;
     return 97;
   }, [campaign, isSolanaCampaign]);
+  // Generation 8 coins (any EVM chain with a gen-8 hook in the app): their own V4 pool panel, before and after graduation.
+  const gen8ChainId = isSolanaCampaign ? null : Number((campaign as { chainId?: number }).chainId) || chainId;
+  const gen8 = useGen8Coin(gen8ChainId, isSolanaCampaign ? "" : String(campaign.token || campaign.campaign || ""), wallet.account ? String(wallet.account) : null);
   const readProvider = useMemo(() => {
     if (isSolanaCampaign || isSolanaChainId(chainId)) return null;
     return getReadProvider(chainId);
@@ -1228,6 +1233,7 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
     setTradeAmount(ethers.formatUnits((spendable * pct) / 100n, isSolanaCampaign ? 9 : 18));
   };
 
+  if (gen8.state && gen8ChainId) return <Gen8TradePanel chainId={gen8ChainId} state={gen8.state} symbol={campaign.symbol} onTraded={() => gen8.refresh()} />;
   if (graduatedImport) return <ImportedTradePanel item={graduatedCampaignTradeItem(campaign, chainId)} graduated />;
 
   return (

@@ -77,6 +77,16 @@ import { TokenWarRoom } from "@/components/token/TokenWarRoom";
 import { AthBar } from "@/components/token/AthBar";
 import { canonicalAthUsd } from "@/lib/canonicalMarket";
 import { canonicalAthNativeFromCandles } from "@/lib/chart/canonicalChartCandles";
+import {
+  GEN8_FDV_WHOLE,
+  gen8HolderExcludeList,
+  gen8LensNative,
+  gen8MarketCapNative,
+  gen8PlatformGraduated,
+  gen8LaunchPriceNative,
+  gen8SpotNative,
+  gen8SpotWindowChanges,
+} from "@/lib/chart/gen8TokenPage";
 import { evmCurveSpotChanges, fullyDilutedSupplyWhole } from "@/lib/fullyDilutedMarketCap.mjs";
 import { ArenaUpvoteDialog, UpvoteDialog } from "@/components/token/UpvoteDialog";
 import { postGradFlags } from "@/features/postgrad/config";
@@ -124,6 +134,8 @@ import {
 
 const CAMPAIGN_ABI = LaunchCampaignArtifact.abi as ethers.InterfaceAbi;
 const TOKEN_ABI = LaunchTokenArtifact.abi as ethers.InterfaceAbi;
+/** Gen-8 coins are plain ERC-20s. The launch-token ABI is the older campaign token. */
+const GEN8_ERC20_BALANCE_ABI = ["function balanceOf(address) view returns (uint256)"];
 const TOKEN_DECIMALS = 18;
 /** Fallback poll for chain reads that otherwise refresh on each new trade (latestTradeKey). */
 const TRADE_SAFETY_POLL_MS = 60_000;
@@ -346,6 +358,38 @@ async function buildCampaignFromAddress(
     xAccount: "",
     website: "",
     extraLink: "",
+  };
+}
+
+/**
+ * A generation 8 coin has no campaign contract: the URL address is its token, and its pool lives in the gen-8 hook.
+ * Only asked where the app has a gen-8 hook for the chain (VITE_EVM_GEN8_HOOK_<id>) and the address is not a campaign.
+ */
+async function buildGen8CampaignFromToken(
+  tokenAddress: string,
+  provider: ethers.AbstractProvider,
+  chainId: number,
+): Promise<CampaignInfo | null> {
+  const cfg = gen8AppConfig(chainId);
+  if (!cfg || !ethers.isAddress(tokenAddress)) return null;
+  const record = await readGen8PoolRecord({ provider, cfg, token: tokenAddress });
+  if (!record) return null;
+  const token = new Contract(tokenAddress, TOKEN_ABI, provider) as any;
+  const [name, symbol] = await Promise.all([safeContractRead(() => token.name(), "Unknown"), safeContractRead(() => token.symbol(), "")]);
+  const address = tokenAddress.toLowerCase();
+  return {
+    id: 0,
+    campaign: address,
+    token: address,
+    creator: String(record.creator).toLowerCase(),
+    name: String(name || "Unknown"),
+    symbol: String(symbol || ""),
+    logoURI: "/placeholder.svg",
+    metadataURI: `/api/token-metadata/${chainId}/${address}`,
+    xAccount: "",
+    website: "",
+    extraLink: "",
+    generation: 8,
   };
 }
 
@@ -584,6 +628,12 @@ import { solanaProjectedSupplyRaw } from "../../shared/solanaCampaignCurve.mjs";
 import { useGen5Campaign } from "@/components/evm/useGen5Campaign";
 import { EvmGen5TradeNotes } from "@/components/evm/EvmGen5TradeNotes";
 import { EvmGen5CreatorPanel } from "@/components/evm/EvmGen5CreatorPanel";
+import { Gen8TradePanel } from "@/components/evm/Gen8TradePanel";
+import { Gen8CoinStatus, Gen8CreatorPanel, Gen8EscrowLock } from "@/components/evm/Gen8CoinPanels";
+import { useGen8Coin } from "@/hooks/useGen8Coin";
+import { gen8AppConfig, readGen8PoolRecord } from "@/lib/evmGen8Client.mjs";
+import { gen8FormatAmount } from "../../shared/evmGen8Swap.mjs";
+import { isGen8CoinPage, shouldReadLegacyCampaign } from "@/lib/gen8LegacyCampaignReads.mjs";
 import { evmCreatorBadge } from "@/lib/evmGen6.mjs";
 
 type TokenDetailsProps = { dbcLive?: Record<string, any> | null };
@@ -855,11 +905,15 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
   );
   // EVM generation-5 coins only; every older campaign reads as null and renders nothing new (E14).
   const gen5 = useGen5Campaign(isSolanaPage ? null : readProvider, Number(chainIdForStorage), isSolanaPage ? "" : resolvedCampaignAddress);
+  // EVM generation 8 coins only (null everywhere else, and no request where the app has no gen-8 hook for the chain):
+  // one Uniswap V4 pool before and after graduation, its own trade box and creator panel.
+  const gen8 = useGen8Coin(isSolanaPage ? null : Number(chainIdForStorage), isSolanaPage ? "" : resolvedCampaignAddress, wallet.account ? String(wallet.account) : null);
+  const gen8State = gen8.state;
   // Generation 6/5 is valued fully diluted: price x the token's total supply (founder 2026-10-01, the
   // DBC and pump.fun basis). Null for every older EVM coin, which keeps price x curve sold.
   const evmFullyDilutedSupply = useMemo(
-    () => (isSolanaPage ? null : fullyDilutedSupplyWhole(gen5.state?.tokenTotalSupplyRaw ?? null, 18)),
-    [gen5.state?.tokenTotalSupplyRaw, isSolanaPage],
+    () => (isSolanaPage ? null : gen8State ? GEN8_FDV_WHOLE : fullyDilutedSupplyWhole(gen5.state?.tokenTotalSupplyRaw ?? null, 18)),
+    [gen5.state?.tokenTotalSupplyRaw, gen8State, isSolanaPage],
   );
   const gen5ViewerIsCreator = Boolean(
     gen5.state && wallet.account && gen5.state.creator.toLowerCase() === String(wallet.account).toLowerCase(),
@@ -1055,6 +1109,29 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
       stopPolling();
     };
   }, [solanaHolderMint, solanaHolderCampaign]);
+  const gen8HolderExcludes = useMemo(() => {
+    if (!gen8State) return [campaign?.campaign];
+    const cfg = gen8AppConfig(Number(chainIdForStorage));
+    return gen8HolderExcludeList({
+      chainId: Number(chainIdForStorage),
+      addresses: [
+        campaign?.campaign,
+        gen8State.gen8.poolManager,
+        gen8State.gen8.hook,
+        gen8State.gen8.launcher,
+        gen8State.gen8.displayPair,
+        gen8State.creatorClaims?.vault?.address,
+        gen8State.creatorClaims?.reserve?.address,
+        gen8State.creatorClaims?.escrow?.address,
+        cfg?.escrow,
+        cfg?.choiceVault,
+        cfg?.reserveLock,
+        cfg?.hook,
+        cfg?.launcher,
+        cfg?.router,
+      ],
+    });
+  }, [campaign?.campaign, chainIdForStorage, gen8State]);
   const [marketResolution, setMarketResolution] = useState<MarketResolution>("1m");
   const [chartExpanded, setChartExpanded] = useState(false);
   const [topazSlippageBps, setTopazSlippageBps] = useState(100);
@@ -1331,52 +1408,76 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
         if (isEvmAddress) {
           pinTokenDetailsChainId(loadChainId);
           const loadProvider = getReadProvider(loadChainId);
+          const gen8Configured = Boolean(gen8AppConfig(loadChainId));
+          let pageIdentity: Awaited<ReturnType<typeof resolveMarketIdentity>> = null;
+          let directAsCampaign: CampaignInfo | null = null;
 
-          // Parallel: prefer page chain resolve + treat param as campaign contract.
-          const [pageIdentity, directAsCampaign] = await Promise.all([
-            resolveMarketIdentity({ address: param, chainId: loadChainId }).catch(() => null),
-            buildCampaignFromAddress(param, loadProvider, loadChainId).catch(() => null),
-          ]);
-
-          if (pageIdentity?.campaignAddress && !pageIdentity.provisional) {
-            resolvedCampaignFromIndexer = pageIdentity.campaignAddress;
-            match =
-              directAsCampaign &&
-              String(directAsCampaign.campaign).toLowerCase() === pageIdentity.campaignAddress.toLowerCase()
-                ? directAsCampaign
-                : await buildCampaignFromAddress(pageIdentity.campaignAddress, loadProvider, loadChainId);
-            if (match && pageIdentity.tokenAddress) {
-              match = { ...match, token: pageIdentity.tokenAddress };
+          // A known gen-8 coin never calls the campaign contract. Other coins still do.
+          // On a chain with no gen-8 hook configured, the identity and the campaign read stay in parallel.
+          if (gen8Configured) {
+            pageIdentity = await resolveMarketIdentity({ address: param, chainId: loadChainId }).catch(() => null);
+            if (!shouldReadLegacyCampaign(pageIdentity)) {
+              match = await buildGen8CampaignFromToken(param, loadProvider, loadChainId).catch(() => null);
             }
-          } else if (directAsCampaign) {
-            match = directAsCampaign;
-          } else {
-            // Token URL on another EVM chain (rare) — only then scan 56.
-            try {
-              const identity = await resolveMarketIdentityAcrossEvm({ address: param });
-              if (identity?.campaignAddress) {
-                const nextChain = identity.chainId as SupportedChainId;
-                resolvedCampaignFromIndexer = identity.campaignAddress;
-                pinTokenDetailsChainId(nextChain);
-                if (nextChain !== pageChainId) {
-                  setPageChainId(nextChain);
-                  setLoading(false);
-                  return;
-                }
-                loadChainId = nextChain;
-                match = await buildCampaignFromAddress(
-                  identity.campaignAddress,
-                  getReadProvider(loadChainId),
-                  loadChainId,
-                );
+          }
+
+          if (!match) {
+            if (!gen8Configured) {
+              [pageIdentity, directAsCampaign] = await Promise.all([
+                resolveMarketIdentity({ address: param, chainId: loadChainId }).catch(() => null),
+                buildCampaignFromAddress(param, loadProvider, loadChainId).catch(() => null),
+              ]);
+            } else if (shouldReadLegacyCampaign(pageIdentity)) {
+              directAsCampaign = await buildCampaignFromAddress(param, loadProvider, loadChainId).catch(() => null);
+            }
+
+            if (shouldReadLegacyCampaign(pageIdentity) && pageIdentity?.campaignAddress && !pageIdentity.provisional) {
+              resolvedCampaignFromIndexer = pageIdentity.campaignAddress;
+              match =
+                directAsCampaign &&
+                String(directAsCampaign.campaign).toLowerCase() === pageIdentity.campaignAddress.toLowerCase()
+                  ? directAsCampaign
+                  : await buildCampaignFromAddress(pageIdentity.campaignAddress, loadProvider, loadChainId);
+              if (match && pageIdentity.tokenAddress) {
+                match = { ...match, token: pageIdentity.tokenAddress };
               }
-            } catch (resolveErr) {
-              console.warn("[TokenDetails] cross-chain resolve failed; using page chain", resolveErr);
+            } else if (directAsCampaign) {
+              match = directAsCampaign;
+            } else if (shouldReadLegacyCampaign(pageIdentity)) {
+              // Token URL on another EVM chain (rare) — only then scan 56.
+              try {
+                const identity = await resolveMarketIdentityAcrossEvm({ address: param });
+                if (identity?.campaignAddress) {
+                  const nextChain = identity.chainId as SupportedChainId;
+                  resolvedCampaignFromIndexer = identity.campaignAddress;
+                  pinTokenDetailsChainId(nextChain);
+                  if (nextChain !== pageChainId) {
+                    setPageChainId(nextChain);
+                    setLoading(false);
+                    return;
+                  }
+                  loadChainId = nextChain;
+                  if (shouldReadLegacyCampaign(identity)) {
+                    match = await buildCampaignFromAddress(
+                      identity.campaignAddress,
+                      getReadProvider(loadChainId),
+                      loadChainId,
+                    );
+                  }
+                }
+              } catch (resolveErr) {
+                console.warn("[TokenDetails] cross-chain resolve failed; using page chain", resolveErr);
+              }
+            }
+
+            // Generation 8: the address is a coin in a V4 pool of our hook, not a campaign contract.
+            if (!match) {
+              match = await buildGen8CampaignFromToken(param, loadProvider, loadChainId).catch(() => null);
             }
           }
 
           // Last resort: small factory inventory (only when campaign not direct-readable).
-          if (!match) {
+          if (!match && shouldReadLegacyCampaign(pageIdentity)) {
             try {
               const page = await fetchOnChainCampaignPage(loadChainId, { limit: 24 });
               const needle = param.toLowerCase();
@@ -1439,37 +1540,42 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
         const loadProvider = getReadProvider(loadChainId);
 
         // Metrics + cosmetic hydrates in parallel (do not serialize RPC).
+        // A gen-8 coin has no campaign contract. Metadata is an HTTP read and stays.
+        const legacyPage = !isGen8CoinPage(match);
+        const emptySummary = {
+          ok: false as const,
+          s: {
+            campaign: match,
+            metrics: null,
+            stats: { holders: "—", volume: "—", marketCap: "—" },
+          } as CampaignSummary,
+        };
         const [summaryResult, withCreator, withMeta, withCreated, displayImage] = await Promise.all([
-          fetchCampaignSummary(match)
-            .then((s) => ({ ok: true as const, s }))
-            .catch(async (summaryErr) => {
-              console.warn("[TokenDetails] summary fetch failed; trying direct metrics", summaryErr);
-              try {
-                const directMetrics = await fetchCampaignMetrics(match.campaign);
-                return {
-                  ok: false as const,
-                  s: {
-                    campaign: match,
-                    metrics: directMetrics,
-                    stats: { holders: "—", volume: "—", marketCap: "—" },
-                  } as CampaignSummary,
-                };
-              } catch (metricsErr) {
-                console.warn("[TokenDetails] direct metrics also failed", metricsErr);
-                return {
-                  ok: false as const,
-                  s: {
-                    campaign: match,
-                    metrics: null,
-                    stats: { holders: "—", volume: "—", marketCap: "—" },
-                  } as CampaignSummary,
-                };
-              }
-            }),
-          hydrateCampaignCreatorFromContract(displayMatch, loadProvider),
+          legacyPage
+            ? fetchCampaignSummary(match)
+                .then((s) => ({ ok: true as const, s }))
+                .catch(async (summaryErr) => {
+                  console.warn("[TokenDetails] summary fetch failed; trying direct metrics", summaryErr);
+                  try {
+                    const directMetrics = await fetchCampaignMetrics(match.campaign);
+                    return {
+                      ok: false as const,
+                      s: {
+                        campaign: match,
+                        metrics: directMetrics,
+                        stats: { holders: "—", volume: "—", marketCap: "—" },
+                      } as CampaignSummary,
+                    };
+                  } catch (metricsErr) {
+                    console.warn("[TokenDetails] direct metrics also failed", metricsErr);
+                    return emptySummary;
+                  }
+                })
+            : Promise.resolve(emptySummary),
+          legacyPage ? hydrateCampaignCreatorFromContract(displayMatch, loadProvider) : Promise.resolve(displayMatch),
           hydrateCampaignMetadata(displayMatch, loadChainId),
-          hydrateCampaignCreatedAtFromFactory(displayMatch, loadChainId),
-          resolveCampaignDisplayImage(displayMatch, loadChainId, fetchCampaignLogoURI).catch(() => null),
+          legacyPage ? hydrateCampaignCreatedAtFromFactory(displayMatch, loadChainId) : Promise.resolve(displayMatch),
+          resolveCampaignDisplayImage(displayMatch, loadChainId, legacyPage ? fetchCampaignLogoURI : async () => null).catch(() => null),
         ]);
 
         displayMatch = {
@@ -1821,11 +1927,17 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
   // clears the reserve on Solana pages).
   const evmTradeKey = isSolanaPage ? "" : latestTradeKey;
   const solanaTradeKey = isSolanaPage ? latestTradeKey : "";
+  // Gen-8 lens (GET /api/evm/campaign-state). gen8Live is a boolean so replacing gen8.state does not call refresh again.
+  const gen8Live = Boolean(gen8State);
+  useEffect(() => {
+    if (!latestTradeKey || !gen8Live) return;
+    gen8.refresh();
+  }, [latestTradeKey, gen8Live, gen8.refresh]);
   const transferHolders = useTokenTransferHolders({
     tokenAddress: campaign?.token,
     chainId: chainIdForStorage,
     enabled: !isSolanaPage && Boolean(campaign?.token),
-    excludeAddresses: [campaign?.campaign],
+    excludeAddresses: gen8HolderExcludes,
     refreshKey: latestTradeKey,
   });
 
@@ -1938,7 +2050,8 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
   useEffect(() => {
     let cancelled = false;
     const addr = resolvedCampaignAddress;
-    if (!hasValidCampaignAddress || !addr || isSolanaPage) {
+    // Gen-8 has no launched() or dex pair on a campaign contract. Leave Topaz off.
+    if (!hasValidCampaignAddress || !addr || isSolanaPage || isGen8CoinPage(campaign)) {
       setOnChainLaunched(false);
       setOnChainPair("");
       return;
@@ -1968,7 +2081,7 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     return () => {
       cancelled = true;
     };
-  }, [hasValidCampaignAddress, resolvedCampaignAddress, chainIdForStorage, isSolanaPage]);
+  }, [hasValidCampaignAddress, resolvedCampaignAddress, chainIdForStorage, isSolanaPage, campaign?.generation]);
 
   // Early graduation flag so Topaz market data can load before the full stage UI block.
   // Solana P1 shell is always bonding — never treat as graduated.
@@ -1983,6 +2096,10 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
             : Number((metrics as any)?.finalizedAt ?? 0) > 0)
       : Boolean(metrics && metrics.curveSupply > 0n && metrics.sold >= metrics.curveSupply);
   }, [metrics, onChainLaunched, isSolanaPage, solanaCurve?.graduated]);
+
+  // Separate from contractGraduatedEarly. That flag turns on the Topaz scan, which a
+  // gen-8 token address must not enter (BNB would price the coin as a Topaz pair).
+  const gen8Graduated = Boolean(gen8State && gen8PlatformGraduated(gen8State));
 
   // Topaz pair scan only after graduation. Running it on pure bonding campaigns
   // can resolve a wrong/empty route and poison price/mcap/chart streams.
@@ -2065,6 +2182,8 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
       .map((trade) => marketTradeToCurvePoint(trade, chainIdForStorage))
       .filter((point): point is CurveTradePoint => Boolean(point));
     const bonding = mergeTradePoints(curvePointsForUi, confirmedCurvePoints, localTopazTrades);
+    // Gen-8's market is the V4 pool the whole time. Merge those swaps without turning Topaz on.
+    if (gen8State) return mergeTradePoints(bonding, unifiedAsPoints);
     if (!contractGraduatedEarly) {
       // Only seed a synthetic Solana anchor when no real prints exist yet.
       if (
@@ -2162,6 +2281,7 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     confirmedCurvePoints,
     contractGraduatedEarly,
     curvePointsForUi,
+    gen8State,
     isSolanaPage,
     metrics?.currentPrice,
     metrics?.sold,
@@ -2275,6 +2395,8 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
 
   const pageLivePriceNative = useMemo(() => {
     if (isSolanaPage) return solanaLivePrice;
+    const gen8Spot = gen8State ? gen8SpotNative(gen8State) : null;
+    if (gen8Spot != null && gen8Spot > 0) return gen8Spot;
     if (contractGraduatedEarly && topazMarket.priceBnb != null && Number.isFinite(topazMarket.priceBnb) && topazMarket.priceBnb > 0) {
       return Number(topazMarket.priceBnb);
     }
@@ -2297,6 +2419,7 @@ const TokenDetails = ({ dbcLive = null }: TokenDetailsProps = {}) => {
     return null;
   }, [
     contractGraduatedEarly,
+    gen8State,
     isRobinhoodPage,
     isSolanaPage,
     metrics?.currentPrice,
@@ -2450,10 +2573,25 @@ const toSeconds = (ts: number): number => {
       out[k].volume = volumeWei > 0n ? formatBnbFromWei(volumeWei) : "—";
     }
 
+    // Gen-8 change is pool spot versus candle spot. Curve fills are a different number
+    // (G8DIR fills read +977% while the pool moved +1847%).
+    if (gen8State) {
+      const spotChanges = gen8SpotWindowChanges({
+        candles: unifiedMarket.candles,
+        spotNow: gen8SpotNative(gen8State),
+        nowSec: now,
+        windows,
+      });
+      for (const k of Object.keys(windows) as TimeframeKey[]) {
+        out[k].change = spotChanges[k] ?? null;
+      }
+    }
+
     // Generation 6/5 bonding: change of the curve spot, not of fills (see evmCurveSpotChanges).
     // Generation 7/6 has no basePrice; its spot comes from the virtual reserves (same walk).
     const evmGen7CurveKnown = (metrics?.virtualNative ?? 0n) > 0n && (metrics?.virtualToken ?? 0n) > 0n;
     if (
+      !gen8State &&
       evmFullyDilutedSupply != null &&
       !contractGraduatedEarly &&
       ((metrics?.basePrice != null && metrics.basePrice > 0n) || evmGen7CurveKnown) &&
@@ -2479,7 +2617,7 @@ const toSeconds = (ts: number): number => {
     }
 
     return out;
-  }, [contractGraduatedEarly, evmFullyDilutedSupply, isSolanaPage, marketTradePoints, metrics, rtStats?.lastPriceBnb, solanaLivePrice, topazMarket.priceBnb]);
+  }, [contractGraduatedEarly, evmFullyDilutedSupply, gen8State, isSolanaPage, marketTradePoints, metrics, rtStats?.lastPriceBnb, solanaLivePrice, topazMarket.priceBnb, unifiedMarket.candles]);
 
   // Token view-model used throughout the page
   const tokenData = useMemo(() => {
@@ -2494,6 +2632,7 @@ const toSeconds = (ts: number): number => {
     const topazMarketCap = contractGraduatedEarly ? topazMarket.marketCapBnb : null;
     const topazLiquidity = contractGraduatedEarly ? topazMarket.liquidityBnb : null;
     const window24h = timeframeTiles?.["24h"]?.volume;
+    const gen8Spot = gen8State ? gen8SpotNative(gen8State) : null;
 
     // Bonding and graduated Solana share one valuation: live price × post-graduation supply
     // (curve sold until that is known).
@@ -2519,6 +2658,9 @@ const toSeconds = (ts: number): number => {
           : null;
         if (solanaCurve?.graduated) solanaDexMcapLabel = label;
         else bondingMcapLabel = label;
+      } else if (gen8State) {
+        const mcapNative = gen8MarketCapNative(gen8State);
+        bondingMcapLabel = mcapNative != null && mcapNative > 0 ? `${formatCompact(mcapNative)} ${nativeUnit}` : null;
       } else if (!contractGraduatedEarly && evmFullyDilutedSupply != null && metrics?.currentPrice != null && metrics.currentPrice > 0n) {
         const mcapNative = Number(ethers.formatUnits(metrics.currentPrice, 18)) * evmFullyDilutedSupply;
         bondingMcapLabel = Number.isFinite(mcapNative) && mcapNative > 0 ? `${formatCompact(mcapNative)} ${nativeUnit}` : null;
@@ -2595,6 +2737,8 @@ const toSeconds = (ts: number): number => {
       price:
         isSolanaPage && solanaLivePrice != null
           ? formatPriceBnb(solanaLivePrice)
+          : gen8Spot != null
+          ? formatPriceBnb(gen8Spot)
           : topazPrice != null && Number.isFinite(topazPrice) && topazPrice > 0
           ? formatPriceBnb(topazPrice)
           : !contractGraduatedEarly && metrics?.currentPrice != null
@@ -2624,7 +2768,7 @@ const toSeconds = (ts: number): number => {
       // Timeframe analytics (native volume + price change)
       metrics: timeframeTiles,
     };
-  }, [campaign, contractGraduatedEarly, evmFullyDilutedSupply, curveReserveWei, dbcMintSupplyWhole, dbcPoolLive?.quoteReserveLamports, solanaProjectedSupplyWhole, isDbcPage, isSolanaPage, latestSoldFromTrades, marketTradePoints, metrics, nativeUnit, solanaCurve, solanaLivePrice, solanaMeteora.holders, solanaMeteora.spot, solanaHolderCount, solanaSpotNative, summary, timeframeTiles, tokenDecimals, rtStats, topazMarket.liquidityBnb, topazMarket.marketCapBnb, topazMarket.priceBnb, transferHolders.complete, transferHolders.holders]);
+  }, [campaign, contractGraduatedEarly, evmFullyDilutedSupply, curveReserveWei, dbcMintSupplyWhole, dbcPoolLive?.quoteReserveLamports, gen8State, solanaProjectedSupplyWhole, isDbcPage, isSolanaPage, latestSoldFromTrades, marketTradePoints, metrics, nativeUnit, solanaCurve, solanaLivePrice, solanaMeteora.holders, solanaMeteora.spot, solanaHolderCount, solanaSpotNative, summary, timeframeTiles, tokenDecimals, rtStats, topazMarket.liquidityBnb, topazMarket.marketCapBnb, topazMarket.priceBnb, transferHolders.complete, transferHolders.holders]);
   // Native/USD reference for TokenDetails conversions: BNB on BNB Chain, SOL on
   // Solana, ETH on Robinhood. Treating every non-Solana chain as BNB priced a
   // Robinhood page in BNB/USD, so the header read about six times lower than the
@@ -2648,6 +2792,10 @@ const toSeconds = (ts: number): number => {
   }, []);
 
   const liveMarketCapNative = useMemo(() => {
+    if (gen8State) {
+      const mcapNative = gen8MarketCapNative(gen8State);
+      if (mcapNative != null && mcapNative > 0) return mcapNative;
+    }
     if (
       !isSolanaPage &&
       evmFullyDilutedSupply == null &&
@@ -2676,6 +2824,7 @@ const toSeconds = (ts: number): number => {
   }, [
     evmFullyDilutedSupply,
     contractGraduatedEarly,
+    gen8State,
     isSolanaPage,
     metrics?.currentPrice,
     metrics?.sold,
@@ -2707,6 +2856,7 @@ const toSeconds = (ts: number): number => {
 
   const priceDisplay = useMemo(() => {
     const fromSolanaSpot = isSolanaPage ? solanaLivePrice : null;
+    const fromGen8 = gen8State ? gen8SpotNative(gen8State) : null;
     const fromWei =
       metrics?.currentPrice != null && metrics.currentPrice > 0n
         ? Number(ethers.formatUnits(metrics.currentPrice, isSolanaPage ? 9 : 18))
@@ -2733,6 +2883,7 @@ const toSeconds = (ts: number): number => {
 
     const priceNative =
       fromSolanaSpot ??
+      (fromGen8 != null && fromGen8 > 0 ? fromGen8 : null) ??
       (contractGraduatedEarly ? fromTopaz : null) ??
       fromWei ??
       fromRt ??
@@ -2749,6 +2900,7 @@ const toSeconds = (ts: number): number => {
   }, [
     contractGraduatedEarly,
     displayDenom,
+    gen8State,
     isSolanaPage,
     marketTradePoints,
     metrics?.currentPrice,
@@ -2966,7 +3118,7 @@ const toSeconds = (ts: number): number => {
 
     const loadReserve = async () => {
       try {
-        if (!campaign?.campaign || !readProvider || isSolanaPage) {
+        if (!campaign?.campaign || !readProvider || isSolanaPage || isGen8CoinPage(campaign)) {
           setCurveReserveWei(null);
           return;
         }
@@ -2986,11 +3138,11 @@ const toSeconds = (ts: number): number => {
       cancelled = true;
       stopPolling?.();
     };
-  }, [readProvider, campaign?.campaign, isSolanaPage, evmTradeKey]);
+  }, [readProvider, campaign?.campaign, campaign?.generation, isSolanaPage, evmTradeKey]);
 
   // Bonding headline (price / sold / mcap) must move while the page is open.
   useEffect(() => {
-    if (!campaign?.campaign || isSolanaPage) return;
+    if (!campaign?.campaign || isSolanaPage || isGen8CoinPage(campaign)) return;
     let cancelled = false;
     const loadMetrics = async () => {
       try {
@@ -3008,7 +3160,7 @@ const toSeconds = (ts: number): number => {
       cancelled = true;
       stopPolling();
     };
-  }, [campaign?.campaign, fetchCampaignMetrics, isSolanaPage, evmTradeKey]);
+  }, [campaign?.campaign, campaign?.generation, fetchCampaignMetrics, isSolanaPage, evmTradeKey]);
 
   // Campaign activity counters (buy/sell volume, buyers). Used for Flywheel and related panels.
   useEffect(() => {
@@ -3016,8 +3168,9 @@ const toSeconds = (ts: number): number => {
 
     const loadActivity = async () => {
       try {
-        if (!campaign?.campaign || isSolanaPage) {
+        if (!campaign?.campaign || isSolanaPage || isGen8CoinPage(campaign)) {
           // Solana Campaign carries native counters; never interpret EVM activity ABI data as SOL.
+          // Gen-8 has no buyersCount / totalBuyVolumeWei / totalSellVolumeWei, and no log scan.
           setActivity(null);
           return;
         }
@@ -3036,7 +3189,7 @@ const toSeconds = (ts: number): number => {
       cancelled = true;
       stopPolling();
     };
-  }, [campaign?.campaign, fetchCampaignActivity, isSolanaPage]);
+  }, [campaign?.campaign, campaign?.generation, fetchCampaignActivity, isSolanaPage]);
 
   // Solana: SOL/USD for $ graduation → native remaining (mirrors BNB oracle target).
   useEffect(() => {
@@ -3235,8 +3388,10 @@ const toSeconds = (ts: number): number => {
           readProvider.getBalance(wallet.account),
           (async () => {
             try {
-              if (!campaign?.token) return 0n;
-              const t = new Contract(campaign.token, TOKEN_ABI, readProvider) as any;
+              const tokenAddress = gen8State?.token || campaign?.token;
+              if (!tokenAddress) return 0n;
+              const abi = gen8State ? GEN8_ERC20_BALANCE_ABI : TOKEN_ABI;
+              const t = new Contract(tokenAddress, abi, readProvider) as any;
               return (await t.balanceOf(wallet.account)) as bigint;
             } catch {
               return 0n;
@@ -3262,7 +3417,7 @@ const toSeconds = (ts: number): number => {
     return () => {
       cancelled = true;
     };
-  }, [readProvider, wallet.account, campaign?.token, campaign?.campaign, isSolanaPage, solanaBalanceTick, solanaQuote.mint, solanaQuote.native, walletMatchesCampaign]);
+  }, [readProvider, wallet.account, campaign?.token, campaign?.campaign, isSolanaPage, solanaBalanceTick, solanaQuote.mint, solanaQuote.native, walletMatchesCampaign, gen8State?.token, gen8State ? latestTradeKey : "", gen8State?.market?.sqrtPriceX96]);
 
   // Build transactions table rows from continuous market trade stream.
   useEffect(() => {
@@ -3578,8 +3733,41 @@ const toSeconds = (ts: number): number => {
     return formatCompactUsd(native * nativeUsd);
   }, [curveProgress.reserveWei, displayDenom, nativeUsd, nativeUsdLoading, isSolanaPage, isDbcPage, dbcQuoteMultiplier]);
 
-  const liquidityLabel = isDexStage ? "Liquidity" : "Reserve";
+  const gen8Curve = gen8State ? gen8LensNative(gen8State) : null;
+  const formatNativeToggle = (wei: bigint | null): string => {
+    if (wei == null) return "—";
+    const nativeLabel = formatBnbFromWei(wei);
+    if (displayDenom !== "USD") return nativeLabel;
+    const native = parseBnbLabel(nativeLabel);
+    if (native == null || native < 0) return nativeLabel;
+    if (!nativeUsd) return nativeUsdLoading ? "…" : nativeLabel;
+    return formatCompactUsd(native * nativeUsd);
+  };
+  const gen8InCurveText = gen8State && !gen8Graduated ? formatNativeToggle(gen8Curve?.inCurveWei ?? null) : null;
+  const gen8RemainingText = !gen8State ? null : gen8Graduated ? "—" : formatNativeToggle(gen8Curve?.remainingWei ?? null);
+  const pageGraduated = contractGraduated || gen8Graduated;
+  const pageProgressPct = gen8State
+    ? (gen8Graduated ? 100 : Math.max(0, Math.min(100, Number(gen8State.graduation?.progressPct ?? 0))))
+    : curveProgress.pct;
+  const barPct = gen8State ? pageProgressPct : curveProgress.pct;
+  const soldShownPct = gen8State ? pageProgressPct : curveProgress.soldPct;
+  const bondingProgressText = pageGraduated
+    ? (isSolanaPage ? "Trading on Meteora" : isRobinhoodPage ? "Trading on Uniswap" : gen8State ? "Graduated" : "Trading on Topaz")
+    : solanaCurveClosed || (!gen8State && curveProgress.matured)
+      ? "Eligible to graduate"
+      : (() => {
+          const pctText = barPct > 0 && barPct < 0.01 ? barPct.toFixed(6) : barPct.toFixed(2);
+          const venue = isSolanaPage ? "to Meteora" : isRobinhoodPage ? "to Uniswap" : gen8State ? "" : "to Topaz";
+          return venue ? `${pctText}% · graduates ${venue} at 100%` : `${pctText}% · graduates at 100%`;
+        })();
+
+  const liquidityLabel = isDexStage || gen8Graduated ? "Liquidity" : "Reserve";
   const liquidityValue = (() => {
+    // Lens native is the bonding-side reserve. After graduation it is not pool TVL.
+    if (gen8State) {
+      if (gen8Graduated || gen8Curve?.inCurveWei == null) return "—";
+      return formatBnbFromWei(gen8Curve.inCurveWei);
+    }
     if (!isDexStage) return tokenData.liquidity;
     if (isSolanaPage && solanaMeteora.spot && solanaMeteora.spot.liquiditySol > 0) {
       return `${formatCompact(solanaMeteora.spot.liquiditySol)} ${nativeUnit}`;
@@ -3645,7 +3833,15 @@ const toSeconds = (ts: number): number => {
       : solanaCurveClosed
         ? "Graduating · Solana"
         : "Bonding · Solana"
-    : isRobinhoodPage
+    : gen8State
+      ? gen8Graduated
+        ? isRobinhoodPage
+          ? "Graduated · Uniswap"
+          : "Graduated"
+        : isRobinhoodPage
+          ? "Bonding · Robinhood"
+          : "Bonding"
+      : isRobinhoodPage
       ? onChainLaunched || contractGraduated
         ? "Graduated · Uniswap"
         : "Bonding · Robinhood"
@@ -3714,6 +3910,10 @@ const toSeconds = (ts: number): number => {
     let cancelled = false;
 
     const loadQuote = async () => {
+      if (isGen8CoinPage(campaign)) {
+        if (!cancelled) setQuoteLoading(false);
+        return;
+      }
       try {
         setQuoteError(null);
 
@@ -4334,9 +4534,10 @@ const toSeconds = (ts: number): number => {
       cancelled = true;
       clearTimeout(t);
     };
-  }, [readProvider, campaign?.campaign, campaign?.token, chainIdForStorage, metrics?.currentPrice, tradeTab, tradeAmount, tradeInputDenom, tokenBalanceWei, isDexStage, isTopazTradingActive, onChainLaunched, topazSlippageBps, unifiedMarket.state?.lastError, unifiedMarket.summary?.last_price_bnb, isSolanaPage, solanaCurve, contractGraduated, solanaCurveClosed, effectiveBnbWei, effectiveTokenWei, isDbcPage, dbcPool, dbcMint, dbcMigrated, dbcMigratedPool, dbcActivationUnix]);
+  }, [readProvider, campaign?.campaign, campaign?.token, campaign?.generation, chainIdForStorage, metrics?.currentPrice, tradeTab, tradeAmount, tradeInputDenom, tokenBalanceWei, isDexStage, isTopazTradingActive, onChainLaunched, topazSlippageBps, unifiedMarket.state?.lastError, unifiedMarket.summary?.last_price_bnb, isSolanaPage, solanaCurve, contractGraduated, solanaCurveClosed, effectiveBnbWei, effectiveTokenWei, isDbcPage, dbcPool, dbcMint, dbcMigrated, dbcMigratedPool, dbcActivationUnix]);
 
   const handlePlaceTrade = async () => {
+    if (isGen8CoinPage(campaign)) return;
     if (!campaign?.campaign) return;
     if (!walletMatchesCampaign) {
       toast({
@@ -5486,28 +5687,32 @@ const toSeconds = (ts: number): number => {
 
             <div className="flex flex-col gap-1.5">
               <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-                <h3 className="m-0 text-sm font-normal text-mw-muted">{contractGraduated ? "Graduated" : "Bonding curve"}</h3>
+                <h3 className="m-0 text-sm font-normal text-mw-muted">{pageGraduated ? "Graduated" : "Bonding curve"}</h3>
                 <span className="font-mw-mono text-mw-text">
-                  {contractGraduated
-                    ? `Trading ${isSolanaPage ? "on Meteora" : isRobinhoodPage ? "on Uniswap" : "on Topaz"}`
-                    : solanaCurveClosed || curveProgress.matured
-                      ? "Eligible to graduate"
-                    : curveProgress.known
-                      ? `${curveProgress.pct > 0 && curveProgress.pct < 0.01 ? curveProgress.pct.toFixed(6) : curveProgress.pct.toFixed(2)}% · graduates ${isSolanaPage ? "to Meteora" : isRobinhoodPage ? "to Uniswap" : "to Topaz"} at 100%`
-                      : "—"}
+                  {gen8State
+                    ? bondingProgressText
+                    : contractGraduated
+                      ? `Trading ${isSolanaPage ? "on Meteora" : isRobinhoodPage ? "on Uniswap" : "on Topaz"}`
+                      : solanaCurveClosed || curveProgress.matured
+                        ? "Eligible to graduate"
+                      : curveProgress.known
+                        ? `${curveProgress.pct > 0 && curveProgress.pct < 0.01 ? curveProgress.pct.toFixed(6) : curveProgress.pct.toFixed(2)}% · graduates ${isSolanaPage ? "to Meteora" : isRobinhoodPage ? "to Uniswap" : "to Topaz"} at 100%`
+                        : "—"}
                 </span>
               </div>
               <div className="h-2 w-full overflow-hidden rounded-full bg-mw-border">
                 <div
                   className="h-full rounded-full bg-mw-accent"
-                  style={{ width: `${Math.max(0, Math.min(100, curveProgress.pct))}%`, minWidth: curveProgress.pct > 0 ? "1px" : undefined }}
+                  style={{ width: `${Math.max(0, Math.min(100, barPct))}%`, minWidth: barPct > 0 ? "1px" : undefined }}
                 />
               </div>
-              {contractGraduated ? null : (
+              {pageGraduated ? null : (
                 <p className="m-0 font-mw-mono text-xs text-mw-muted">
-                  {curveProgress.known
-                    ? `${inCurveLabel} in curve · ${remainingCurveLabel.primary} to target · ${curveProgress.soldPct > 0 && curveProgress.soldPct < 0.01 ? curveProgress.soldPct.toFixed(6) : curveProgress.soldPct.toFixed(2)}% of tokens sold`
-                    : "—"}
+                  {gen8State
+                    ? `${gen8InCurveText} in curve · ${gen8RemainingText} to target · ${soldShownPct > 0 && soldShownPct < 0.01 ? soldShownPct.toFixed(6) : soldShownPct.toFixed(2)}% of tokens sold`
+                    : curveProgress.known
+                      ? `${inCurveLabel} in curve · ${remainingCurveLabel.primary} to target · ${curveProgress.soldPct > 0 && curveProgress.soldPct < 0.01 ? curveProgress.soldPct.toFixed(6) : curveProgress.soldPct.toFixed(2)}% of tokens sold`
+                      : "—"}
                 </p>
               )}
             </div>
@@ -5594,7 +5799,7 @@ const toSeconds = (ts: number): number => {
                   marketCandles={unifiedMarket.candles}
                   marketState={unifiedMarket.state}
                   serverTime={unifiedMarket.serverTime}
-                  graduationMarker={unifiedMarket.graduationMarker || solanaGraduationMarker}
+                  graduationMarker={gen8State ? (gen8Graduated ? unifiedMarket.graduationMarker : null) : (unifiedMarket.graduationMarker || solanaGraduationMarker)}
                   creatorAddress={isSolanaPage ? (solanaCurve?.creator || campaign?.creator) : campaign?.creator}
                   creatorAvatarUrl={creatorProfile?.avatarUrl}
                   creatorDisplayName={creatorProfile?.displayName}
@@ -5613,6 +5818,8 @@ const toSeconds = (ts: number): number => {
                   resolution={marketResolution}
                   onResolutionChange={setMarketResolution}
                   denomination={displayDenom}
+                  continueFlatBodies={Boolean(gen8State)}
+                  launchPriceNative={gen8State ? gen8LaunchPriceNative(gen8State.gen8?.tickStart) : null}
                   historyReady={!unifiedMarket.loading}
                   loading={unifiedMarket.loading || ((marketTradePoints?.length ?? 0) === 0 && liveCurveLoading)}
                   error={unifiedMarket.error || ((marketTradePoints?.length ?? 0) > 0 ? null : liveCurveError || topazMarket.error)}
@@ -5884,11 +6091,11 @@ const toSeconds = (ts: number): number => {
                           </div>
                           <div className={cp.tile}>
                             <p className={cp.tileLabel}>Curve progress</p>
-                            <p className={cp.tileValue}>{curveProgress.pct.toFixed(2)}%</p>
+                            <p className={cp.tileValue}>{(gen8State ? pageProgressPct : curveProgress.pct).toFixed(2)}%</p>
                           </div>
                           <div className={cp.tile}>
                             <p className={cp.tileLabel}>Remaining to graduate</p>
-                            <p className={cp.tileValue}>{remainingCurveLabel.primary}</p>
+                            <p className={cp.tileValue}>{gen8State ? gen8RemainingText : remainingCurveLabel.primary}</p>
                           </div>
                         </div>
                       </AccordionContent>
@@ -5939,7 +6146,15 @@ const toSeconds = (ts: number): number => {
         </div>
 
         <aside className="flex flex-col gap-4 self-start xl:sticky xl:top-[calc(var(--mwz-topbar-offset)+16px)]">
-          {solanaGraduatedImportTrade ? (
+          {gen8State ? (
+            isXlUp ? (
+              <section aria-label="Trade" className={`${cp.card} flex flex-col gap-4 p-4`} data-gen8-trade="true">
+                <Gen8TradePanel chainId={Number(chainIdForStorage)} state={gen8State} symbol={tokenData.ticker} onTraded={() => { gen8.refresh(); void unifiedMarket.refresh().catch(() => undefined); }} />
+                <Gen8CoinStatus chainId={Number(chainIdForStorage)} state={gen8State} explorerBase={getExplorerBase(chainIdForStorage)} nativeUsd={nativeUsd ?? null} />
+                <Gen8CreatorPanel chainId={Number(chainIdForStorage)} state={gen8State} symbol={tokenData.ticker} onDone={() => gen8.refresh()} />
+              </section>
+            ) : null
+          ) : solanaGraduatedImportTrade ? (
             isXlUp ? (
               <section aria-label="Trade" className={`${cp.card} flex flex-col gap-4 p-4`} data-graduated-import-trade="solana">
                 <ImportedTradePanel item={solanaGraduatedImportItem} graduated onTraded={refreshAfterSolanaGraduatedImportTrade} />
@@ -6393,8 +6608,13 @@ const toSeconds = (ts: number): number => {
               </div>
               <div>
                 <p className="text-mw-muted">Token balance</p>
-                <p className="mt-1 font-mw-mono text-mw-text break-words">{formatTokenFromWei(tokenBalanceWei)} {tokenData.ticker}</p>
+                <p className="mt-1 font-mw-mono text-mw-text break-words">{gen8State ? (tokenBalanceWei == null ? "—" : `${gen8FormatAmount(tokenBalanceWei)} ${tokenData.ticker}`) : `${formatTokenFromWei(tokenBalanceWei)} ${tokenData.ticker}`}</p>
               </div>
+              {gen8State ? (
+                <div className="col-span-2">
+                  <Gen8EscrowLock chainId={Number(chainIdForStorage)} state={gen8State} symbol={tokenData.ticker} onDone={() => gen8.refresh()} />
+                </div>
+              ) : null}
             </div>
             {walletMatchesCampaign ? null : (
               <p className="mt-2 text-xs text-amber-300">
@@ -6460,7 +6680,19 @@ const toSeconds = (ts: number): number => {
           setMobileTradeOpen(true);
         }}
       />
-      {solanaGraduatedImportTrade && mobileTradeOpen && !isXlUp ? (
+      {gen8State && mobileTradeOpen && !isXlUp ? (
+        <div className="fixed inset-0 z-50 xl:hidden" data-mobile-trade-sheet="gen8">
+          <button type="button" className="absolute inset-0 bg-black/70" aria-label="Close trade sheet" onClick={() => setMobileTradeOpen(false)} />
+          <div
+            className="absolute inset-x-0 bottom-0 flex max-h-[92dvh] flex-col gap-4 overflow-y-auto rounded-t-2xl border border-border/70 bg-background p-4"
+            style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
+          >
+            <Gen8TradePanel key={tradeTab} chainId={Number(chainIdForStorage)} state={gen8State} symbol={tokenData.ticker} initialSide={tradeTab} onTraded={() => { gen8.refresh(); void unifiedMarket.refresh().catch(() => undefined); }} />
+            <Gen8CoinStatus chainId={Number(chainIdForStorage)} state={gen8State} explorerBase={getExplorerBase(chainIdForStorage)} nativeUsd={nativeUsd ?? null} />
+            <Gen8CreatorPanel chainId={Number(chainIdForStorage)} state={gen8State} symbol={tokenData.ticker} onDone={() => gen8.refresh()} />
+          </div>
+        </div>
+      ) : solanaGraduatedImportTrade && mobileTradeOpen && !isXlUp ? (
         <div className="fixed inset-0 z-50 xl:hidden" data-mobile-trade-sheet="graduated-import-solana">
           <button type="button" className="absolute inset-0 bg-black/70" aria-label="Close trade sheet" onClick={() => setMobileTradeOpen(false)} />
           <div

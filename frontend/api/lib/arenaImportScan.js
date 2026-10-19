@@ -87,23 +87,23 @@ export function importScannerChainFamily(chainId) {
 function rpcUrl(chainId) {
   const id = Number(chainId);
   if (id === 101) {
-    return env("SOLANA_RPC_URL", "VITE_SOLANA_RPC_URL", "VITE_SOLANA_MAINNET_RPC") || "https://api.mainnet-beta.solana.com";
+    return env("SOLANA_RPC_URL", "VITE_SOLANA_RPC_URL", "VITE_SOLANA_MAINNET_RPC", "SOLANA_RPC_HTTP");
   }
   if (id === 102) {
     return env("SOLANA_DEVNET_RPC_URL", "VITE_SOLANA_DEVNET_RPC_URL") || "https://api.devnet.solana.com";
   }
   if (id === 56) {
-    return env("BSC_RPC_URL", "VITE_PUBLIC_RPC_56") || "https://bsc-dataseed.binance.org";
+    return env("BSC_RPC_URL", "VITE_PUBLIC_RPC_56", "BSC_RPC_HTTP", "BSC_RPC_HTTP_56");
   }
   if (id === 97) {
-    return env("BSC_TESTNET_RPC_URL", "VITE_PUBLIC_RPC_97") || "https://bsc-testnet-rpc.publicnode.com";
+    return env("BSC_RPC_HTTP_97", "BSC_TESTNET_RPC_URL", "VITE_PUBLIC_RPC_97", "BSC_TESTNET_RPC_HTTP") || "https://bsc-testnet-rpc.publicnode.com";
   }
   if (id === 4663) {
     // Server env only, like the other Robinhood readers: the app's VITE_ RPC is a browser setting.
-    return env("ROBINHOOD_MAINNET_RPC_URL", "ROBINHOOD_RPC_URL") || "https://rpc.mainnet.chain.robinhood.com";
+    return env("ROBINHOOD_MAINNET_RPC_URL", "ROBINHOOD_RPC_URL", "ROBINHOOD_RPC_HTTP_4663");
   }
   if (id === 46630) {
-    return env("ROBINHOOD_TESTNET_RPC_URL");
+    return env("ROBINHOOD_RPC_HTTP_46630", "ROBINHOOD_TESTNET_RPC_URL", "VITE_PUBLIC_RPC_46630") || "https://rpc.testnet.chain.robinhood.com";
   }
   return "";
 }
@@ -555,8 +555,10 @@ export async function scanEvm(chainId, token) {
   if (importScannerChainFamily(chainId) !== "evm") {
     return finalizeScan({ scan: { reasons: ["unsupported_chain"], warnings } });
   }
+  const url = rpcUrl(chainId);
+  if (!url) return finalizeScan({ scan: { reasons: ["rpc_unconfigured"], warnings } });
   try {
-    const provider = new ethers.JsonRpcProvider(rpcUrl(chainId), Number(chainId));
+    const provider = new ethers.JsonRpcProvider(url, Number(chainId));
     const code = await provider.getCode(token);
     if (!code || code === "0x") {
       return finalizeScan({ scan: { reasons: ["not_a_contract"], warnings } });
@@ -627,8 +629,10 @@ export async function scanSolana(chainId, token) {
   if (importScannerChainFamily(chainId) !== "solana") {
     return finalizeScan({ scan: { reasons: ["unsupported_chain"], warnings: [] } });
   }
+  const url = rpcUrl(chainId);
+  if (!url) return finalizeScan({ scan: { reasons: ["rpc_unconfigured"], warnings: [] } });
   try {
-    const connection = new Connection(rpcUrl(chainId), "confirmed");
+    const connection = new Connection(url, "confirmed");
     const pubkey = new PublicKey(token);
     const parsed = await connection.getParsedAccountInfo(pubkey);
     const data = parsed?.value?.data;

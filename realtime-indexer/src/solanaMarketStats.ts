@@ -283,8 +283,8 @@ async function quoteUsdPrice(db: Queryable, quoteMint: string, quoteReferenceUsd
 
 function rpcUrl(cluster: "mainnet-beta" | "devnet"): string {
   const runtime = String(process.env.SOLANA_CLUSTER || "").trim().toLowerCase();
-  if (cluster === "devnet") return String(process.env.SOLANA_DEVNET_RPC_URL || (runtime === "devnet" ? ENV.SOLANA_RPC_HTTP || process.env.SOLANA_RPC_URL : "") || "https://api.devnet.solana.com").split(",")[0].trim();
-  return String(process.env.SOLANA_MAINNET_RPC_URL || (runtime !== "devnet" ? ENV.SOLANA_RPC_HTTP || process.env.SOLANA_RPC_URL : "") || "https://api.mainnet-beta.solana.com").split(",")[0].trim();
+  if (cluster === "devnet") return String(process.env.SOLANA_DEVNET_RPC_URL || (runtime === "devnet" ? ENV.SOLANA_RPC_HTTP || process.env.SOLANA_RPC_URL : "") || "").split(",")[0].trim();
+  return String(process.env.SOLANA_MAINNET_RPC_URL || (runtime !== "devnet" ? ENV.SOLANA_RPC_HTTP || process.env.SOLANA_RPC_URL : "") || "").split(",")[0].trim();
 }
 
 async function rpc<T>(url: string, method: string, params: unknown[], fetchImpl: typeof fetch): Promise<T> {
@@ -401,6 +401,7 @@ export async function refreshSolanaMarketStats(campaign: string, deps: { db?: Qu
   const graduated = Boolean(campaignRow.graduated_at_chain || campaignRow.pool_address);
   const cluster: "mainnet-beta" | "devnet" = String(process.env.SOLANA_CLUSTER || "").trim().toLowerCase() === "devnet" ? "devnet" : "mainnet-beta";
   const url = rpcUrl(cluster);
+  if (!url) return null;
   let quoteMint = graduated ? String(campaignRow.quote_mint || "").trim() || NATIVE_MINT : NATIVE_MINT;
   let quoteDecimals = quoteMint === NATIVE_MINT ? 9 : Number(campaignRow.quote_decimals || 6);
   if (isDbc && !graduated && String(campaignRow.dbc_quote_mint || "").trim()) {
@@ -566,6 +567,11 @@ let loopStarted = false;
 export function startSolanaMarketStatsLoop() {
   if (loopStarted) return;
   loopStarted = true;
+  const cluster: "mainnet-beta" | "devnet" = String(process.env.SOLANA_CLUSTER || "").trim().toLowerCase() === "devnet" ? "devnet" : "mainnet-beta";
+  if (!rpcUrl(cluster)) {
+    console.log("[solana-market-stats] skipped: no Solana RPC configured");
+    return;
+  }
   const intervalMs = Math.max(15_000, Number(process.env.SOLANA_MARKET_STATS_INTERVAL_MS || 60_000));
   let running = false;
   const tick = async () => {

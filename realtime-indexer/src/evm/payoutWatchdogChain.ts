@@ -5,6 +5,9 @@
  * watchdog first. Pure rules: payoutWatchdog.ts.
  */
 import { ethers } from "ethers";
+import { GEN8_HOOK_IFACE, GEN8_TOPICS } from "./evmGen8Abi.js";
+import type { Gen8WatchdogVault } from "./payoutWatchdogConfig.js";
+import type { Gen8ForeignClaim, Gen8VaultWatchFacts } from "./evmGen8VaultWatch.js";
 import { foldTransfers } from "./evmCreatorChoiceChain.js";
 import {
   PAYOUT_WATCHDOG_ROLE_KEY,
@@ -123,6 +126,78 @@ export interface WatchdogSender {
   address: string;
   /** Sends execTransactionWithRole(to, 0, data, CALL, role, true) and waits for the receipt. */
   exec(roles: string, to: string, data: string): Promise<{ hash: string; status: number; gasUsed: bigint }>;
+}
+
+const GEN8_VAULT_READ = new ethers.Interface(["function totalLiabilities() view returns (uint256)"]);
+const GEN8_SPLITTER_READ = new ethers.Interface(["function operator() view returns (address)"]);
+
+/**
+ * Balance, liabilities, the hook's current router, and claimRouter calls from wallets outside `knownClaimers`.
+ * A log-scan failure is returned on the facts. It does not hide the balance.
+ */
+export async function readGen8VaultFacts(
+  provider: ethers.Provider,
+  lane: Gen8WatchdogVault & { chainId: number },
+  opts: { fromBlock: number; toBlock: number; knownClaimers: Set<string> },
+): Promise<Gen8VaultWatchFacts> {
+  const vault = new ethers.Contract(lane.vault, GEN8_VAULT_READ, provider);
+  const balanceWei = await provider.getBalance(lane.vault);
+  const totalLiabilitiesWei = BigInt(await vault.totalLiabilities());
+  let treasuryRouter: string | null = null;
+  const foreignClaims: Gen8ForeignClaim[] = [];
+  let foreignScanError: string | null = null;
+  if (lane.hook) {
+    try {
+      const hook = new ethers.Contract(lane.hook, GEN8_HOOK_IFACE, provider);
+      const router = await hook.treasuryRouter();
+      treasuryRouter = ethers.getAddress(router);
+      const logs = await provider.getLogs({
+        address: lane.hook,
+        topics: [GEN8_TOPICS.RouterClaimed],
+        fromBlock: opts.fromBlock,
+        toBlock: opts.toBlock,
+      });
+      for (const log of logs.slice(0, 20)) {
+        const tx = await provider.getTransaction(log.transactionHash);
+        const from = String(tx?.from || "").toLowerCase();
+        if (!from || opts.knownClaimers.has(from)) continue;
+        const parsed = GEN8_HOOK_IFACE.parseLog(log);
+        foreignClaims.push({ txHash: log.transactionHash, from, amount: BigInt(parsed?.args?.amount ?? 0) });
+      }
+    } catch (error) {
+      foreignScanError = error instanceof Error ? error.message.slice(0, 300) : String(error);
+    }
+  }
+  return {
+    chainId: lane.chainId,
+    vault: lane.vault,
+    balanceWei,
+    totalLiabilitiesWei,
+    treasuryRouter,
+    expectedRouter: lane.expectedRouter,
+    foreignClaims,
+    foreignScanError,
+  };
+}
+
+/** Splitter operator plus EVM_GEN8_ROUTER_CLAIMERS_<id>. These wallets are not foreign claimers. */
+export async function gen8WatchClaimers(provider: ethers.Provider, chainId: number, splitter: string | null, env: NodeJS.ProcessEnv): Promise<Set<string>> {
+  const known = new Set(
+    String(env[`EVM_GEN8_ROUTER_CLAIMERS_${chainId}`] || "")
+      .split(/[\s,;]+/)
+      .map((item) => item.trim().toLowerCase())
+      .filter((item) => /^0x[0-9a-f]{40}$/.test(item)),
+  );
+  if (splitter) {
+    try {
+      const operator = await new ethers.Contract(splitter, GEN8_SPLITTER_READ, provider).operator();
+      const op = String(operator || "").toLowerCase();
+      if (/^0x[0-9a-f]{40}$/.test(op) && !/^0x0{40}$/.test(op)) known.add(op);
+    } catch {
+      // the splitter may be unset on this tick
+    }
+  }
+  return known;
 }
 
 export function execCalldata(to: string, data: string, shouldRevert = true): string {

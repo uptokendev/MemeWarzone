@@ -198,7 +198,10 @@ function resolveRpcUrl(chainId: number): string {
   if (chainId === 56) {
     return parseRpcList(ENV.BSC_RPC_HTTP_56)[0] || parseRpcList(process.env.BSC_RPC_HTTP || "")[0] || "";
   }
-  return parseRpcList(ENV.BSC_RPC_HTTP_97)[0] || parseRpcList(process.env.BSC_RPC_HTTP || "")[0] || "";
+  if (chainId === 97) return parseRpcList(ENV.BSC_RPC_HTTP_97)[0] || "";
+  if (chainId === 46630) return parseRpcList(ENV.ROBINHOOD_RPC_HTTP_46630)[0] || "";
+  if (chainId === 4663) return parseRpcList(ENV.ROBINHOOD_RPC_HTTP_4663)[0] || "";
+  return "";
 }
 
 async function loadGraduatedRows(chainId: number, limit: number) {
@@ -220,6 +223,8 @@ async function loadGraduatedRows(chainId: number, limit: number) {
            on cms.chain_id = c.chain_id
           and lower(cms.campaign_address) = lower(c.campaign_address)
         where c.chain_id = $1
+          -- Gen-8 coins have no LP locker (the hook takes every fee per swap).
+          and coalesce(c.factory_generation, 0) <> 8
           and (
             c.graduated_at_chain is not null
             or c.graduated_block is not null

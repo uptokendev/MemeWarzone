@@ -302,7 +302,7 @@ function fromCsv(raw?: string) {
 
 function robinhoodDefaultRpc(chainId: SupportedChainId): string {
   if (chainId === ROBINHOOD_TESTNET_CHAIN_ID) return "https://rpc.testnet.chain.robinhood.com";
-  if (chainId === ROBINHOOD_CHAIN_ID) return "https://rpc.mainnet.chain.robinhood.com";
+  // Chain 4663 has no public default. An empty mainnet RPC is a skip.
   return "";
 }
 
@@ -341,10 +341,10 @@ export function getPublicRpcUrl(chainId: SupportedChainId): string {
     const v =
       (import.meta.env.VITE_BSC_MAINNET_RPC as string | undefined) ??
       (import.meta.env.VITE_PUBLIC_RPC_MAINNET as string | undefined);
-    const vFirst = firstFromCsv(v);
-    if (vFirst) return vFirst;
-    return "https://bsc-dataseed.binance.org/";
+    return firstFromCsv(v);
   }
+
+  if (chainId !== BNB_TESTNET_CHAIN_ID) return "";
 
   const v =
     (import.meta.env.VITE_BSC_TESTNET_RPC as string | undefined) ??
@@ -352,7 +352,7 @@ export function getPublicRpcUrl(chainId: SupportedChainId): string {
     (import.meta.env.VITE_PUBLIC_RPC_97 as string | undefined);
   const vFirst = firstFromCsv(v);
   if (vFirst) return vFirst;
-  return "https://data-seed-prebsc-1-s1.binance.org:8545/";
+  return "https://bsc-testnet-rpc.publicnode.com";
 }
 
 // For redundancy: get *all* configured public RPC URLs for a chain.
@@ -383,16 +383,18 @@ export function getPublicRpcUrls(chainId: SupportedChainId): string[] {
   if (explicitList.length) return explicitList;
 
   if (chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID) {
-    return [robinhoodDefaultRpc(chainId)];
+    const url = robinhoodDefaultRpc(chainId);
+    return url ? [url] : [];
   }
 
   if (chainId === 56) {
     const v =
       (import.meta.env.VITE_BSC_MAINNET_RPC as string | undefined) ??
       (import.meta.env.VITE_PUBLIC_RPC_MAINNET as string | undefined);
-    const list = fromCsv(v);
-    return list.length ? list : ["https://bsc-dataseed.binance.org/"];
+    return fromCsv(v);
   }
+
+  if (chainId !== BNB_TESTNET_CHAIN_ID) return [];
 
   const v =
     (import.meta.env.VITE_BSC_TESTNET_RPC as string | undefined) ??
@@ -400,7 +402,7 @@ export function getPublicRpcUrls(chainId: SupportedChainId): string[] {
     (import.meta.env.VITE_PUBLIC_RPC_97 as string | undefined);
   const list = fromCsv(v);
   if (list.length) return list;
-  return ["https://data-seed-prebsc-1-s1.binance.org:8545/"];
+  return ["https://bsc-testnet-rpc.publicnode.com"];
 }
 
 export function getFactoryAddress(chainId: SupportedChainId): string {

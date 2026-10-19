@@ -54,6 +54,8 @@ export type CampaignInfo = {
   tokenVault?: string | null;
   solVault?: string | null;
   campaignIdHex?: string | null;
+  /** 8 for an EVM generation 8 coin (one Uniswap V4 pool, campaign address = token address); absent otherwise. */
+  generation?: number;
 };
 
 export type CampaignMetrics = {

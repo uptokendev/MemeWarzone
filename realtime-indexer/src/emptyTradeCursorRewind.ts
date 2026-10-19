@@ -22,6 +22,7 @@ export async function rewindEmptyCampaignTradeCursor(
       `select
          coalesce(c.created_block,0)::bigint as created_block,
          coalesce(c.factory_address,'') as factory_address,
+         coalesce(c.factory_generation,0) as factory_generation,
          (select count(*)::int from public.curve_trades t
            where t.chain_id=c.chain_id and t.campaign_address=c.campaign_address) as trade_count
        from public.campaigns c
@@ -31,6 +32,8 @@ export async function rewindEmptyCampaignTradeCursor(
     );
     const row = stats.rows[0];
     if (!row) return { rewound: false, reason: "campaign_missing" };
+    // Gen-8 coins have no campaign cursor (evm/evmGen8Pool.ts keeps its own).
+    if (Number(row.factory_generation) === 8) return { rewound: false, reason: "gen8" };
 
     const tradeCount = Number(row.trade_count || 0);
     if (tradeCount > 0) return { rewound: false, reason: "has_trades" };

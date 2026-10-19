@@ -26,7 +26,13 @@ const DEFAULT_SOLANA_OPERATOR = "HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9";
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 function solanaRpcUrl(): string {
-  return String(process.env.SOLANA_RPC_URL || process.env.SOLANA_RPC || "https://api.mainnet-beta.solana.com").trim();
+  return String(process.env.SOLANA_RPC_URL || process.env.SOLANA_RPC || process.env.SOLANA_RPC_HTTP || "").trim();
+}
+
+function solanaConnection(): Connection {
+  const url = solanaRpcUrl();
+  if (!url) throw Object.assign(new Error("Solana RPC is not configured"), { status: 503 });
+  return new Connection(url, "confirmed");
 }
 
 /** Mainnet deployer. It must never hold user money, so it can never receive the protocol 20%. */
@@ -434,7 +440,7 @@ export async function listSolanaLpFees(input: {
     params,
   );
 
-  const connection = new Connection(solanaRpcUrl(), "confirmed");
+  const connection = solanaConnection();
   const cpAmm = new CpAmm(connection as any);
   const items = [];
   for (const row of rows) {
@@ -615,7 +621,7 @@ async function harvestSolanaLpFeesOnce(input: {
     throw Object.assign(new Error("Campaign is missing Meteora pool, position, mint, or creator."), { status: 400 });
   }
 
-  const connection = new Connection(solanaRpcUrl(), "confirmed");
+  const connection = solanaConnection();
   const cpAmm = new CpAmm(connection as any);
   const poolPk = new PublicKey(poolAddress);
   const positionPk = new PublicKey(positionAddress);

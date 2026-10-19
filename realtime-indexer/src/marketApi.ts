@@ -7,6 +7,7 @@ import {
   TOPAZ_ROUTER_ADAPTER_ABI,
 } from "./abis.js";
 import { pool } from "./db.js";
+import { isGen8Campaign } from "./evm/evmGen8Guard.js";
 import { ENV } from "./env.js";
 import { rewindEmptyCampaignTradeCursor } from "./emptyTradeCursorRewind.js";
 import { TIMEFRAMES } from "./timeframes.js";
@@ -123,6 +124,8 @@ async function upgradeGraduatedMarketStateFromChain(
 ): Promise<boolean> {
   const rpcUrl = rpcUrlForChain(chainId);
   if (!rpcUrl || !isEvmAddress(campaign)) return false;
+  // Gen-8 coins have no campaign contract; evm/evmGen8Pool.ts writes their market state.
+  if (await isGen8Campaign(pool, chainId, campaign)) return false;
 
   try {
     const provider = createStaticJsonRpcProvider(rpcUrl, chainId, { timeoutMs: 20_000 });
@@ -474,6 +477,7 @@ export async function ensureDexPoolForCampaign(chainId: number, campaignRaw: str
   }
   const rpcUrl = rpcUrlForChain(chainId);
   if (!rpcUrl) return { ok: false, error: `No RPC for chain ${chainId}` };
+  if (await isGen8Campaign(pool, chainId, campaign)) return { ok: false, error: "Gen-8 coins trade in a Uniswap V4 pool; there is no DEX pool row to repair" };
 
   const provider = createStaticJsonRpcProvider(rpcUrl, chainId, { timeoutMs: 25_000 });
   try {
@@ -897,6 +901,7 @@ export function registerMarketContinuityRoutes(app: Express) {
           matchedBy: "campaign",
           campaignAddress: address,
           tokenAddress: null,
+          factoryGeneration: null,
           publicUrlAddress: address,
           marketKey: address,
           hint: "No campaigns row yet; treating address as provisional campaign key.",
@@ -910,6 +915,7 @@ export function registerMarketContinuityRoutes(app: Express) {
         matchedBy: identity.matchedBy,
         campaignAddress: identity.campaignAddress,
         tokenAddress: identity.tokenAddress || null,
+        factoryGeneration: identity.factoryGeneration ?? null,
         publicUrlAddress: identity.tokenAddress || identity.campaignAddress,
         marketKey: identity.campaignAddress,
       });
