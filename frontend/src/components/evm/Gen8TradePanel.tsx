@@ -7,7 +7,7 @@ import { useWallet } from "@/contexts/WalletContext";
 import { getNativeSymbol, isRobinhoodChainId, type SupportedChainId } from "@/lib/chainConfig";
 import { getReadProvider } from "@/lib/readProvider";
 import { evmBuyGasReserveWei } from "@/lib/tradeBalanceReserve";
-import { DBC_CREATOR_LOCK_COPY } from "../../../shared/dbcEconomics.mjs";
+import { GEN8_CREATOR_BUY_ESCROW_COPY } from "../../../shared/gen8EscrowSchedule.mjs";
 import {
   GEN8_AUTO_SLIPPAGE,
   GEN8_DEFAULT_SLIPPAGE_BPS,
@@ -435,7 +435,7 @@ export function Gen8TradePanel({
           </p>
         ) : null}
         <p className="mt-2 text-center text-[11px] text-mw-muted">{gen8FeeLine({ graduated, feeBps: graduated ? state.tradeFee?.postGraduationBps ?? 100 : state.tradeFee?.bondingBps ?? 200 })}</p>
-        {side === "buy" && escrowBuy ? <p className="mt-1 text-center text-xs text-orange-200">{DBC_CREATOR_LOCK_COPY}</p> : null}
+        {side === "buy" && escrowBuy ? <p className="mt-1 text-center text-xs text-orange-200">{GEN8_CREATOR_BUY_ESCROW_COPY}</p> : null}
         {showRpcOffer && rpcChoice?.state !== "dismissed" ? (
           <div className="mt-2 rounded-md border border-mw-border p-2 text-xs text-mw-muted" data-gen8-rpc-offer={rpcChoice?.state || "open"}>
             {rpcChoice?.state === "added" ? (
