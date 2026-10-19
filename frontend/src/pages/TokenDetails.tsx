@@ -133,6 +133,8 @@ import {
 
 const CAMPAIGN_ABI = LaunchCampaignArtifact.abi as ethers.InterfaceAbi;
 const TOKEN_ABI = LaunchTokenArtifact.abi as ethers.InterfaceAbi;
+/** Gen-8 coins are plain ERC-20s. The launch-token ABI is the older campaign token. */
+const GEN8_ERC20_BALANCE_ABI = ["function balanceOf(address) view returns (uint256)"];
 const TOKEN_DECIMALS = 18;
 /** Fallback poll for chain reads that otherwise refresh on each new trade (latestTradeKey). */
 const TRADE_SAFETY_POLL_MS = 60_000;
@@ -629,6 +631,7 @@ import { Gen8TradePanel } from "@/components/evm/Gen8TradePanel";
 import { Gen8CoinStatus, Gen8CreatorPanel } from "@/components/evm/Gen8CoinPanels";
 import { useGen8Coin } from "@/hooks/useGen8Coin";
 import { gen8AppConfig, readGen8PoolRecord } from "@/lib/evmGen8Client.mjs";
+import { gen8FormatAmount } from "../../shared/evmGen8Swap.mjs";
 import { isGen8CoinPage, shouldReadLegacyCampaign } from "@/lib/gen8LegacyCampaignReads.mjs";
 import { evmCreatorBadge } from "@/lib/evmGen6.mjs";
 
@@ -3384,8 +3387,10 @@ const toSeconds = (ts: number): number => {
           readProvider.getBalance(wallet.account),
           (async () => {
             try {
-              if (!campaign?.token) return 0n;
-              const t = new Contract(campaign.token, TOKEN_ABI, readProvider) as any;
+              const tokenAddress = gen8State?.token || campaign?.token;
+              if (!tokenAddress) return 0n;
+              const abi = gen8State ? GEN8_ERC20_BALANCE_ABI : TOKEN_ABI;
+              const t = new Contract(tokenAddress, abi, readProvider) as any;
               return (await t.balanceOf(wallet.account)) as bigint;
             } catch {
               return 0n;
@@ -3411,7 +3416,7 @@ const toSeconds = (ts: number): number => {
     return () => {
       cancelled = true;
     };
-  }, [readProvider, wallet.account, campaign?.token, campaign?.campaign, isSolanaPage, solanaBalanceTick, solanaQuote.mint, solanaQuote.native, walletMatchesCampaign]);
+  }, [readProvider, wallet.account, campaign?.token, campaign?.campaign, isSolanaPage, solanaBalanceTick, solanaQuote.mint, solanaQuote.native, walletMatchesCampaign, gen8State?.token, gen8State ? latestTradeKey : "", gen8State?.market?.sqrtPriceX96]);
 
   // Build transactions table rows from continuous market trade stream.
   useEffect(() => {
@@ -6601,7 +6606,7 @@ const toSeconds = (ts: number): number => {
               </div>
               <div>
                 <p className="text-mw-muted">Token balance</p>
-                <p className="mt-1 font-mw-mono text-mw-text break-words">{formatTokenFromWei(tokenBalanceWei)} {tokenData.ticker}</p>
+                <p className="mt-1 font-mw-mono text-mw-text break-words">{gen8State ? (tokenBalanceWei == null ? "—" : `${gen8FormatAmount(tokenBalanceWei)} ${tokenData.ticker}`) : `${formatTokenFromWei(tokenBalanceWei)} ${tokenData.ticker}`}</p>
               </div>
             </div>
             {walletMatchesCampaign ? null : (
