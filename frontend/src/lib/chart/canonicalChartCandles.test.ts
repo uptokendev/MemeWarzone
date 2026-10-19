@@ -6,6 +6,7 @@ import {
   canonicalAthNativeFromCandles,
   continueFlatCandleBodies,
   marketCandlesForChart,
+  omitUnchangedFlatSpots,
   openFlatCandleAt,
   patchActiveLatestBucket,
   priceAxisMinMove,
@@ -407,6 +408,7 @@ test("gen-8 flat spots draw a body from the previous close, in market cap and in
     intervalSeconds: 60, nowSec: Date.parse("2026-10-19T00:02:30Z") / 1000,
     fixedSupplyWhole: supply,
   });
+  assert.equal(plain.length, 3, "without the gen-8 flag the unchanged doji stays");
   assert.equal(plain[0].open, plain[0].close);
   assert.equal(plain[1].open, plain[1].close);
   const linked = assembleMarketCapCandles({
@@ -417,17 +419,21 @@ test("gen-8 flat spots draw a body from the previous close, in market cap and in
   });
   const grad = Number(p1) * supply * usd;
   const later = Number(p2) * supply * usd;
+  assert.equal(linked.length, 2, "the doji at the same spot as the buy is omitted");
   assert.ok(Math.abs(linked[0].close - grad) < 1e-4);
   assert.equal(linked[0].open, linked[0].close, "graduation print stays on its own bar");
   assert.equal(linked[1].open, linked[0].close);
   assert.ok(Math.abs(linked[1].close - later) < 1e-4);
   assert.ok(linked[1].high > linked[1].low, "the move is a candle body");
-  assert.equal(linked[2].open, linked[1].close);
-  assert.equal(linked[2].open, linked[2].close, "a spot that did not move stays flat");
-  const price = continueFlatCandleBodies(marketCandlesForChart(rows, "price", "BNB", 0));
+  const priceRows = marketCandlesForChart(rows, "price", "BNB", 0);
+  const price = continueFlatCandleBodies(openFlatCandleAt(omitUnchangedFlatSpots(priceRows), null));
+  assert.equal(price.length, 2);
   assert.equal(price[1].open, price[0].close);
   assert.ok(price[1].close > price[1].open);
   assert.ok(priceAxisMinMove(price.flatMap((row) => [row.open, row.close]), 1e-8) < 1e-10);
+  const stitchedOnly = continueFlatCandleBodies(priceRows);
+  assert.equal(stitchedOnly.length, 3, "the stitch helper itself still keeps a flat");
+  assert.equal(stitchedOnly[2].open, stitchedOnly[2].close);
   const ranged = continueFlatCandleBodies([
     { time: 1, open: 10, high: 12, low: 9, close: 11 },
     { time: 2, open: 11, high: 15, low: 11, close: 14 },
@@ -469,12 +475,85 @@ test("the gen-8 graduation buy opens at the launch spot instead of a speck at th
   assert.ok(Math.abs(linked[0].close - grad) < 1e-4, "closes at the graduation spot");
   assert.ok(linked[0].high > linked[0].low, "the curve trade is a candle");
   assert.equal(linked[0].low, Math.min(launchMcap, grad));
+  assert.equal(linked.length, 2, "the unchanged dust sell is not a bar");
   assert.equal(linked[1].open, linked[0].close, "the next bar still starts at the graduation close");
   assert.ok(Math.abs(linked[1].close - later) < 1e-4);
-  assert.equal(linked[2].open, linked[2].close, "a spot that did not move stays flat");
-  const price = continueFlatCandleBodies(openFlatCandleAt(marketCandlesForChart(rows, "price", "BNB", 0), launch));
+  assert.ok(linked[1].high > linked[1].low);
+  const price = continueFlatCandleBodies(openFlatCandleAt(omitUnchangedFlatSpots(marketCandlesForChart(rows, "price", "BNB", 0)), launch));
+  assert.equal(price.length, 2);
   assert.ok(Math.abs(price[0].open - launch) < 1e-18);
   assert.equal(price[1].open, price[0].close);
   const alreadyRanged = openFlatCandleAt([{ time: 1, open: 10, high: 12, low: 9, close: 11 }], launch);
   assert.equal(alreadyRanged[0].open, 10);
+});
+
+test("gen-8 drops the flat sell at the previous spot and keeps the later red candle", () => {
+  // YCC 1m: the 00:02 sell of 0.002 coins stored the same spot as the 00:01 buy.
+  // That doji drew as a zero-height green bar. The 02:01 sell already has a range.
+  const supply = 1_000_000_000;
+  const usd = 721;
+  const launch = 5.064834e-12;
+  const p1 = "0.000000000369495624";
+  const p2 = "0.000000000455183624";
+  const sold = "0.000000000410363945";
+  const flat = (bucket: string, price: string) => {
+    const mcap = String(Number(price) * supply);
+    return candle({
+      bucket_start: bucket,
+      o: price, h: price, l: price, c: price,
+      price_o: price, price_h: price, price_l: price, price_c: price,
+      mcap_o: mcap, mcap_h: mcap, mcap_l: mcap, mcap_c: mcap,
+    });
+  };
+  const rows = [
+    flat("2026-10-18T23:59:00.000Z", p1),
+    flat("2026-10-19T00:01:00.000Z", p2),
+    flat("2026-10-19T00:02:00.000Z", p2),
+    candle({
+      bucket_start: "2026-10-19T02:01:00.000Z",
+      o: p2, h: p2, l: sold, c: sold,
+      price_o: p2, price_h: p2, price_l: sold, price_c: sold,
+      mcap_o: String(Number(p2) * supply),
+      mcap_h: String(Number(p2) * supply),
+      mcap_l: String(Number(sold) * supply),
+      mcap_c: String(Number(sold) * supply),
+    }),
+  ];
+  const linked = assembleMarketCapCandles({
+    marketCandles: rows, denomination: "USD", nativeUsd: usd, historyReady: true,
+    intervalSeconds: 60, nowSec: Date.parse("2026-10-19T02:01:30Z") / 1000,
+    fixedSupplyWhole: supply, continueFlatBodies: true, launchPriceNative: launch,
+  });
+  const grad = Number(p1) * supply * usd;
+  const buy = Number(p2) * supply * usd;
+  const red = Number(sold) * supply * usd;
+  assert.equal(linked.length, 3);
+  assert.equal(linked[0].time, Date.parse("2026-10-18T23:59:00.000Z") / 1000);
+  assert.equal(linked[1].time, Date.parse("2026-10-19T00:01:00.000Z") / 1000);
+  assert.equal(linked[2].time, Date.parse("2026-10-19T02:01:00.000Z") / 1000);
+  assert.ok(Math.abs(linked[0].open - launch * supply * usd) < 1e-4);
+  assert.ok(Math.abs(linked[0].close - grad) < 1e-4);
+  assert.equal(linked[1].open, linked[0].close);
+  assert.ok(Math.abs(linked[1].close - buy) < 1e-4);
+  assert.equal(linked[2].open, linked[1].close, "the red candle still opens at the buy");
+  assert.ok(Math.abs(linked[2].close - red) < 1e-4);
+  assert.ok(linked[2].close < linked[2].open);
+  assert.ok(linked.every((row) => row.high > row.low), "no zero-height bar remains");
+  const price = continueFlatCandleBodies(
+    openFlatCandleAt(omitUnchangedFlatSpots(marketCandlesForChart(rows, "price", "BNB", 0)), launch),
+  );
+  assert.equal(price.length, 3);
+  assert.equal(price[2].open, Number(p2));
+  assert.equal(price[2].close, Number(sold));
+  assert.ok(price[2].close < price[2].open);
+  const kept = assembleMarketCapCandles({
+    marketCandles: rows, denomination: "USD", nativeUsd: usd, historyReady: true,
+    intervalSeconds: 60, fixedSupplyWhole: supply,
+  });
+  assert.equal(kept.length, 4, "Solana and every other chart still keep the doji");
+  const sameCloseWick = omitUnchangedFlatSpots([
+    { time: 1, open: 10, high: 12, low: 9, close: 11 },
+    { time: 2, open: 11, high: 14, low: 10, close: 11 },
+  ]);
+  assert.equal(sameCloseWick.length, 2, "a bar with a range stays even when its close matches");
 });

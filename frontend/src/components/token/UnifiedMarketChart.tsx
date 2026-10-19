@@ -27,6 +27,7 @@ import {
   assembleMarketCapCandles,
   continueFlatCandleBodies,
   marketCandlesForChart,
+  omitUnchangedFlatSpots,
   openFlatCandleAt,
   patchActiveLatestBucket,
   priceAxisMinMove,
@@ -640,9 +641,10 @@ export function UnifiedMarketChart({
     const priceOpen = continueFlatBodies && Number.isFinite(launchPrice) && launchPrice > 0
       ? (denomination === "USD" && nativeUsd > 0 ? launchPrice * nativeUsd : launchPrice)
       : null;
+    const spots = continueFlatBodies ? omitUnchangedFlatSpots(authoritative) : authoritative;
     const linked = continueFlatBodies
-      ? continueFlatCandleBodies(openFlatCandleAt(authoritative, priceOpen))
-      : authoritative;
+      ? continueFlatCandleBodies(openFlatCandleAt(spots, priceOpen))
+      : spots;
     const canPatchLivePrice =
       Number.isFinite(livePrice) && livePrice > 0 && (denomination !== "USD" || nativeUsd > 0);
     if (!canPatchLivePrice) return toChartRows(linked);

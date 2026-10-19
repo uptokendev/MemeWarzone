@@ -102,12 +102,27 @@ function liveAgreesWithClose(close: number, liveValue: number): boolean {
   return diff <= 1e-12 || diff / scale <= 1e-6;
 }
 
+function isFlatSpot(row: CanonicalCandleRow): boolean {
+  return row.open === row.high && row.high === row.low && row.low === row.close;
+}
+
 /**
- * A gen-8 bucket stores one pool spot, so open, high, low and close are equal and the
- * candle has no body. Solana opens the next bucket at the previous close (dbcIndexer),
- * and buildCandles does the same. Link only a flat bar. A bar that already has a range
- * is left alone, so Solana wicks stay as stored.
+ * A gen-8 trade that does not move the stored spot is a doji on the previous close.
+ * Drawing it is a zero-height bar. Drop that bar. Keep the first bar, and keep any
+ * bar that already has a range. Solana does not call this.
  */
+export function omitUnchangedFlatSpots(rows: CanonicalCandleRow[]): CanonicalCandleRow[] {
+  if (rows.length < 2) return rows;
+  const out: CanonicalCandleRow[] = [rows[0]];
+  for (let i = 1; i < rows.length; i += 1) {
+    const row = rows[i];
+    const prev = out[out.length - 1];
+    if (isFlatSpot(row) && prev.close > 0 && row.close === prev.close) continue;
+    out.push(row);
+  }
+  return out;
+}
+
 /**
  * The first gen-8 bucket stores the spot after the swap. A buy that runs from the launch
  * tick through graduation is then a flat speck at the top of that move. Open that flat
@@ -133,6 +148,12 @@ export function openFlatCandleAt(rows: CanonicalCandleRow[], start: number | nul
   ];
 }
 
+/**
+ * A gen-8 bucket stores one pool spot, so open, high, low and close are equal and the
+ * candle has no body. Solana opens the next bucket at the previous close (dbcIndexer),
+ * and buildCandles does the same. Link only a flat bar. A bar that already has a range
+ * is left alone, so Solana wicks stay as stored.
+ */
 export function continueFlatCandleBodies(rows: CanonicalCandleRow[]): CanonicalCandleRow[] {
   if (rows.length < 2) return rows;
   const out: CanonicalCandleRow[] = [rows[0]];
@@ -230,8 +251,9 @@ export function assembleMarketCapCandles(input: {
   /** Fully diluted coins: see marketCandlesForChart. */
   fixedSupplyWhole?: number | null;
   /**
-   * Gen-8 only. Flat indexer spots become candle bodies the way Solana stores them.
-   * Leave this off for every other chart: a Solana bar already has its open.
+   * Gen-8 only. An unchanged flat spot is dropped, then the remaining flat spots
+   * become candle bodies the way Solana stores them. Leave this off for every
+   * other chart: a Solana bar already has its open, and a Solana doji stays.
    */
   continueFlatBodies?: boolean;
   /**
@@ -257,7 +279,8 @@ export function assembleMarketCapCandles(input: {
     const nativeMcap = launchPrice * fixed;
     flatOpen = input.denomination === "USD" && input.nativeUsd > 0 ? nativeMcap * input.nativeUsd : nativeMcap;
   }
-  const opened = openFlatCandleAt(chosen, flatOpen);
+  const spots = input.continueFlatBodies ? omitUnchangedFlatSpots(chosen) : chosen;
+  const opened = openFlatCandleAt(spots, flatOpen);
   const rows = input.continueFlatBodies ? continueFlatCandleBodies(opened) : opened;
   if (!rows.length) return [];
   const liveNative = Number(input.liveMcapNative);
