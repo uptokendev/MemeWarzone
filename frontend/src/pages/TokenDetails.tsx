@@ -6145,7 +6145,7 @@ const toSeconds = (ts: number): number => {
           />
         </div>
 
-        <aside className="flex flex-col gap-4 self-start xl:sticky xl:top-[calc(var(--mwz-topbar-offset)+16px)] xl:max-h-[calc(100dvh-var(--mwz-topbar-offset)-3rem)] xl:overflow-y-auto xl:overscroll-contain">
+        <aside className="flex flex-col gap-4 self-start">
           {gen8State ? (
             isXlUp ? (
               <section aria-label="Trade" className={`${cp.card} flex flex-col gap-4 p-4`} data-gen8-trade="true">
