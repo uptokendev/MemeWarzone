@@ -24,7 +24,7 @@ The Battles list has its own chain filter, which also offers all chains at once.
 | Wallet | EVM wallet, such as MetaMask | Solana wallet, such as Phantom or Solflare | EVM wallet, such as MetaMask |
 | You pay in | BNB | SOL | ETH |
 | Address format | starts with 0x | base58 mint address | starts with 0x |
-| Graduated coins trade on | Topaz | Meteora | a Uniswap V3 pool |
+| Graduated coins trade on | Uniswap V4 | Meteora | Uniswap V4 |
 | Imported coins trade on | PancakeSwap | Jupiter | Uniswap |
 | Launch a coin | Yes | Yes | Yes |
 | Battles, leagues and Major War League | Yes | Yes | Yes |

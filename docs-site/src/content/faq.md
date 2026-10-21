@@ -113,7 +113,7 @@ No. An UpVote is paid visibility, not a safety label.
 
 ### How long does a battle last?
 
-A Vote Battle runs 6, 12, 24 or 48 hours. A metrics battle runs 24 hours, 3 days or 7 days. Read **[Live Battles](/arena/live-battles)**.
+A Vote Battle runs 1, 6, 12, 24 or 48 hours. A metrics battle runs 24 hours, 3 days or 7 days. Read **[Live Battles](/arena/live-battles)**.
 
 ### Are rewards paid automatically?
 

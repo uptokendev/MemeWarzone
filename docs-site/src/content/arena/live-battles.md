@@ -19,7 +19,7 @@ The first live battle is shown large at the top. Each battle card shows both coi
 
 | Type | How it is decided | Length |
 | --- | --- | --- |
-| Vote Battle | free votes and boosts | 6, 12, 24 or 48 hours |
+| Vote Battle | free votes and boosts | 1, 6, 12, 24 or 48 hours |
 | Metrics battle | change in market cap, holders and trading volume during the fight, plus boosts | 24 hours, 3 days or 7 days |
 
 In a Vote Battle each wallet has one free vote, worth 1 point. A boost costs $1 and adds 1 point.
