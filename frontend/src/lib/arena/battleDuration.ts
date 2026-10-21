@@ -4,8 +4,9 @@ export const BATTLE_DURATIONS = [
   { hours: 168, label: "7 days" },
 ] as const;
 
-/** Vote Battles: free votes + boosts, 6, 12, 24 or 48 hours. */
+/** Vote Battles: free votes + boosts, 1, 6, 12, 24 or 48 hours. */
 export const VOTE_BATTLE_DURATIONS = [
+  { hours: 1, label: "1 hour" },
   { hours: 6, label: "6 hours" },
   { hours: 12, label: "12 hours" },
   { hours: 24, label: "24 hours" },
@@ -26,7 +27,7 @@ export function parseBattleDurationHours(value: unknown, fallback = 24): 24 | 72
 
 export function parseVoteBattleDurationHours(value: unknown, fallback: VoteBattleDurationHours = 24): VoteBattleDurationHours {
   const n = Number(value);
-  if (n === 6 || n === 12 || n === 24 || n === 48) return n;
+  if (n === 1 || n === 6 || n === 12 || n === 24 || n === 48) return n;
   return fallback;
 }
 
@@ -38,7 +39,7 @@ export function battleDurationOptions(mode: BattleMode): ReadonlyArray<{ hours: 
   return mode === "vote" ? VOTE_BATTLE_DURATIONS : BATTLE_DURATIONS;
 }
 
-/** The duration a battle of this mode accepts: vote 6/12/24/48 h, metrics 24 h / 3 d / 7 d. */
+/** The duration a battle of this mode accepts: vote 1/6/12/24/48 h, metrics 24 h / 3 d / 7 d. */
 export function parseBattleDurationHoursForMode(mode: BattleMode | string | undefined | null, value: unknown, fallback = 24): number {
   return parseBattleMode(mode) === "vote"
     ? parseVoteBattleDurationHours(value, parseVoteBattleDurationHours(fallback, 24))

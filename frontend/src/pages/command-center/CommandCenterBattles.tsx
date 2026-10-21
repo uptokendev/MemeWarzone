@@ -373,7 +373,7 @@ export default function CommandCenterBattles() {
                     }}
                   >
                     <option value="normal">Metrics battle (market cap, holders, volume, boosts)</option>
-                    <option value="vote">Vote Battle (free votes + boosts, 6 to 48 hours)</option>
+                    <option value="vote">Vote Battle (free votes + boosts, 1 to 48 hours)</option>
                   </select>
                 </label>
                 <label className={fieldLabel}>
