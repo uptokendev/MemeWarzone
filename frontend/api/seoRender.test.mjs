@@ -331,13 +331,18 @@ test("/about serves the full About copy and its JSON-LD to crawlers", async () =
   for (const s of ABOUT_SECTIONS) assert.ok(res.body.includes(`<h2>${s.heading.replace(/'/g, "&#39;")}</h2>`), s.heading);
   assert.ok(res.body.includes("Call of Duty: Warzone"));
   assert.ok(res.body.includes('<a href="https://t.me/memewarzonehq">Telegram</a>'));
-  assert.equal(ABOUT_INTRO.length, 3);
+  assert.equal(ABOUT_INTRO.length, 2);
+  assert.ok(res.body.includes("Vote battle (1 hour, 6 hours, 12 hours, 24 hours, 48 hours)"));
+  assert.ok(res.body.includes("Perfect Run: Coins that graduated"));
   assert.equal(calls.length, 0);
 });
 
 test("About copy follows the copy rules", async () => {
-  const { ABOUT_DESCRIPTION, ABOUT_INTRO, ABOUT_SECTIONS } = await import("../shared/aboutContent.mjs");
-  const all = [ABOUT_DESCRIPTION, ...ABOUT_INTRO, ...ABOUT_SECTIONS.flatMap((s) => [s.heading, ...(s.paragraphs || []), ...(s.items || []), ...(s.note ? [s.note] : []), ...(s.links || []).map((l) => l.text)])];
-  for (const t of all) assert.doesNotMatch(t, /[–—]/, t);
+  const { ABOUT_SECTIONS, aboutAllText } = await import("../shared/aboutContent.mjs");
+  for (const t of aboutAllText()) assert.doesNotMatch(t, /[–—]/, t);
   for (const s of ABOUT_SECTIONS) for (const l of s.links || []) assert.match(l.href, /^(\/[a-z]|https:\/\/)/, l.href);
+  const fs = await import("node:fs");
+  for (const s of ABOUT_SECTIONS) for (const img of [s.image, ...(s.categories || []).map((c) => c.image)].filter(Boolean)) {
+    assert.ok(fs.existsSync(new URL(`../public${img}`, import.meta.url)), img);
+  }
 });
