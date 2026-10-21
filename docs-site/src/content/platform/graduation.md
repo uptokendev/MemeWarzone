@@ -24,9 +24,9 @@ The coin keeps its coin page, posts, holders and history.
 
 | Chain | DEX |
 | --- | --- |
-| BNB Chain | Topaz |
+| BNB Chain | Uniswap V4 |
 | Solana | Meteora |
-| Robinhood Chain | a Uniswap V3 pool |
+| Robinhood Chain | Uniswap V4 |
 
 The token a coin pairs with in that pool was chosen at launch. On Solana and Robinhood Chain it can be something other than SOL or ETH, such as USDC or a stock token. Graduation locks the pool's liquidity for good.
 
