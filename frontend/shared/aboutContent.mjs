@@ -12,7 +12,9 @@
 // - airdrops: docs-site rewards/warzone-airdrops.md; squad pool: rewards/squad-pool.md
 // - fees: 2% curve fee (shared/evmGen8.mjs GEN8_RATES.bondingBps), creator 5.6% (creatorBondingBps 560), older coins 5%:
 //   docs-site creators/creator-earnings.md; recruiter 12.5%/15%, OG 15%/17.5%: fees/fee-routing.md, fees/where-fees-go.md;
-//   imports 1% = 0.5% creator + 0.5% MemeWarzone on every chain (founder)
+//   imports 1% = 0.5% creator + 0.5% MemeWarzone on every chain (founder); creator reserve 20M: Solana at graduation
+//   (shared/dbcEconomics.mjs DBC_LOCKED_VESTING), gen-8 >= 1 h after graduation while price >= graduation price
+//   (shared/evmGen8.mjs GEN8_RESERVE_RELEASE_DELAY_SECONDS, MwzReserveLock errors); founder OK 2026-10-22
 // - UpVote price $3: src/components/token/UpvoteDialog.tsx, api/arenaVotes.js; launchpad Featured: api/featured.js;
 //   Warzone Featured rail: src/pages/Arena.tsx (useArenaFeaturedVotes)
 // - contracts: Solana program ids and gen-8 addresses as baked into the live app (VITE_SOLANA_*_PROGRAM_ID,
@@ -176,6 +178,7 @@ export const ABOUT_SECTIONS = [
     image: "/assets/about/upvote_image.webp",
     items: [
       "Every buy and sell on the bonding curve pays a 2% fee. The creator gets 5.6% of it, which is 0.112% of every trade. Coins launched before October 2026 earn 5%, which is 0.10%.",
+      "The creator also gets a reserve of 2% of the supply (20M tokens). On Solana it is released when the coin graduates. On BNB Chain and Robinhood Chain it is released no earlier than 1 hour after graduation, and only while the price is at or above the graduation price.",
       "Imported coins pay a 1% swap fee on MemeWarzone: 0.5% to the coin's creator and 0.5% to MemeWarzone, on every chain.",
       "Each coin has a Story: a full-screen page with the creator's own chapters and an automatic chronicle of the coin.",
       "UpVotes cost $3 each and move a coin up a Featured list. Coins still on their curve are featured on the launchpad. Graduated and imported coins have their own UpVotes and are featured in the Warzone overview.",

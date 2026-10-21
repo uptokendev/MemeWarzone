@@ -37,7 +37,7 @@ export const COMPARE_PAGES = [
         who: "mwz",
         title: "Pick MemeWarzone if",
         items: [
-          "You want to launch on BNB Chain or Robinhood Chain.",
+          "You want to launch on BNB Chain, Solana or Robinhood Chain from one platform.",
           "You want your coin to keep competing after launch, in battles, tournaments and leagues.",
           "You want your community to earn from the trading fee through league prizes, recruiters, squads and airdrops.",
           "Your coin already finished bonding on Pump.fun and you want to bring it into battles.",

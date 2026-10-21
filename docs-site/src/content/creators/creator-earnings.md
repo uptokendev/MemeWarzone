@@ -6,7 +6,7 @@ description: How creators earn from their coin and where to claim it.
 Creator earnings come from two places.
 
 First, a share of the trading fees while your coin trades.
-Second, the 2% creator reserve (20M tokens), released to you when the coin graduates. The 2% graduation fee goes to MemeWarzone's fee routing, not to the creator.
+Second, the 2% creator reserve (20M tokens). On Solana it is released to you when the coin graduates. On BNB Chain and Robinhood Chain it is released no earlier than 1 hour after graduation, and only while the price is at or above the graduation price. The 2% graduation fee goes to MemeWarzone's fee routing, not to the creator.
 
 On chains and launch types that offer it, you choose in the **Bond** step of Create what happens to your share of the trade fee: keep it, give it to holders, split it, or use it for buyback and burn.
 
