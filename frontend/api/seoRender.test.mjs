@@ -317,3 +317,27 @@ test("a synchronously throwing loader is not stuck in the coalescing map", async
   assert.equal((await run()).statusCode, 200);
   assert.equal(calls, 2);
 });
+
+test("/about serves the full About copy and its JSON-LD to crawlers", async () => {
+  const { ABOUT_SECTIONS, ABOUT_INTRO } = await import("../shared/aboutContent.mjs");
+  const { run, calls } = setup();
+  const res = await run("/__render/about");
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.headers["x-robots-tag"], undefined);
+  assert.match(res.body, /<title>About MemeWarzone · MemeWarzone<\/title>/);
+  assert.match(res.body, /rel="canonical" href="https:\/\/app\.memewar\.zone\/about"/);
+  assert.match(res.body, /"@type":"AboutPage"/);
+  assert.match(res.body, /<h1>About MemeWarzone<\/h1>/);
+  for (const s of ABOUT_SECTIONS) assert.ok(res.body.includes(`<h2>${s.heading.replace(/'/g, "&#39;")}</h2>`), s.heading);
+  assert.ok(res.body.includes("Call of Duty: Warzone"));
+  assert.ok(res.body.includes('<a href="https://t.me/memewarzonehq">Telegram</a>'));
+  assert.equal(ABOUT_INTRO.length, 3);
+  assert.equal(calls.length, 0);
+});
+
+test("About copy follows the copy rules", async () => {
+  const { ABOUT_DESCRIPTION, ABOUT_INTRO, ABOUT_SECTIONS } = await import("../shared/aboutContent.mjs");
+  const all = [ABOUT_DESCRIPTION, ...ABOUT_INTRO, ...ABOUT_SECTIONS.flatMap((s) => [s.heading, ...(s.paragraphs || []), ...(s.items || []), ...(s.note ? [s.note] : []), ...(s.links || []).map((l) => l.text)])];
+  for (const t of all) assert.doesNotMatch(t, /[–—]/, t);
+  for (const s of ABOUT_SECTIONS) for (const l of s.links || []) assert.match(l.href, /^(\/[a-z]|https:\/\/)/, l.href);
+});

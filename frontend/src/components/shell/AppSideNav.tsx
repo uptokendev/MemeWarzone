@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, Info, Plus } from "lucide-react";
 import { socialLinks } from "@/constants/navigation";
 import { cn } from "@/lib/utils";
 import { NAV_ICONS } from "./navIcons";
@@ -110,6 +110,14 @@ export function AppSideNav({ collapsed, onToggleCollapse }: { collapsed: boolean
       </nav>
 
       <div className={cn("border-t border-[#1E2329] px-2 py-3", collapsed && "flex flex-col items-center")}>
+        <Link
+          to="/about"
+          aria-label={collapsed ? "About" : undefined}
+          className={itemClass(location.pathname === "/about", collapsed)}
+        >
+          <Info className="h-5 w-5 shrink-0" aria-hidden="true" />
+          {collapsed ? null : <span>About</span>}
+        </Link>
         <a
           href={DOCS_URL}
           target="_blank"

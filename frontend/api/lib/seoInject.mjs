@@ -10,6 +10,10 @@ export function h1(text) {
   return `<h1>${esc(text)}</h1>`;
 }
 
+export function h2(text) {
+  return `<h2>${esc(text)}</h2>`;
+}
+
 export function p(text) {
   return `<p>${esc(text)}</p>`;
 }
