@@ -5,7 +5,9 @@ import { createAppShell } from "./lib/appShell.mjs";
 import { injectSeo, h1, h2, p, ul, link } from "./lib/seoInject.mjs";
 import { createSeoEntities } from "./lib/seoEntities.js";
 import { DEFAULT_DESCRIPTION, headForPath, matchRoute } from "../shared/seoRoutes.mjs";
-import { ABOUT_INTRO, ABOUT_PATH, ABOUT_SECTIONS, ABOUT_TITLE, aboutJsonLd } from "../shared/aboutContent.mjs";
+import {
+  ABOUT_DISAMBIGUATION, ABOUT_HERO_LINKS, ABOUT_HIGHLIGHTS, ABOUT_INTRO, ABOUT_PATH, ABOUT_SECTIONS, ABOUT_TITLE, aboutJsonLd,
+} from "../shared/aboutContent.mjs";
 
 const BRAND = "MemeWarzone";
 const NOINDEX = "noindex,follow";
@@ -64,11 +66,18 @@ function summaryOf(s) {
 
 // Fixed pages whose full text is server-rendered (the same copy the app page shows), keyed by route pattern.
 function aboutBody() {
-  let html = h1(ABOUT_TITLE) + ABOUT_INTRO.map((t) => p(t)).join("");
+  let html = h1(ABOUT_TITLE) + ABOUT_INTRO.map((t) => p(t)).join("") + p(ABOUT_DISAMBIGUATION);
+  html += ul(ABOUT_HIGHLIGHTS.map((x) => `${x.value}: ${x.label}`));
+  html += `<p>${ABOUT_HERO_LINKS.map((l) => link(l.href, l.text)).join(" ")}</p>`;
   for (const s of ABOUT_SECTIONS) {
     html += h2(s.heading);
-    html += (s.paragraphs || []).map((t) => p(t)).join("");
+    if (s.lead) html += p(s.lead);
+    if (s.steps?.length) html += ul(s.steps.map((x) => `${x.title}: ${x.text}`));
+    if (s.chips?.length) html += p(`${s.chipsLabel || ""} ${s.chips.join(", ")}`.trim());
+    for (const m of s.modes || []) html += p(`${m.name} (${m.durations.join(", ")}): ${m.text}`);
+    if (s.pool) html += p(`${s.pool.winnerPct}% ${s.pool.winnerLabel}, ${s.pool.protocolPct}% ${s.pool.protocolLabel}.`);
     if (s.items?.length) html += ul(s.items);
+    if (s.categories?.length) html += ul(s.categories.map((c) => `${c.name}: ${c.text}`));
     if (s.note) html += p(s.note);
     if (s.links?.length) html += `<p>${s.links.map((l) => link(l.href, l.text)).join(" ")}</p>`;
   }
