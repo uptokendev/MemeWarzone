@@ -24,7 +24,7 @@ Every coin has 1 billion tokens:
 | --- | ---: | --- |
 | 85% | 850M | the bonding curve |
 | 13% | 130M | the DEX pool at graduation |
-| 2% | 20M | the creator reserve, released at graduation |
+| 2% | 20M | the creator reserve: on Solana released at graduation, on BNB Chain and Robinhood Chain at least 1 hour after graduation while the price is at or above the graduation price |
 
 ## Launch fee
 
