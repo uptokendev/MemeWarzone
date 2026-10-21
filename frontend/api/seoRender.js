@@ -2,12 +2,14 @@
 // nginx proxies app page requests here. Same HTML for people and crawlers; React replaces #root on load.
 // Loader DATA is cached (never HTML, never errors); the CURRENT shell is fetched on every request.
 import { createAppShell } from "./lib/appShell.mjs";
-import { injectSeo, h1, h2, p, ul, link } from "./lib/seoInject.mjs";
+import { injectSeo, esc, h1, h2, p, ul, link } from "./lib/seoInject.mjs";
 import { createSeoEntities } from "./lib/seoEntities.js";
 import { DEFAULT_DESCRIPTION, headForPath, matchRoute } from "../shared/seoRoutes.mjs";
 import {
-  ABOUT_DISAMBIGUATION, ABOUT_HERO_LINKS, ABOUT_HIGHLIGHTS, ABOUT_INTRO, ABOUT_PATH, ABOUT_SECTIONS, ABOUT_TITLE, aboutJsonLd,
+  ABOUT_CHAINS, ABOUT_DISAMBIGUATION, ABOUT_HERO_LINKS, ABOUT_HIGHLIGHTS, ABOUT_INTRO, ABOUT_NEXT_CHAIN, ABOUT_PATH, ABOUT_SECTIONS,
+  ABOUT_TITLE, aboutJsonLd,
 } from "../shared/aboutContent.mjs";
+import { COMPARE_PAGES, compareJsonLd } from "../shared/comparePages.mjs";
 
 const BRAND = "MemeWarzone";
 const NOINDEX = "noindex,follow";
@@ -65,25 +67,54 @@ function summaryOf(s) {
 }
 
 // Fixed pages whose full text is server-rendered (the same copy the app page shows), keyed by route pattern.
-function aboutBody() {
-  let html = h1(ABOUT_TITLE) + ABOUT_INTRO.map((t) => p(t)).join("") + p(ABOUT_DISAMBIGUATION);
-  html += ul(ABOUT_HIGHLIGHTS.map((x) => `${x.value}: ${x.label}`));
-  html += `<p>${ABOUT_HERO_LINKS.map((l) => link(l.href, l.text)).join(" ")}</p>`;
-  for (const s of ABOUT_SECTIONS) {
+function sectionsHtml(sections) {
+  let html = "";
+  for (const s of sections) {
     html += h2(s.heading);
     if (s.lead) html += p(s.lead);
     if (s.steps?.length) html += ul(s.steps.map((x) => `${x.title}: ${x.text}`));
     if (s.chips?.length) html += p(`${s.chipsLabel || ""} ${s.chips.join(", ")}`.trim());
     for (const m of s.modes || []) html += p(`${m.name} (${m.durations.join(", ")}): ${m.text}`);
-    if (s.pool) html += p(`${s.pool.winnerPct}% ${s.pool.winnerLabel}, ${s.pool.protocolPct}% ${s.pool.protocolLabel}.`);
+    for (const x of s.splits || []) html += p(`${x.title}: ${x.segments.map((g) => `${g.pct}% ${g.label}`).join(", ")}.`);
     if (s.items?.length) html += ul(s.items);
     if (s.categories?.length) html += ul(s.categories.map((c) => `${c.name}: ${c.text}`));
+    if (s.members?.length) html += ul(s.members.map((m) => `${m.name}, ${m.role}`));
+    for (const c of s.contracts || []) {
+      html += p(`${c.chain}. ${c.audit}.`);
+      html += `<ul>${c.entries.map((e) => `<li>${esc(e.label)}: ${link(e.href, e.address)}</li>`).join("")}</ul>`;
+    }
+    for (const x of s.qa || []) html += `<h3>${esc(x.q)}</h3>${p(x.a)}`;
+    if (s.rows?.length) {
+      html += `<table><thead><tr><th>Feature</th><th>MemeWarzone</th><th>Pump.fun</th></tr></thead><tbody>`;
+      for (const r of s.rows) html += `<tr><td>${esc(r.feature)}</td><td>${esc(r.mwz)}</td><td>${esc(r.other)}</td></tr>`;
+      html += "</tbody></table>";
+    }
     if (s.note) html += p(s.note);
     if (s.links?.length) html += `<p>${s.links.map((l) => link(l.href, l.text)).join(" ")}</p>`;
   }
+  return html;
+}
+
+function aboutBody() {
+  let html = h1(ABOUT_TITLE) + ABOUT_INTRO.map((t) => p(t)).join("") + p(ABOUT_DISAMBIGUATION);
+  html += p(`Live on ${ABOUT_CHAINS.join(", ")}. ${ABOUT_NEXT_CHAIN.name}: ${ABOUT_NEXT_CHAIN.label.toLowerCase()}. ${ABOUT_NEXT_CHAIN.text}`);
+  html += ul(ABOUT_HIGHLIGHTS.map((x) => `${x.value}: ${x.label}`));
+  html += `<p>${ABOUT_HERO_LINKS.map((l) => link(l.href, l.text)).join(" ")}</p>`;
+  html += sectionsHtml(ABOUT_SECTIONS);
   return { html, jsonLd: aboutJsonLd() };
 }
-const PAGE_BODIES = { [ABOUT_PATH]: aboutBody };
+
+function compareBody(page) {
+  let html = h1(page.title) + page.intro.map((t) => p(t)).join("") + p(page.disclaimer);
+  for (const v of page.verdicts) html += h2(v.title) + ul(v.items);
+  html += sectionsHtml(page.sections);
+  html += h2("Sources") + `<ul>${page.sources.map((x) => `<li>${link(x.href, x.text)} (${esc(x.date)})</li>`).join("")}</ul>`;
+  return { html, jsonLd: compareJsonLd(page) };
+}
+const PAGE_BODIES = {
+  [ABOUT_PATH]: aboutBody,
+  ...Object.fromEntries(COMPARE_PAGES.map((page) => [page.path, () => compareBody(page)])),
+};
 
 function splitUrl(req) {
   const raw = String(req.originalUrl || req.url || req.path || "");
