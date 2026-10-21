@@ -4,7 +4,7 @@
 // Every fact is read from code, docs or chain, or given by the founder, on 2026-10-21. Update this file when one changes:
 // - chains, graduation: docs-site/src/content/platform/graduation.md. DEX per chain (founder): Uniswap V4 on BNB Chain and
 //   Robinhood Chain, Meteora on Solana. Graduated and imported coins can battle (founder). DogeOS line: founder, verified
-//   by DogeOS and MyDoge Wallet. Roadmap and team: founder, 2026-10-21.
+//   by DogeOS and MyDoge Wallet. Roadmap (Interchained DEX in two steps) and team: founder, 2026-10-21.
 // - battle modes, clocks, points: api/lib/arenaBattleMode.js; Boost rules: api/lib/arenaBoostRules.js; Boost $1:
 //   docs-site arena/live-battles.md; buy-in flow and 75/20/5: arena/live-battles.md, arena/war-pools.md
 // - Boost split 90/10: api/lib/arenaBoostRuntime.mjs (BOOST_POOL_BPS, BOOST_PROTOCOL_BPS)
@@ -260,7 +260,7 @@ export const ABOUT_SECTIONS = [
     steps: [
       { title: "DogeOS", text: "MemeWarzone is among the first launchpads invited onto DogeOS, which targets about 500,000 existing wallets." },
       { title: "More chains", text: "More chains will follow DogeOS, with the same launchpad, battles and leagues on each." },
-      { title: "Interchained DEX", text: "Our own DEX that connects the chains MemeWarzone runs on." },
+      { title: "Interchained DEX", text: "A full interchained DEX. The first release covers the chains MemeWarzone runs on, then it opens up to more chains." },
     ],
   },
   {
