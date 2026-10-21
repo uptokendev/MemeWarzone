@@ -2,7 +2,8 @@
 // (api/seoRender.js). Pure module: no DOM, no I/O. Add a competitor by adding an object to COMPARE_PAGES; the
 // route rule, sitemap entry and server-rendered text follow from it. nginx renders /memewarzone-vs-<slug>.
 //
-// MemeWarzone facts: the same sources as shared/aboutContent.mjs (fees: shared/evmGen8.mjs GEN8_RATES,
+// MemeWarzone facts: the same sources as shared/aboutContent.mjs (fees: shared/evmGen8.mjs GEN8_RATES incl. creatorPostBps 50,
+// creator fee choice keep/holders/split/buyback: src/components/create/CreatorFeeChoicePicker.tsx (live launch types: DBC on Solana, gen-8 on BNB/RH; founder 2026-10-22);
 // docs-site fees/fee-routing.md, creators/creator-earnings.md; battles: api/lib/arenaBattleMode.js).
 // Competitor facts: public sources listed in `sources`, checked on `checkedOn`. Re-check before changing a number.
 // Copy rule: plain sentences, concrete facts, no slogans, no dashes used as punctuation. Be fair to the competitor.
@@ -48,8 +49,8 @@ export const COMPARE_PAGES = [
         title: "Pick Pump.fun if",
         items: [
           "Your community is on Solana and you want the largest audience of active traders.",
-          "You want a lower trading fee and a higher creator share per trade.",
-          "You want features MemeWarzone does not have, such as holder rewards and perps trading in the same app.",
+          "You want a lower trading fee and a higher creator share on the bonding curve.",
+          "You want perps trading in the same app, which MemeWarzone does not offer.",
         ],
       },
     ],
@@ -79,12 +80,13 @@ export const COMPARE_PAGES = [
         id: "fees",
         nav: "Fees",
         heading: "Fees and who earns them",
-        lead: "Pump.fun charges less per trade and pays its creators a larger share of each trade. MemeWarzone charges more and sends most of the fee back to the community through league prize pools, recruiters, squads and airdrops.",
+        lead: "Pump.fun charges less per trade and pays creators more on the bonding curve. After graduation MemeWarzone pays creators more. MemeWarzone sends most of its trading fee back to the community through league prize pools, recruiters, squads and airdrops. On both platforms a creator can pass their fees on to holders.",
         rows: [
           { feature: "Bonding curve fee", mwz: "2% on every buy and sell.", other: "1.25% on every buy and sell." },
           { feature: "Creator share on the curve", mwz: "0.112% of each trade, which is 5.6% of the fee.", other: "0.30% of each trade." },
-          { feature: "Community share of the fee", mwz: "37.5% to league prize pools, 12.5% to recruiters and 2.5% to the squad pool. When a trader has no recruiter, those last two go to weekly airdrops.", other: "A referral program since October 2026 that matches a new user's deposit, up to $50 each. Creators can share fees with holders through Holder Rewards." },
-          { feature: "After graduation", mwz: "Creators keep earning from trading fees in the DEX pool.", other: "The creator share on PumpSwap falls from 0.30% to 0.05% as the market cap grows." },
+          { feature: "What the creator does with their share", mwz: "Chosen at launch: keep it, give it to holders, split it, or use it for buyback and burn.", other: "Creators can pass part of their fees to holders through Holder Rewards, since September 2026." },
+          { feature: "Community share of the fee", mwz: "37.5% to league prize pools, 12.5% to recruiters and 2.5% to the squad pool. When a trader has no recruiter, those last two go to weekly airdrops.", other: "A referral program since October 2026 that matches a new user's deposit, up to $50 each." },
+          { feature: "Creator share after graduation", mwz: "BNB Chain and Robinhood Chain: 0.5% of every swap. Solana: 80% of the 0.25% pool fee, which is 0.20%.", other: "On PumpSwap 0.30% of each swap, falling to 0.05% as the market cap grows." },
           { feature: "Imported coins", mwz: "A 1% swap fee: 0.5% to the coin's creator and 0.5% to MemeWarzone.", other: "Not applicable." },
         ],
       },
@@ -116,7 +118,7 @@ export const COMPARE_PAGES = [
         items: [
           "A much larger audience and more trading volume on Solana.",
           "A lower trading fee and a higher creator share per trade on the curve.",
-          "Holder Rewards, perps trading and a mobile app in one place.",
+          "Perps trading in the same app.",
         ],
       },
       {
