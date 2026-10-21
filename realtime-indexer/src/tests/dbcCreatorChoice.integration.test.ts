@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Keypair } from "@solana/web3.js";
+import { Keypair, PublicKey } from "@solana/web3.js";
 import { startThrowawayPostgres } from "../../../scripts/dbc/throwaway-postgres.mjs";
 
 process.env.ABLY_API_KEY ||= "test:key";
@@ -124,4 +124,76 @@ test("a payout that failed on chain is retried; a failed one never counts as pai
   const creator = await pg.pool.query(`select status from public.dbc_creator_pool_payouts where kind='creator' order by id`);
   assert.deepEqual(creator.rows.map((r: any) => r.status), ["failed", "landed"]);
   await resolvePendingPayouts(pg.pool, ok as any);
+});
+
+test("hold-through week: four checks, lowest balance, 0.01% minimum; a coin created mid-week skips earlier checks", async () => {
+  const { takeDueSnapshots } = await import("../dbc/dbcCreatorPayouts.js");
+  const { holdThroughMoments, weekSecret } = await import("../dbc/dbcCreatorChoice.js");
+  const MASTER = "hold-through-master";
+  const WEEK2 = "2026-10-26";
+  const moments = holdThroughMoments(weekSecret(MASTER, WEEK2), new Date(`${WEEK2}T00:00:00Z`));
+  const SUPPLY = 1_000_000_000n * 1_000_000n;
+  const MIN = SUPPLY / 10_000n;
+
+  // the coins above use placeholder mints that are not public keys; this week only has real ones
+  await pg.pool.query(`delete from public.campaigns where campaign_address in ('PoolSplit', 'PoolHold')`);
+  const key = () => Keypair.generate().publicKey.toBase58();
+  const [steady, dipper, flipper, small, lateBuyer, lateHolder] = [key(), key(), key(), key(), key(), key()];
+  const mintHT = key();
+  const mintLate = key();
+  await seedCoin("PoolHT", mintHT, key(), "holders", null, 30_000_000n);
+  await seedCoin("PoolLate", mintLate, key(), "holders", null, 10_000_000n);
+  // created between check 1 and check 2
+  await pg.pool.query(`update public.campaigns set created_at_chain = $2 where campaign_address = $1`, [
+    "PoolLate", new Date((moments[1].getTime() + moments[2].getTime()) / 2),
+  ]);
+
+  // balances per check, by mint
+  const held: Record<string, Array<Array<[string, bigint]>>> = {
+    [mintHT]: [
+      [[steady, 10n * MIN], [dipper, 20n * MIN], [small, MIN - 1n]],
+      [[steady, 10n * MIN], [dipper, 20n * MIN], [small, MIN - 1n], [lateBuyer, 40n * MIN]],
+      [[steady, 10n * MIN], [dipper, 5n * MIN], [small, MIN - 1n], [lateBuyer, 40n * MIN], [flipper, 90n * MIN]],
+      [[steady, 10n * MIN], [dipper, 20n * MIN], [small, MIN - 1n], [lateBuyer, 40n * MIN]],
+    ],
+    [mintLate]: [[], [], [[lateHolder, 3n * MIN]], [[lateHolder, 3n * MIN]]],
+  };
+  function tokenAccount(mint: string, owner: string, amount: bigint) {
+    const data = Buffer.alloc(165);
+    new PublicKey(mint).toBuffer().copy(data, 0);
+    new PublicKey(owner).toBuffer().copy(data, 32);
+    data.writeBigUInt64LE(amount, 64);
+    return data;
+  }
+  const chainAt = (i: number) => ({
+    async getSlot() { return 1_000 + i; },
+    async getTokenSupply() { return { value: { amount: SUPPLY.toString() } }; },
+    async getProgramAccounts(_program: unknown, opts: any) {
+      const mint = String(opts.filters[1].memcmp.bytes);
+      return (held[mint]?.[i] || []).map(([owner, amount]) => ({ account: { data: tokenAccount(mint, owner, amount) } }));
+    },
+  });
+
+  for (let i = 0; i < 4; i += 1) {
+    const take = (at: number) =>
+      takeDueSnapshots({ db: pg.pool, connection: chainAt(i) as any, masterSecret: MASTER, excluded: new Set(), now: new Date(at) });
+    assert.equal(await take(moments[i].getTime() - 1_000), 0, `nothing new is due just before check ${i}`);
+    assert.ok((await take(moments[i].getTime() + 1_000)) > 0, `check ${i} is taken at its moment`);
+    assert.equal(await take(moments[i].getTime() + 2_000), 0, `check ${i} is taken once`);
+  }
+  const lateRuns = await pg.pool.query(
+    `select check_index from public.dbc_holder_check_runs where week_id = $1 and mint = $2 order by check_index`, [WEEK2, mintLate],
+  );
+  assert.deepEqual(lateRuns.rows.map((r: any) => Number(r.check_index)), [2, 3]);
+  const oldTable = await pg.pool.query(`select 1 from public.dbc_holder_snapshots where week_id = $1`, [WEEK2]);
+  assert.equal(oldTable.rows.length, 0, "nothing is settled while the week runs");
+
+  const result = await runWeeklyPayouts({ db: pg.pool, connection: stubChain() as any, collector, send: true, now: new Date("2026-11-02T01:00:00Z") });
+  assert.equal(result.weekId, WEEK2);
+  assert.equal(result.holderRound, "landed");
+  const round = (await pg.pool.query(`select total_lamports, leaves from public.dbc_holder_rounds where week_id = $1`, [WEEK2])).rows[0];
+  const leaves = Object.fromEntries(round.leaves.leaves.map((l: any) => [l.owner, l.amount]));
+  // PoolHT 30M over steady 10 : dipper 5 (its lowest); flipper, small and lateBuyer are out. PoolLate 10M to lateHolder.
+  assert.deepEqual(leaves, { [steady]: "20000000", [dipper]: "10000000", [lateHolder]: "10000000" });
+  assert.equal(String(round.total_lamports), "40000000");
 });

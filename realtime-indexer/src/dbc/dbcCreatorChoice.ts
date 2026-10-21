@@ -46,6 +46,66 @@ export function snapshotMoment(secret: string, weekStart: Date): Date {
   return moment(secret, "holders-snapshot", weekStart.getTime(), WEEK_MS);
 }
 
+/**
+ * Hold-through rule (founder, 2026-10-21), every week from HOLD_THROUGH_FROM_WEEK on. Instead of one
+ * snapshot there is one secret check in each quarter of the week. A wallet counts only if it held at
+ * least MIN_HOLDING_BPS of the mint's supply at every check taken for the coin, and it counts with its
+ * lowest balance across those checks. Earlier weeks keep the single snapshot.
+ */
+export const HOLD_THROUGH_FROM_WEEK = "2026-10-26";
+export const HOLD_THROUGH_CHECKS = 4;
+/** Minimum holding at every check, in basis points of the supply: 1 = 0.01% (100,000 of 1B). */
+export const MIN_HOLDING_BPS = 1n;
+
+export function usesHoldThrough(weekId: string): boolean {
+  return weekId >= HOLD_THROUGH_FROM_WEEK;
+}
+
+/** Check i falls inside quarter i of the week. */
+export function holdThroughMoments(secret: string, weekStart: Date): Date[] {
+  const slot = WEEK_MS / HOLD_THROUGH_CHECKS;
+  return Array.from({ length: HOLD_THROUGH_CHECKS }, (_, i) =>
+    moment(secret, `holders-snapshot:${i}`, weekStart.getTime() + i * slot, slot));
+}
+
+/**
+ * The check due at `now`: the latest one whose moment has passed. A check is read at the first pass after
+ * its moment, or later if the indexer was down, but never once the next check is due (then it is skipped).
+ */
+export function dueHoldThroughCheck(moments: Date[], now: Date): number | null {
+  let due: number | null = null;
+  moments.forEach((at, i) => {
+    if (now.getTime() >= at.getTime()) due = i;
+  });
+  return due;
+}
+
+export type HoldingCheck = { supply: bigint; balances: HolderBalance[] };
+
+/** Wallets at or above the minimum at every check, each with its lowest balance across them. */
+export function holdThroughBalances(checks: HoldingCheck[]): HolderBalance[] {
+  let eligible: Map<string, bigint> | null = null;
+  for (const check of checks) {
+    const here = new Map<string, bigint>();
+    for (const b of check.balances) {
+      if (b.amount > 0n && b.amount * 10_000n >= check.supply * MIN_HOLDING_BPS) here.set(b.owner, b.amount);
+    }
+    if (!eligible) {
+      eligible = here;
+      continue;
+    }
+    const kept = new Map<string, bigint>();
+    for (const [owner, amount] of eligible) {
+      const now = here.get(owner);
+      if (now !== undefined) kept.set(owner, now < amount ? now : amount);
+    }
+    eligible = kept;
+  }
+  return [...(eligible ?? new Map<string, bigint>()).entries()]
+    .map(([owner, amount]) => ({ owner, amount }))
+    .sort((a, b) => a.owner.localeCompare(b.owner));
+}
+
 /** Up to perDay buy moments for one coin on one day, sorted. */
 export function buybackMoments(secret: string, pool: string, day: Date, perDay: number): Date[] {
   const dayStart = new Date(day);
