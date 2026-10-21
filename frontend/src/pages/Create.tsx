@@ -43,6 +43,7 @@ import {
   beginDbcCreate,
   finalizeDbcCreate,
   preflightDbcCreate,
+  dbcQuoteErrorText,
   quoteDbcFirstBuy,
   type DbcFeeChoice,
 } from "@/lib/dbcCreate";
@@ -250,6 +251,7 @@ const Create = () => {
   const dbcFirstBuyRaw = (): bigint => quoteUiToRaw(dbcFirstBuySol, Number(dbcQuote?.decimals ?? 9), dbcQuoteMultiplier);
   const chooseDbcQuote = (mint: string) => setDbcQuoteMint(mint);
   const [dbcFirstBuyQuote, setDbcFirstBuyQuote] = useState<{ tokensOut: string; bps: string; exceedsCap: boolean; capBps: number } | null>(null);
+  const [dbcFirstBuyQuoteError, setDbcFirstBuyQuoteError] = useState<string | null>(null);
   // EVM generation-6 factories only (E14: older factories keep today's create form).
   const [evmFeeChoice, setEvmFeeChoice] = useState<CreatorFeeChoice>("keep");
   const [evmCreatorSharePct, setEvmCreatorSharePct] = useState("50");
@@ -328,8 +330,9 @@ const Create = () => {
       }
       const ui = quoteRawToUi(max.toString(), Number(dbcQuote?.decimals ?? 9), dbcQuoteMultiplier);
       setDbcFirstBuySol(String(Math.floor(ui * 10_000) / 10_000));
-    } catch {
-      toast.error("Could not read your balance. Try again.");
+    } catch (error) {
+      // The balance read returns null instead of throwing, so this is the quote.
+      toast.error(dbcQuoteErrorText(error));
     } finally {
       setDbcMaxPending(false);
     }
@@ -474,6 +477,7 @@ const Create = () => {
   }, [graduationOptions, graduationTargetWei, chainId, dbcLaunch, evmGen7, evmGen8]);
 
   useEffect(() => {
+    setDbcFirstBuyQuoteError(null);
     if (!dbcLaunch) {
       setDbcFirstBuyQuote(null);
       return;
@@ -504,8 +508,11 @@ const Create = () => {
             });
           }
         })
-        .catch(() => {
-          if (!cancelled) setDbcFirstBuyQuote(null);
+        .catch((error) => {
+          if (!cancelled) {
+            setDbcFirstBuyQuote(null);
+            setDbcFirstBuyQuoteError(dbcQuoteErrorText(error));
+          }
         });
     }, 350);
     return () => {
@@ -1619,6 +1626,8 @@ const Create = () => {
                         About {(Number(dbcFirstBuyQuote.bps) / 100).toFixed(2)}% of supply
                         {dbcFirstBuyQuote.exceedsCap ? ` (over the ${dbcFirstBuyQuote.capBps / 100}% cap)` : ""}.
                       </p>
+                    ) : dbcFirstBuyQuoteError ? (
+                      <p className="mt-1 text-xs text-mw-accent-soft">{dbcFirstBuyQuoteError}</p>
                     ) : null}
                   </div>
                   {pendingStock ? (

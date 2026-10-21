@@ -113,6 +113,9 @@ export async function handleDbcLaunchConfig(req, res, deps = {}) {
         code: "DBC_CONFIG_FAILED",
       });
     }
+    if (error?.code === "DBC_CONFIG_PENDING" || error?.code === "DBC_CONFIG_DROPPED") {
+      return json(res, 503, { ok: false, error: error.message, code: error.code });
+    }
     throw error;
   }
 

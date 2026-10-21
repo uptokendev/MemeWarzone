@@ -2,9 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import { SOLANA_GENESIS } from "../../../src/lib/solanaArenaLayout.mjs";
-import { DBC_TARGET_USD_MICROS } from "../../../shared/dbcEconomics.mjs";
+import { DBC_PROGRAM_ID, DBC_TARGET_USD_MICROS } from "../../../shared/dbcEconomics.mjs";
 import { handleDbcLaunchConfig, dbcLaunchDisabledPayload } from "../../dbc/launch-config.js";
-import { createDbcConfigLadder, diffOnChainConfig } from "./dbcConfigLadder.js";
+import {
+  DBC_CONFIG_DROP_GRACE_MS,
+  DBC_CONFIG_PRIORITY_MICROLAMPORTS,
+  createDbcConfigLadder,
+  diffOnChainConfig,
+} from "./dbcConfigLadder.js";
 import { buildLaunchConfigParams } from "./dbcLaunchConfigParams.mjs";
 
 const DEVNET = SOLANA_GENESIS.devnet;
@@ -78,10 +83,20 @@ function memoryDb() {
       const row = rows.find((r) => r.id === params[0]);
       if (row) {
         row.status = "active";
-        row.create_signature = params[1];
-        row.verified_at = params[2];
+        if (sql.includes("create_signature")) {
+          row.create_signature = params[1];
+          row.verified_at = params[2];
+        } else {
+          row.verified_at = params[1];
+        }
       }
       return { rows: row ? [row] : [] };
+    }
+    if (sql.startsWith("delete from public.dbc_launch_configs")) {
+      const wantStatus = sql.includes("status = 'pending'") ? "pending" : params[1];
+      const i = rows.findIndex((r) => r.id === params[0] && r.status === wantStatus);
+      if (i >= 0) rows.splice(i, 1);
+      return { rows: [], rowCount: i >= 0 ? 1 : 0 };
     }
     return { rows: [] };
   };
@@ -102,14 +117,25 @@ function memoryDb() {
   };
 }
 
+const DBC_PROGRAM = new PublicKey(DBC_PROGRAM_ID);
+
 function fakeChain({ mismatch = false, creations = { n: 0 } } = {}) {
   const onChain = new Map();
+  const landedSignatures = new Set();
   return {
     creations,
+    onChain,
+    landedSignatures,
     connection: {
       async getGenesisHash() { return DEVNET; },
       async confirmTransaction() { return { value: { err: null } }; },
       async sendTransaction() { return "sig"; },
+      async getAccountInfo(address) {
+        return onChain.has(address.toBase58()) ? { owner: DBC_PROGRAM, data: Buffer.alloc(0), lamports: 1 } : null;
+      },
+      async getSignatureStatuses(sigs) {
+        return { value: sigs.map((sig) => (landedSignatures.has(sig) ? { slot: 1, err: null, confirmationStatus: "confirmed" } : null)) };
+      },
     },
     async sendTransaction(_conn, _tx, signers) {
       creations.n += 1;
@@ -218,22 +244,157 @@ test("readback mismatch marks the row failed and it is not served", async () => 
   assert.equal(chain.creations.n, 1);
 });
 
-test("a confirm failure after send persists failed and does not create again", async () => {
+const ARGS_30K = Object.freeze({
+  targetUsdMicros: DBC_TARGET_USD_MICROS[30000],
+  stepIndex: 241,
+  stepUsdMicros: 118_000_000n,
+  creatorFeeMode: "creator",
+});
+
+function expiredError() {
+  const err = new Error("Signature sig has expired: block height exceeded.");
+  err.name = "TransactionExpiredBlockheightExceededError";
+  return err;
+}
+
+test("a confirm failure whose config did land is verified and activated on the next call, not created again", async () => {
   const db = memoryDb();
   const chain = fakeChain();
+  let clock = new Date("2026-10-21T14:21:37Z");
   const ladder = ladderFor(db, chain, {
-    confirmTransaction: async () => { throw new Error("confirm dropped"); },
+    confirmTransaction: async () => { throw new Error("confirm timed out"); },
+    now: () => clock,
   });
-  const args = {
-    targetUsdMicros: DBC_TARGET_USD_MICROS[30000],
-    stepIndex: 241,
-    stepUsdMicros: 118_000_000n,
-    creatorFeeMode: "creator",
-  };
-  await assert.rejects(() => ladder.ensureLaunchConfig(args), (err) => err.code === "DBC_CONFIG_FAILED");
+  await assert.rejects(() => ladder.ensureLaunchConfig(ARGS_30K), (err) => err.code === "DBC_CONFIG_FAILED");
   assert.equal(db.rows[0].status, "failed");
-  await assert.rejects(() => ladder.ensureLaunchConfig(args), (err) => err.code === "DBC_CONFIG_FAILED");
+  clock = new Date(clock.getTime() + 1000);
+  const row = await ladder.ensureLaunchConfig(ARGS_30K);
+  assert.equal(row.status, "active");
+  assert.equal(row.configAddress, db.rows[0].config_address);
   assert.equal(chain.creations.n, 1);
+});
+
+test("a create that expired with no config account is removed and the next call creates the key again", async () => {
+  const db = memoryDb();
+  const chain = fakeChain();
+  const send = chain.sendTransaction;
+  let drop = true;
+  chain.sendTransaction = async (conn, tx, signers) => {
+    const sig = await send(conn, tx, signers);
+    if (drop) chain.onChain.delete(signers[1].publicKey.toBase58());
+    return sig;
+  };
+  const ladder = ladderFor(db, chain, {
+    confirmTransaction: async () => { if (drop) throw expiredError(); },
+  });
+  await assert.rejects(() => ladder.ensureLaunchConfig(ARGS_30K), (err) => err.code === "DBC_CONFIG_DROPPED");
+  assert.equal(db.rows.length, 0);
+  drop = false;
+  const row = await ladder.ensureLaunchConfig(ARGS_30K);
+  assert.equal(row.status, "active");
+  assert.equal(chain.creations.n, 2);
+});
+
+test("an expiry whose config account does exist is kept as failed (no delete on a landed create)", async () => {
+  const db = memoryDb();
+  const chain = fakeChain({ mismatch: true });
+  const ladder = ladderFor(db, chain, { confirmTransaction: async () => { throw expiredError(); } });
+  await assert.rejects(() => ladder.ensureLaunchConfig(ARGS_30K), (err) => err.code === "DBC_CONFIG_FAILED");
+  assert.equal(db.rows[0].status, "failed");
+});
+
+/** A failed row as production row 8 had it (2026-10-21): no config account, signature unknown. */
+function seedDroppedRow(db, createdAt) {
+  const built = buildLaunchConfigParams(ARGS_30K.targetUsdMicros, ARGS_30K.stepUsdMicros, "creator");
+  db.rows.push({
+    id: 99,
+    cluster: "devnet",
+    quote_mint: "So11111111111111111111111111111111111111112",
+    target_usd_micros: ARGS_30K.targetUsdMicros.toString(),
+    step_index: ARGS_30K.stepIndex,
+    creator_fee_mode: "creator",
+    params_hash: built.paramsHash,
+    config_address: Keypair.generate().publicKey.toBase58(),
+    create_signature: "dropped-sig",
+    status: "failed",
+    created_at: createdAt.toISOString(),
+    verified_at: null,
+  });
+}
+
+test("an old failed row whose config and signature never reached the chain is replaced by a fresh create", async () => {
+  const db = memoryDb();
+  const chain = fakeChain();
+  const t0 = new Date("2026-10-21T14:21:37Z");
+  seedDroppedRow(db, t0);
+  const ladder = ladderFor(db, chain, { now: () => new Date(t0.getTime() + DBC_CONFIG_DROP_GRACE_MS) });
+  const row = await ladder.ensureLaunchConfig(ARGS_30K);
+  assert.equal(row.status, "active");
+  assert.equal(chain.creations.n, 1);
+  assert.equal(db.rows.some((r) => r.id === 99), false);
+});
+
+test("an expiry whose signature the chain knows keeps the row failed, even with no config account visible", async () => {
+  // A lagging RPC node may not show the account yet; the signature check stops a second create.
+  const db = memoryDb();
+  const chain = fakeChain();
+  const send = chain.sendTransaction;
+  chain.sendTransaction = async (conn, tx, signers) => {
+    const sig = await send(conn, tx, signers);
+    chain.onChain.delete(signers[1].publicKey.toBase58());
+    chain.landedSignatures.add(sig);
+    return sig;
+  };
+  const ladder = ladderFor(db, chain, { confirmTransaction: async () => { throw expiredError(); } });
+  await assert.rejects(() => ladder.ensureLaunchConfig(ARGS_30K), (err) => err.code === "DBC_CONFIG_FAILED");
+  assert.equal(db.rows[0].status, "failed");
+});
+
+test("a recent failed row with nothing on chain is pending, not recreated (its blockhash may still be valid)", async () => {
+  const db = memoryDb();
+  const chain = fakeChain();
+  const t0 = new Date("2026-10-21T14:21:37Z");
+  seedDroppedRow(db, t0);
+  const ladder = ladderFor(db, chain, { now: () => new Date(t0.getTime() + DBC_CONFIG_DROP_GRACE_MS - 1) });
+  await assert.rejects(() => ladder.ensureLaunchConfig(ARGS_30K), (err) => err.code === "DBC_CONFIG_PENDING");
+  assert.equal(chain.creations.n, 0);
+  assert.equal(db.rows.find((r) => r.id === 99).status, "failed");
+});
+
+test("a failed row whose signature landed stays refused even with no config account", async () => {
+  const db = memoryDb();
+  const chain = fakeChain();
+  const t0 = new Date("2026-10-21T14:21:37Z");
+  seedDroppedRow(db, t0);
+  chain.landedSignatures.add("dropped-sig");
+  const ladder = ladderFor(db, chain, { now: () => new Date(t0.getTime() + 60 * 60 * 1000) });
+  await assert.rejects(() => ladder.ensureLaunchConfig(ARGS_30K), (err) => err.code === "DBC_CONFIG_FAILED");
+  assert.equal(chain.creations.n, 0);
+});
+
+test("an RPC error while checking a failed row refuses; it never deletes on an unknown answer", async () => {
+  const db = memoryDb();
+  const chain = fakeChain();
+  const t0 = new Date("2026-10-21T14:21:37Z");
+  seedDroppedRow(db, t0);
+  chain.connection.getAccountInfo = async () => { throw new Error("429 Too Many Requests"); };
+  const ladder = ladderFor(db, chain, { now: () => new Date(t0.getTime() + 60 * 60 * 1000) });
+  await assert.rejects(() => ladder.ensureLaunchConfig(ARGS_30K), /429/);
+  assert.equal(chain.creations.n, 0);
+  assert.equal(db.rows.find((r) => r.id === 99).status, "failed");
+});
+
+test("the config create carries a priority fee as its first instruction", async () => {
+  const { ComputeBudgetProgram, ComputeBudgetInstruction, Transaction } = await import("@solana/web3.js");
+  const chain = fakeChain();
+  let sent;
+  const send = chain.sendTransaction;
+  chain.sendTransaction = async (conn, tx, signers) => { sent = tx; return send(conn, tx, signers); };
+  chain.client.partner.createConfig = async (params) => Object.assign(new Transaction(), { params });
+  await ladderFor(memoryDb(), chain).ensureLaunchConfig(ARGS_30K);
+  const first = sent.instructions[0];
+  assert.ok(first.programId.equals(ComputeBudgetProgram.programId));
+  assert.equal(ComputeBudgetInstruction.decodeSetComputeUnitPrice(first).microLamports, BigInt(DBC_CONFIG_PRIORITY_MICROLAMPORTS));
 });
 
 test("an error before the transaction is sent does not insert a row", async () => {
