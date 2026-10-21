@@ -2,12 +2,13 @@
 // so crawlers that do not run JavaScript read the same text people see. Pure module: no DOM, no I/O.
 //
 // Every fact is read from code or docs on 2026-10-21. Update this file when one of these changes:
-// - chains, DEX per chain, graduation: docs-site/src/content/platform/graduation.md, fees/after-graduation.md
+// - chains, graduation: docs-site/src/content/platform/graduation.md. DEX per chain (founder, 2026-10-21): Uniswap V4 on
+//   BNB Chain and Robinhood Chain, Meteora on Solana. Graduated and imported coins can battle (founder, 2026-10-21).
 // - battle modes, clocks, points: api/lib/arenaBattleMode.js; Boost rules: api/lib/arenaBoostRules.js
 // - Boost split 90/10: api/lib/arenaBoostRuntime.mjs (BOOST_POOL_BPS, BOOST_PROTOCOL_BPS)
 // - leagues, MWL, airdrops: docs-site/src/content/leagues/*, arena/major-war-league.md, rewards/warzone-airdrops.md
-// - UpVote price: src/components/token/UpvoteDialog.tsx; Featured ranking: api/featured.js
-// - supply and creator reserve: contracts/gen7/LaunchCampaignGen7.sol (mint to the campaign, reserve paid at graduation)
+// - UpVote price $3: src/components/token/UpvoteDialog.tsx, api/arenaVotes.js; launchpad Featured: api/featured.js;
+//   Warzone Featured rail: src/pages/Arena.tsx (useArenaFeaturedVotes)
 // - imports and claims: docs-site/src/content/creators/imported-coins.md
 // - legal: docs-site/src/content/legal/terms-of-service.md; socials: src/constants/navigation.ts
 // Copy rule: plain sentences, concrete facts, no dashes used as punctuation.
@@ -21,7 +22,7 @@ export const ABOUT_DESCRIPTION =
 
 export const ABOUT_INTRO = [
   "MemeWarzone is a memecoin launchpad with a social feed and a battle arena. It runs on BNB Chain, Solana and Robinhood Chain, and each coin lives on one chain.",
-  "Coins launch on a bonding curve and graduate to a DEX pool with locked liquidity. After that they can fight other coins in battles, tournaments and leagues.",
+  "Coins launch on a bonding curve and graduate to a DEX pool with locked liquidity. Graduated coins, and coins imported from other launchpads, can then fight other coins in battles, tournaments and leagues.",
   "MemeWarzone is a crypto platform. It has no connection to Call of Duty: Warzone or any other game.",
 ];
 
@@ -38,8 +39,8 @@ export const ABOUT_SECTIONS = [
     items: [
       "Launch: a creator picks a chain, sets the name, ticker, image and story, and deploys the coin on a bonding curve. No code is needed.",
       "Trade: anyone can buy and sell on the curve from the coin page. The price rises as the curve fills.",
-      "Graduate: when the curve sells out, the liquidity moves into a DEX pool and is locked for good. That pool is on Topaz on BNB Chain, on Meteora on Solana and on Uniswap V3 on Robinhood Chain.",
-      "Compete: a graduated coin can battle other coins in the Warzone and earn points in the leagues.",
+      "Graduate: when the curve sells out, the liquidity moves into a DEX pool and is locked for good. On BNB Chain and Robinhood Chain that pool is on Uniswap V4, on Solana it is on Meteora.",
+      "Compete: a graduated or imported coin can battle other coins in the Warzone and earn points in the leagues.",
     ],
     note: "On Solana, new coins launch on a Meteora Dynamic Bonding Curve, so they can be traded through Jupiter before they graduate.",
     links: [
@@ -88,7 +89,7 @@ export const ABOUT_SECTIONS = [
     items: [
       "Creators earn a share of the trading fees on their coin, before and after graduation.",
       "Each coin has a Story: a full-screen page with the creator's own chapters and an automatic chronicle of the coin.",
-      "UpVotes cost $3 each and move a coin up the Featured list.",
+      "UpVotes cost $3 each and move a coin up a Featured list. Coins still on their curve are featured on the launchpad. Graduated and imported coins have their own UpVotes and are featured in the Warzone overview.",
       "Coins that finished bonding on another launchpad, such as Pump.fun or Four.meme, can be imported. The owner claims an imported coin by wallet verification, by logging in with X, or through a manual review.",
     ],
     links: [
@@ -119,10 +120,8 @@ export const ABOUT_SECTIONS = [
     items: [
       "Buys and sells go from your wallet to the coin's contract. MemeWarzone does not hold your coins.",
       "Trading fees are split inside the same transaction as the trade.",
-      "A new coin's full supply is minted to its own contract, not to the team. The creator's reserve of 2% of the supply is released only when the coin graduates.",
       "The BNB Chain and Robinhood Chain contracts are owned by a Safe multisig and cannot be changed after deployment. The Solana programs can only be upgraded through a Squads multisig.",
       "Protocol earnings above a fixed cap move to a multisig wallet.",
-      "The contracts went through an internal audit and a full test suite before deployment. There has been no external audit yet.",
     ],
   },
   {
