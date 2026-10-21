@@ -861,6 +861,19 @@ test("the live first-buy quote reports the 70% cap, the same for every wallet", 
   assert.match(String(within.body.capLamports), /^\d+$/);
 });
 
+test("a refused, pending or dropped launch config is a 503 with its reason on the first-buy quote, not a bare 500", async () => {
+  // Mainnet 2026-10-21: a failed $50K config row made every $50K quote (and the create page's MAX) a 500.
+  for (const code of ["DBC_CONFIG_FAILED", "DBC_CONFIG_MISMATCH", "DBC_CONFIG_PENDING", "DBC_CONFIG_DROPPED"]) {
+    const handle = handlerFor(memoryDb(), {
+      ladder: { ensureLaunchConfig: async () => { throw Object.assign(new Error(`ladder said ${code}`), { code }); } },
+    });
+    const res = await post(handle, { operation: "quote-first-buy", targetUsd: 50000, feeChoice: "keep", firstBuyLamports: "1" });
+    assert.equal(res.statusCode, 503, code);
+    assert.equal(res.body.code, code === "DBC_CONFIG_MISMATCH" ? "DBC_CONFIG_FAILED" : code);
+    assert.equal(res.body.error, `ladder said ${code}`);
+  }
+});
+
 test("the $15K target is gone (founder 2026-10-08): only $30K and $50K graduation market caps", async () => {
   const db = memoryDb();
   const handle = handlerFor(db);

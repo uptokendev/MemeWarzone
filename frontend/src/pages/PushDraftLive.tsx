@@ -63,6 +63,7 @@ import {
   beginDbcCreate,
   finalizeDbcCreate,
   preflightDbcCreate,
+  dbcQuoteErrorText,
   quoteDbcFirstBuy,
   scheduleDbcDraft,
 } from "@/lib/dbcCreate";
@@ -190,6 +191,7 @@ export default function PushDraftLive() {
   // editable here. Stock quotes keep the saved amount (their wallet multiplier is read on Create).
   const [dbcFirstBuyInput, setDbcFirstBuyInput] = useState("");
   const [dbcFirstBuyQuote, setDbcFirstBuyQuote] = useState<{ bps: string; exceedsCap: boolean; capBps: number } | null>(null);
+  const [dbcFirstBuyQuoteError, setDbcFirstBuyQuoteError] = useState<string | null>(null);
 
   const showArmBlock = (detail: Parameters<typeof emitCreatorArmBlocked>[0]) => {
     emitCreatorArmBlocked(detail);
@@ -632,6 +634,7 @@ export default function PushDraftLive() {
   // Share of supply for the typed first buy, and this creator's cap (same quote call as Create).
   const dbcLaunchDraft = isDbcLaunchEnabled() && String((draft as { launchType?: string } | undefined)?.launchType || "") === "dbc";
   useEffect(() => {
+    setDbcFirstBuyQuoteError(null);
     const n = Number(dbcFirstBuyInput);
     if (!dbcLaunchDraft || !dbcFirstBuyEditable || !Number.isFinite(n) || n <= 0) {
       setDbcFirstBuyQuote(null);
@@ -656,8 +659,11 @@ export default function PushDraftLive() {
             });
           }
         })
-        .catch(() => {
-          if (!cancelled) setDbcFirstBuyQuote(null);
+        .catch((error) => {
+          if (!cancelled) {
+            setDbcFirstBuyQuote(null);
+            setDbcFirstBuyQuoteError(dbcQuoteErrorText(error));
+          }
         });
     }, 350);
     return () => {
@@ -720,8 +726,9 @@ export default function PushDraftLive() {
       }
       const ui = quoteRawToUi(max.toString(), Number(dbcDraftQuote.decimals ?? 9));
       setDbcFirstBuyInput(String(Math.floor(ui * 10_000) / 10_000));
-    } catch {
-      toast.error("Could not read your balance. Try again.");
+    } catch (error) {
+      // The balance read returns null instead of throwing, so this is the quote.
+      toast.error(dbcQuoteErrorText(error));
     } finally {
       setDbcMaxPending(false);
     }
@@ -1258,6 +1265,8 @@ export default function PushDraftLive() {
                 About {(Number(dbcFirstBuyQuote.bps) / 100).toFixed(2)}% of supply
                 {dbcFirstBuyQuote.exceedsCap ? ` (over the ${dbcFirstBuyQuote.capBps / 100}% cap)` : ""}.
               </p>
+            ) : dbcFirstBuyQuoteError ? (
+              <p className="mt-1 text-xs text-mw-accent-soft">{dbcFirstBuyQuoteError}</p>
             ) : null}
           </div>
         ) : null}

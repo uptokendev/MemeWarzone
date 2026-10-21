@@ -138,3 +138,18 @@ graduates at 85 SOL = ~411 SOL MC, 0 migration fee).
   (ladder, quote, authorize 70% cap, finalize), browser submit + trade builder, indexer, fee accrual and the
   graduation keeper end to end. Both ALL CHECKS PASS (2026-10-08). Launch tx with first buy: 915 B / 18 accounts / 2 signers.
 - `prove-stock-quote-local.mjs` still asks for the removed $15K target; update it before its next run.
+
+### Config ladder: a dropped create blocked the $50K target (2026-10-21)
+
+- A first-buy quote (`quote-first-buy`) creates the launch config on mainnet with the server payer
+  `AkdT8o6i…` when the key (target x SOL step x fee mode) has none; the creator signs nothing.
+- Row 8 (`$50K`, step 236, creator): the create `4w5xX2XY…` never landed (no signature, no account
+  `Crk6VKhq…`), the old 30 s confirm gave up, the row went `failed`, and the ladder refused that key
+  for everyone: every $50K quote and the create page's MAX returned a bare 500 ("Could not read your
+  balance" on MAX). Fixed by deleting row 8 in production.
+- Fix (branch `fix/dbc-config-dropped-tx`): failed/pending rows are checked on chain first (config
+  on chain and reads back -> activated; signature known -> refused; nothing on chain after 5 min ->
+  row deleted, key created again); confirm waits on lastValidBlockHeight (capped 180 s); 50,000
+  uL/CU priority fee on the create; config codes are 503 with a reason; the create pages show it.
+  Local proof: `scripts/dbc/prove-config-recovery-local.mjs` (7/7). Create tx 673 B, 30,698 CU.
+- 70% first-buy cap at SOL ~$107 (step 236): $30K = 15.98 SOL, $50K = 26.64 SOL.

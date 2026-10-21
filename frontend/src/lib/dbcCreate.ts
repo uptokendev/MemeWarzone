@@ -90,6 +90,15 @@ export async function quoteDbcFirstBuy(input: {
   });
 }
 
+/** Why a first-buy quote failed, in words for the create pages (the API answers 503 with one of these codes). */
+export function dbcQuoteErrorText(error: unknown): string {
+  const code = (error as { code?: string } | null)?.code;
+  if (code === "DBC_CONFIG_PENDING") return "This graduation target is still being set up on Solana. Try again in a few minutes.";
+  if (code === "DBC_CONFIG_DROPPED") return "Setting up this graduation target on Solana did not go through. Try again.";
+  if (code === "DBC_CONFIG_FAILED") return "This graduation target is not available right now. Pick the other target or try again later.";
+  return "Could not get the first-buy quote. Try again.";
+}
+
 export async function scheduleDbcDraft(input: {
   draftId: string;
   creatorWallet: string;

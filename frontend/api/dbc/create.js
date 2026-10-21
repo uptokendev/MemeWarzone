@@ -1078,6 +1078,10 @@ export function createDbcCreateHandler(deps = {}) {
       if (error?.code === "DBC_SCHEDULE_TOO_SOON" || error?.code === "DBC_SCHEDULE_TOO_FAR") {
         return json(res, 400, { ok: false, error: error.message, code: error.code });
       }
+      // The launch config ladder (dbcConfigLadder.js): a refused, still-confirming or dropped config.
+      if (["DBC_CONFIG_FAILED", "DBC_CONFIG_MISMATCH", "DBC_CONFIG_PENDING", "DBC_CONFIG_DROPPED"].includes(error?.code)) {
+        return json(res, 503, { ok: false, error: error.message, code: error.code === "DBC_CONFIG_MISMATCH" ? "DBC_CONFIG_FAILED" : error.code });
+      }
       console.error("[dbc/create]", error);
       return json(res, 500, { ok: false, error: "Server error", code: error?.code });
     }

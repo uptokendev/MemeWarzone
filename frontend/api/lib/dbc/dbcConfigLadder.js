@@ -1,9 +1,9 @@
 /**
  * Create a DBC launch config on chain (or return the active row) for one ladder key.
  */
-import { Keypair, PublicKey, Connection } from "@solana/web3.js";
+import { ComputeBudgetProgram, Keypair, PublicKey, Connection } from "@solana/web3.js";
 import { DynamicBondingCurveClient } from "@meteora-ag/dynamic-bonding-curve-sdk";
-import { DBC_QUOTE_MINT } from "../../../shared/dbcEconomics.mjs";
+import { DBC_PROGRAM_ID, DBC_QUOTE_MINT } from "../../../shared/dbcEconomics.mjs";
 import { TOKEN_2022_PROGRAM_ID, nativeQuote, requireEnabledQuote } from "../../../shared/dbcQuotes.mjs";
 import { dbcTokenBadgeAddress } from "./dbcStockQuote.mjs";
 import { SOLANA_GENESIS } from "../../../src/lib/solanaArenaLayout.mjs";
@@ -11,6 +11,24 @@ import { buildLaunchConfigParams } from "./dbcLaunchConfigParams.mjs";
 import { getGenesisHashCached } from "../solanaGenesisHashCache.js";
 
 const NATIVE_MINT = new PublicKey(DBC_QUOTE_MINT);
+const DBC_PROGRAM = new PublicKey(DBC_PROGRAM_ID);
+
+/**
+ * Priority fee on the config create, in micro-lamports per compute unit. Mainnet 2026-10-21: a
+ * create sent without one never landed, and its failed row blocked the $50K target for everyone.
+ * At the default 200k CU limit this is at most 10,000 lamports.
+ */
+export const DBC_CONFIG_PRIORITY_MICROLAMPORTS = 50_000;
+
+/**
+ * A create can only land while its blockhash is valid (the RPC's lastValidBlockHeight, about 300
+ * blocks: 2 minutes). A failed or pending row this old, whose config account and signature are both
+ * unknown to the chain, never landed and never will, so its key may be created again.
+ */
+export const DBC_CONFIG_DROP_GRACE_MS = 5 * 60 * 1000;
+
+/** The confirm wait holds the key's advisory lock and a pool client; it gives up after this. */
+export const DBC_CONFIG_CONFIRM_MAX_MS = 180_000;
 
 export function parseInlineKeypair(raw, name) {
   const text = String(raw || "").trim();
@@ -297,19 +315,26 @@ export function createDbcConfigLadder(deps = {}) {
       );
       const row0 = existing.rows[0];
       if (row0?.status === "active") return mapRow(row0, built);
-      if (row0?.status === "failed" || row0?.status === "pending") {
-        throw Object.assign(
-          new Error("This DBC launch config failed on-chain readback and will not be created again until an operator clears it."),
-          { code: "DBC_CONFIG_FAILED" },
-        );
-      }
 
       const conn = connection();
       await assertRpcCluster({ connection: conn, cluster: net });
-      const pay = payer();
       const collector = feeClaimer();
-      const configKp = Keypair.generate();
       const client = givenClient || new DynamicBondingCurveClient(conn, "confirmed");
+      const readbackExtra = {
+        feeClaimer: collector,
+        leftoverReceiver: collector,
+        quoteMint: new PublicKey(quote.mint),
+        quoteTokenProgram: quote.tokenProgram,
+      };
+
+      if (row0?.status === "failed" || row0?.status === "pending") {
+        const recovered = await recoverUnfinishedRow(row0, { q, conn, client, built, readbackExtra });
+        if (recovered) return recovered;
+        // The row was dead and is gone; create this key again below.
+      }
+
+      const pay = payer();
+      const configKp = Keypair.generate();
 
       const tx = await client.partner.createConfig({
         config: configKp.publicKey,
@@ -322,6 +347,9 @@ export function createDbcConfigLadder(deps = {}) {
         ...built.configParams,
       });
       tx.feePayer = pay.publicKey;
+      if (Array.isArray(tx.instructions)) {
+        tx.instructions.unshift(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: DBC_CONFIG_PRIORITY_MICROLAMPORTS }));
+      }
       const sig = await sendTransaction(conn, tx, [pay, configKp]);
       const inserted = await q(
         `insert into public.dbc_launch_configs (
@@ -339,9 +367,19 @@ export function createDbcConfigLadder(deps = {}) {
       );
       const row = inserted.rows[0];
       try {
-        if (confirmTransaction) await confirmTransaction(conn, sig);
-        else await conn.confirmTransaction(sig, "confirmed");
+        if (confirmTransaction) await confirmTransaction(conn, sig, tx);
+        else await defaultConfirm(conn, sig, tx);
       } catch (error) {
+        // Past its last valid block height with no config account: the create was dropped and can
+        // no longer land. Remove the row so the next request creates this key again.
+        if (error?.name === "TransactionExpiredBlockheightExceededError"
+          && !(await configLanded(conn, configKp.publicKey))
+          && !(await signatureKnown(conn, sig))) {
+          await q(`delete from public.dbc_launch_configs where id = $1 and status = 'pending'`, [row.id]);
+          await commit();
+          console.warn("[dbc-ladder] config create dropped, row removed", { id: row.id, config: configKp.publicKey.toBase58(), sig });
+          throw Object.assign(new Error(DROPPED_MESSAGE), { code: "DBC_CONFIG_DROPPED" });
+        }
         await q(`update public.dbc_launch_configs set status = 'failed' where id = $1`, [row.id]);
         await commit();
         throw Object.assign(error, { code: error.code || "DBC_CONFIG_FAILED" });
@@ -353,12 +391,7 @@ export function createDbcConfigLadder(deps = {}) {
         await commit();
         throw Object.assign(new Error("DBC config missing after create"), { code: "DBC_CONFIG_FAILED" });
       }
-      const mismatches = diffOnChainConfig(onChain, built.configParams, {
-        feeClaimer: collector,
-        leftoverReceiver: collector,
-        quoteMint: new PublicKey(quote.mint),
-        quoteTokenProgram: quote.tokenProgram,
-      });
+      const mismatches = diffOnChainConfig(onChain, built.configParams, readbackExtra);
       if (mismatches.length) {
         await q(
           `update public.dbc_launch_configs set status = 'failed', create_signature = $2 where id = $1`,
@@ -381,7 +414,88 @@ export function createDbcConfigLadder(deps = {}) {
     });
   }
 
+  /**
+   * A failed or pending row, checked against the chain before it is refused:
+   * - its config exists and reads back as expected (the create landed after we stopped waiting):
+   *   the row is activated and served;
+   * - its config exists and reads back wrong, or its signature landed: refused, an operator looks;
+   * - neither the config nor the signature is on chain and the blockhash has long expired: the row
+   *   is deleted and null is returned, so the caller creates the key again.
+   */
+  async function recoverUnfinishedRow(row, { q, conn, client, built, readbackExtra }) {
+    const address = row.config_address ? new PublicKey(row.config_address) : null;
+    if (address && await configLanded(conn, address)) {
+      const onChain = await client.state.getPoolConfig(address);
+      const mismatches = onChain ? diffOnChainConfig(onChain, built.configParams, readbackExtra) : [{ path: "", got: null, want: "config" }];
+      if (mismatches.length) throw failedConfigError();
+      const updated = await q(
+        `update public.dbc_launch_configs
+            set status = 'active', verified_at = $2
+          where id = $1
+          returning *`,
+        [row.id, now().toISOString()],
+      );
+      console.warn("[dbc-ladder] late-landed config verified and activated", { id: row.id, config: row.config_address });
+      return mapRow(updated.rows[0], built);
+    }
+    if (row.create_signature && await signatureKnown(conn, row.create_signature)) throw failedConfigError();
+    const ageMs = now().getTime() - new Date(row.created_at).getTime();
+    if (!(ageMs >= DBC_CONFIG_DROP_GRACE_MS)) {
+      throw Object.assign(
+        new Error("This graduation target is still being set up on Solana. Try again in a few minutes."),
+        { code: "DBC_CONFIG_PENDING" },
+      );
+    }
+    await q(`delete from public.dbc_launch_configs where id = $1 and status = $2`, [row.id, row.status]);
+    console.warn("[dbc-ladder] dropped config row removed", { id: row.id, config: row.config_address, sig: row.create_signature });
+    return null;
+  }
+
   return { ensureLaunchConfig, buildLaunchConfigParams };
+}
+
+const DROPPED_MESSAGE = "Setting up this graduation target on Solana did not go through. Try again.";
+
+function failedConfigError() {
+  return Object.assign(
+    new Error("This DBC launch config failed on-chain readback and will not be created again until an operator clears it."),
+    { code: "DBC_CONFIG_FAILED" },
+  );
+}
+
+/** A config account owned by the DBC program exists at this address. */
+async function configLanded(conn, address) {
+  const info = await conn.getAccountInfo(address, "confirmed");
+  return Boolean(info && info.owner?.equals?.(DBC_PROGRAM));
+}
+
+/** The chain (or its history) knows this signature: the transaction landed, with or without error. */
+async function signatureKnown(conn, sig) {
+  const statuses = await conn.getSignatureStatuses([sig], { searchTransactionHistory: true });
+  return Boolean(statuses?.value?.[0]);
+}
+
+/**
+ * Wait on the blockhash the send used: it ends confirmed or past its last valid block height
+ * (TransactionExpiredBlockheightExceededError). An RPC that stops answering is cut off at
+ * DBC_CONFIG_CONFIRM_MAX_MS; that row is marked failed and the recovery above sorts it out.
+ */
+async function defaultConfirm(conn, sig, tx) {
+  const result = tx?.recentBlockhash && tx?.lastValidBlockHeight != null
+    ? await conn.confirmTransaction(
+      {
+        signature: sig,
+        blockhash: tx.recentBlockhash,
+        lastValidBlockHeight: tx.lastValidBlockHeight,
+        abortSignal: AbortSignal.timeout(DBC_CONFIG_CONFIRM_MAX_MS),
+      },
+      "confirmed",
+    )
+    : await conn.confirmTransaction(sig, "confirmed");
+  if (result?.value?.err) {
+    throw Object.assign(new Error(`DBC config create failed on chain: ${JSON.stringify(result.value.err)}`), { code: "DBC_CONFIG_FAILED" });
+  }
+  return result;
 }
 
 function mapRow(row, built) {
