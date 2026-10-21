@@ -3,6 +3,7 @@
 // Source of truth for kinds and aliases: docs/templar/specs/2026-10-11-app-seo.md section 1.3.
 
 import { ABOUT_DESCRIPTION, ABOUT_PATH, ABOUT_TITLE } from "./aboutContent.mjs";
+import { COMPARE_PAGES } from "./comparePages.mjs";
 
 export const APP_ORIGIN = "https://app.memewar.zone";
 
@@ -113,6 +114,7 @@ export const ROUTE_RULES = [
     description: "Launch a memecoin on BNB Chain, Solana or Robinhood Chain from MemeWarzone. Set the name, symbol and image, then deploy it on a bonding curve.",
   },
   { pattern: ABOUT_PATH, kind: "index", title: ABOUT_TITLE, description: ABOUT_DESCRIPTION },
+  ...COMPARE_PAGES.map((c) => ({ pattern: c.path, kind: "index", title: c.title, description: c.description })),
 
   // Noindex: more specific than the per-entity rules below, so they come first.
   { pattern: "/token/:id/edit", kind: "noindex", title: "Edit coin" },

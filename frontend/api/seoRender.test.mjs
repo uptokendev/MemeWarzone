@@ -346,3 +346,34 @@ test("About copy follows the copy rules", async () => {
     assert.ok(fs.existsSync(new URL(`../public${img}`, import.meta.url)), img);
   }
 });
+
+test("comparison page serves its table, FAQ and sources to crawlers", async () => {
+  const { COMPARE_PAGES, compareAllText } = await import("../shared/comparePages.mjs");
+  const page = COMPARE_PAGES[0];
+  const { run, calls } = setup();
+  const res = await run(`/__render${page.path}`);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.headers["x-robots-tag"], undefined);
+  assert.match(res.body, /<title>MemeWarzone vs Pump\.fun · MemeWarzone<\/title>/);
+  assert.match(res.body, /rel="canonical" href="https:\/\/app\.memewar\.zone\/memewarzone-vs-pumpfun"/);
+  assert.match(res.body, /"@type":"FAQPage"/);
+  assert.match(res.body, /<table>/);
+  assert.ok(res.body.includes("1.25% on every buy and sell."));
+  assert.ok(res.body.includes('href="https://pump.fun/docs/fees"'));
+  assert.equal(calls.length, 0);
+  for (const t of compareAllText(page)) assert.doesNotMatch(t, /[–—]/, t);
+  for (const s of page.sections) for (const l of s.links || []) assert.match(l.href, /^(\/[a-z]|https:\/\/)/, l.href);
+});
+
+test("About contract addresses are checksummed and link to the right explorer", async () => {
+  const { ethers } = await import("ethers");
+  const { ABOUT_SECTIONS } = await import("../shared/aboutContent.mjs");
+  const c = ABOUT_SECTIONS.find((s) => s.id === "contracts").contracts;
+  for (const group of c) for (const e of group.entries) {
+    assert.ok(e.href.endsWith(e.address), e.label);
+    if (e.address.startsWith("0x")) assert.equal(ethers.getAddress(e.address.toLowerCase()), e.address, e.address);
+    else assert.match(e.address, /^[1-9A-HJ-NP-Za-km-z]{32,44}$/);
+    const host = new URL(e.href).host;
+    assert.equal(host, group.chain === "BNB Chain" ? "bscscan.com" : group.chain === "Solana" ? "solscan.io" : "robinhoodchain.blockscout.com");
+  }
+});

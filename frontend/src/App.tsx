@@ -43,6 +43,8 @@ import CoinEdit from "./pages/CoinEdit";
 import { RouteErrorBoundary } from "@/components/app/RouteErrorBoundary";
 import Playbook from "@/pages/Playbook";
 import About from "@/pages/About";
+import ComparePage from "@/pages/ComparePage";
+import { COMPARE_PATHS } from "../shared/comparePages.mjs";
 import Prepare from "./pages/Prepare";
 import Live from "./pages/Live";
 import DraftPromotionSetup from "./pages/DraftPromotionSetup";
@@ -296,6 +298,9 @@ function AppShellLayout({
           <Route path="/story/:chainId/:token" element={<StoryPage />} />
           <Route path="/playbook" element={<Playbook />} />
           <Route path="/about" element={<About />} />
+          {COMPARE_PATHS.map((path: string) => (
+            <Route key={path} path={path} element={<ComparePage path={path} />} />
+          ))}
           <Route path="/docs" element={<Playbook />} />
           <Route path="/status" element={<Status />} />
           <Route path="*" element={<NotFound />} />
