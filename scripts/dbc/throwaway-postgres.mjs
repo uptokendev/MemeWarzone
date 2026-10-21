@@ -67,6 +67,7 @@ export async function startThrowawayPostgres(opts = {}) {
   apply(path.join(ROOT, "db/migrations/20260929_000009_dbc_quote_binding.sql"));
   apply(path.join(ROOT, "db/migrations/20260929_000010_dbc_payout_quote.sql"));
   apply(path.join(ROOT, "db/migrations/20260929_000011_campaign_drafts_dbc_quote.sql"));
+  apply(path.join(ROOT, "db/migrations/20261021_000001_dbc_holder_checks.sql"));
   for (const file of opts.extraFiles || []) apply(path.isAbsolute(file) ? file : path.join(ROOT, file));
   } catch (error) {
     abort(error);

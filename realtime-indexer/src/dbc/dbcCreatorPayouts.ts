@@ -30,9 +30,13 @@ import { jupiterRawUnitUsd } from "../solanaMarketStats.js";
 import {
   allocateToHolders,
   buybackMoments,
+  dueHoldThroughCheck,
+  holdThroughBalances,
+  holdThroughMoments,
   holderLeaves,
   previousWeek,
   snapshotMoment,
+  usesHoldThrough,
   weekCommitment,
   weekOf,
   weekSecret,
@@ -53,6 +57,8 @@ export type PlatformCoin = {
   dammPool: string | null;
   quoteMint: string;
   quoteDecimals: number;
+  /** When the coin was created (chain time, else row time); a hold-through check skips coins created after it. */
+  createdAt?: Date | null;
 };
 
 /**
@@ -94,7 +100,7 @@ export function boundHoldersSol(ledger: CoinLedger): bigint {
 
 export async function platformCoins(db: Queryable): Promise<PlatformCoin[]> {
   const { rows } = await db.query(
-    `select campaign_address, token_address, creator_address, meta
+    `select campaign_address, token_address, creator_address, meta, coalesce(created_at_chain, created_at) as created_at
        from public.campaigns
       where chain_id = 101
         and coalesce(launch_type, 'launchpad') = 'dbc'
@@ -109,6 +115,7 @@ export async function platformCoins(db: Queryable): Promise<PlatformCoin[]> {
     dammPool: String(row.meta?.dbc?.migration?.pool || row.meta?.solanaGraduation?.pool || "") || null,
     quoteMint: quoteMintFromMeta(row.meta),
     quoteDecimals: quoteDecimalsFromMeta(row.meta, isNativeQuoteMint(quoteMintFromMeta(row.meta)) ? 9 : 6),
+    createdAt: row.created_at ? new Date(row.created_at) : null,
   }));
 }
 
@@ -206,6 +213,7 @@ export async function takeDueSnapshots(input: {
   now: Date;
 }): Promise<number> {
   const week = weekOf(input.now);
+  if (usesHoldThrough(week.weekId)) return takeDueHoldingChecks({ ...input, week });
   const due = snapshotMoment(weekSecret(input.masterSecret, week.weekId), week.start);
   if (input.now.getTime() < due.getTime()) return 0;
   const coins = (await platformCoins(input.db)).filter((coin) => coin.choice !== "buyback");
@@ -238,6 +246,112 @@ export async function takeDueSnapshots(input: {
     taken += 1;
   }
   return taken;
+}
+
+/**
+ * Hold-through weeks: the check due now, for every holders / split coin that existed at its moment.
+ * Each check is written in one statement (balances + run row), so a crash never leaves half a check.
+ */
+async function takeDueHoldingChecks(input: {
+  db: Queryable;
+  connection: Connection;
+  masterSecret: string;
+  excluded: Set<string>;
+  now: Date;
+  week: { weekId: string; start: Date };
+}): Promise<number> {
+  const moments = holdThroughMoments(weekSecret(input.masterSecret, input.week.weekId), input.week.start);
+  const index = dueHoldThroughCheck(moments, input.now);
+  if (index === null) return 0;
+  const at = moments[index].getTime();
+  const coins = (await platformCoins(input.db))
+    .filter((coin) => coin.choice !== "buyback" && (!coin.createdAt || coin.createdAt.getTime() <= at));
+  let taken = 0;
+  for (const coin of coins) {
+    const done = await input.db.query(
+      `select 1 from public.dbc_holder_check_runs where week_id = $1 and mint = $2 and check_index = $3`,
+      [input.week.weekId, coin.mint, index],
+    );
+    if ((done.rowCount ?? done.rows.length) > 0) continue;
+    const slot = await input.connection.getSlot("confirmed");
+    const supply = BigInt((await input.connection.getTokenSupply(new PublicKey(coin.mint), "confirmed")).value.amount);
+    const accounts = await input.connection.getProgramAccounts(TOKEN_PROGRAM_ID, {
+      commitment: "confirmed",
+      filters: [{ dataSize: TOKEN_ACCOUNT_SIZE }, { memcmp: { offset: 0, bytes: coin.mint } }],
+    });
+    const excluded = new Set([...input.excluded, coin.creator]);
+    const balances = holderBalances(accounts.map((a) => parseTokenAccount(Buffer.from(a.account.data))), excluded);
+    // An empty read is not recorded: an RPC hiccup must not count as "nobody held". The next pass
+    // retries while this check is still the due one; a coin that really has no holders gets no check.
+    if (!balances.length) continue;
+    await input.db.query(
+      `with checked as (
+         insert into public.dbc_holder_checks (week_id, mint, check_index, owner, amount)
+         select $1, $2, $3, t.owner, t.amount::numeric from unnest($4::text[], $5::text[]) as t(owner, amount)
+         on conflict (week_id, mint, check_index, owner) do nothing
+         returning 1
+       )
+       insert into public.dbc_holder_check_runs (week_id, mint, check_index, pool, slot, supply, holders)
+       values ($1, $2, $3, $6, $7, $8::numeric, $9)
+       on conflict (week_id, mint, check_index) do nothing`,
+      [
+        input.week.weekId, coin.mint, index,
+        balances.map((b) => b.owner), balances.map((b) => b.amount.toString()),
+        coin.pool, slot, supply.toString(), balances.length,
+      ],
+    );
+    taken += 1;
+  }
+  return taken;
+}
+
+/**
+ * After a hold-through week ends: each coin's checks become its dbc_holder_snapshots rows (wallets at
+ * or above the minimum at every check, lowest balance), which the weekly round reads as before. A coin
+ * with no check that week gets no run row, so its holder share rolls over. Idempotent.
+ */
+export async function settleHoldingChecks(db: Queryable, weekId: string): Promise<number> {
+  const runs = await db.query(
+    `select mint, pool, check_index, slot, supply::text as supply
+       from public.dbc_holder_check_runs where week_id = $1 order by mint, check_index`,
+    [weekId],
+  );
+  const byMint = new Map<string, Array<{ pool: string; index: number; slot: unknown; supply: bigint }>>();
+  for (const row of runs.rows) {
+    const list = byMint.get(String(row.mint)) || [];
+    list.push({ pool: String(row.pool), index: Number(row.check_index), slot: row.slot, supply: BigInt(String(row.supply)) });
+    byMint.set(String(row.mint), list);
+  }
+  let settled = 0;
+  for (const [mint, checks] of byMint) {
+    const done = await db.query(`select 1 from public.dbc_holder_snapshot_runs where week_id = $1 and mint = $2`, [weekId, mint]);
+    if ((done.rowCount ?? done.rows.length) > 0) continue;
+    const rows = await db.query(
+      `select check_index, owner, amount::text as amount from public.dbc_holder_checks where week_id = $1 and mint = $2`,
+      [weekId, mint],
+    );
+    const eligible = holdThroughBalances(checks.map((check) => ({
+      supply: check.supply,
+      balances: rows.rows
+        .filter((r: any) => Number(r.check_index) === check.index)
+        .map((r: any) => ({ owner: String(r.owner), amount: BigInt(String(r.amount)) })),
+    })));
+    const last = checks[checks.length - 1];
+    await db.query(
+      `with settled as (
+         insert into public.dbc_holder_snapshots (week_id, mint, owner, amount)
+         select $1, $2, t.owner, t.amount::numeric from unnest($3::text[], $4::text[]) as t(owner, amount)
+         on conflict (week_id, mint, owner) do nothing
+         returning 1
+       )
+       insert into public.dbc_holder_snapshot_runs (week_id, mint, pool, slot, holders)
+       values ($1, $2, $5, $6, $7)
+       on conflict (week_id, mint) do nothing`,
+      [weekId, mint, eligible.map((b) => b.owner), eligible.map((b) => b.amount.toString()), last.pool, last.slot, eligible.length],
+    );
+    settled += 1;
+  }
+  return settled;
 }
 
 // ---------------------------------------------------------------- sending
@@ -469,6 +583,7 @@ export async function runWeeklyPayouts(input: {
   // 2. Holders: one round per week, leaves fixed once computed, one deposit into airdrop_vault.
   let round = (await input.db.query(`select * from public.dbc_holder_rounds where week_id = $1`, [week.weekId])).rows[0];
   if (!round) {
+    if (usesHoldThrough(week.weekId)) await settleHoldingChecks(input.db, week.weekId);
     // 2a. A bound coin's holder share is quote tokens: swap it to SOL first (keyed per coin and week,
     // so a retry resumes the same swap). The round waits until no swap is still sending.
     const swapState = await swapBoundHolderShares({ ...input, week: week.weekId, coins, ledgers });

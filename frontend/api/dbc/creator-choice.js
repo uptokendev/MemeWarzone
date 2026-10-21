@@ -36,7 +36,9 @@ export function createDbcCreatorChoiceHandler(deps = {}) {
             revealedAt: row.revealed_at ? new Date(row.revealed_at).toISOString() : null,
           })),
           rule: "week secret = HMAC-SHA256(master, 'dbc-week:' + weekId); commitment = sha256(week secret); "
-            + "snapshot = HMAC(week secret, 'holders-snapshot') mod week; buy i on day D = HMAC(week secret, 'buyback:' + pool + ':' + D + ':' + i) mod day",
+            + "snapshot = HMAC(week secret, 'holders-snapshot') mod week; buy i on day D = HMAC(week secret, 'buyback:' + pool + ':' + D + ':' + i) mod day; "
+            + "from week 2026-10-26: holder check i (0..3) = quarter i start + HMAC(week secret, 'holders-snapshot:' + i) mod quarter; "
+            + "a wallet counts with its lowest balance if it held at least 0.01% of the supply at every check taken for the coin",
         });
       }
       const campaign = await database.query(
