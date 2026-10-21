@@ -214,7 +214,7 @@ const EVM = "0x1234567890abcdef1234567890abcdef12345678";
 const MINT = "So11111111111111111111111111111111111111112";
 
 test("index routes go to the renderer proxy", () => {
-  const index = ["/", "/coins", "/warzone", "/warzone/battles", "/warzone/major-war-league", "/warzone/tournaments", "/league", "/war-room", "/airdrops", "/airdrops/winners", "/recruiters", "/squads", "/playbook", "/sponsorships/apply", "/create",
+  const index = ["/", "/coins", "/warzone", "/warzone/battles", "/warzone/major-war-league", "/warzone/tournaments", "/league", "/war-room", "/airdrops", "/airdrops/winners", "/recruiters", "/squads", "/playbook", "/sponsorships/apply", "/create", "/about", "/faq", "/faq/which-chains",
     `/token/${EVM}`, `/token/${MINT}`, "/warzone/battles/arena-mprhklw2-c5aa2c", "/warzone/tournaments/t-12", "/prepare/my-coin_1", "/post/12345", "/recruiters/ABC123", `/profile/${EVM}`, `/profile/${MINT}`];
   for (const p of index) {
     const l = pickLocation(p);

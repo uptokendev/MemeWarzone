@@ -2,9 +2,10 @@
 // nginx proxies app page requests here. Same HTML for people and crawlers; React replaces #root on load.
 // Loader DATA is cached (never HTML, never errors); the CURRENT shell is fetched on every request.
 import { createAppShell } from "./lib/appShell.mjs";
-import { injectSeo, h1, p, link } from "./lib/seoInject.mjs";
+import { injectSeo, h1, h2, p, ul, link } from "./lib/seoInject.mjs";
 import { createSeoEntities } from "./lib/seoEntities.js";
 import { DEFAULT_DESCRIPTION, headForPath, matchRoute } from "../shared/seoRoutes.mjs";
+import { ABOUT_INTRO, ABOUT_PATH, ABOUT_SECTIONS, ABOUT_TITLE, aboutJsonLd } from "../shared/aboutContent.mjs";
 
 const BRAND = "MemeWarzone";
 const NOINDEX = "noindex,follow";
@@ -60,6 +61,20 @@ function summaryOf(s) {
   if (links.length) html += `<p>${links.map((l) => link(l?.href, l?.text)).join(" ")}</p>`;
   return html;
 }
+
+// Fixed pages whose full text is server-rendered (the same copy the app page shows), keyed by route pattern.
+function aboutBody() {
+  let html = h1(ABOUT_TITLE) + ABOUT_INTRO.map((t) => p(t)).join("");
+  for (const s of ABOUT_SECTIONS) {
+    html += h2(s.heading);
+    html += (s.paragraphs || []).map((t) => p(t)).join("");
+    if (s.items?.length) html += ul(s.items);
+    if (s.note) html += p(s.note);
+    if (s.links?.length) html += `<p>${s.links.map((l) => link(l.href, l.text)).join(" ")}</p>`;
+  }
+  return { html, jsonLd: aboutJsonLd() };
+}
+const PAGE_BODIES = { [ABOUT_PATH]: aboutBody };
 
 function splitUrl(req) {
   const raw = String(req.originalUrl || req.url || req.path || "");
@@ -201,13 +216,15 @@ export function createSeoRenderer({
 
     const head = headForPath(path);
     const title = titleOf(head.title);
+    const page = rule && PAGE_BODIES[rule.pattern] ? PAGE_BODIES[rule.pattern]() : null;
     return send(res, 200, injectSeo(html, {
       title,
       description: head.description || DEFAULT_DESCRIPTION,
       canonical: head.canonical,
       robots: head.robots,
       og: { title, description: head.description || DEFAULT_DESCRIPTION, url: head.canonical || undefined, type: "website" },
-      summaryHtml: h1(head.title || BRAND) + (head.description ? p(head.description) : ""),
+      jsonLd: page ? page.jsonLd : undefined,
+      summaryHtml: page ? page.html : h1(head.title || BRAND) + (head.description ? p(head.description) : ""),
     }), head.robots);
   }
 

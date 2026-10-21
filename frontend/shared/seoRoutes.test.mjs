@@ -129,3 +129,12 @@ test("DEFAULT_DESCRIPTION matches index.html", async () => {
   const m = /<meta name="description" content="([^"]*)"/.exec(html);
   assert.equal(DEFAULT_DESCRIPTION, m[1]);
 });
+
+test("/about is an indexed fixed route and is in the static sitemap", async () => {
+  const h = headForPath("/about");
+  assert.equal(h.title, "About MemeWarzone");
+  assert.equal(h.robots, "index,follow");
+  assert.equal(h.canonical, `${APP_ORIGIN}/about`);
+  const { staticEntries } = await import("../api/lib/sitemapSources.js");
+  assert.ok(staticEntries().some((e) => e.loc === `${APP_ORIGIN}/about`));
+});
