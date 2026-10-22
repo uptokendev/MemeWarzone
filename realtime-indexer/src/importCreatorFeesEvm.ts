@@ -19,9 +19,16 @@
  *             0.25% protocol of a partner swap): each partner's partner_raw of this vault's fee rows minus its
  *             'partner' transfers -> its payout_wallet with payout(to, amount), same vault, same caps, same checks
  *             as a creator, at least IMPORT_PARTNER_MIN_PAYOUT_WEI_<chainId>; one payout per partner per pass
+ *   gen-8     (founder 2026-10-22) the same partner payout also carries the partner's 0.25% of graduated gen-8 widget
+ *             swaps (gen8_partner_fees, written by evm/gen8PartnerFees.ts), paid ONLY out of MemeWarzone's free share
+ *             of this vault: min(balance - creator accruals waiting / paying - import partner dues, our own recorded
+ *             share + verified Safe top-ups - what gen-8 already took from this vault). Short -> the gen-8 part waits.
+ *             import_fee_transfers.gen8_raw says how much of a partner payout paid gen-8 dues. Sends only with
+ *             GEN8_PARTNER_PAYOUT_SEND=true; otherwise the pass lists what it would pay (result.gen8.planned).
  *   sweep     the protocol's part of every fee (fee - creator - partner) plus the expired creator halves ->
  *             ProtocolRevenueVault with payout(vault, amount); at most once per UTC day, only in a pass that
- *             paid no creator and no partner
+ *             paid no creator and no partner. With the gen-8 ledger: minus every gen-8 partner due still owed
+ *             (and what gen-8 already took), and never above the vault's free MemeWarzone share.
  *
  * Partners on EVM (2026-10-09): every fee, partner swap or not, lands in the chain's ONE default
  * ImportFeeVault; the finance cron attributes a fee row to a partner (partner_id / partner_raw) from the
@@ -64,6 +71,10 @@ export const VAULT_ABI = [
 ];
 const vaultInterface = new ethers.Interface(VAULT_ABI);
 export const PAYOUT_TOPIC = vaultInterface.getEvent("Payout")!.topicHash;
+/** NativeTreasuryVaultBase: admin() (the Safe) and Deposit(from, amount, newBalance) from receive(); used to verify a gen-8 top-up. */
+const VAULT_BASE_ABI = ["function admin() view returns (address)", "event Deposit(address indexed from, uint256 amount, uint256 newBalance)"];
+const vaultBaseInterface = new ethers.Interface(VAULT_BASE_ABI);
+export const DEPOSIT_TOPIC = vaultBaseInterface.getEvent("Deposit")!.topicHash;
 
 /** ProtocolRevenueVault per mainnet (read on chain 2026-10-04, protocolForwarderKeeper.ts FORWARDER_CHAIN_PINS). Testnets: env only. */
 const PROTOCOL_REVENUE_VAULTS: Record<number, string> = {
@@ -92,6 +103,8 @@ export type ImportFeeEvmSettings = {
   holdDays: number;
   payoutsPerPass: number;
   resendAfterMs: number;
+  /** GEN8_PARTNER_PAYOUT_SEND=true: partner payouts include gen-8 dues. Otherwise they are only listed (result.gen8.planned). */
+  gen8Send?: boolean;
 };
 
 function envBigint(env: Record<string, string | undefined>, name: string, fallback: bigint): bigint {
@@ -118,6 +131,7 @@ export function importFeeEvmSettings(chainId: number, env: Record<string, string
     holdDays: Math.max(0, Number(env.IMPORT_CREATOR_HOLD_DAYS ?? 7)),
     payoutsPerPass: Math.max(1, Math.min(20, Number(env.IMPORT_CREATOR_PAYOUTS_PER_PASS ?? 5))),
     resendAfterMs: Math.max(60_000, Number(env.IMPORT_FEE_EVM_RESEND_AFTER_MS ?? 600_000)),
+    gen8Send: ["1", "true", "yes", "on"].includes(String(env.GEN8_PARTNER_PAYOUT_SEND ?? "").trim().toLowerCase()),
   };
 }
 
@@ -167,6 +181,62 @@ export function vaultDailyLeft(state: { dailyPayoutCap: bigint; dailySpent: bigi
 }
 
 const min = (...values: bigint[]) => values.reduce((a, b) => (a < b ? a : b));
+const nonNegative = (value: bigint) => (value > 0n ? value : 0n);
+
+/**
+ * What this vault owes and holds for the gen-8 partner part (all native wei, from the db; one read per pass).
+ *   creatorOwed        creator accruals of this vault's fee rows still 'waiting' or 'paying' (unclaimed imports included)
+ *   importPartnerOwed  per partner: partner_raw of this vault's fee rows minus the import part of its payouts, summed (>= 0 each)
+ *   protocolHalves / expiredCreator / swept  as readEvmProtocolDue
+ *   topUps             verified Safe top-ups of this vault for gen-8 (gen8_partner_topups)
+ *   gen8PaidFromVault  gen8_raw of this vault's partner payouts (sending / landed)
+ *   gen8Earned / gen8PaidOnChain  gen8_partner_fees of the chain / gen8_raw of the chain's partner payouts (sending / landed)
+ */
+export type Gen8VaultLedger = {
+  creatorOwed: bigint;
+  importPartnerOwed: bigint;
+  protocolHalves: bigint;
+  expiredCreator: bigint;
+  swept: bigint;
+  topUps: bigint;
+  gen8PaidFromVault: bigint;
+  gen8Earned: bigint;
+  gen8PaidOnChain: bigint;
+};
+
+/** MemeWarzone's own money in this vault by the ledger: our fee parts + expired creator halves + top-ups - swept - what gen-8 took. May be negative. */
+export function gen8OwnShare(l: Gen8VaultLedger): bigint {
+  return l.protocolHalves + l.expiredCreator + l.topUps - l.swept - l.gen8PaidFromVault;
+}
+
+/** Gen-8 partner dues still owed on the chain (earned - sent or landed), never negative. */
+export function gen8Outstanding(l: Gen8VaultLedger): bigint {
+  return nonNegative(l.gen8Earned - l.gen8PaidOnChain);
+}
+
+/**
+ * What gen-8 partner payouts may take from the vault: the vault's money above every creator and import partner
+ * liability, and never more than MemeWarzone's own recorded share (so a fee that reached the vault before the finance
+ * cron recorded its creator half is never used). 0 when either is short.
+ */
+export function gen8FreeRoom(balance: bigint, l: Gen8VaultLedger): bigint {
+  return nonNegative(min(balance - l.creatorOwed - l.importPartnerOwed, gen8OwnShare(l)));
+}
+
+/** The most the daily sweep may take with the gen-8 ledger: our share minus every gen-8 due, within the vault's free money. */
+export function gen8SweepLimit(balance: bigint, l: Gen8VaultLedger): bigint {
+  const owed = gen8Outstanding(l);
+  return nonNegative(min(gen8OwnShare(l) - owed, balance - l.creatorOwed - l.importPartnerOwed - owed));
+}
+
+/** One partner payout of `cap` at most: the import part first (its money came with the fee rows), then gen-8 within `gen8Room`. */
+export function splitPartnerPayout(input: { importDue: bigint; gen8Due: bigint; gen8Room: bigint; cap: bigint }): { amount: bigint; importPart: bigint; gen8Part: bigint } {
+  const importDue = nonNegative(input.importDue);
+  const gen8Payable = nonNegative(min(input.gen8Due, input.gen8Room));
+  const amount = nonNegative(min(importDue + gen8Payable, input.cap));
+  const importPart = min(importDue, amount);
+  return { amount, importPart, gen8Part: amount - importPart };
+}
 
 // ---------------------------------------------------------------- chain access
 
@@ -200,6 +270,10 @@ export interface ImportFeeChain {
   /** The vault's Payout(to, amount) logs since `sinceMs` (wall clock of the transfer row). */
   payoutLogs(input: { to: string; amount: bigint; sinceMs: number }): Promise<PayoutLog[]>;
   txSender(hash: string): Promise<{ from: string; nonce: number } | null>;
+  /** The vault's admin (the Safe). Optional: without it a gen-8 top-up stays unverified. */
+  vaultAdmin?(): Promise<string>;
+  /** Receipt status and the vault's Deposit logs of one transaction; null while there is no receipt. */
+  vaultDeposits?(hash: string): Promise<{ status: number; deposits: Array<{ from: string; amount: bigint }> } | null>;
 }
 
 /** Real chain access over ethers. `wallet` may be null in a dry run (nothing is signed). */
@@ -287,6 +361,21 @@ export function createEthersImportFeeChain(provider: ethers.JsonRpcProvider, vau
     async txSender(hash) {
       const tx = await provider.getTransaction(hash);
       return tx ? { from: tx.from, nonce: tx.nonce } : null;
+    },
+    async vaultAdmin() {
+      const base = new ethers.Contract(vault.target as string, VAULT_BASE_ABI, provider);
+      return String(await base.admin());
+    },
+    async vaultDeposits(hash) {
+      const r = await provider.getTransactionReceipt(hash);
+      if (!r) return null;
+      const deposits: Array<{ from: string; amount: bigint }> = [];
+      for (const log of r.logs) {
+        if (String(log.address).toLowerCase() !== String(vault.target).toLowerCase() || log.topics[0] !== DEPOSIT_TOPIC || log.topics.length < 2) continue;
+        const [amount] = ethers.AbiCoder.defaultAbiCoder().decode(["uint256", "uint256"], log.data);
+        deposits.push({ from: ethers.getAddress(ethers.dataSlice(log.topics[1], 12)), amount: BigInt(amount) });
+      }
+      return { status: Number(r.status), deposits };
     },
   };
 }
@@ -452,6 +541,143 @@ export async function readEvmPartnerDue(db: Queryable, chainId: number, vault: s
   return due > 0n ? due : 0n;
 }
 
+// ---------------------------------------------------------------- gen-8 partner part (2026-10-22)
+
+/**
+ * True once migration 20261022_000010_gen8_partner_fees.sql is applied (ledger, top-ups and import_fee_transfers.gen8_raw).
+ * Before that every gen-8 step is skipped and the pass runs exactly as it did without it.
+ */
+export async function gen8PartnerPayoutReady(db: Queryable): Promise<boolean> {
+  const { rows } = await db.query(
+    `select to_regclass('public.gen8_partner_fees') is not null
+        and to_regclass('public.gen8_partner_topups') is not null
+        and exists (select 1 from information_schema.columns
+                     where table_schema = 'public' and table_name = 'import_fee_transfers' and column_name = 'gen8_raw') as ready`,
+  );
+  return rows[0]?.ready === true;
+}
+
+const SENT = `status in ('sending', 'landed')`;
+
+/** The vault's liabilities and our share for the gen-8 part (Gen8VaultLedger). */
+export async function readGen8VaultLedger(db: Queryable, chainId: number, vault: string, topUps: bigint): Promise<Gen8VaultLedger> {
+  const { rows } = await db.query(
+    `select
+       (select coalesce(sum(c.creator_raw), 0) from public.import_creator_fees c
+          join public.finance_import_swap_fees f on f.id = c.fee_id
+         where c.chain_id = $1 and f.fee_receiver = $2 and c.status in ('waiting', 'paying'))::text as creator_owed,
+       (select coalesce(sum(greatest(e.earned - coalesce(p.paid, 0), 0)), 0)
+          from (select partner_id, sum(partner_raw) as earned from public.finance_import_swap_fees
+                 where chain_id = $1 and fee_receiver = $2 and partner_id is not null and partner_raw > 0 group by partner_id) e
+          left join (select partner_id, sum(amount_raw - gen8_raw) as paid from public.import_fee_transfers
+                      where chain_id = $1 and kind = 'partner' and from_address = $2 and partner_id is not null and ${SENT} group by partner_id) p
+            on p.partner_id = e.partner_id)::text as import_partner_owed,
+       (select coalesce(sum(fee_raw - creator_raw - partner_raw), 0) from public.finance_import_swap_fees
+         where chain_id = $1 and fee_receiver = $2 and (creator_raw > 0 or partner_raw > 0))::text as halves,
+       (select coalesce(sum(c.creator_raw), 0) from public.import_creator_fees c
+          join public.finance_import_swap_fees f on f.id = c.fee_id
+         where c.chain_id = $1 and c.status = 'expired' and f.fee_receiver = $2)::text as expired,
+       (select coalesce(sum(amount_raw), 0) from public.import_fee_transfers
+         where chain_id = $1 and kind = 'protocol' and from_address = $2 and ${SENT})::text as swept,
+       (select coalesce(sum(gen8_raw), 0) from public.import_fee_transfers
+         where chain_id = $1 and kind = 'partner' and from_address = $2 and ${SENT})::text as gen8_paid_vault,
+       (select coalesce(sum(partner_raw), 0) from public.gen8_partner_fees where chain_id = $1)::text as gen8_earned,
+       (select coalesce(sum(gen8_raw), 0) from public.import_fee_transfers
+         where chain_id = $1 and kind = 'partner' and ${SENT})::text as gen8_paid_chain`,
+    [chainId, vault],
+  );
+  const r = rows[0] || {};
+  const b = (v: unknown) => BigInt(String(v ?? "0") || "0");
+  return {
+    creatorOwed: b(r.creator_owed),
+    importPartnerOwed: b(r.import_partner_owed),
+    protocolHalves: b(r.halves),
+    expiredCreator: b(r.expired),
+    swept: b(r.swept),
+    topUps,
+    gen8PaidFromVault: b(r.gen8_paid_vault),
+    gen8Earned: b(r.gen8_earned),
+    gen8PaidOnChain: b(r.gen8_paid_chain),
+  };
+}
+
+/**
+ * One partner's dues with the gen-8 ledger: the import part (this vault's fee rows minus the import part of its payouts
+ * from this vault, as readEvmPartnerDue) and the gen-8 part (its gen8_partner_fees on the chain minus gen8_raw of its
+ * payouts on the chain, from any vault, so a vault change can never pay a due twice).
+ */
+export async function readEvmPartnerDueParts(db: Queryable, chainId: number, vault: string, partnerId: string): Promise<{ importDue: bigint; gen8Due: bigint }> {
+  const { rows } = await db.query(
+    `select
+       (select coalesce(sum(partner_raw), 0) from public.finance_import_swap_fees
+         where chain_id = $1 and fee_receiver = $2 and partner_id = $3)::text as import_earned,
+       (select coalesce(sum(amount_raw - gen8_raw), 0) from public.import_fee_transfers
+         where chain_id = $1 and kind = 'partner' and from_address = $2 and partner_id = $3 and ${SENT})::text as import_paid,
+       (select coalesce(sum(partner_raw), 0) from public.gen8_partner_fees
+         where chain_id = $1 and partner_id = $3)::text as gen8_earned,
+       (select coalesce(sum(gen8_raw), 0) from public.import_fee_transfers
+         where chain_id = $1 and kind = 'partner' and partner_id = $3 and ${SENT})::text as gen8_paid`,
+    [chainId, vault, partnerId],
+  );
+  const r = rows[0] || {};
+  return {
+    importDue: nonNegative(BigInt(r.import_earned || "0") - BigInt(r.import_paid || "0")),
+    gen8Due: nonNegative(BigInt(r.gen8_earned || "0") - BigInt(r.gen8_paid || "0")),
+  };
+}
+
+/**
+ * Verified Safe top-ups of this vault (gen8_partner_topups). A 'pending' row is checked against its receipt: status 1,
+ * Deposit logs into this vault from the vault's admin (the Safe) that add up to exactly amount_raw, and the transaction
+ * is not an import fee row. Then 'verified' (counted) or 'rejected' (never counted). No receipt / no RPC: stays pending.
+ * `write` false (dry run): checked in memory, nothing written.
+ */
+export async function verifyGen8TopUps(db: Queryable, chain: ImportFeeChain, input: { chainId: number; vault: string; write: boolean }): Promise<{ verified: bigint; pending: number; rejected: string[] }> {
+  const { rows } = await db.query(
+    `select id, tx_hash, amount_raw::text as amount_raw, status from public.gen8_partner_topups
+      where chain_id = $1 and lower(vault) = $2 and status in ('pending', 'verified') order by id`,
+    [input.chainId, input.vault],
+  );
+  const out = { verified: 0n, pending: 0, rejected: [] as string[] };
+  let admin: string | null = null;
+  for (const row of rows) {
+    const amount = BigInt(String(row.amount_raw));
+    if (row.status === "verified") {
+      out.verified += amount;
+      continue;
+    }
+    if (!chain.vaultDeposits || !chain.vaultAdmin) {
+      out.pending += 1;
+      continue;
+    }
+    let reason: string | null = null;
+    try {
+      const receipt = await chain.vaultDeposits(String(row.tx_hash));
+      if (!receipt) {
+        out.pending += 1;
+        continue;
+      }
+      admin ??= (await chain.vaultAdmin()).toLowerCase();
+      const fromAdmin = receipt.deposits.filter((d) => d.from.toLowerCase() === admin).reduce((sum, d) => sum + d.amount, 0n);
+      const fee = await db.query(`select 1 from public.finance_import_swap_fees where chain_id = $1 and lower(tx_hash) = lower($2) limit 1`, [input.chainId, String(row.tx_hash)]);
+      if (receipt.status !== 1) reason = "transaction reverted";
+      else if (fee.rows.length) reason = "transaction is an import fee row";
+      else if (fromAdmin !== amount) reason = `deposits from the vault admin ${admin} into the vault are ${fromAdmin}, not ${amount}`;
+    } catch (error) {
+      out.pending += 1; // RPC trouble: try again next pass
+      continue;
+    }
+    if (reason) {
+      out.rejected.push(`top-up ${row.tx_hash}: ${reason}`);
+      if (input.write) await db.query(`update public.gen8_partner_topups set status = 'rejected', error = $2 where id = $1 and status = 'pending'`, [row.id, reason.slice(0, 500)]);
+      continue;
+    }
+    out.verified += amount;
+    if (input.write) await db.query(`update public.gen8_partner_topups set status = 'verified', verified_at = now(), error = null where id = $1 and status = 'pending'`, [row.id]);
+  }
+  return out;
+}
+
 export type PayableCoin = { token: string; owner: string; waiting: WaitingAccrual[]; total: bigint };
 
 /** Verified imports whose claim is at least `holdDays` old and that have waiting accruals on this vault. */
@@ -515,8 +741,17 @@ export type EvmPassResult = {
   expired: number;
   sweep: { amount: string; hash: string | null } | null;
   payouts: Array<{ token: string; owner: string; amount: string; hash: string | null }>;
-  partnerPayouts: Array<{ partner: string; to: string; amount: string; hash: string | null }>;
+  partnerPayouts: Array<{ partner: string; to: string; amount: string; hash: string | null; gen8Amount?: string }>;
   skipped: string[];
+  /** Only with the gen-8 ledger (migration 20261022_000010): the vault's free MemeWarzone share and the gen-8 dues. */
+  gen8?: {
+    send: boolean;
+    roomWei: string;
+    outstandingWei: string;
+    topUpsWei: string;
+    /** Gen-8 dues the pass would pay (GEN8_PARTNER_PAYOUT_SEND off) or could not pay (vault short). */
+    planned: Array<{ partner: string; dueWei: string; payableWei: string }>;
+  };
 };
 
 /**
@@ -573,12 +808,33 @@ export async function runImportCreatorFeeEvmPass(input: {
   const ownerIndex = input.ownerIndex || ownerWalletIndex();
   const held = await heldWalletKeys(db);
 
+  // Gen-8 partner part: read once, before anything moves. Creator and import partner payouts in this pass take their
+  // own money (balance and liability drop together), so the room only shrinks by the gen-8 parts paid below.
+  let gen8Ledger: Gen8VaultLedger | null = null;
+  let gen8Room = 0n;
+  const gen8Send = Boolean(settings.gen8Send);
+  if (await gen8PartnerPayoutReady(db)) {
+    const topUps = await verifyGen8TopUps(db, chain, { chainId, vault: settings.vault, write: send });
+    for (const why of topUps.rejected) result.skipped.push(why);
+    gen8Ledger = await readGen8VaultLedger(db, chainId, settings.vault, topUps.verified);
+    gen8Room = gen8FreeRoom(state.balance, gen8Ledger);
+    result.gen8 = { send: gen8Send, roomWei: gen8Room.toString(), outstandingWei: gen8Outstanding(gen8Ledger).toString(), topUpsWei: topUps.verified.toString(), planned: [] };
+  }
+
   /** Sign, store 'sending' (+ mark the accruals 'paying') in one db transaction, then broadcast. */
-  async function move(kind: "creator" | "protocol" | "partner", to: string, amount: bigint, token: string | null, feeIds: string[], partnerId: string | null = null): Promise<string | null> {
+  async function move(kind: "creator" | "protocol" | "partner", to: string, amount: bigint, token: string | null, feeIds: string[], partnerId: string | null = null, gen8Raw = 0n): Promise<string | null> {
+    if (gen8Raw < 0n || gen8Raw > amount || (gen8Raw > 0n && (kind !== "partner" || !partnerId))) throw new Error("invalid gen-8 part of a payout");
     const signed = await chain.signPayout({ to, amount, nonce });
     const stored = await inTransaction(db, async (client) => {
-      // A partner payout also stores partner_id (its due is counted from these rows); creator / protocol rows are unchanged.
-      const transfer = partnerId
+      // A partner payout also stores partner_id (its due is counted from these rows), and gen8_raw when part of it pays
+      // gen-8 dues; creator / protocol rows are unchanged.
+      const transfer = partnerId && gen8Raw > 0n
+        ? await client.query(
+            `insert into public.import_fee_transfers (chain_id, kind, from_address, to_address, token_address, amount_raw, status, signature, last_valid_block_height, partner_id, gen8_raw)
+             values ($1, $2, $3, $4, $5, $6, 'sending', $7, $8, $9, $10) returning id`,
+            [chainId, kind, settings.vault, to.toLowerCase(), token, amount.toString(), signed.hash, signed.nonce, partnerId, gen8Raw.toString()],
+          )
+        : partnerId
         ? await client.query(
             `insert into public.import_fee_transfers (chain_id, kind, from_address, to_address, token_address, amount_raw, status, signature, last_valid_block_height, partner_id)
              values ($1, $2, $3, $4, $5, $6, 'sending', $7, $8, $9) returning id`,
@@ -656,11 +912,21 @@ export async function runImportCreatorFeeEvmPass(input: {
     }
   }
 
-  // Partners: their share of this vault's fees, to their payout wallet, after the creators (Solana order).
+  // Partners: their share of this vault's fees, to their payout wallet, after the creators (Solana order). With the
+  // gen-8 ledger the same payout also carries the partner's gen-8 dues, but only within the vault's free MemeWarzone
+  // share (gen8Room); what does not fit waits for fees, the sweep never takes it, and the Safe can top the vault up.
   const partners = await readEvmPartners(db, chainId);
   for (const partner of partners) {
     if (result.payouts.length + result.partnerPayouts.length >= settings.payoutsPerPass) break;
-    const due = await readEvmPartnerDue(db, chainId, settings.vault, partner.id);
+    const parts = gen8Ledger ? await readEvmPartnerDueParts(db, chainId, settings.vault, partner.id) : { importDue: await readEvmPartnerDue(db, chainId, settings.vault, partner.id), gen8Due: 0n };
+    const gen8Payable = gen8Send ? min(parts.gen8Due, gen8Room) : 0n;
+    if (gen8Ledger && parts.gen8Due > 0n && (!gen8Send || gen8Payable < parts.gen8Due)) {
+      result.gen8!.planned.push({ partner: partner.id, dueWei: parts.gen8Due.toString(), payableWei: min(parts.gen8Due, gen8Room).toString() });
+      if (gen8Send && parts.gen8Due >= settings.minPartnerPayoutWei) {
+        result.skipped.push(`partner ${partner.id}: gen-8 share ${parts.gen8Due - gen8Payable} waits; the vault's free MemeWarzone share is ${gen8Room}`);
+      }
+    }
+    const due = parts.importDue + gen8Payable;
     if (due < settings.minPartnerPayoutWei) continue;
     const wallet = partner.payoutWallet;
     if (!/^0x[0-9a-fA-F]{40}$/.test(wallet) || wallet.toLowerCase() === ethers.ZeroAddress) {
@@ -679,17 +945,18 @@ export async function runImportCreatorFeeEvmPass(input: {
       result.skipped.push(`partner ${partner.id}: payout wallet ${wallet} is a contract`);
       continue;
     }
-    const amount = min(due, state.maxPayoutPerTx, dailyLeft, balance);
+    const { amount, gen8Part } = splitPartnerPayout({ importDue: parts.importDue, gen8Due: gen8Payable, gen8Room, cap: min(state.maxPayoutPerTx, dailyLeft, balance) });
     if (amount < settings.minPartnerPayoutWei) {
       result.skipped.push(dailyLeft < settings.minPartnerPayoutWei ? "daily payout cap reached; the rest pays tomorrow" : `partner ${partner.id}: vault balance or per-payout cap below the minimum`);
       continue;
     }
     const to = ethers.getAddress(wallet.toLowerCase());
-    const hash = send ? await move("partner", to, amount, null, [], partner.id) : null;
+    const hash = send ? await move("partner", to, amount, null, [], partner.id, gen8Part) : null;
     if (send && hash == null) continue;
-    result.partnerPayouts.push({ partner: partner.id, to, amount: amount.toString(), hash });
+    result.partnerPayouts.push({ partner: partner.id, to, amount: amount.toString(), hash, ...(gen8Ledger ? { gen8Amount: gen8Part.toString() } : {}) });
     dailyLeft -= amount;
     balance -= amount;
+    gen8Room -= gen8Part;
   }
 
   // Our part (and expired creator halves): once per UTC day, only in a pass that paid no creator and no partner.
@@ -697,8 +964,10 @@ export async function runImportCreatorFeeEvmPass(input: {
     if (!settings.protocolVault) {
       result.skipped.push(`no ProtocolRevenueVault for chain ${chainId} (PROTOCOL_REVENUE_VAULT_ADDRESS_${chainId}); protocol sweep off`);
     } else if ((await readSweptToday(db, chainId, settings.vault, now)) === 0) {
-      const due = await readEvmProtocolDue(db, chainId, settings.vault);
-      const amount = min(due, balance, state.maxPayoutPerTx, dailyLeft);
+      // With the gen-8 ledger: our share minus every gen-8 partner due (owed or in flight; what gen-8 already took is
+      // out of our share), and never above the vault's money beyond creator, import partner and gen-8 partner dues.
+      const due = gen8Ledger ? nonNegative(gen8OwnShare(gen8Ledger) - gen8Outstanding(gen8Ledger)) : await readEvmProtocolDue(db, chainId, settings.vault);
+      const amount = gen8Ledger ? min(due, gen8SweepLimit(balance, gen8Ledger), balance, state.maxPayoutPerTx, dailyLeft) : min(due, balance, state.maxPayoutPerTx, dailyLeft);
       if (amount >= settings.minSweepWei) {
         const to = ethers.getAddress(settings.protocolVault);
         const hash = send ? await move("protocol", to, amount, null, []) : null;

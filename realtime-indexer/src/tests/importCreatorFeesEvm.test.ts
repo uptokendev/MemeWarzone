@@ -27,18 +27,23 @@ const NOW = new Date("2026-11-01T12:00:00Z");
 const DAY = 86_400;
 
 type Accrual = { fee_id: string; chain_id: number; token_address: string; creator_raw: bigint; status: string; transfer_id: number | null; expires_at: Date | null; occurred_at: Date; payee_kind?: string };
-type Transfer = { id: number; chain_id: number; kind: string; from_address: string; to_address: string; token_address: string | null; amount_raw: bigint; status: string; signature: string; last_valid_block_height: number; error: string | null; created_at: Date; updated_at: Date; partner_id?: string | null };
+type Transfer = { id: number; chain_id: number; kind: string; from_address: string; to_address: string; token_address: string | null; amount_raw: bigint; status: string; signature: string; last_valid_block_height: number; error: string | null; created_at: Date; updated_at: Date; partner_id?: string | null; gen8_raw?: bigint };
+/** Gen-8 ledger (migration 20261022_000010) in the fake: per-partner gen8_partner_fees totals of the chain, top-up rows, fee tx hashes. */
+type Gen8Init = { earned?: Record<string, bigint>; topups?: Array<{ tx_hash: string; amount_raw: bigint; status?: string; vault?: string }>; feeTxs?: string[] };
 type PartnerRow = Record<string, unknown> & { id: string };
 type Owner = { token: string; owner: string; verifiedAt: Date };
 
-function fakeDb(init: { accruals?: Array<Partial<Accrual> & { fee_id: string; creator_raw: bigint }>; owners?: Owner[]; campaigns?: Array<{ token: string; creator: string }>; held?: string[]; halves?: bigint; now?: Date; partners?: PartnerRow[] | "missing"; partnerEarned?: Record<string, bigint> }) {
+function fakeDb(init: { accruals?: Array<Partial<Accrual> & { fee_id: string; creator_raw: bigint }>; owners?: Owner[]; campaigns?: Array<{ token: string; creator: string }>; held?: string[]; halves?: bigint; now?: Date; partners?: PartnerRow[] | "missing"; partnerEarned?: Record<string, bigint>; gen8?: Gen8Init }) {
   const clock = { now: init.now || NOW };
   let state = {
     accruals: (init.accruals || []).map((a, i) => ({ chain_id: CHAIN, token_address: TOKEN, status: "waiting", transfer_id: null, expires_at: new Date(clock.now.getTime() + 30 * DAY * 1000), occurred_at: new Date(clock.now.getTime() - (100 - i) * 1000), ...a }) as Accrual),
     transfers: [] as Transfer[],
+    topups: (init.gen8?.topups || []).map((t, i) => ({ id: i + 1, vault: VAULT, status: "pending", error: null as string | null, ...t })),
   };
   let snapshot: typeof state | null = null;
-  const clone = (s: typeof state) => ({ accruals: s.accruals.map((a) => ({ ...a })), transfers: s.transfers.map((t) => ({ ...t })) });
+  const clone = (s: typeof state) => ({ accruals: s.accruals.map((a) => ({ ...a })), transfers: s.transfers.map((t) => ({ ...t })), topups: s.topups.map((t) => ({ ...t })) });
+  const sent = (t: Transfer) => ["sending", "landed"].includes(t.status);
+  const g8 = (t: Transfer) => t.gen8_raw ?? 0n;
   const calls: string[] = [];
   const db = {
     calls,
@@ -122,6 +127,48 @@ function fakeDb(init: { accruals?: Array<Partial<Accrual> & { fee_id: string; cr
         if (init.partners === "missing") throw Object.assign(new Error('relation "public.import_fee_partners" does not exist'), { code: "42P01" });
         return { rows: (init.partners || []).filter((p) => p.chain_id == null || p.chain_id === params[0]) };
       }
+      if (s.startsWith("select to_regclass('public.gen8_partner_fees') is not null and to_regclass('public.gen8_partner_topups')")) {
+        return { rows: [{ ready: Boolean(init.gen8) }] };
+      }
+      if (s.startsWith("select id, tx_hash, amount_raw::text as amount_raw, status from public.gen8_partner_topups")) {
+        return { rows: state.topups.filter((t) => t.vault === params[1] && ["pending", "verified"].includes(t.status)).map((t) => ({ ...t, amount_raw: t.amount_raw.toString() })) };
+      }
+      if (s.startsWith("select 1 from public.finance_import_swap_fees where chain_id = $1 and lower(tx_hash)")) {
+        return { rows: (init.gen8?.feeTxs || []).map((h) => h.toLowerCase()).includes(String(params[1]).toLowerCase()) ? [{ "?column?": 1 }] : [] };
+      }
+      if (s.startsWith("update public.gen8_partner_topups set status = 'verified'") || s.startsWith("update public.gen8_partner_topups set status = 'rejected'")) {
+        const t = state.topups.find((x) => x.id === params[0] && x.status === "pending");
+        if (t) { t.status = s.includes("'verified'") ? "verified" : "rejected"; t.error = s.includes("'rejected'") ? params[1] : null; }
+        return { rows: [], rowCount: t ? 1 : 0 };
+      }
+      if (s.startsWith("select (select coalesce(sum(c.creator_raw), 0) from public.import_creator_fees c join public.finance_import_swap_fees f on f.id = c.fee_id where c.chain_id = $1 and f.fee_receiver = $2 and c.status in ('waiting', 'paying'))")) {
+        assert.equal(params[1], VAULT);
+        const creatorOwed = state.accruals.filter((a) => ["waiting", "paying"].includes(a.status)).reduce((n, a) => n + a.creator_raw, 0n);
+        let importPartnerOwed = 0n;
+        for (const [id, earned] of Object.entries(init.partnerEarned || {})) {
+          const paid = state.transfers.filter((t) => t.kind === "partner" && t.partner_id === id && t.from_address === VAULT && sent(t)).reduce((n, t) => n + t.amount_raw - g8(t), 0n);
+          importPartnerOwed += earned > paid ? earned - paid : 0n;
+        }
+        const expired = state.accruals.filter((a) => a.status === "expired").reduce((n, a) => n + a.creator_raw, 0n);
+        const swept = state.transfers.filter((t) => t.kind === "protocol" && sent(t)).reduce((n, t) => n + t.amount_raw, 0n);
+        const partnerSent = state.transfers.filter((t) => t.kind === "partner" && sent(t));
+        return { rows: [{
+          creator_owed: creatorOwed.toString(), import_partner_owed: importPartnerOwed.toString(), halves: String(init.halves ?? 0n), expired: expired.toString(), swept: swept.toString(),
+          gen8_paid_vault: partnerSent.filter((t) => t.from_address === VAULT).reduce((n, t) => n + g8(t), 0n).toString(),
+          gen8_earned: Object.values(init.gen8?.earned || {}).reduce((n, v) => n + v, 0n).toString(),
+          gen8_paid_chain: partnerSent.reduce((n, t) => n + g8(t), 0n).toString(),
+        }] };
+      }
+      if (s.startsWith("select (select coalesce(sum(partner_raw), 0) from public.finance_import_swap_fees where chain_id = $1 and fee_receiver = $2 and partner_id = $3)::text as import_earned")) {
+        const id = params[2];
+        const mine = state.transfers.filter((t) => t.kind === "partner" && t.partner_id === id && sent(t));
+        return { rows: [{
+          import_earned: String(init.partnerEarned?.[id] ?? 0n),
+          import_paid: mine.filter((t) => t.from_address === params[1]).reduce((n, t) => n + t.amount_raw - g8(t), 0n).toString(),
+          gen8_earned: String(init.gen8?.earned?.[id] ?? 0n),
+          gen8_paid: mine.reduce((n, t) => n + g8(t), 0n).toString(),
+        }] };
+      }
       if (s.startsWith("select (select coalesce(sum(partner_raw), 0)")) {
         assert.equal(params[1], VAULT, "a partner's due is read from the default vault's fee rows");
         const earned = init.partnerEarned?.[params[2]] ?? 0n;
@@ -141,7 +188,9 @@ function fakeDb(init: { accruals?: Array<Partial<Accrual> & { fee_id: string; cr
       if (s.startsWith("insert into public.import_fee_transfers")) {
         const id = state.transfers.length + 1;
         if (/partner_id\)/.test(s) !== (params.length === 9)) throw new Error("partner_id column and parameter must come together");
-        state.transfers.push({ id, chain_id: params[0], kind: params[1], from_address: params[2], to_address: params[3], token_address: params[4], amount_raw: BigInt(params[5]), status: "sending", signature: params[6], last_valid_block_height: params[7], error: null, created_at: clock.now, updated_at: clock.now, partner_id: params[8] ?? null });
+        if (/gen8_raw\)/.test(s) !== (params.length === 10)) throw new Error("gen8_raw column and parameter must come together");
+        if (params.length === 10 && !init.gen8) throw new Error("gen8_raw written without the gen-8 migration");
+        state.transfers.push({ id, chain_id: params[0], kind: params[1], from_address: params[2], to_address: params[3], token_address: params[4], amount_raw: BigInt(params[5]), status: "sending", signature: params[6], last_valid_block_height: params[7], error: null, created_at: clock.now, updated_at: clock.now, partner_id: params[8] ?? null, gen8_raw: params[9] != null ? BigInt(params[9]) : 0n });
         return { rows: [{ id }], rowCount: 1 };
       }
       throw new Error(`unexpected SQL: ${s.slice(0, 80)}`);
@@ -587,4 +636,179 @@ test("graduated MemeWarzone coin: paid to the campaign creator at once (no claim
   assert.notEqual(byId.g1, "expired");
   assert.notEqual(byId.g2, "expired");
   assert.equal(byId.i1, "expired", "the unclaimed import row still expires after 90 days");
+});
+
+// ---------------------------------------------------------------- gen-8 graduated widget swaps (2026-10-22)
+// The partner's 0.25% of graduated gen-8 widget swaps (gen8_partner_fees) rides on the same partner payout, but only
+// out of MemeWarzone's free share of the vault: min(balance - creator accruals - import partner dues, our recorded share
+// + verified top-ups - what gen-8 already took). The sweep reserves every gen-8 due.
+
+import { gen8FreeRoom, gen8Outstanding, gen8OwnShare, gen8SweepLimit, splitPartnerPayout, type Gen8VaultLedger } from "../importCreatorFeesEvm.js";
+
+const SAFE = "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7";
+const g8settings = { minPartnerPayoutWei: 100n, gen8Send: true };
+const ledger = (l: Partial<Gen8VaultLedger>): Gen8VaultLedger => ({ creatorOwed: 0n, importPartnerOwed: 0n, protocolHalves: 0n, expiredCreator: 0n, swept: 0n, topUps: 0n, gen8PaidFromVault: 0n, gen8Earned: 0n, gen8PaidOnChain: 0n, ...l });
+const sentTransfers = (db: any, kind = "partner") => db.state.transfers.filter((t: any) => t.kind === kind && ["sending", "landed"].includes(t.status));
+
+test("gen-8 pure: free room, own share, outstanding, sweep limit, split (BigInt edge cases)", () => {
+  // Plenty in the vault: room = our share.
+  assert.equal(gen8FreeRoom(10_000n, ledger({ protocolHalves: 1_000n })), 1_000n);
+  // Vault short of its own liabilities: creators owed more than the balance -> 0, whatever our share says.
+  assert.equal(gen8FreeRoom(3_000n, ledger({ creatorOwed: 5_000n, protocolHalves: 1_000n })), 0n);
+  // Import partner dues are reserved like creator money.
+  assert.equal(gen8FreeRoom(1_500n, ledger({ creatorOwed: 600n, importPartnerOwed: 300n, protocolHalves: 1_000n })), 600n);
+  // A fee that reached the vault before the finance cron recorded it is not ours to spend: capped by the recorded share.
+  assert.equal(gen8FreeRoom(1_000_000n, ledger({ protocolHalves: 50n })), 50n);
+  // Gen-8 already took more than our share (a top-up paid it): negative own share -> 0 room, no underflow.
+  const over = ledger({ protocolHalves: 100n, gen8PaidFromVault: 400n });
+  assert.equal(gen8OwnShare(over), -300n);
+  assert.equal(gen8FreeRoom(10_000n, over), 0n);
+  assert.equal(gen8FreeRoom(10_000n, ledger({ protocolHalves: 100n, topUps: 400n, gen8PaidFromVault: 400n })), 100n, "a verified top-up adds to our share");
+  // Outstanding never negative.
+  assert.equal(gen8Outstanding(ledger({ gen8Earned: 100n, gen8PaidOnChain: 150n })), 0n);
+  assert.equal(gen8Outstanding(ledger({ gen8Earned: 500n, gen8PaidOnChain: 150n })), 350n);
+  // Sweep: our share minus every gen-8 due, within the free money; 0 when the dues exceed it.
+  assert.equal(gen8SweepLimit(10_000n, ledger({ protocolHalves: 1_000n, gen8Earned: 300n })), 700n);
+  assert.equal(gen8SweepLimit(10_000n, ledger({ protocolHalves: 1_000n, gen8Earned: 300n, gen8PaidOnChain: 300n, gen8PaidFromVault: 300n })), 700n, "paid gen-8 is out of the share once, not twice");
+  assert.equal(gen8SweepLimit(10_000n, ledger({ protocolHalves: 100n, gen8Earned: 300n })), 0n);
+  assert.equal(gen8SweepLimit(1_200n, ledger({ creatorOwed: 1_000n, protocolHalves: 1_000n, gen8Earned: 100n })), 100n, "never into creator money");
+  // Split: import first, gen-8 within the room, all within the cap.
+  assert.deepEqual(splitPartnerPayout({ importDue: 300n, gen8Due: 200n, gen8Room: 1_000n, cap: 10_000n }), { amount: 500n, importPart: 300n, gen8Part: 200n });
+  assert.deepEqual(splitPartnerPayout({ importDue: 300n, gen8Due: 200n, gen8Room: 50n, cap: 10_000n }), { amount: 350n, importPart: 300n, gen8Part: 50n });
+  assert.deepEqual(splitPartnerPayout({ importDue: 300n, gen8Due: 200n, gen8Room: 1_000n, cap: 250n }), { amount: 250n, importPart: 250n, gen8Part: 0n });
+  assert.deepEqual(splitPartnerPayout({ importDue: 0n, gen8Due: 200n, gen8Room: 0n, cap: 10_000n }), { amount: 0n, importPart: 0n, gen8Part: 0n });
+  assert.deepEqual(splitPartnerPayout({ importDue: -5n, gen8Due: -5n, gen8Room: -5n, cap: -5n }), { amount: 0n, importPart: 0n, gen8Part: 0n }, "no negative amounts");
+  assert.equal(importFeeEvmSettings(4663, { IMPORT_FEE_VAULT_4663: VAULT })!.gen8Send, false, "gen-8 payouts send only when GEN8_PARTNER_PAYOUT_SEND=true");
+  assert.equal(importFeeEvmSettings(4663, { IMPORT_FEE_VAULT_4663: VAULT, GEN8_PARTNER_PAYOUT_SEND: "true" })!.gen8Send, true);
+});
+
+test("gen-8: a due with no import revenue is paid from our share (gen8_raw), stored before send, once; the sweep takes only the rest", async () => {
+  const db = fakeDb({ partners: [cryptic()], halves: 1_000n, gen8: { earned: { crypticpump: 400n } } });
+  const chain = fakeChain({ balance: 1_000n });
+  chain.atBroadcast.push(() => {
+    const t = db.state.transfers.at(-1)!;
+    assert.equal(t.status, "sending");
+    assert.equal(t.kind, "partner");
+    assert.equal(t.gen8_raw, 400n, "the gen-8 part is recorded with the row");
+  });
+  const out = await pass(db, chain, true, g8settings);
+  assert.deepEqual(out.partnerPayouts.map((p) => [p.partner, p.amount, p.gen8Amount]), [["crypticpump", "400", "400"]]);
+  assert.equal(out.gen8?.roomWei, "1000");
+  assert.equal(out.sweep, null);
+  chain.atBroadcast.length = 0;
+  chain.mine();
+  const second = await pass(db, chain, true, g8settings);
+  assert.equal(second.resolved!.landed, 1);
+  assert.equal(second.partnerPayouts.length, 0, "double run: nothing paid twice");
+  assert.equal(second.sweep?.amount, "600", "1000 of our share - 400 gen-8 already paid from it");
+  chain.mine();
+  await pass(db, chain, true, g8settings);
+  assert.deepEqual(chain.paid.map((p: any) => p.amount), [400n, 600n]);
+  assert.equal(chain.vault.balance, 0n);
+});
+
+test("gen-8: vault short -> pays only the free share, the rest waits (no creator money), a verified Safe top-up pays it", async () => {
+  // Creators are owed 2000 (unclaimed import: not payable, still a liability); our share is 100; the vault holds exactly that.
+  const db = fakeDb({ accruals: accruals([1_000n, 1_000n]), partners: [cryptic()], halves: 100n, gen8: { earned: { crypticpump: 500n } } });
+  const chain = fakeChain({ balance: 2_100n });
+  chain.vaultAdmin = async () => SAFE;
+  const first = await pass(db, chain, true, g8settings);
+  assert.deepEqual(first.partnerPayouts.map((p) => [p.amount, p.gen8Amount]), [["100", "100"]], "only the free 100");
+  assert.ok(first.skipped.some((s) => /gen-8 share 400 waits; the vault's free MemeWarzone share is 100/.test(s)));
+  chain.mine();
+  const second = await pass(db, chain, true, g8settings);
+  assert.equal(second.partnerPayouts.length, 0);
+  assert.equal(second.gen8?.roomWei, "0");
+  assert.deepEqual(second.gen8?.planned, [{ partner: "crypticpump", dueWei: "400", payableWei: "0" }]);
+  assert.equal(second.sweep, null, "nothing of ours left to sweep: the 400 is reserved");
+  assert.equal(chain.vault.balance, 2_000n, "the creators' 2000 is untouched");
+  // The Safe tops up 400; the founder records the hash. Wrong rows are rejected, never counted.
+  const good = "0x" + "a".repeat(64);
+  const wrongAmount = "0x" + "b".repeat(64);
+  const notSafe = "0x" + "c".repeat(64);
+  const feeTx = "0x" + "d".repeat(64);
+  const db2 = fakeDb({ accruals: accruals([1_000n, 1_000n]), partners: [cryptic()], halves: 100n, gen8: { earned: { crypticpump: 500n }, feeTxs: [feeTx], topups: [{ tx_hash: good, amount_raw: 400n }, { tx_hash: wrongAmount, amount_raw: 999n }, { tx_hash: notSafe, amount_raw: 400n }, { tx_hash: feeTx, amount_raw: 400n }] } });
+  db2.state.transfers.push(...db.state.transfers.map((t: any) => ({ ...t })));
+  chain.vault.balance += 400n;
+  chain.vaultDeposits = async (hash: string) => ({ status: 1, deposits: [{ from: hash === notSafe ? OWNER : SAFE, amount: 400n }] });
+  const dry = await pass(db2, chain, false, g8settings);
+  assert.equal(dry.gen8?.topUpsWei, "400", "dry run: checked in memory");
+  assert.ok(db2.state.topups.every((t: any) => t.status === "pending"), "dry run writes nothing");
+  const third = await pass(db2, chain, true, g8settings);
+  assert.deepEqual(db2.state.topups.map((t: any) => t.status), ["verified", "rejected", "rejected", "rejected"]);
+  assert.ok(third.skipped.some((s) => /is an import fee row/.test(s)));
+  assert.deepEqual(third.partnerPayouts.map((p) => [p.amount, p.gen8Amount]), [["400", "400"]]);
+  chain.mine();
+  await pass(db2, chain, true, g8settings);
+  assert.equal(chain.paid.reduce((n: bigint, p: any) => n + p.amount, 0n), 500n, "exactly what was earned");
+  assert.equal(chain.vault.balance, 2_000n, "creator money never moved");
+});
+
+test("gen-8: creator dues above the balance -> no gen-8 payout and no sweep", async () => {
+  const db = fakeDb({ accruals: accruals([5_000n]), partners: [cryptic()], halves: 1_000n, gen8: { earned: { crypticpump: 500n } } });
+  const out = await pass(db, fakeChain({ balance: 3_000n }), true, g8settings);
+  assert.equal(out.partnerPayouts.length, 0);
+  assert.equal(out.gen8?.roomWei, "0");
+  assert.equal(out.sweep, null);
+});
+
+test("gen-8: import and gen-8 parts in one payout; caps take the import part first; parts are counted apart afterwards", async () => {
+  const earned: Record<string, bigint> = { crypticpump: 300n };
+  const db = fakeDb({ partners: [cryptic()], partnerEarned: earned, halves: 1_000n, gen8: { earned: { crypticpump: 200n } } });
+  const chain = fakeChain({ balance: 1_300n, maxPayoutPerTx: 250n });
+  const first = await pass(db, chain, true, g8settings);
+  assert.deepEqual(first.partnerPayouts.map((p) => [p.amount, p.gen8Amount]), [["250", "0"]], "import first within the per-payout cap");
+  assert.equal(db.state.transfers[0].gen8_raw, 0n);
+  chain.mine();
+  const second = await pass(db, chain, true, g8settings);
+  assert.deepEqual(second.partnerPayouts.map((p) => [p.amount, p.gen8Amount]), [["250", "200"]], "50 import + 200 gen-8");
+  chain.mine();
+  // More import fees arrive: only the import part is due; the gen-8 part stays paid.
+  earned.crypticpump = 420n;
+  const third = await pass(db, chain, true, g8settings);
+  assert.deepEqual(third.partnerPayouts.map((p) => [p.amount, p.gen8Amount]), [["120", "0"]]);
+  chain.mine();
+  const fourth = await pass(db, chain, true, g8settings);
+  assert.equal(fourth.partnerPayouts.length, 0);
+  assert.equal(fourth.sweep?.amount, "250", "1000 of ours - 200 gen-8, capped at maxPayoutPerTx 250");
+  const partnerSent = sentTransfers(db);
+  assert.equal(partnerSent.reduce((n: bigint, t: any) => n + t.amount_raw, 0n), 620n, "420 import + 200 gen-8");
+  assert.equal(partnerSent.reduce((n: bigint, t: any) => n + t.gen8_raw, 0n), 200n);
+});
+
+test("gen-8: GEN8_PARTNER_PAYOUT_SEND off lists the gen-8 part and pays only the import part; the sweep still reserves it", async () => {
+  const db = fakeDb({ partners: [cryptic()], partnerEarned: { crypticpump: 300n }, halves: 1_000n, gen8: { earned: { crypticpump: 200n } } });
+  const chain = fakeChain({ balance: 1_300n });
+  const out = await pass(db, chain, true, { ...g8settings, gen8Send: false });
+  assert.deepEqual(out.partnerPayouts.map((p) => [p.amount, p.gen8Amount]), [["300", "0"]]);
+  assert.deepEqual(out.gen8?.planned, [{ partner: "crypticpump", dueWei: "200", payableWei: "200" }]);
+  chain.mine();
+  const next = await pass(db, chain, true, { ...g8settings, gen8Send: false });
+  assert.equal(next.sweep?.amount, "800", "1000 - the 200 still owed");
+  chain.mine();
+  await pass(db, chain, true, { ...g8settings, gen8Send: false });
+  assert.equal(chain.vault.balance, 200n, "the partner's 200 stays in the vault");
+});
+
+test("gen-8: an inactive partner is still paid what it earned; a contract wallet is never paid and its due stays reserved", async () => {
+  const contract = "0x3334567890123456789012345678901234567890";
+  const db = fakeDb({ partners: [cryptic({ active: false }), cryptic({ id: "boxed", payout_wallet: contract })], halves: 1_000n, gen8: { earned: { crypticpump: 150n, boxed: 300n } } });
+  const chain = fakeChain({ balance: 1_000n, contracts: [contract] });
+  const out = await pass(db, chain, true, g8settings);
+  assert.deepEqual(out.partnerPayouts.map((p) => [p.partner, p.amount]), [["crypticpump", "150"]]);
+  assert.ok(out.skipped.some((s) => /partner boxed: payout wallet .* is a contract/.test(s)));
+  chain.mine();
+  const next = await pass(db, chain, true, g8settings);
+  assert.equal(next.sweep?.amount, "550", "1000 - 150 paid - 300 reserved for the contract-wallet partner");
+});
+
+test("gen-8: dry run reads only; without the migration the pass is unchanged (no gen8 block, no gen8_raw written)", async () => {
+  const db = fakeDb({ accruals: accruals([500n]), owners: [verified()], partners: [cryptic()], halves: 1_000n, gen8: { earned: { crypticpump: 300n } } });
+  const dry = await pass(db, fakeChain({ balance: 2_000n }), false, g8settings);
+  assert.equal(dry.payouts.length, 1);
+  assert.deepEqual(dry.partnerPayouts.map((p) => [p.amount, p.gen8Amount, p.hash]), [["300", "300", null]]);
+  assert.ok(db.calls.every((sql) => !/^(insert|update|begin)/i.test(sql)), "read-only");
+  const off = await pass(fakeDb({ partners: [cryptic()], partnerEarned: { crypticpump: 300n }, halves: 1_000n }), fakeChain({}), true, g8settings);
+  assert.equal(off.gen8, undefined);
+  assert.deepEqual(off.partnerPayouts.map((p) => [p.amount, p.gen8Amount]), [["300", undefined]]);
 });
