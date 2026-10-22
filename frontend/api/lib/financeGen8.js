@@ -25,6 +25,13 @@
  * -> the landed transaction's to / input / value -> the same fingerprint -> import_swap_fingerprints.partner_id. A
  * forged referrer cannot match a fingerprint the API did not record. The indexer needs nothing new: it already stores
  * tx_hash and referrer on every HookFee row.
+ *
+ * Ledger (2026-10-22, migration 20261022_000010): the indexer (realtime-indexer/src/evm/gen8PartnerFees.ts) writes the
+ * same attribution into gen8_partner_fees, and the import payout worker pays it from the chain's ImportFeeVault out of
+ * MemeWarzone's import share (import_fee_transfers kind 'partner', gen8_raw = the gen-8 part). Once the indexer has run on
+ * a chain (a gen8_partner_fee_cursors row), the partner block reads earned / paid / due from the ledger and makes no RPC
+ * call; before that it falls back to gen8PartnerAttribution. The indexer's copy of gen8PartnerShareRaw is pinned to this
+ * one by realtime-indexer/src/tests/gen8PartnerFees.test.ts.
  */
 import { ethers } from "ethers";
 import { GEN8_REWARD_SOURCE } from "../../shared/evmGen8.mjs";
@@ -92,6 +99,71 @@ export async function gen8PartnerAttribution({ db, chainId, hook, provider = nul
   }
   out.attributedWei = total.toString();
   return out;
+}
+
+/**
+ * The gen-8 partner ledger of a chain: earned (gen8_partner_fees), paid (landed) and sending (in flight) gen8_raw of the
+ * partner payouts, due = earned - paid - sending (never negative). null until the migration is applied and the indexer
+ * has run on this chain (no cursor row), so the caller can fall back to the RPC report.
+ */
+export async function gen8PartnerLedger({ db, chainId, hook }) {
+  const probe = await db.query(
+    `select to_regclass('public.gen8_partner_fees') is not null and to_regclass('public.gen8_partner_fee_cursors') is not null as ledger,
+            exists (select 1 from information_schema.columns
+                     where table_schema = 'public' and table_name = 'import_fee_transfers' and column_name = 'gen8_raw') as split`,
+  );
+  if (probe.rows[0]?.ledger !== true) return null;
+  const cursorRow = await db.query(`select last_accrual_id::text as last from public.gen8_partner_fee_cursors where chain_id = $1 and hook_address = $2`, [Number(chainId), String(hook).toLowerCase()]);
+  if (!cursorRow.rows.length) return null;
+  const cursor = cursorRow.rows[0].last;
+  const earned = await db.query(
+    `select partner_id, count(*)::int as swaps, coalesce(sum(curve_amount), 0)::text as volume, coalesce(sum(partner_raw), 0)::text as earned
+       from public.gen8_partner_fees where chain_id = $1 group by partner_id order by partner_id`,
+    [Number(chainId)],
+  );
+  const paid = probe.rows[0]?.split === true
+    ? await db.query(
+        `select partner_id, status, coalesce(sum(gen8_raw), 0)::text as amount
+           from public.import_fee_transfers
+          where chain_id = $1 and kind = 'partner' and gen8_raw > 0 and status in ('sending', 'landed') and partner_id is not null
+          group by partner_id, status`,
+        [Number(chainId)],
+      )
+    : { rows: [] };
+  const checked = await db.query(
+    `select count(*) filter (where id <= $3)::int as checked, count(*) filter (where id > $3)::int as unchecked
+       from public.evm_gen8_fee_accruals
+      where chain_id = $1 and hook_address = $2 and kind = 'trade' and phase = 'post' and lower(coalesce(referrer, '')) = $4`,
+    [Number(chainId), String(hook).toLowerCase(), cursor, GEN8_REFERRER_WIDGET.toLowerCase()],
+  );
+  const byPartner = {};
+  const entry = (id) => (byPartner[id] ||= { swaps: 0, volumeWei: "0", partnerWei: "0", paidWei: "0", sendingWei: "0", dueWei: "0" });
+  for (const r of earned.rows) Object.assign(entry(String(r.partner_id)), { swaps: Number(r.swaps), volumeWei: str(r.volume), partnerWei: str(r.earned) });
+  for (const r of paid.rows) {
+    const e = entry(String(r.partner_id));
+    if (r.status === "landed") e.paidWei = str(r.amount);
+    else e.sendingWei = str(r.amount);
+  }
+  let earnedWei = 0n, paidWei = 0n, sendingWei = 0n, dueWei = 0n;
+  for (const e of Object.values(byPartner)) {
+    const due = BigInt(e.partnerWei) - BigInt(e.paidWei) - BigInt(e.sendingWei);
+    e.dueWei = (due > 0n ? due : 0n).toString();
+    earnedWei += BigInt(e.partnerWei);
+    paidWei += BigInt(e.paidWei);
+    sendingWei += BigInt(e.sendingWei);
+    dueWei += BigInt(e.dueWei);
+  }
+  return {
+    available: true,
+    cursor: Number(cursor),
+    checked: Number(checked.rows[0]?.checked || 0),
+    unchecked: Number(checked.rows[0]?.unchecked || 0),
+    earnedWei: earnedWei.toString(),
+    paidWei: paidWei.toString(),
+    sendingWei: sendingWei.toString(),
+    dueWei: dueWei.toString(),
+    byPartner,
+  };
 }
 
 /** Revenue lane spec (financeRevenueLanes.js LANE_SPECS shape): protocol share of post-graduation gen-8 trades. */
@@ -231,7 +303,11 @@ export async function buildGen8Finance({ db, chainId, getProvider = null, env = 
     const routerAccrued = BigInt(lanes.trade_bonding?.routerWei || 0) + BigInt(lanes.trade_post?.routerWei || 0) + BigInt(lanes.graduation?.routerWei || 0);
     const routerClaimed = BigInt(claimed.RouterClaimed?.amountWei || 0);
     const provider = getProvider ? await getProvider(Number(chainId)).catch(() => null) : null;
-    const partnerLink = await gen8PartnerAttribution({ db, chainId, hook: cfg.hook, provider }).catch((error) => ({ error: String(error?.message || error) }));
+    const partnerLedger = await gen8PartnerLedger({ db, chainId, hook: cfg.hook }).catch((error) => ({ error: String(error?.message || error) }));
+    const ledgerReady = Boolean(partnerLedger?.available);
+    const partnerLink = ledgerReady
+      ? { attributedWei: partnerLedger.earnedWei, byPartner: partnerLedger.byPartner, checked: partnerLedger.checked, unchecked: partnerLedger.unchecked }
+      : await gen8PartnerAttribution({ db, chainId, hook: cfg.hook, provider }).catch((error) => ({ error: String(error?.message || error) }));
 
     return {
       ...base,
@@ -246,7 +322,12 @@ export async function buildGen8Finance({ db, chainId, getProvider = null, env = 
         checkedSwaps: partnerLink.checked ?? 0,
         uncheckedSwaps: partnerLink.unchecked ?? 0,
         ...(partnerLink.error ? { error: partnerLink.error } : {}),
-        note: "Widget swaps after graduation, matched to the partner by the fingerprint the API recorded when it built them (api/gen8Swap.js). Paid off chain from MemeWarzone's 0.5%.",
+        ledger: ledgerReady
+          ? { available: true, earnedWei: partnerLedger.earnedWei, paidWei: partnerLedger.paidWei, sendingWei: partnerLedger.sendingWei, dueWei: partnerLedger.dueWei, cursor: partnerLedger.cursor }
+          : { available: false, ...(partnerLedger?.error ? { error: partnerLedger.error } : {}) },
+        note: ledgerReady
+          ? "Widget swaps after graduation, matched to the partner by the fingerprint the API recorded when it built them (api/gen8Swap.js), from the gen8_partner_fees ledger. Paid from the chain's ImportFeeVault out of MemeWarzone's import share."
+          : "Widget swaps after graduation, matched to the partner by the fingerprint the API recorded when it built them (api/gen8Swap.js). Paid off chain from MemeWarzone's 0.5%.",
       },
       runs,
       claims: claimed,
