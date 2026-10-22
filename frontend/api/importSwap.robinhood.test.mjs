@@ -58,7 +58,7 @@ function fakeProvider({ erc20Allowance = 0n, permit2Amount = 0n, permit2Expirati
   return provider;
 }
 
-const deps = (provider, extra = {}) => ({ env: SPLIT_ENV, getProvider: async () => provider, nowSec: NOW, readPartner: async (id) => (id === "testpartner" ? { id } : null), rememberPartnerSwap: async () => {}, ...extra });
+const deps = (provider, extra = {}) => ({ env: SPLIT_ENV, getProvider: async () => provider, nowSec: NOW, deadlineJitterSec: 0, readPartner: async (id) => (id === "testpartner" ? { id } : null), rememberPartnerSwap: async () => {}, ...extra });
 
 test("fee terms: split mode only (1% to the ImportFeeVault, half to the creator); anything else is refused with 503", () => {
   const terms = api.robinhoodImportTerms(SPLIT_ENV);
@@ -228,4 +228,24 @@ test("readSwapInput: 4663 takes an EVM token (lowercased), never WETH; other cha
   assert.throws(() => api.readSwapInput({ chainId: 4663, side: "buy", token: app.WETH_4663 }), /Invalid Robinhood/);
   assert.throws(() => api.readSwapInput({ chainId: 46630, side: "buy", token: TOKEN }), /Solana, BNB Chain and Robinhood Chain/);
   assert.deepEqual(api.readSwapInput({ chainId: 56, side: "sell", token: TOKEN }), { chainId: 56, side: "sell", token: TOKEN.toLowerCase() });
+});
+
+test("deadline jitter: the widget's builds get a random 0..3599 s on top of the app's 20 minutes, so two wallets never share build bytes by timing", async () => {
+  const { widgetDeadlineJitter } = await import("./lib/widgetDeadline.js");
+  assert.equal(widgetDeadlineJitter({ deadlineJitterSec: 0 }), 0);
+  assert.throws(() => widgetDeadlineJitter({ deadlineJitterSec: 3600 }), /0 to 3599/);
+  const p = fakeProvider();
+  const random = { ...deps(p) };
+  delete random.deadlineJitterSec;
+  const datas = new Set();
+  for (let i = 0; i < 8; i += 1) {
+    const built = await api.robinhoodBuildCore({ token: TOKEN, side: "buy", wallet: WALLET.address, amountRaw: "10000000000000000" }, random);
+    const deadline = BigInt(built.deadline);
+    assert.ok(deadline >= BigInt(NOW + 1200) && deadline < BigInt(NOW + 1200 + 3600), `deadline ${deadline}`);
+    datas.add(built.data);
+  }
+  assert.ok(datas.size > 1, "builds in the same second differ");
+  const fs = await import("node:fs");
+  const gen8 = fs.readFileSync(new URL("./gen8Swap.js", import.meta.url), "utf8");
+  assert.match(gen8, /deadline: BigInt\(nowSec \+ GEN8_SWAP_DEADLINE_SECONDS \+ widgetDeadlineJitter\(deps\)\)/, "gen-8 widget builds too");
 });

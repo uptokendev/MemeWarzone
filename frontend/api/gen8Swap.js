@@ -48,6 +48,7 @@ import {
 import { gen8ConfigFor } from "./lib/evmGen8Config.js";
 import { gen8LaunchReadiness, gen8TradeGap } from "../shared/gen8LaunchReadiness.mjs";
 import { evmFingerprint } from "./lib/importSwapFingerprint.js";
+import { widgetDeadlineJitter } from "./lib/widgetDeadline.js";
 
 const HOOK_ABI = [
   "function pools(bytes32) view returns (address creator, uint40 openAt, bool graduated, int24 tickGrad, int24 tickStart, uint128 liqA, uint128 liqB, uint160 sqrtGrad, tuple(uint16 bondingBps, uint16 postBps, uint16 creatorPostBps, uint16 sniperStartBps, uint16 creatorBondingBps) fees, uint40 graduatedAt)",
@@ -317,7 +318,9 @@ export async function gen8SwapBuildCore(input, deps = {}) {
     exactIn: true,
     amount: amountIn,
     limit: BigInt(quote.minAmountOut),
-    deadline: BigInt(nowSec + GEN8_SWAP_DEADLINE_SECONDS),
+    // Random extra 0..3599 s (never shorter than before): two wallets that build the same swap in the same second get
+    // different bytes, so a recorded fingerprint names one build (and finance also checks the landed wallet).
+    deadline: BigInt(nowSec + GEN8_SWAP_DEADLINE_SECONDS + widgetDeadlineJitter(deps)),
     hookData: gen8HookData(GEN8_REFERRER_WIDGET),
     permit,
   });

@@ -37,6 +37,7 @@ import {
   quoteImportSwap4663,
 } from "../src/lib/robinhoodImportSwap.mjs";
 import { PERMIT2_ABI, PERMIT2_ADDRESS, gen8PriceImpactBps, gen8ReferenceAmount, gen8SellSetup } from "../shared/evmGen8Swap.mjs";
+import { widgetDeadlineJitter } from "./lib/widgetDeadline.js";
 
 export const IMPORT_SWAP_FEE_BPS = Math.max(0, Math.min(200, Number(process.env.IMPORT_SWAP_FEE_BPS || 50)));
 
@@ -661,7 +662,9 @@ export async function robinhoodBuildCore({ token, side, wallet, amountRaw, slipp
   const call = side === "buy"
     ? encodeImportBuy({ token: coin, fee, amountInWei: amount, minTokensOut: minOut, feeReceiver: terms.feeReceiver, feeBps: terms.feeBps })
     : encodeImportSell({ token: coin, fee, amountIn: amount, minGrossEthOut: minOut, permit: null, feeReceiver: terms.feeReceiver, feeBps: terms.feeBps });
-  const deadline = BigInt(nowSec + ROBINHOOD_DEADLINE_SECONDS);
+  // Random extra 0..3599 s on top of the app's 20 minutes (never shorter): two wallets building the same swap in the
+  // same second get different bytes, so the recorded fingerprint names one build (finance also checks the wallet).
+  const deadline = BigInt(nowSec + ROBINHOOD_DEADLINE_SECONDS + widgetDeadlineJitter(deps));
   const data = UNIVERSAL_ROUTER_IFACE.encodeFunctionData("execute", [call.commands, call.inputs, deadline]);
   const value = call.value.toString();
   assertRobinhoodImportCall({ data, value, side, token: coin, amountIn: amount, terms });
