@@ -10,7 +10,10 @@
  *   post-graduation trade accruals (evm_gen8_fee_accruals kind 'trade', phase 'post') of the configured hook whose
  *   hookData referrer is the widget tag (a pre-filter only: a forged tag cannot match a fingerprint the API did not
  *   record), after the cursor, oldest first, at most `batch` per run
- *   -> the landed transaction's to / input / value (RPC) -> the same fingerprint -> the partner id
+ *   -> the landed transaction's to / input / value (RPC) -> the same fingerprint -> the partner id, ONLY when the wallet
+ *      recorded with that build equals the landed transaction's sender (tx.from). A widget build can be byte-identical
+ *      for two wallets (recipient = MSG_SENDER, deadline per second) and import_swap_fingerprints is first-writer-wins,
+ *      so a fingerprint alone would let a scripted partner claim another wallet's swap. A NULL stored wallet never matches.
  *   -> the partner must have an ACTIVE row on this chain (a partner switched off earns nothing on later swaps; what it
  *      earned before stays owed, as for imports)
  *   -> partner_raw = floor(curve_amount x 25 / 10000), never above the accrual's protocol slice.
@@ -78,7 +81,7 @@ export type Gen8PartnerAttributionResult = {
 export const STALL_WARN_AFTER = 10;
 const STALL_WARN_EVERY_MS = 3_600_000;
 
-export type Gen8TxReader = { getTransaction(hash: string): Promise<{ to?: string | null; data?: string; input?: string; value?: bigint | string | number } | null> };
+export type Gen8TxReader = { getTransaction(hash: string): Promise<{ from?: string | null; to?: string | null; data?: string; input?: string; value?: bigint | string | number } | null> };
 
 async function inTransaction<T>(db: Pool, fn: (client: Queryable) => Promise<T>): Promise<T> {
   const client = typeof db.connect === "function" ? await db.connect() : db;
@@ -164,6 +167,7 @@ export async function runGen8PartnerAttributionOnce(input: {
 
   // Read each transaction once, in id order; stop at the first failed read (retried next run).
   const fpByTx = new Map<string, string | null>();
+  const senderByTx = new Map<string, string>();
   let usable = rows.length;
   for (let i = 0; i < rows.length; i += 1) {
     const hash = String(rows[i].tx_hash).toLowerCase();
@@ -172,6 +176,7 @@ export async function runGen8PartnerAttributionOnce(input: {
       const tx = await provider.getTransaction(hash);
       if (!tx) throw new Error("transaction not found on this RPC");
       fpByTx.set(hash, evmFingerprint(tx.to, tx.data ?? tx.input, tx.value));
+      senderByTx.set(hash, String(tx.from ?? "").toLowerCase());
     } catch (error) {
       const failures = cursorRow?.stalled_tx_hash === hash ? Number(cursorRow.stalled_failures || 0) + 1 : 1;
       out.retry = { txHash: hash, accrualId: Number(rows[i].id), error: errorText(error), consecutiveFailures: failures };
@@ -187,18 +192,21 @@ export async function runGen8PartnerAttributionOnce(input: {
   }
 
   const fingerprints = [...new Set([...fpByTx.values()].filter((fp): fp is string => Boolean(fp)))];
-  const partnerByFp = new Map<string, string>();
+  const partnerByFp = new Map<string, { partnerId: string; wallet: string | null }>();
   if (fingerprints.length) {
-    const found = await db.query(`select fingerprint, partner_id from public.import_swap_fingerprints where chain_id = $1 and fingerprint = any($2::text[])`, [chainId, fingerprints]);
-    for (const row of found.rows) partnerByFp.set(String(row.fingerprint), String(row.partner_id));
+    const found = await db.query(`select fingerprint, partner_id, wallet from public.import_swap_fingerprints where chain_id = $1 and fingerprint = any($2::text[])`, [chainId, fingerprints]);
+    for (const row of found.rows) partnerByFp.set(String(row.fingerprint), { partnerId: String(row.partner_id), wallet: row.wallet == null ? null : String(row.wallet).toLowerCase() });
   }
 
   const ledger: Array<{ row: any; partnerId: string; fingerprint: string; share: bigint }> = [];
   for (const row of done) {
     const fingerprint = fpByTx.get(String(row.tx_hash).toLowerCase());
     if (!fingerprint) continue;
-    const partnerId = partnerByFp.get(fingerprint);
-    if (!partnerId || !active.has(partnerId)) continue;
+    const hit = partnerByFp.get(fingerprint);
+    const sender = senderByTx.get(String(row.tx_hash).toLowerCase());
+    if (!hit || !hit.wallet || !sender || hit.wallet !== sender) continue; // the build's wallet must be the swap's sender
+    const partnerId = hit.partnerId;
+    if (!active.has(partnerId)) continue;
     const share = gen8PartnerShareRaw({ curveAmount: row.curve_amount, protocol: row.protocol });
     if (share <= 0n) continue;
     ledger.push({ row, partnerId, fingerprint, share });

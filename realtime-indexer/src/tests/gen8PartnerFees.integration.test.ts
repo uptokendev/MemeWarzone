@@ -26,6 +26,9 @@ const WIDGET = "0x000000000000000000000000000000006d777a77";
 const VAULT = "0x41076e191509d4e307a8f8b40d432b9aaa36f953";
 const OPERATOR = "0x00000000000000000000000000000000000000Ee";
 const PARTNER_WALLET = "0x4434567890123456789012345678901234567890";
+const TRADER_CHECKSUM = "0x6634567890123456789012345678901234567890";
+const TRADER = TRADER_CHECKSUM.toLowerCase();
+const OTHER_WALLET = "0x7734567890123456789012345678901234567890";
 const OLD_WALLET = "0x5534567890123456789012345678901234567890";
 const milli = (n: number) => BigInt(n) * 10n ** 15n;
 const hash = (n: number) => "0x" + n.toString(16).padStart(64, "0");
@@ -60,10 +63,13 @@ test("gen-8 partner ledger + payout on real SQL", { skip: runnable ? false : "Po
       [chainId, HOOK, POOL, COIN, tx, nextLog++, phase, referrer, curve.toString(), (curve / 100n).toString(), protocol.toString(), ageSec],
     );
   };
-  const txs: Record<string, { to: string; data: string; value: bigint }> = {};
-  const build = (tx: string, data: string, partner: string | null) => {
-    txs[tx] = { to: ROUTER, data, value: 0n };
-    return partner ? db.query(`insert into public.import_swap_fingerprints (fingerprint, chain_id, partner_id) values ($1, $2, $3)`, [evmFingerprint(ROUTER, data, 0n), CHAIN, partner]) : null;
+  const txs: Record<string, { from: string; to: string; data: string; value: bigint }> = {};
+  // The API records the build with the wallet it was built for (checksummed here: matching is case-insensitive).
+  const build = (tx: string, data: string, partner: string | null, from = TRADER, recordedWallet: string | null = TRADER_CHECKSUM) => {
+    txs[tx] = { from, to: ROUTER, data, value: 0n };
+    return partner
+      ? db.query(`insert into public.import_swap_fingerprints (fingerprint, chain_id, partner_id, wallet) values ($1, $2, $3, $4) on conflict (fingerprint) do nothing`, [evmFingerprint(ROUTER, data, 0n), CHAIN, partner, recordedWallet])
+      : null;
   };
   await db.query(
     `insert into public.import_fee_partners (id, chain_id, name, payout_wallet, active) values ('crypticpump', $1, 'CrypticPump', $2, true), ('oldie', $1, 'Old', $3, false)`,
@@ -94,7 +100,7 @@ test("gen-8 partner ledger + payout on real SQL", { skip: runnable ? false : "Po
     async getTransaction(h: string) {
       lookedUp.push(h);
       if (h === G && failG) throw new Error("rpc timeout");
-      return txs[h] ? { to: txs[h].to, data: txs[h].data, value: txs[h].value } : null;
+      return txs[h] ? { from: txs[h].from, to: txs[h].to, data: txs[h].data, value: txs[h].value } : null;
     },
   };
   const ledger = async () => (await db.query(`select tx_hash, partner_id, partner_raw::text as raw from public.gen8_partner_fees order by accrual_id`)).rows.map((r: any) => [r.tx_hash, r.partner_id, BigInt(r.raw)]);
@@ -286,5 +292,28 @@ test("gen-8 partner ledger + payout on real SQL", { skip: runnable ? false : "Po
     } finally {
       console.error = original;
     }
+  });
+
+  await t.test("wallet-bound: a build recorded for wallet A never pays for a byte-identical swap landed from wallet B", async () => {
+    const K = hash(0x4b4b), L = hash(0x4c4c), M = hash(0x4d4d);
+    // Same calldata (recipient = MSG_SENDER), so the same fingerprint; recorded once, for TRADER.
+    await build(K, "0x0b", "crypticpump", OTHER_WALLET);
+    await build(L, "0x0b", "crypticpump", TRADER);
+    await accrual(K, "post", WIDGET, milli(1000), milli(5));
+    await accrual(L, "post", WIDGET, milli(1000), milli(5));
+    // A build recorded without a wallet never matches.
+    await build(M, "0x0c", "crypticpump", TRADER, null);
+    await accrual(M, "post", WIDGET, milli(1000), milli(5));
+    const out = await runGen8PartnerAttributionOnce({ db, chainId: CHAIN, hook: HOOK, provider, settleSeconds: 0 });
+    assert.equal(out.retry, null);
+    assert.equal(out.inserted, 1);
+    const rows = await ledger();
+    assert.equal(rows.some(([tx]) => tx === K), false, "landed from B: no ledger row");
+    assert.equal(rows.some(([tx]) => tx === L), true, "landed from A: row");
+    assert.equal(rows.some(([tx]) => tx === M), false, "no stored wallet: no row");
+    const { gen8PartnerAttribution } = await import("../../../frontend/api/lib/financeGen8.js");
+    const report = await gen8PartnerAttribution({ db, chainId: CHAIN, hook: HOOK, provider });
+    assert.ok(report.rows.some((r: any) => r.txHash === L));
+    assert.ok(!report.rows.some((r: any) => r.txHash === K || r.txHash === M), "the API report applies the same wallet rule");
   });
 });

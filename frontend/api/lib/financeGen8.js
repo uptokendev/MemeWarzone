@@ -36,7 +36,7 @@
 import { ethers } from "ethers";
 import { GEN8_REWARD_SOURCE } from "../../shared/evmGen8.mjs";
 import { GEN8_REFERRER_WIDGET } from "../../shared/evmGen8Swap.mjs";
-import { evmFingerprint, partnersForFingerprints } from "./importSwapFingerprint.js";
+import { evmFingerprint } from "./importSwapFingerprint.js";
 import { gen8ConfigFor } from "./evmGen8Config.js";
 import { gen8Tables, isSchemaMissingError } from "./evmGen8Schema.js";
 
@@ -70,15 +70,28 @@ export async function gen8PartnerAttribution({ db, chainId, hook, provider = nul
     return out;
   }
   const fpByTx = new Map();
+  const senderByTx = new Map();
   for (const hash of [...new Set(rows.map((r) => String(r.tx_hash).toLowerCase()))]) {
     try {
       const tx = await provider.getTransaction(hash);
       fpByTx.set(hash, tx ? evmFingerprint(tx.to, tx.data, tx.value) : null);
+      if (tx) senderByTx.set(hash, String(tx.from ?? "").toLowerCase());
     } catch {
       fpByTx.set(hash, undefined);
     }
   }
-  const partners = await partnersForFingerprints(db, Number(chainId), [...fpByTx.values()].filter(Boolean));
+  // fingerprint -> { partnerId, wallet }. A build can be byte-identical for two wallets (recipient = MSG_SENDER), so
+  // the swap counts for the partner only when the wallet recorded with the build is the landed transaction's sender.
+  const partners = new Map();
+  const fingerprints = [...new Set([...fpByTx.values()].filter(Boolean))];
+  if (fingerprints.length) {
+    try {
+      const found = await db.query(`select fingerprint, partner_id, wallet from public.import_swap_fingerprints where chain_id = $1 and fingerprint = any($2::text[])`, [Number(chainId), fingerprints]);
+      for (const row of found.rows) partners.set(String(row.fingerprint), { partnerId: String(row.partner_id), wallet: row.wallet == null ? null : String(row.wallet).toLowerCase() });
+    } catch (error) {
+      if (error?.code !== "42P01") throw error;
+    }
+  }
   let total = 0n;
   for (const r of rows) {
     const fp = fpByTx.get(String(r.tx_hash).toLowerCase());
@@ -87,8 +100,10 @@ export async function gen8PartnerAttribution({ db, chainId, hook, provider = nul
       continue;
     }
     out.checked += 1;
-    const partnerId = fp ? partners.get(fp) : null;
-    if (!partnerId) continue;
+    const hit = fp ? partners.get(fp) : null;
+    const sender = senderByTx.get(String(r.tx_hash).toLowerCase());
+    if (!hit || !hit.wallet || !sender || hit.wallet !== sender) continue;
+    const partnerId = hit.partnerId;
     const share = gen8PartnerShareRaw({ curveAmount: r.curve_amount, protocol: r.protocol });
     total += share;
     const p = (out.byPartner[partnerId] ||= { swaps: 0, volumeWei: "0", partnerWei: "0" });

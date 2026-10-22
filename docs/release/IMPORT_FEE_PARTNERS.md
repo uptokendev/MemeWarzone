@@ -79,7 +79,8 @@ came through its widget, out of MemeWarzone's 0.50%. **Nothing during bonding.**
 - **Ledger** (`gen8_partner_fees`, written by the indexer, `realtime-indexer/src/evm/gen8PartnerFees.ts`): post-graduation
   trade accruals (`evm_gen8_fee_accruals`, phase `post`) with the widget referrer tag -> the landed transaction's
   to / input / value -> the fingerprint the API recorded when it built that partner's swap (`api/gen8Swap.js`) -> the
-  partner, if its row on that chain is **active**. Share = floor(volume x 25 / 10000), never above the trade's protocol
+  partner, if its row on that chain is **active** and the wallet recorded with the build is the landed transaction's
+  sender (a build can be byte-identical for two wallets; a build recorded without a wallet never counts). Share = floor(volume x 25 / 10000), never above the trade's protocol
   slice. A failed RPC read is retried on the next run, never recorded as "no partner". Re-runs insert nothing twice.
 - **Payout**: the existing EVM import worker pays it from the chain's **ImportFeeVault**, in the same partner payout as the
   import share (`import_fee_transfers` kind `partner`, `gen8_raw` = the gen-8 part), same operator key, caps, minimum,
