@@ -2,6 +2,7 @@
 // Read-only SQL only. No database import: callers inject `db` (the pg Pool interface:
 // `query(sql, params) -> { rows }`), so tests run on a fake. api/sitemap.js wires the real pool.
 import { ROUTE_RULES, canonicalForToken } from "../../shared/seoRoutes.mjs";
+import { HELP_ARTICLES, HELP_PATH, HELP_TOPICS } from "../../shared/helpContent.mjs";
 import {
   absoluteLoc,
   chunkEntries,
@@ -24,9 +25,12 @@ const ident = (v) => String(v ?? "").trim();
 const rowsOf = (result) => (result && Array.isArray(result.rows) ? result.rows : []);
 
 export function staticEntries() {
-  return ROUTE_RULES
+  const fixed = ROUTE_RULES
     .filter((r) => r.kind === "index" && !r.pattern.includes(":") && !r.pattern.includes("**"))
     .map((r) => ({ loc: absoluteLoc(r.pattern) }));
+  // Help Center topics and articles (shared/helpContent.mjs): static pages under /faq/<slug>.
+  const help = [...HELP_TOPICS.map((t) => t.id), ...HELP_ARTICLES.map((a) => a.slug)].map((slug) => ({ loc: absoluteLoc(`${HELP_PATH}/${slug}`) }));
+  return [...fixed, ...help];
 }
 
 function dedupe(entries) {

@@ -10,6 +10,9 @@ import {
   ABOUT_TITLE, aboutJsonLd,
 } from "../shared/aboutContent.mjs";
 import { COMPARE_PAGES, compareJsonLd } from "../shared/comparePages.mjs";
+import {
+  HELP_PATH, HELP_TITLE, HELP_DESCRIPTION, HELP_TOPICS, helpArticlesForTopic, helpHead, helpJsonLd, helpPopular, helpRelated,
+} from "../shared/helpContent.mjs";
 
 const BRAND = "MemeWarzone";
 const NOINDEX = "noindex,follow";
@@ -111,7 +114,47 @@ function compareBody(page) {
   html += h2("Sources") + `<ul>${page.sources.map((x) => `<li>${link(x.href, x.text)} (${esc(x.date)})</li>`).join("")}</ul>`;
   return { html, jsonLd: compareJsonLd(page) };
 }
+function helpArticleHtml(a) {
+  let html = (a.a || []).map((t) => p(t)).join("");
+  if (a.steps?.length) html += `<ol>${a.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>`;
+  if (a.bullets?.length) html += ul(a.bullets);
+  if (a.links?.length) html += `<p>${a.links.map((l) => link(l.href, l.text)).join(" ")}</p>`;
+  return html;
+}
+
+const helpLink = (slug, text) => link(`${HELP_PATH}/${slug}`, text);
+
+function helpIndexBody() {
+  let html = h1(HELP_TITLE) + p(HELP_DESCRIPTION);
+  const popular = helpPopular();
+  if (popular.length) html += h2("Popular questions") + `<ul>${popular.map((a) => `<li>${helpLink(a.slug, a.q)}</li>`).join("")}</ul>`;
+  for (const t of HELP_TOPICS) {
+    const list = helpArticlesForTopic(t.id);
+    html += h2(t.label) + p(t.description) + `<p>${helpLink(t.id, `All ${list.length} answers about ${t.label.toLowerCase()}`)}</p>`;
+    html += `<ul>${list.map((a) => `<li>${helpLink(a.slug, a.q)}</li>`).join("")}</ul>`;
+  }
+  return { html, jsonLd: helpJsonLd(null) };
+}
+
+function helpItemBody({ slug }) {
+  const head = helpHead(String(slug || ""));
+  if (!head) return { notFound: true };
+  const back = `<p>${link(HELP_PATH, HELP_TITLE)}</p>`;
+  let html;
+  if (head.kind === "topic") {
+    html = back + h1(head.topic.label) + p(head.topic.description);
+    for (const a of helpArticlesForTopic(head.topic.id)) html += h2(a.q) + helpArticleHtml(a) + `<p>${helpLink(a.slug, "Open this answer")}</p>`;
+  } else {
+    html = back + `<p>${helpLink(head.topic.id, head.topic.label)}</p>` + h1(head.article.q) + helpArticleHtml(head.article);
+    const related = helpRelated(head.article);
+    if (related.length) html += h2("Related questions") + `<ul>${related.map((a) => `<li>${helpLink(a.slug, a.q)}</li>`).join("")}</ul>`;
+  }
+  return { html, jsonLd: helpJsonLd(head), head: { title: head.title, description: head.description } };
+}
+
 const PAGE_BODIES = {
+  [HELP_PATH]: helpIndexBody,
+  [`${HELP_PATH}/:slug`]: helpItemBody,
   [ABOUT_PATH]: aboutBody,
   ...Object.fromEntries(COMPARE_PAGES.map((page) => [page.path, () => compareBody(page)])),
 };
@@ -254,9 +297,10 @@ export function createSeoRenderer({
       }), robots);
     }
 
-    const head = headForPath(path);
+    const page = rule && PAGE_BODIES[rule.pattern] ? PAGE_BODIES[rule.pattern](rule.params || {}) : null;
+    if (page?.notFound) return notFound(res, html);
+    const head = headForPath(path, page?.head || {});
     const title = titleOf(head.title);
-    const page = rule && PAGE_BODIES[rule.pattern] ? PAGE_BODIES[rule.pattern]() : null;
     return send(res, 200, injectSeo(html, {
       title,
       description: head.description || DEFAULT_DESCRIPTION,

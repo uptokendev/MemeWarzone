@@ -1,0 +1,42 @@
+# MemeWarzone
+
+> MemeWarzone is a memecoin launchpad on BNB Chain, Solana and Robinhood Chain. Coins launch on a bonding curve, graduate to a DEX and battle. MemeWarzone is a crypto platform. It has no connection to Call of Duty: Warzone or any other game.
+
+MemeWarzone is a memecoin launchpad with a social feed and a battle arena. It runs on BNB Chain, Solana and Robinhood Chain, and each coin lives on one chain.
+Coins launch on a bonding curve and graduate to a DEX pool with locked liquidity. Graduated coins, and coins imported from other launchpads, can then fight other coins in battles, tournaments and leagues.
+
+Live on BNB Chain, Solana, Robinhood Chain. Next: DogeOS. MemeWarzone is among the first launchpads invited onto DogeOS, which targets about 500,000 existing wallets.
+
+## Key pages
+
+- [About MemeWarzone](https://app.memewar.zone/about): what MemeWarzone is, battles, leagues, fees, contracts, roadmap and team
+- [Help Center](https://app.memewar.zone/faq): Answers about MemeWarzone: wallets, launching a coin, trading, graduation, battles, leagues, rewards, fees, imports, recruiters and safety.
+- [MemeWarzone vs Pump.fun](https://app.memewar.zone/memewarzone-vs-pumpfun): MemeWarzone vs Pump.fun: chains, trading fees, creator earnings, graduation, battles and leagues side by side, with sources checked in October 2026.
+- [Launch a coin](https://app.memewar.zone/create)
+- [Coins](https://app.memewar.zone/coins)
+- [Warzone battles](https://app.memewar.zone/warzone/battles)
+- [League standings](https://app.memewar.zone/league)
+- [Docs](https://docs.memewar.zone)
+
+## Help Center topics
+
+- [Getting started](https://app.memewar.zone/faq/getting-started): What MemeWarzone is, how to begin and where everything is.
+- [Wallets and chains](https://app.memewar.zone/faq/wallets): Connecting a wallet, switching chains and signing in.
+- [Create and launch](https://app.memewar.zone/faq/create): Launching a coin, drafts, scheduled launches and launch rules.
+- [Buying and selling](https://app.memewar.zone/faq/trading): Trading on the bonding curve and after graduation.
+- [Graduation](https://app.memewar.zone/faq/graduation): When a coin graduates, where it trades and what happens to liquidity.
+- [Fees and earnings](https://app.memewar.zone/faq/fees): Trading fees, the fee split, creator earnings and fee choices.
+- [Battles and tournaments](https://app.memewar.zone/faq/battles): Metrics and vote battles, Boosts, war pools and tournaments.
+- [Leagues](https://app.memewar.zone/faq/leagues): Weekly and monthly leagues and the Major War League.
+- [Rewards, claims and airdrops](https://app.memewar.zone/faq/rewards): What you can earn, how claims work and weekly airdrops.
+- [Importing coins](https://app.memewar.zone/faq/imports): Bringing a coin from another launchpad and claiming it.
+- [Recruiters and squads](https://app.memewar.zone/faq/recruiters): Referral links, recruiter earnings and squad pools.
+- [UpVotes and promotion](https://app.memewar.zone/faq/promotion): UpVotes, Featured lists, Stories and sponsorships.
+- [Profiles and the feed](https://app.memewar.zone/faq/social): Your profile, posts, follows and live streams.
+- [Safety and security](https://app.memewar.zone/faq/safety): Scams, impersonation, reporting abuse and keeping your wallet safe.
+- [Troubleshooting](https://app.memewar.zone/faq/troubleshooting): Failed transactions, wallet warnings and things that look wrong.
+
+## Optional
+
+- [Full text for AI tools](https://app.memewar.zone/llms-full.txt): About, comparisons and every Help Center answer in one file
+- [Sitemap](https://app.memewar.zone/sitemap.xml)

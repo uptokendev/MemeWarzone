@@ -1,0 +1,1629 @@
+# MemeWarzone: full text
+
+> MemeWarzone is a memecoin launchpad on BNB Chain, Solana and Robinhood Chain. Coins launch on a bonding curve, graduate to a DEX and battle. MemeWarzone is a crypto platform. It has no connection to Call of Duty: Warzone or any other game. Source: https://app.memewar.zone. Generated from the same content as the pages.
+
+# About MemeWarzone
+
+URL: https://app.memewar.zone/about
+
+MemeWarzone is a memecoin launchpad with a social feed and a battle arena. It runs on BNB Chain, Solana and Robinhood Chain, and each coin lives on one chain.
+
+Coins launch on a bonding curve and graduate to a DEX pool with locked liquidity. Graduated coins, and coins imported from other launchpads, can then fight other coins in battles, tournaments and leagues.
+
+Live on BNB Chain, Solana, Robinhood Chain. Next: DogeOS. MemeWarzone is among the first launchpads invited onto DogeOS, which targets about 500,000 existing wallets.
+
+## How a coin's life works
+
+- Launch: A creator picks a chain, sets the name, ticker, image and story, and deploys the coin on a bonding curve. No code is needed, and there is no platform fee to create a coin.
+- Trade: Anyone can buy and sell on the curve from the coin page. The price rises as the curve fills. A launch fee starts at 90% and falls to 2% over the first 60 seconds, to stop snipers.
+- Graduate: When the coin reaches its market cap target, $30K or $50K as the creator picked, the liquidity moves into a DEX pool and is locked for good. On BNB Chain and Robinhood Chain that pool is on Uniswap V4, on Solana it is on Meteora.
+- Compete: A graduated or imported coin can battle other coins in the Warzone and earn points in the leagues.
+
+Graduates to: BNB Chain: Uniswap V4, Robinhood Chain: Uniswap V4, Solana: Meteora
+
+On Solana, new coins launch on a Meteora Dynamic Bonding Curve, so they can be traded through Jupiter before they graduate.
+
+## Battles
+
+A battle puts two coins against each other for a set time. One coin's owner challenges another, and both agree on the type, the buy-in and the length. Each side pays the buy-in once both have agreed. The Warzone runs two kinds of battle.
+
+- Metrics battle (24 hours, 3 days, 7 days): Scored on changes in market cap, holders, volume and Boost points.
+- Vote battle (1 hour, 6 hours, 12 hours, 24 hours, 48 hours): Every wallet has one free vote worth 1 point. A Boost costs $1 and adds 1 point. A tie goes to Final Salvo, a short tie-breaker.
+
+Where the buy-ins go: 75% Winning coin's owner, 20% Major War League, 5% MemeWarzone.
+
+Where Boost money goes: 90% War pool, taken by the winning coin, 10% MemeWarzone.
+
+- A wallet can Boost twice per battle. Boosts close when the last 20% of the battle clock starts.
+- Prizes are not paid automatically. The owner of the winning coin claims them from the Command Center.
+- Tournaments run brackets with free votes and Boosts in every matchup. Some matchups end in a Final Salvo, where only free votes count, one per wallet per shot.
+
+## Leagues and rewards
+
+Weekly and monthly leagues rank coins and players in six categories. A weekly league runs from Monday 00:00 UTC to the next Monday. A monthly league runs from the first day of the month at 00:00 UTC to the first day of the next month.
+
+- When enough entrants qualify, at least the top 3 of a weekly league and the top 5 of a monthly league are paid. With more entrants, more ranks are paid.
+- The Major War League ranks graduated coins by battle points. It is funded by 20% of battle buy-ins, and the top 8 coins play the quarterly finals.
+- Weekly airdrops on each chain reward active traders and creators whose coins draw real buyers. Eligibility looks at trading volume, the number of trades and activity on more than one day. The exact thresholds are not published.
+- Creator self-buys do not count for airdrops and flagged wallets are excluded. A winner sits out for 14 days. The airdrop week closes on Monday at 00:00 UTC, and unclaimed airdrops return to the pot after 60 days.
+- Prizes are paid in the chain's own coin and claimed from the Command Center.
+
+- Perfect Run: Coins that graduated with no sells on the curve. Monthly only.
+- Fastest Finish: The shortest time from launch to graduation.
+- Biggest Hit: The largest single buy on a bonding curve.
+- Top Earner: Trader profit and loss inside the bonding curve.
+- Crowd Favorite: UpVotes from unique voters.
+- Recruiter League: Referral score across all chains.
+
+## For creators
+
+- Every buy and sell on the bonding curve pays a 2% fee. The creator gets 5.6% of it, which is 0.112% of every trade. Coins launched before October 2026 earn 5%, which is 0.10%.
+- The creator also gets a reserve of 2% of the supply (20M tokens). On Solana it is released when the coin graduates. On BNB Chain and Robinhood Chain it is released no earlier than 1 hour after graduation, and only while the price is at or above the graduation price.
+- Imported coins pay a 1% swap fee on MemeWarzone: 0.5% to the coin's creator and 0.5% to MemeWarzone, on every chain.
+- Each coin has a Story: a full-screen page with the creator's own chapters and an automatic chronicle of the coin.
+- UpVotes cost $3 each and move a coin up a Featured list. Coins still on their curve are featured on the launchpad. Graduated and imported coins have their own UpVotes and are featured in the Warzone overview.
+- Coins that finished bonding on another launchpad, such as Pump.fun or Four.meme, can be imported. The owner claims an imported coin by wallet verification, by logging in with X, or through a manual review.
+
+## Recruiters and squads
+
+Recruiters bring traders to MemeWarzone with a referral link. A recruiter earns 12.5% of the trading fee from the wallets they bring in, which is 0.25% of each trade, and 15% of the graduation fee of coins those wallets create, which is 0.30%. OG recruiters earn 15% and 17.5%, which is 0.30% and 0.35%. The extra comes out of MemeWarzone's share, not from a higher fee.
+
+- A squad is a group of traders around a recruiter. 2.5% of the trading fee goes to a weekly squad pool, shared by eligible members based on what they contribute. It is not an equal or guaranteed payout.
+- Fair-play checks apply to recruiters and squads.
+
+## Profiles and the feed
+
+Every wallet has one profile, and it is the same on every chain. You can post, repost, quote, react and follow any coin or wallet on any chain. Only buying and selling depend on the chain you have selected.
+
+## How your money is handled
+
+- Buys and sells go from your wallet to the coin's contract. MemeWarzone does not hold your coins.
+- Trading fees are split inside the same transaction as the trade.
+- The BNB Chain and Robinhood Chain contracts are owned by a Safe multisig and cannot be changed after deployment. The Solana programs can only be upgraded through a Squads multisig.
+- Protocol earnings above a fixed cap move to a multisig wallet.
+
+## Contracts and audits
+
+These are the contracts that new coins on MemeWarzone use today. An external audit is pending on every chain.
+
+BNB Chain (External audit: pending):
+- Launcher: 0xCa64b78653d45232E679be19e2B8e24d72152C1f
+- Launch hook (Uniswap V4): 0xCb5c3265328cAe92Ef609E4bF3DE27a6c73668EC
+- Owner (Safe multisig): 0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7
+
+Robinhood Chain (External audit: pending):
+- Launcher: 0xCa64b78653d45232E679be19e2B8e24d72152C1f
+- Launch hook (Uniswap V4): 0x8c298A7Ab9640c377BEE1EFF67425956F96B28Ec
+- Owner (Safe multisig): 0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7
+
+Solana (External audit: pending):
+- Launchpad program: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+- Rewards treasury program: 2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX
+- Upgrade authority (Squads multisig): fk5YYWb4ppwbFqME8YRugirMSaNfhGgPP3GjfMbbfGv
+
+New Solana coins trade on Meteora's Dynamic Bonding Curve program, which Meteora runs.
+
+## What comes next
+
+- DogeOS: MemeWarzone is among the first launchpads invited onto DogeOS, which targets about 500,000 existing wallets.
+- More chains: More chains will follow DogeOS, with the same launchpad, battles and leagues on each.
+- Interchained DEX: A full interchained DEX. The first release covers the chains MemeWarzone runs on, then it opens up to more chains.
+
+## The team
+
+MemeWarzone is operated under Dutch law. You must be 18 or older to use it. Support and security questions go to support@memewar.zone. Legal questions go to legal@memewar.zone.
+
+- Patrick Klarenbeek, CEO
+- Sven Hoederdaal, CTO and Head of Development
+- Douglas Klepp, CSO
+
+## Good to know
+
+### Does MemeWarzone pay every holder of a coin?
+
+No. Rewards go to battle winners, league places, creators, recruiters, squad members and airdrop winners. There is no automatic payout to every holder.
+
+### Are rewards guaranteed?
+
+No. Rewards depend on taking part, eligibility, results and the size of each pool. Some details, such as the exact airdrop thresholds, are not published. Memecoins are volatile and you can lose what you put in.
+
+### How is MemeWarzone different from Pump.fun?
+
+Pump.fun launches coins on Solana. MemeWarzone launches on BNB Chain, Solana and Robinhood Chain and adds battles, tournaments and leagues after launch. The full comparison is on its own page.
+
+### Is MemeWarzone related to Call of Duty: Warzone?
+
+No. MemeWarzone is a crypto platform. It has no connection to Call of Duty: Warzone or any other game.
+
+# MemeWarzone vs Pump.fun
+
+URL: https://app.memewar.zone/memewarzone-vs-pumpfun. Checked 21 October 2026.
+
+Pump.fun and MemeWarzone both launch memecoins on a bonding curve. Pump.fun launches coins on Solana. MemeWarzone launches coins on BNB Chain, Solana and Robinhood Chain, and adds battles, tournaments and leagues after launch.
+
+This page compares the two on chains, fees, creator earnings, graduation and what happens after launch.
+
+## Pick MemeWarzone if
+
+- You want to launch on BNB Chain, Solana or Robinhood Chain from one platform.
+- You want your coin to keep competing after launch, in battles, tournaments and leagues.
+- You want your community to earn from the trading fee through league prizes, recruiters, squads and airdrops.
+- Your coin already finished bonding on Pump.fun and you want to bring it into battles.
+
+## Pick Pump.fun if
+
+- Your community is on Solana and you want the largest audience of active traders.
+- You want a lower trading fee and a higher creator share on the bonding curve.
+- You want perps trading in the same app, which MemeWarzone does not offer.
+
+## Chains
+
+- Where coins launch. MemeWarzone: BNB Chain, Solana and Robinhood Chain. DogeOS is next. Other: Solana.
+- Other chains in the app. MemeWarzone: Coins imported from other launchpads trade on MemeWarzone on all three chains. Other: Since May 2026 its app also trades coins on Ethereum, Base and BNB Chain, settled through Solana.
+
+## Launch and graduation
+
+- Launch model. MemeWarzone: Bonding curve. Other: Bonding curve.
+- Cost to create a coin. MemeWarzone: No platform fee, network costs only. Other: Not on its fee page. Third-party guides put it at about 0.02 SOL.
+- Sniper protection. MemeWarzone: A launch fee that starts at 90% and falls to 2% over the first 60 seconds. Other: Not listed in its fee docs.
+- Graduation. MemeWarzone: At a $30K or $50K market cap, chosen by the creator at launch. Other: At about 85 SOL raised, according to third-party analyses. Its fee page lists a 0.015 SOL graduation fee.
+- Where graduated coins trade. MemeWarzone: Uniswap V4 on BNB Chain and Robinhood Chain, Meteora on Solana. The liquidity is locked for good. Other: PumpSwap, Pump.fun's own DEX, since March 2025.
+
+## Fees and who earns them
+
+Pump.fun charges less per trade and pays creators more on the bonding curve. After graduation MemeWarzone pays creators more. MemeWarzone sends most of its trading fee back to the community through league prize pools, recruiters, squads and airdrops. On both platforms a creator can pass their fees on to holders.
+
+- Bonding curve fee. MemeWarzone: 2% on every buy and sell. Other: 1.25% on every buy and sell.
+- Creator share on the curve. MemeWarzone: 0.112% of each trade, which is 5.6% of the fee. Other: 0.30% of each trade.
+- What the creator does with their share. MemeWarzone: Chosen at launch: keep it, give it to holders, split it, or use it for buyback and burn. Other: Creators can pass part of their fees to holders through Holder Rewards, since September 2026.
+- Community share of the fee. MemeWarzone: 37.5% to league prize pools, 12.5% to recruiters and 2.5% to the squad pool. When a trader has no recruiter, those last two go to weekly airdrops. Other: A referral program since October 2026 that matches a new user's deposit, up to $50 each.
+- Creator share after graduation. MemeWarzone: BNB Chain and Robinhood Chain: 0.5% of every swap. Solana: 80% of the 0.25% pool fee, which is 0.20%. Other: On PumpSwap 0.30% of each swap, falling to 0.05% as the market cap grows.
+- Imported coins. MemeWarzone: A 1% swap fee: 0.5% to the coin's creator and 0.5% to MemeWarzone. Other: Not applicable.
+
+## After launch
+
+This is the main difference. On Pump.fun a coin's visibility comes from trading activity. On MemeWarzone a coin can enter one competition after another.
+
+- Battles. MemeWarzone: Metrics battles of 24 hours to 7 days and vote battles of 1 to 48 hours, with buy-ins and a war pool for the winner. Other: None in its public docs.
+- Tournaments. MemeWarzone: Brackets with free votes, Boosts and Final Salvo tie-breakers. Other: None in its public docs.
+- Leagues. MemeWarzone: Weekly and monthly leagues in six categories, plus the Major War League for graduated coins. Other: None in its public docs.
+- Social. MemeWarzone: One profile per wallet across chains, posts and follows, coin Stories and live streams. Other: Coin comments and livestreams.
+
+## Scale and trust
+
+- Size. MemeWarzone: Live since 2026 and still early. Other: The largest Solana launchpad. About $491M of PUMP token buybacks by October 2026.
+- External audit. MemeWarzone: Pending on every chain. Other: No audit report in its public docs.
+
+## Where Pump.fun is ahead
+
+- A much larger audience and more trading volume on Solana.
+- A lower trading fee and a higher creator share per trade on the curve.
+- Perps trading in the same app.
+
+## Questions
+
+### What is the main difference between MemeWarzone and Pump.fun?
+
+Pump.fun launches coins on Solana and they graduate to PumpSwap. MemeWarzone launches coins on BNB Chain, Solana and Robinhood Chain, and after graduation a coin can enter battles, tournaments and leagues.
+
+### Which one has lower fees?
+
+Pump.fun. Its bonding curve fee is 1.25% per trade, MemeWarzone's is 2%. On MemeWarzone most of the fee goes back to the community through league prize pools, recruiters, squads and airdrops.
+
+### Can I launch a coin on BNB Chain with Pump.fun?
+
+No. Pump.fun launches coins on Solana. Its app has traded some coins on other chains since May 2026. MemeWarzone launches coins on BNB Chain, Solana and Robinhood Chain.
+
+### Does Pump.fun have battles or leagues?
+
+Its public docs list no battles, tournaments or leagues as of 21 October 2026.
+
+### Can I bring my Pump.fun coin to MemeWarzone?
+
+Yes. Once a coin has finished bonding and has a funded DEX pool, it can be imported. Imported coins can battle, and after claiming the coin the creator gets 0.5% of every swap on MemeWarzone.
+
+Sources:
+- Pump.fun fees: https://pump.fun/docs/fees (page updated 17 October 2026)
+- Pump.fun referral rewards: https://pump.fun/docs/referral-rewards (7 October 2026)
+- PUMP token page: https://pump.fun/pump-token (checked 21 October 2026)
+- The Block: Pump.fun launches PumpSwap: https://www.theblock.co/post/347360 (20 March 2025)
+- The Crypto Times: Pump.fun adds Ethereum, Base and BNB Chain trading: https://www.cryptotimes.io/2026/05/26/pump-fun-adds-ethereum-base-and-bnb-chain-trading-to-app/ (26 May 2026)
+- MemeWarzone fee routing: https://docs.memewar.zone/fees/fee-routing (checked 21 October 2026)
+
+# Help Center
+
+URL: https://app.memewar.zone/faq
+
+## Getting started
+
+### What is MemeWarzone?
+
+MemeWarzone is a memecoin launchpad with a social feed and a battle arena. You can launch a coin, trade coins, follow people and coins, and enter coins into battles and leagues. It runs on BNB Chain, Solana and Robinhood Chain. Each coin lives on one chain. You trade from your own wallet, and MemeWarzone does not hold your coins. Launch: create a coin with a bonding curve, or save it as a draft first. Trade: buy and sell on the curve, and in the DEX pool after graduation. Battle: coins fight in metrics and vote battles for prizes and league points. Earn: fees, league prizes and weekly airdrops are paid out when you qualify. Nothing is guaranteed.
+
+URL: https://app.memewar.zone/faq/what-is-memewarzone
+
+### How do I start trading on MemeWarzone?
+
+You need a wallet with a little of the chain's coin for the trade and for network fees: BNB on BNB Chain, SOL on Solana, ETH on Robinhood Chain. 1. Press Connect Wallet in the top right and pick your wallet. 2. Sign in once when asked. It is a signature, not a transaction, and it costs nothing. 3. Pick your chain with the chain buttons (BNB, Solana, Robinhood) on Coins. 4. Open a coin from the Coins page. 5. Enter an amount in the Buy panel, read the quote, and confirm in your wallet.
+
+URL: https://app.memewar.zone/faq/how-to-start-trading-memecoins
+
+### How do I launch my first coin?
+
+Open Launch a coin in the menu. On a phone it is the Create button in the bottom bar. Create has six steps: Path, Identity, Story, Bond, Market and Review. There is no MemeWarzone fee to launch. You pay network costs, plus the cost of your own first buy if you make one. Have your image, name, ticker, a short description and your official links ready first.
+
+URL: https://app.memewar.zone/faq/how-to-start-as-a-creator
+
+### Can I browse MemeWarzone without connecting a wallet?
+
+Yes. Public pages open without a wallet: the coin list, coin pages, charts, battles, leagues, profiles and search. You need a connected wallet to trade, launch, follow, post, vote or claim anything.
+
+URL: https://app.memewar.zone/faq/browse-without-wallet
+
+### Do I need to create an account or sign up with an email?
+
+No. Your wallet is your account. One wallet has one profile with a picture, name, @username and bio, and it looks the same on every chain. The first time you connect, you may be asked to pick a @username. You can press Later and set it in Settings.
+
+URL: https://app.memewar.zone/faq/do-i-need-an-account
+
+### Which chains does MemeWarzone support?
+
+BNB Chain, Solana and Robinhood Chain. Launching, trading, battles, leagues, imports and reward claims work on all three. Each coin lives on one chain. Social features work across chains: you can follow any coin or wallet on any chain. Only buying and selling depends on the chain you have selected. BNB Chain: you pay in BNB. Use an EVM wallet such as MetaMask. Solana: you pay in SOL. Use a Solana wallet such as Phantom or Solflare. Robinhood Chain: you pay in ETH. Use an EVM wallet such as MetaMask.
+
+URL: https://app.memewar.zone/faq/supported-chains
+
+### Is DogeOS coming to MemeWarzone?
+
+Yes. MemeWarzone is among the first launchpads invited onto DogeOS, which is aiming at about 500,000 existing wallets. DogeOS has not launched on MemeWarzone yet. After DogeOS the plan is more chains and a full Interchained DEX, first for the chains MemeWarzone already runs on. These are plans, not dates.
+
+URL: https://app.memewar.zone/faq/dogeos-coming-to-memewarzone
+
+### How much does it cost to use MemeWarzone?
+
+Connecting a wallet, browsing, drafting a coin and signing in are free. There is no MemeWarzone fee to launch a coin. You pay network fees for each transaction. Trades on the bonding curve carry a 2% fee, shown in the quote before you confirm. Making your own first buy at launch is optional and costs the coin price plus that 2% fee. On Solana, setting up a new launch costs about 0.006 SOL in rent for its curve configuration, on top of network fees.
+
+URL: https://app.memewar.zone/faq/cost-to-get-started
+
+### Where do I find things: Coins, Warzone, Leagues, Command Center and the War Room?
+
+The main menu has the pages you will use most. Home: the social feed with posts from people and coins you follow. Coins: every coin on your selected chain, with a Drafts tab for coins not yet live. Warzone: the battle arena, with battles, tournaments and the Major War League. Leagues: weekly and monthly rankings. War Room: a trading room with charts and a fast trade panel, including imported coins. Command Center: your private dashboard, opened from your profile. Airdrops and Recruiters: weekly airdrops and referral links.
+
+URL: https://app.memewar.zone/faq/where-things-are
+
+### What is the Command Center?
+
+It is your private dashboard. Open it from your profile. It has tabs for Overview, My coins, Battles, Recruiter, Squad, Airdrops, Rewards and claims, Support and safety, Notifications, Edit profile and Settings. Some tabs only appear when they apply to you, for example Battles when you own a coin that can battle, and Squad when you are in one. On a phone, swipe the tab row.
+
+URL: https://app.memewar.zone/faq/what-is-the-command-center
+
+### What is the Warzone and how do battles work?
+
+The Warzone is the battle arena. Coin owners challenge other coins, the two sides agree on the type, buy-in and length, and the community backs a side. Graduated and imported coins can battle. There are metrics battles (24 hours, 3 days or 7 days) and vote battles (1, 6, 12, 24 or 48 hours). Winners earn league points and prizes that the winning coin's owner claims from the Command Center.
+
+URL: https://app.memewar.zone/faq/what-is-the-warzone
+
+### Is MemeWarzone related to Call of Duty: Warzone?
+
+No. MemeWarzone has nothing to do with the Call of Duty game or its publisher. It is a memecoin launchpad. The war theme is only our branding.
+
+URL: https://app.memewar.zone/faq/memewarzone-and-call-of-duty
+
+### Who runs MemeWarzone and how do I contact the team?
+
+MemeWarzone is operated under Dutch law, and you must be 18 or older to use it. For product questions, join the Discord. For account or security problems, email support@memewar.zone. Legal matters go to legal@memewar.zone. To report impersonation or abuse, use Report Abuse in the Command Center under Support and safety.
+
+URL: https://app.memewar.zone/faq/who-runs-memewarzone-contact
+
+### Can I lose money trading memecoins here?
+
+Yes. Memecoin prices can fall to near zero, and you can lose everything you put in. Rewards, prizes and airdrops are not guaranteed, and nothing on MemeWarzone is financial advice. Only trade what you can afford to lose. Check the coin page, the creator and the links, and be careful with anything that promises returns.
+
+URL: https://app.memewar.zone/faq/can-i-lose-money-on-memecoins
+
+## Wallets and chains
+
+### Which wallets can I use on MemeWarzone?
+
+Which wallet you need depends on the chain. BNB Chain and Robinhood Chain use EVM wallets. Solana uses Solana wallets. The connect window lists the wallets it finds in your browser. Wallets that are installed show first. EVM (BNB Chain, Robinhood Chain): MetaMask, Rabby, Coinbase Wallet, Trust Wallet, OKX Wallet, Binance Wallet and other browser wallets, plus WalletConnect. Solana: Phantom, Solflare, Backpack and other Solana wallets that support wallet-standard.
+
+URL: https://app.memewar.zone/faq/which-wallets-are-supported
+
+### Which wallet do I need for Robinhood Chain?
+
+Any EVM wallet, such as MetaMask or Rabby. The same address you use on BNB Chain works on Robinhood Chain. You pay network fees in ETH. If Robinhood Chain is not in your wallet yet, MemeWarzone asks the wallet to add it when you pick the chain. Confirm the request in the wallet. A Solana wallet like Phantom cannot be used for Robinhood Chain coins.
+
+URL: https://app.memewar.zone/faq/which-wallet-for-robinhood-chain
+
+### Robinhood Chain shows errors in my wallet. Do I need to update the network?
+
+If you added Robinhood Chain to your wallet through MemeWarzone before October 14, it may use an old RPC address that now fails often. Balances and transactions can then error. When this applies to you, MemeWarzone shows an Update Robinhood Chain notice once per session. Press Update and confirm once in your wallet. You can also set the network's RPC to https://rpc.mainnet.chain.robinhood.com in the wallet's network settings.
+
+URL: https://app.memewar.zone/faq/robinhood-chain-rpc-update
+
+### How do I connect Phantom, and why can't I?
+
+Press Connect Wallet in the top right, pick Phantom and approve the request in the Phantom popup. Phantom is for Solana coins. For BNB Chain or Robinhood Chain use an EVM wallet. If nothing happens, work through the checks below. 1. Unlock Phantom. A locked wallet cannot answer the request. 2. Reload the page and try again. Allow popups for memewar.zone if your browser blocks them. 3. Make sure Phantom is installed in the browser you are using. If you run several wallet extensions, disable the ones you do not need. 4. On a phone, a normal mobile browser cannot reach wallet apps. Use Open in Phantom in the connect window, or open memewar.zone from the browser inside the Phantom app.
+
+URL: https://app.memewar.zone/faq/connect-phantom-wallet
+
+### How do I connect MetaMask or another EVM wallet?
+
+Use an EVM wallet for BNB Chain and Robinhood Chain. The steps are the same for MetaMask, Rabby, Trust Wallet, Coinbase Wallet and OKX Wallet. 1. Press Connect Wallet in the top right. 2. Pick your wallet from the list. If you use WalletConnect, scan the code with your wallet app. 3. Approve the connection in the wallet. 4. Sign the one sign-in message when it appears. It is a signature, not a transaction. 5. Pick BNB or Robinhood with the chain buttons. Your wallet may ask you to switch network.
+
+URL: https://app.memewar.zone/faq/connect-metamask-wallet
+
+### How do I connect a wallet on my phone?
+
+Phone browsers cannot talk to wallet apps directly. When no wallet is found, the connect window shows Open this page in your wallet app. Tap your wallet and the page opens inside it, ready to connect. Phantom and Solflare (Solana) and MetaMask, Trust Wallet and OKX Wallet (EVM) have these links. If the app is not installed, the link sends you to its download page. For Binance Wallet, open memewar.zone from the Discover tab of the app.
+
+URL: https://app.memewar.zone/faq/connect-wallet-on-phone
+
+### Why does MemeWarzone ask me to sign a message when I connect?
+
+The signature proves the wallet is yours. It is valid for 30 days. It is not a transaction, it costs no fee and it moves no funds. After you sign in, actions such as posting, following, voting, editing your profile and changing settings need no further prompt. Anything that moves money, deploys a coin or acts on-chain always asks your wallet again. If you decline, you can keep browsing. Those actions then ask for a signature each time you use them.
+
+URL: https://app.memewar.zone/faq/why-sign-a-message-when-connecting
+
+### How do I switch between BNB Chain, Solana and Robinhood Chain?
+
+Use the chain buttons (BNB, Solana, Robinhood) on Coins, Leagues or the War Room. Your choice is remembered, and Coins, Leagues, the Major War League, the War Room and search all follow it. A coin page always opens on the coin's own chain. The Battles list has its own chain filter, which can also show all chains at once.
+
+URL: https://app.memewar.zone/faq/how-to-switch-chains
+
+### Why does my wallet ask me to switch networks?
+
+The action you started is on a different network from the one selected in your wallet. A BNB Chain coin needs your wallet on BNB Chain, and a Robinhood Chain coin needs it on Robinhood Chain. Approve the switch in your wallet. The same EVM address works on both chains, but the wallet has to be on the right network for the transaction. If your wallet is on a network MemeWarzone does not support, Settings in the Command Center shows a Switch network button.
+
+URL: https://app.memewar.zone/faq/switch-network-in-wallet
+
+### Can I connect a BNB wallet and a Solana wallet at the same time?
+
+Yes. Both can be connected from the same wallet window. Balances, coins and rewards stay separate per chain, and a Solana wallet does not change anything on your BNB Chain data. An EVM wallet and a Solana wallet have different addresses, so each has its own profile.
+
+URL: https://app.memewar.zone/faq/use-evm-and-solana-wallets-together
+
+### Is my profile the same on every chain?
+
+Yes, for one wallet address. Your picture, name, @username and bio belong to the address and show on every chain. Save them once under Edit profile in the Command Center. The same EVM address is used on BNB Chain and Robinhood Chain, so those share one profile. A Solana address is a different wallet, so it has its own profile.
+
+URL: https://app.memewar.zone/faq/same-profile-on-every-chain
+
+### How do I disconnect my wallet?
+
+Click your wallet address in the top bar and press Disconnect wallet. This disconnects both an EVM and a Solana wallet if both are connected. MemeWarzone also drops the connection after 15 minutes without activity in the tab. Reconnecting is silent and needs no new approval in most wallets. To revoke the site's access completely, remove memewar.zone from the connected sites in your wallet.
+
+URL: https://app.memewar.zone/faq/disconnect-wallet
+
+### Why was my wallet disconnected on its own?
+
+After 15 minutes without any activity in the tab, MemeWarzone drops the app's wallet connection to save resources. After 2 minutes of inactivity it also pauses live updates. Move the mouse or press a key and the app reconnects. Your wallet itself stays authorized, so reconnecting does not need a new approval.
+
+URL: https://app.memewar.zone/faq/wallet-disconnects-by-itself
+
+### Should I use a separate wallet for MemeWarzone?
+
+You do not have to, but many people use a separate wallet for memecoins and keep their main funds elsewhere. Memecoins are risky, and a wallet that only holds what you are willing to lose limits the damage if something goes wrong. Whichever wallet you use, never share your seed phrase or private key with anyone. MemeWarzone never asks for them.
+
+URL: https://app.memewar.zone/faq/do-i-need-a-new-wallet-for-memewarzone
+
+### What do I need in my wallet to trade or launch?
+
+You need the chain's own coin for the trade amount and the network fee: BNB on BNB Chain, SOL on Solana and ETH on Robinhood Chain. Some Solana and Robinhood Chain coins are paired with another token, such as USDC or a stock token. The Buy panel shows what you pay in before you confirm.
+
+URL: https://app.memewar.zone/faq/which-coin-pays-for-gas
+
+## Create and launch
+
+### How do I launch a coin, step by step?
+
+Open Launch a coin in the menu. On a phone it is the Create button in the bottom bar. Next stays locked until a step is complete. There is no MemeWarzone fee to launch, only network costs. 1. Path: choose Direct to launch now, or Draft to get a public page first and launch later. 2. Identity: upload the image, then enter the name and ticker. The card preview updates as you type and Create tells you if the ticker is available. 3. Story: write a short description and add your socials. Socials are optional. 4. Bond: pick the graduation market cap ($30K or $50K) and what happens to your share of the trade fee. On BNB Chain and Robinhood Chain your optional first buy is here. 5. Market: pick the token your coin pairs with after graduation. On Solana your optional first buy is here. 6. Review: check everything, then save the draft or deploy and confirm in your wallet.
+
+URL: https://app.memewar.zone/faq/how-to-launch-a-coin
+
+### What is DBC, and how does a launch differ per chain?
+
+On Solana new coins launch on a Meteora Dynamic Bonding Curve, called DBC. Jupiter can route trades on it before graduation, and when the curve completes the coin moves to a Meteora pool. On BNB Chain and Robinhood Chain new coins launch on our own bonding curve built on a Uniswap V4 hook. When the curve completes the coin moves to a Uniswap V4 pool. The rules you see in Create are the same on all three chains: 1 billion supply, the same two graduation targets, the same anti-sniper fee and the same fee choices.
+
+URL: https://app.memewar.zone/faq/launch-types-solana-dbc-and-evm
+
+### Should my coin graduate at $30K or $50K?
+
+In the Bond step you choose the market cap at which the bonding curve completes and the coin graduates: $30K (Fast grad) or $50K (Normal, the default). A lower target is reached sooner, so the coin graduates sooner. A higher target needs more buying before graduation. The choice is part of the launch and cannot be changed afterwards.
+
+URL: https://app.memewar.zone/faq/graduation-target-30k-or-50k
+
+### How is the supply split between the curve, the pool and the creator?
+
+Every new coin has 1 billion tokens. 85% (850M) is sold on the bonding curve. 13% (130M) goes into the DEX pool at graduation. 2% (20M) is the creator reserve. On Solana it is released at graduation. On BNB Chain and Robinhood Chain it can be released no earlier than 1 hour after graduation, and only while the price is at or above the graduation price.
+
+URL: https://app.memewar.zone/faq/coin-supply-and-creator-reserve
+
+### What is the anti-sniper fee at launch?
+
+When trading opens, the trade fee starts at 90% and falls to the normal 2% within 60 seconds. Bots that buy in the first seconds pay for it. Your own first buy in the launch transaction does not pay the high fee. It is charged the normal 2%.
+
+URL: https://app.memewar.zone/faq/anti-sniper-launch-fee
+
+### Can I buy my own coin when I launch it, and how much?
+
+Yes. A first buy is optional. It happens inside the launch transaction before anyone else can buy, at the curve price plus the normal 2% fee. The tokens go straight to your wallet, unlocked. You can buy up to 70% of the supply, so at least 15% of the supply is still left on the curve for everyone else. The MAX button in Create fills in the most your wallet can pay after gas and launch fees. On BNB Chain and Robinhood Chain the first buy is in the Bond step. On Solana it is in the Market step, because you pay in the token you pick there. A large first buy costs a lot, because the price rises along the curve.
+
+URL: https://app.memewar.zone/faq/creator-first-buy
+
+### What happens to coins I buy later from the creator wallet?
+
+Coins you buy from the creator wallet on your own coin after launch go into escrow. 20% unlocks after 30 days, then another 20% every 7 days. Everything is free after 58 days. The Buy panel shows this schedule before you confirm. The first buy inside the launch transaction is not escrowed.
+
+URL: https://app.memewar.zone/faq/creator-later-buys-escrow
+
+### What are the creator fee choices at launch?
+
+In the Bond step you decide what happens to your share of the trade fee. The four choices are keep it, give it to holders, split it, or use it for buyback and burn. The choice is made at launch. Your share is a small slice of the 2% trade fee: 5.6% of the fee, which is 0.112% of each trade. The full fee split is on the fee pages.
+
+URL: https://app.memewar.zone/faq/creator-fee-choice-at-launch
+
+### What is a draft, the Prepare page and Push Live?
+
+Choose Draft in the Path step to get a public page for your coin before trading opens. That page is the Prepare page. It shows on the Drafts tab on Coins and in search as PRE-LAUNCH. On a draft you set the message, links, launch time and founder note, share the page, and let people follow and comment. There is no chart and no Buy button. Trading starts when you press Push Live and confirm the launch in your wallet. A draft only needs a wallet signature. You pay network fees when you deploy. 1. Create the coin and save it as a draft. 2. Finish promotion setup: message, links, timing, founder note and logo. 3. Share the Prepare page and gather followers. 4. Press Push Live when links and timing are final.
+
+URL: https://app.memewar.zone/faq/what-is-a-draft-prepare-page
+
+### Can I edit a draft after saving it?
+
+Yes. Open Command Center, My coins, find the draft and press Edit Draft. You can change it until you deploy the coin. Check the chain, ticker, image, links and launch time before Push Live, because once the coin trades, people act on what the page says.
+
+URL: https://app.memewar.zone/faq/edit-or-hide-a-draft
+
+### How do I schedule a launch for later?
+
+Scheduled launches are made from a draft. On the Push Live page choose the scheduled option and pick a time. The time must be at least five minutes ahead and no more than 30 days away. The page uses your local time zone. Trading stays closed until that time. On BNB Chain and Robinhood Chain the open time is part of the launch you sign, so the coin opens by itself and you do not need to come back to press anything. The anti-sniper fee runs from the open time, not from the moment you signed. 1. Save the coin as a Draft and finish promotion setup. 2. Open Push Live and choose the scheduled option. 3. Pick the trading-open time. 4. Confirm in your wallet.
+
+URL: https://app.memewar.zone/faq/schedule-a-launch
+
+### Can I change the launch time after I scheduled it?
+
+Not after the launch is signed on BNB Chain or Robinhood Chain. The open time is part of the signed launch request and cannot be changed afterwards. Before you sign, you can change the time on the draft's Push Live page.
+
+URL: https://app.memewar.zone/faq/change-launch-time-after-signing
+
+### Can I edit my coin after launch?
+
+The name, ticker and image are written into the token itself and cannot be changed. Everything else on the coin page you can edit as the owner. Open Edit page from Command Center, My coins. You can change the banner, bio (up to 1,200 characters), founder note, website, X, Telegram and Discord links, up to 5 tags, the Story text and the pinned post. Every edit is signed by your wallet. A signature is not a transaction and costs nothing.
+
+URL: https://app.memewar.zone/faq/edit-coin-after-launch
+
+### What are the limits for the image, name, ticker and description?
+
+Create checks these as you type. Image: PNG, JPG or WebP, up to 5 MB. Name: up to 32 characters. Ticker: up to 10 characters. Description: up to 1,000 characters and required. Socials (website, X, Telegram, Discord) are optional.
+
+URL: https://app.memewar.zone/faq/image-and-metadata-limits
+
+### What is the Market step and which token should I pair with?
+
+The Market step sets the token your coin is paired with in its DEX pool after graduation. On BNB Chain the curve trades in BNB, and on Robinhood Chain in ETH. On Solana the curve trades in the token you pick, SOL by default. Only approved options appear. On Solana an example is USDC. On Robinhood Chain you can choose ETH or an approved stock token. If you pair with something other than the chain's coin, your coin's price and liquidity also follow that token.
+
+URL: https://app.memewar.zone/faq/pick-the-pairing-token-market-step
+
+### Can I launch the same coin on two chains?
+
+Each coin lives on one chain, so there is no single coin across chains. You can launch a separate coin on each chain, one launch per chain. You pick the chain in Create. There is no limit on how many live coins one wallet can have and no wait between launches. Share the MemeWarzone coin page link and not only the address, because the link carries the chain.
+
+URL: https://app.memewar.zone/faq/launch-on-more-than-one-chain
+
+### Why can't I launch my coin?
+
+There is no cooldown between launches and no limit on live coins. A launch can still be refused when: the wallet, or a group of wallets it belongs to, is restricted for abuse the creator is under manual review the wallet cannot pay for the first buy plus gas and launch fees the ticker is not available the image is over 5 MB or a field is too long
+
+URL: https://app.memewar.zone/faq/why-was-my-launch-refused
+
+## Buying and selling
+
+### How do I buy or sell a coin?
+
+Open the coin page and use the Buy/Sell panel. The panel is the same for coins launched on MemeWarzone and for imported coins. A coin on its bonding curve trades on MemeWarzone itself. A graduated or imported coin trades in a DEX pool, still from the same page. You need a connected wallet on the coin's chain. On a phone, Buy and Sell sit at the bottom of the coin page and open the panel as a sheet. 1. Open the coin page and pick Buy (green) or Sell (red). 2. Type an amount. Quick buttons such as 25%, 50% or 100% fill in a share of your balance. 3. Read the quote: what you pay and about what you get. 4. Check the slippage where the panel shows it. 5. Press the big button and read the wallet request before you confirm.
+
+URL: https://app.memewar.zone/faq/how-to-buy-and-sell
+
+### Which coin do I pay with when I buy?
+
+You pay with the native coin of the chain the token lives on: BNB on BNB Chain, SOL on Solana and ETH on Robinhood Chain. Each coin lives on one chain, so a Solana coin cannot be bought from a BNB wallet. On Solana the creator can choose another token to pair with, such as USDC from an approved list. For those coins the panel shows which token it asks for. Always read the panel and the wallet request before you confirm. Keep a little of the chain's native coin in the wallet for the network fee, whatever you buy with.
+
+URL: https://app.memewar.zone/faq/which-coin-do-i-pay-with
+
+### What is slippage?
+
+Slippage is how far the price may move between the quote you see and the moment your trade lands. If the price moves past your limit, the trade fails instead of filling at a worse price. You then lose only the network fee. Use the lowest slippage that works. A very high setting lets the trade fill at a much worse price, and on public networks it gives bots more room to trade around you.
+
+URL: https://app.memewar.zone/faq/what-is-slippage
+
+### Can I change the slippage in the trade panel?
+
+It depends on the chain and the coin. On BNB Chain the panel has a Slippage menu with Auto, 0.5%, 1% and 3%. Auto starts at 0.3% and adds a little for larger trades, up to 1%. On Robinhood Chain the panel uses a fixed 1%. Imported coins also use a fixed 1%. On Solana the curve trade uses a fixed 5% limit, and the panel has no menu for it. If a trade keeps failing on slippage, try a smaller amount first. Raise the setting only when you accept a worse price.
+
+URL: https://app.memewar.zone/faq/slippage-settings-by-chain
+
+### What is price impact?
+
+Price impact is how much your own trade moves the price. On a bonding curve every buy pushes the price up and every sell pushes it down, so a bigger order has a bigger impact. Early on, when there are few trades, one order can move the price a lot. Several smaller orders often fill better than one large one. Read the quote before you confirm. It shows what you pay and about what you get.
+
+URL: https://app.memewar.zone/faq/what-is-price-impact
+
+### Why does a coin's price move?
+
+While a coin is on its bonding curve, a formula sets the price. Buys push it up and sells push it down. There is no order book and no market maker. After graduation the price comes from the DEX pool, where buys and sells move it in the same way. Momentum can snowball in both directions. Buying after a big rise or selling in a panic are common mistakes. This is not advice: coins can lose all their value, and you can lose everything you put in.
+
+URL: https://app.memewar.zone/faq/why-does-the-price-move
+
+### What do market cap and the progress bar mean?
+
+Market cap is the coin's price multiplied by its supply. Every coin has 1 billion tokens. The curve progress shows how close the coin is to graduation. It is the Curve percentage on the coin card and the bar on the coin page. The creator picks the graduation target at launch: $30K or $50K market cap. When the bonding curve sells out at that market cap, the coin graduates and its liquidity moves into a DEX pool. A full bar alone does not mean the move is finished. Wait for the coin card to show DEX.
+
+URL: https://app.memewar.zone/faq/market-cap-and-progress-bar
+
+### Where do I trade a coin after it graduates?
+
+You keep trading on the same coin page. The Buy/Sell button now names the market it uses. Graduated coins trade in a locked DEX pool: Uniswap V4 on BNB Chain and Robinhood Chain, and Meteora on Solana. The curve fee of 2% stops. The pool charges its own fee instead: 1% on BNB Chain and Robinhood Chain, and 0.25% on Solana. You can also trade a graduated coin on the DEX directly, and those trades show in the market history.
+
+URL: https://app.memewar.zone/faq/trading-after-graduation
+
+### Can I trade a Solana coin in Jupiter or another app?
+
+New Solana coins launch on a Meteora bonding curve, so Jupiter and other apps can trade them as well, before and after graduation. The trade is the same curve or pool trade, whichever app you use. The fee split is the same. One difference: when you trade on memewar.zone, Meteora pays a small referral back to MemeWarzone. In other apps that referral does not come to MemeWarzone.
+
+URL: https://app.memewar.zone/faq/trade-solana-coins-on-jupiter
+
+### What is the War Trade Room?
+
+The War Trade Room is a trading table. Each row is a coin. Open a row to see its chart, its details and a Buy/Sell panel without leaving the table. It shows one chain at a time. The mode tabs filter the table: Trending, New, Graduated, Imported and Drafts. Click a column header to sort by market cap, liquidity, volume, holders or all-time high. Use the filter box to search by ticker, name, creator or address.
+
+URL: https://app.memewar.zone/faq/war-trade-room-explained
+
+### What is the War Room chat on a coin page?
+
+Every coin page has a War Room, a live chat for that one coin. Anyone can read it without a wallet. To post, connect your wallet and sign once. The same signature covers your other social actions for 30 days. Chat is not advice, not a safety label and not proof that a coin is good. Check the official links, the holders and the wallet request yourself. Support never sends urgent claim links in a direct message.
+
+URL: https://app.memewar.zone/faq/war-room-chat
+
+### How do I read the chart and the holders?
+
+The coin page and each open row in the War Trade Room show a price chart. After graduation the chart carries on from the curve into DEX trading, so history stays in one place. Holders is the number of wallets that hold the coin. A few wallets holding most of the supply is a risk signal, because one sale can move the price a lot. Check the holders before you buy, and do not read a busy chart as a sign of safety.
+
+URL: https://app.memewar.zone/faq/charts-and-holders
+
+### How do I sell all of a coin?
+
+Pick Sell in the trade panel and press the 100% button, or use Max where the panel shows it. Then confirm in your wallet. You can also sell in steps with 25% or 50%. A sell pays the same 2% fee as a buy while the coin is on its curve. A big sell on a thin curve can move the price down a lot, so read the quote first. If the sell fails, try a smaller part.
+
+URL: https://app.memewar.zone/faq/sell-all-my-tokens
+
+### How much do I need in my wallet to trade? Is there a minimum?
+
+The panel does not tell you a fixed minimum trade size, but you must keep some of the chain's native coin for the network fee. The panel's Max button already leaves a reserve: about 0.005 SOL on Solana, 0.0005 BNB on BNB Chain and 0.0002 ETH on Robinhood Chain. If you try to spend more, the panel says you do not have enough and shows how much you can use. Very small trades can also be eaten by network fees, so check the quote.
+
+URL: https://app.memewar.zone/faq/how-much-to-keep-for-fees
+
+### Why is the fee so high in the first minute after a launch?
+
+New coins have an anti-sniper fee. When trading opens, the fee starts at 90% and falls to the normal 2% over 60 seconds. It stops bots from buying everything in the first block for almost nothing. The fee is split the same way as the normal trade fee. If you buy in the first minute, you pay the fee shown in the quote. Waiting until the minute is over means you pay 2%. The creator's own first buy in the launch transaction pays 2%.
+
+URL: https://app.memewar.zone/faq/launch-fee-first-60-seconds
+
+## Graduation
+
+### What is graduation?
+
+Graduation is the step from the bonding curve to a DEX pool. It happens when the coin's curve sells out at the graduation market cap the creator chose at launch, $30K or $50K. After that the curve is closed and the coin trades in a normal liquidity pool. The coin keeps its coin page, posts, holders and history. Progress toward graduation shows on the coin page and as the Curve percentage on the coin card.
+
+URL: https://app.memewar.zone/faq/what-is-graduation
+
+### What is a bonding curve?
+
+A bonding curve is a price formula built into the coin's contract. It lets a new coin trade from the first second, before any pool exists. Buys push the price up and sells push it down along the curve. Every new coin puts 85% of its supply on the curve. When those tokens are sold, the coin graduates. Early on, one trade can move the price a lot. Read the quote before you confirm.
+
+URL: https://app.memewar.zone/faq/what-is-a-bonding-curve
+
+### What exactly happens when a coin graduates?
+
+When the curve completes, these things happen in order. On BNB Chain and Robinhood Chain graduation is instant. 1. The curve is complete and curve trading ends. 2. A 2% graduation fee goes to MemeWarzone's fee routing. 3. The liquidity moves into the coin's DEX pool and is locked for good. 4. The creator's 2% reserve (20M tokens) becomes releasable under the chain's rule. 5. The coin card switches from LIVE to DEX. 6. The Buy and Sell panel now trades in the pool, and the button names the DEX.
+
+URL: https://app.memewar.zone/faq/what-happens-step-by-step-at-graduation
+
+### Where do coins trade after graduation?
+
+In a DEX pool, on the same MemeWarzone coin page. You do not have to leave the site. BNB Chain: Uniswap V4 Robinhood Chain: Uniswap V4 Solana: Meteora (DAMM v2)
+
+URL: https://app.memewar.zone/faq/where-do-graduated-coins-trade
+
+### Is the liquidity locked after graduation?
+
+Yes. At graduation the coin's liquidity goes into the DEX pool and is locked for good. Nobody can withdraw it, including MemeWarzone and the creator. That removes the usual liquidity pull. It does not make a coin safe: the price can still fall as holders sell.
+
+URL: https://app.memewar.zone/faq/is-liquidity-locked-after-graduation
+
+### When does the creator get the 2% reserve?
+
+Every coin sets aside 2% of the supply (20M tokens) as a creator reserve. When it is released depends on the chain. Solana: released at graduation. BNB Chain and Robinhood Chain: released no earlier than 1 hour after graduation, and only while the price is at or above the graduation price.
+
+URL: https://app.memewar.zone/faq/creator-reserve-release-rules
+
+### What happens if my coin never graduates?
+
+It stays on its bonding curve. The curve keeps working: anyone can still buy and sell, and the price still follows the curve. The coin is not removed, and no expiry date was found in the launch settings. It can still get posts, followers and UpVotes. Graduation depends on enough people buying, and it is never promised.
+
+URL: https://app.memewar.zone/faq/coin-never-graduates
+
+### How can I see how close a coin is to graduating?
+
+Open the coin page. Curve progress shows there, and the coin card shows it as the Curve percentage. The target market cap ($30K or $50K) was set by the creator at launch and does not change. On Solana, a full bar alone is not graduation. The coin counts as graduated once the move to its Meteora pool is confirmed on-chain. The coin card then switches from LIVE to DEX.
+
+URL: https://app.memewar.zone/faq/how-far-is-my-coin-from-graduating
+
+### Do I need to press a Graduate button?
+
+No. Graduation happens on its own when the curve completes. On BNB Chain and Robinhood Chain it is instant. On Solana MemeWarzone's own keeper moves the coin into its Meteora pool after the curve completes, which can take a short while.
+
+URL: https://app.memewar.zone/faq/do-i-press-a-graduate-button
+
+### Can I trade a Solana coin on Jupiter before it graduates?
+
+Yes for coins launched on the Meteora Dynamic Bonding Curve, which is how new Solana coins launch. Jupiter can route trades on the curve, so a new coin is also reachable from Jupiter and from wallets that use Jupiter. After graduation the coin trades in a Meteora pool, and the coin page keeps working as before.
+
+URL: https://app.memewar.zone/faq/jupiter-before-graduation-solana
+
+### Does the chart reset when a coin graduates?
+
+No. The chart continues from the curve into DEX trading. After graduation the market history also includes trades made directly in the DEX pool, not only trades made on MemeWarzone.
+
+URL: https://app.memewar.zone/faq/does-the-chart-reset-at-graduation
+
+### What can a coin do after it graduates?
+
+A graduated coin can challenge other coins to battles, enter tournaments and earn Major War League points. Its graduation shows up as an auto update on the coin page and on the home feed. The creator should announce it through official channels, remind people the coin page link stays the same, and watch for fake pool links and impersonators.
+
+URL: https://app.memewar.zone/faq/what-changes-for-a-coin-after-graduation
+
+### Does graduation make the price go up?
+
+No. Graduation moves the coin from the curve to a pool at the curve's last price. What happens next depends on buyers and sellers, as with any coin. Graduation is also not a safety check. It shows the curve was filled, nothing more.
+
+URL: https://app.memewar.zone/faq/does-graduation-mean-price-goes-up
+
+## Fees and earnings
+
+### How much is the fee when I trade?
+
+Every buy and every sell on a bonding curve pays a 2% fee. It is part of the trade and is already in the quote. It is not added afterwards. You also pay a network fee (gas) to the chain. That is separate and does not go to MemeWarzone. After a coin graduates, the 2% curve fee stops and the pool's own fee applies.
+
+URL: https://app.memewar.zone/faq/what-is-the-trade-fee
+
+### Where does the 2% trade fee go?
+
+The 2% is split in the same transaction as the trade. Shares below are of the 2% fee. League prizes get 37.5%. The coin's creator gets 5.6%, which is 0.112% of the trade. The recruiter gets 12.5% (OG recruiters 15%). The squad pool gets 2.5%. MemeWarzone keeps the rest, 41.9% for a linked trader. If the trader has no recruiter, nobody earns the recruiter and squad slices. They go to the weekly Warzone Airdrops, 15% of the fee. Rewards come out of the 2%. None of them adds a fee of its own. League prizes: 37.5% Creator: 5.6% (0.112% of the trade) Recruiter: 12.5%, or 15% for OG recruiters Squad pool: 2.5% Airdrops: 15%, only when the trader has no recruiter MemeWarzone: the remainder, 41.9% for a linked trader
+
+URL: https://app.memewar.zone/faq/where-the-trade-fee-goes
+
+### Is the fee different for new Solana coins?
+
+The trade fee is still 2%. New Solana coins trade on a Meteora bonding curve, and Meteora keeps 20% of every fee, which is 0.40% of the trade. The remaining 80% is split into the same reward slices by the same rules. The creator share is the same 0.112% of the trade. MemeWarzone's own share is smaller, 21.9% of the fee for a linked trader. When you trade on memewar.zone, Meteora pays part of its cut back to MemeWarzone as a referral.
+
+URL: https://app.memewar.zone/faq/solana-meteora-fee-share
+
+### How much does a creator earn from trades?
+
+On new coins the creator gets 5.6% of the 2% trade fee, which is 0.112% of every buy and sell. A coin that trades 100,000 dollars in volume on the curve earns its creator about 112 dollars. After graduation the creator side gets half of the 1% pool fee on BNB Chain and Robinhood Chain, and 80% of the 0.25% pool fee on Solana. Creators claim in the Command Center under Rewards and claims. Earnings are not guaranteed and depend on real trading.
+
+URL: https://app.memewar.zone/faq/creator-earnings-per-trade
+
+### Why do older coins pay creators 0.10% and not 0.112%?
+
+A coin keeps the rules it launched with, and its fee never changes. Coins launched before October 2026, and coins on the earlier Solana launchpad curve, give the creator 5% of the 2% fee, which is 0.10% of every trade. New coins give 5.6% (0.112%). The difference comes out of MemeWarzone's own share, not out of the other slices.
+
+URL: https://app.memewar.zone/faq/older-coins-creator-share
+
+### What is the graduation fee?
+
+When a coin graduates, MemeWarzone takes 2% of the coin's raise, once. The creator gets no share of it. It goes to the recruiter, squad and airdrop slices and to MemeWarzone. The creator does get the 2% reserve (20 million tokens). Solana releases it at graduation. BNB Chain and Robinhood Chain release it no earlier than 1 hour after graduation, and only while the price is at or above the graduation price.
+
+URL: https://app.memewar.zone/faq/graduation-fee
+
+### What fees apply after a coin graduates?
+
+The 2% curve fee stops and the DEX pool charges its own fee. On BNB Chain and Robinhood Chain every swap pays 1%: 0.5% to the creator side and 0.5% to MemeWarzone. On Solana the Meteora pool charges 0.25%: 80% to the creator side and 20% to MemeWarzone. Older BNB Chain and Robinhood coins that graduated into earlier pools split 80% creator side and 20% MemeWarzone. Pool liquidity is locked for good, so nobody can withdraw it.
+
+URL: https://app.memewar.zone/faq/fees-after-graduation
+
+### What is the fee on imported coins?
+
+Swaps of imported coins pay a 1% fee on every chain. Half, 0.5%, goes to the coin's creator and half to MemeWarzone. The fee is shown in the quote before you confirm. While a coin is unclaimed, the creator's half is held for 90 days per trade. If the creator claims the coin in that time, it is paid out. What is still unclaimed after 90 days goes to MemeWarzone.
+
+URL: https://app.memewar.zone/faq/imported-coin-swap-fee
+
+### How much do UpVotes and Boosts cost?
+
+An UpVote costs 3 dollars, paid in the chain's own coin, so the amount of BNB, SOL or ETH changes with the price. One transaction is one vote. The fee goes to MemeWarzone. A battle Boost costs 1 dollar and adds 1 point. 90% of a Boost goes to the prize and 10% to MemeWarzone. A wallet can Boost twice per battle, and Boosts close in the last 20% of a battle.
+
+URL: https://app.memewar.zone/faq/upvote-and-boost-prices
+
+### Are network fees (gas) part of the MemeWarzone fee?
+
+No. Network fees are paid to the chain, not to MemeWarzone. They come on top of the 2% trade fee. The amount depends on the chain and how busy it is. Your wallet shows it before you confirm. Keep some BNB, SOL or ETH in the wallet for them. On Solana a trade can also pay a small one-time rent for a new token account.
+
+URL: https://app.memewar.zone/faq/network-fees-are-separate
+
+### Does it cost anything to launch a coin?
+
+MemeWarzone charges no platform fee to create a coin. You pay network costs only. On Solana, setting up the launch costs about 0.006 SOL in rent, and a first buy of your own coin pays the normal 2% fee. A launch can be refused if the wallet cannot cover the first buy plus gas and launch costs.
+
+URL: https://app.memewar.zone/faq/no-fee-to-launch
+
+### Why does MemeWarzone take a fee, and who holds the money?
+
+MemeWarzone's share pays for development, servers, audits and the team. Rewards come out of the 2% fee before the protocol share is counted, so the protocol gets what is left. MemeWarzone never holds your coins. Fees are split by the contract or program in the same transaction as the trade. Protocol earnings above a fixed cap move to a multisig wallet that needs several signers to move funds.
+
+URL: https://app.memewar.zone/faq/why-memewarzone-charges-fees
+
+### What fees apply to battles and sponsorships?
+
+A battle buy-in carries a 25% fee: 20% goes to the Major War League pool and 5% to MemeWarzone. The other 75% is the prize. A Boost carries a 10% fee to MemeWarzone, and 90% goes to the prize. Event sponsorships carry a 30% fee: 20% marketing and 10% MemeWarzone. The other 70% is the event prize.
+
+URL: https://app.memewar.zone/faq/battle-and-sponsorship-fees
+
+### What are all the fees on MemeWarzone?
+
+Curve trades pay 2%. The first 60 seconds after a launch start at 90% and fall to 2%. Graduation takes 2% of the raise once. After graduation the pool fee applies. Imported swaps pay 1%. An UpVote is 3 dollars and a Boost is 1 dollar. Battle buy-ins carry 25%. Network fees are separate and go to the chain. Curve trade: 2% of every buy and sell Launch fee: 90% falling to 2% in 60 seconds Graduation: 2% of the raise, once After graduation: 1% (BNB Chain, Robinhood Chain) or 0.25% (Solana) Imported swap: 1% UpVote: 3 dollars. Boost: 1 dollar
+
+URL: https://app.memewar.zone/faq/all-fees-at-a-glance
+
+## Battles and tournaments
+
+### What is a battle?
+
+A battle is a timed fight between two coins on the same chain. One coin wins, one loses, and the result counts in the leagues. There are two kinds. A metrics battle is scored on market data. A vote battle is scored on votes. Both can have a prize pool made of buy-ins and Boosts.
+
+URL: https://app.memewar.zone/faq/what-is-a-battle
+
+### Which coins can battle?
+
+Graduated coins and imported coins can battle. A coin still on its bonding curve cannot. Both coins must be on the same chain. The coin owner has to be able to answer the challenge, so the opponent needs a verified owner. Graduated coins: yes Imported coins: yes Coins still on the curve: no Coins on different chains: no
+
+URL: https://app.memewar.zone/faq/which-coins-can-battle
+
+### What is the difference between a metrics battle and a vote battle?
+
+A metrics battle lasts 24 hours, 3 days or 7 days. It is scored on the change in market cap, holders and trading volume during the fight, plus Boost points. It scores percent change, so a bigger coin does not win just for being bigger. A vote battle lasts 1, 6, 12, 24 or 48 hours. Each wallet has one free vote worth 1 point. A Boost costs $1 and adds 1 point. The coin with more points wins. Metrics battle: 24 h, 3 days or 7 days Vote battle: 1, 6, 12, 24 or 48 hours Both coins need live market data in a metrics battle
+
+URL: https://app.memewar.zone/faq/metrics-vs-vote-battles
+
+### How is a battle scored?
+
+In a vote battle the score is free vote points plus Boost points. One free vote is 1 point and one Boost is 1 point. In a metrics battle the score comes from how much each coin changed in percent during the fight: market cap, holders and trading volume, plus Boost points. The Rules tab on the battle page shows the scoring for that battle.
+
+URL: https://app.memewar.zone/faq/how-battle-scoring-works
+
+### Is voting in a battle free?
+
+Yes. In a vote battle each wallet gets one free vote worth 1 point. Connect a wallet on the battle's chain and press Vote on the side you want. A free vote is one per wallet per battle. You cannot change it or vote for the other side. If you vote and then write a comment, the comment shows which side you voted for.
+
+URL: https://app.memewar.zone/faq/free-votes-in-battles
+
+### What is a Boost and how many can I buy?
+
+A Boost costs $1 and adds 1 point to the side you pick. Each Boost also adds to the battle's prize pool. Each wallet can buy 2 Boosts per battle, on either side or split between both. In a tournament the limit of 2 applies per matchup. Boosts close when 80% of the battle time has passed. In a 24 hour battle the last Boost can be bought 19 hours and 12 minutes after the start. In a 1 hour battle it is 48 minutes. Price: $1 per Boost Value: 1 point in a vote battle Limit: 2 per wallet per battle Closed in the last 20% of the battle
+
+URL: https://app.memewar.zone/faq/battle-boosts
+
+### How do I challenge another coin to a battle?
+
+Only the owner of a coin can send a challenge. Connect the wallet that owns your coin first. 1. Press Challenge a coin on the Battles page, or Challenge on a coin page. 2. Pick your coin and an opponent on the same chain. 3. Choose the battle type, the buy-in and the length. 4. Review and send the challenge.
+
+URL: https://app.memewar.zone/faq/challenge-another-coin
+
+### Someone challenged my coin. Can I accept, decline or counter?
+
+Yes. The owner of the challenged coin sees the challenge as a popup and in the Command Center. You can accept, decline or send a counter offer with a different buy-in or length. The battle goes live only after both owners agree. Each side pays its buy-in once both have agreed. A decline can carry a short message of up to 280 characters.
+
+URL: https://app.memewar.zone/faq/accept-decline-counter-challenge
+
+### How is a battle prize pool split?
+
+The war pool holds both buy-ins and every Boost bought during the fight. When the battle is settled it is split as follows. 75% of both buy-ins: the winning coin's owner 90% of the Boosts: the winning coin's owner 20% of the buy-ins: the Major War League prize pool 5% of the buy-ins: MemeWarzone 10% of the Boosts: MemeWarzone
+
+URL: https://app.memewar.zone/faq/war-pool-prize-split
+
+### How do I claim a battle prize?
+
+Nothing is sent automatically. The owner of the winning coin claims the prize with the wallet that owns that coin. Until the result is final, the row says Waiting for on-chain result. After you claim it shows Claimed. 1. Open Command Center and go to Rewards and claims. 2. Connect the wallet that owns the winning coin and check the chain at the top. 3. Find the battle row and press Claim. 4. Confirm in your wallet and wait for Claimed.
+
+URL: https://app.memewar.zone/faq/claim-battle-prize
+
+### What happens if a battle ends in a tie?
+
+A tied vote battle goes to a Final Salvo. A Final Salvo is a set of short voting windows called shots, up to 5 shots of 60 seconds each. Only free votes count in a shot, one per wallet per shot. In a metrics battle an exact tie on points is settled by comparing market cap points, then holder points, then volume points, then Boost points. If those are level too, the battle is decided by a fixed rule on the token address, so there is always a winner for the prize. League points for a true draw are 0 for both coins.
+
+URL: https://app.memewar.zone/faq/battle-tie-final-salvo
+
+### How many league points does a battle give?
+
+Ranked battles give the winner 3 points and the loser 1. Vote battles are always ranked. An unranked metrics battle is called Open War. Its points count half: 1.5 for a win and 0.5 for a loss. Points count toward the Major War League table. Ranked win: 3, ranked loss: 1 Open War win: 1.5, Open War loss: 0.5 Draw: 0 for both
+
+URL: https://app.memewar.zone/faq/battle-points-for-leagues
+
+### How do tournaments work?
+
+A tournament is a bracket of graduated coins. They fight round by round until one champion is left. Each matchup is a battle. A slot without an opponent advances on its own. In a vote tournament each wallet has one free vote per matchup and round, and can buy 2 Tournament Boosts per matchup. A Tournament Boost costs $1 and adds 1 point. Boosts close when 80% of the round time has passed. Some matchups go to a Final Salvo. To enter, connect the wallet that owns an eligible graduated coin, open the tournament and press Enter tournament.
+
+URL: https://app.memewar.zone/faq/tournaments-explained
+
+### Can a project sponsor a tournament?
+
+Yes. Sponsors can apply for event and tournament sponsorships. The team reviews each application. Submitting an application does not book anything and no payment is due at that point. The event sponsorship fee is 30% of the sponsorship: 20% goes to marketing and 10% to the protocol. A sponsored spot is paid visibility and not an endorsement by MemeWarzone.
+
+URL: https://app.memewar.zone/faq/tournament-sponsorship
+
+### Why did my challenge or battle disappear or not start?
+
+A battle goes live only after the other owner accepts and both sides have paid the buy-in. A challenge that is declined or not answered in time moves to the expired state and never goes live. If you were declined, the inbox shows the decline message when the other owner wrote one. If a battle you expected is not on the Live tab, check Upcoming, My battles and Finished, and check that the chain filter matches the battle's chain.
+
+URL: https://app.memewar.zone/faq/why-challenge-disappeared
+
+### What happens if a coin is hidden or delisted during a battle?
+
+Only graduated and imported coins can enter a battle, so a coin does not graduate in the middle of one. Eligibility is checked when the battle is set up. A coin that is later hidden or has trading switched off after a safety finding is handled by the team on a case by case basis. If this happens to a battle you are in, ask in Discord support.
+
+URL: https://app.memewar.zone/faq/coin-graduates-or-delisted-mid-battle
+
+### How do I watch battles live?
+
+Open Warzone, then Battles. The tabs are Live, Upcoming, My battles and Finished. You can filter by chain and by battle type. The first live battle is shown large at the top. Press Open fight on a card to open the battle page. It shows both coins, the countdown, the score, and the Vote and Boost buttons. Scores update live. Below are tabs for live comments, all comments, supporters ranked by Boosts, the rules and the prize pool.
+
+URL: https://app.memewar.zone/faq/watch-battles-live
+
+## Leagues
+
+### What are the leagues?
+
+Leagues are recurring competitions that rank coins, traders and recruiters. There is a weekly and a monthly round in most categories, and the top places share a prize pool. There are six categories, so more than one kind of performance can win. Standings move live while a round runs, and the result is fixed when it ends.
+
+URL: https://app.memewar.zone/faq/what-are-leagues
+
+### When do weekly and monthly leagues start and end?
+
+A weekly league runs from Monday 00:00 UTC to the next Monday 00:00 UTC. A monthly league runs from the 1st of the month 00:00 UTC to the 1st of the next month. The League page shows the exact window in the header and counts down under Ends in.
+
+URL: https://app.memewar.zone/faq/league-periods
+
+### What do the six league categories rank?
+
+Each category ranks a different thing. Perfect Run: coins that graduated with no sells on the curve. Monthly only. Fastest Finish: the shortest time from launch to graduation. Creator buys are not counted. Biggest Hit: the largest single buy on a bonding curve in the round. Top Earner: trader profit and loss on the bonding curve, measured as net sells minus buys. Crowd Favorite: the most UpVotes from unique voters. Recruiter League: referral score across all chains.
+
+URL: https://app.memewar.zone/faq/league-categories
+
+### Where does the league prize money come from?
+
+League prizes come from trading fees. Every buy and sell on the bonding curve pays a 2% fee, and 37.5% of that fee goes to the league pool. Nobody pays an entry fee to join a league. The pool for a round is split over the categories and then over the ranks in each category. The prize pool therefore depends on trading volume and is not fixed in advance.
+
+URL: https://app.memewar.zone/faq/how-league-prizes-are-funded
+
+### How many places get paid in a league?
+
+When enough entrants qualify, at least the top 3 are paid in a weekly league and at least the top 5 in a monthly league. With more entrants, more ranks are paid. The standings then say that further ranks are paid too. The higher the rank, the larger the share. Payout now next to each rank shows what that place would get if the round ended now. Monthly prizes can have a cap per player, and the page warns you when it applies.
+
+URL: https://app.memewar.zone/faq/how-many-ranks-are-paid
+
+### How are league prizes paid and claimed?
+
+Nothing is paid out automatically. When a round closes, results are checked and published, winners show on the page and in the Hall of fame, and the prize moves into the claim flow in your Command Center. Prizes are paid in the coin of the chain you earned them on. Claim with the wallet that earned the place. 1. Open Command Center and go to Rewards and claims. 2. Connect the wallet that earned the place and check the chain at the top. 3. Press Claim on the League Rewards row when it is Ready. 4. Confirm in your wallet.
+
+URL: https://app.memewar.zone/faq/league-prizes-paid-and-claimed
+
+### Where do I see league standings?
+
+Open the League page. Pick a category and a period, weekly or monthly. If you pick Perfect Run while Weekly is selected, the page switches to Monthly because Perfect Run is monthly only. The page shows the prize pool, the time left, the live standings and earlier rounds. Major War League standings are on their own page under Warzone.
+
+URL: https://app.memewar.zone/faq/where-to-see-league-standings
+
+### Why am I not on the league leaderboard?
+
+Usually the activity did not count in that category or that round. Some rules that apply: Fastest Finish ignores creator buys. Top Earner leaves out a creator's trades on their own coin. Perfect Run only counts coins that graduated with no sells on the curve, and only in the monthly round. Crowd Favorite counts confirmed UpVotes from unique voters. Recruiter League needs referred trading in the current round for a paid place. Hidden coins and activity flagged as self trading, wash trading or linked wallet farming are excluded. Check that the chain and the period at the top match where you were active.
+
+URL: https://app.memewar.zone/faq/why-am-i-not-on-the-league-leaderboard
+
+### How does the Crowd Favorite league work?
+
+Crowd Favorite ranks coins by confirmed UpVotes from unique voters in the selected week or month. Many votes from one wallet do not stack the way votes from many wallets do. An UpVote is a paid on-platform signal. It is not a recommendation to buy and it is not a safety check.
+
+URL: https://app.memewar.zone/faq/crowd-favorite-league
+
+### What is the Recruiter League?
+
+The Recruiter League ranks recruiters across all chains. The score combines your network and the volume it traded in the current round. It is paid from the league fee like the other leagues. A paid place needs referred trading in the current round. Prizes go to your recruiter wallet on each chain.
+
+URL: https://app.memewar.zone/faq/recruiter-league
+
+### What is the Major War League?
+
+The Major War League is the monthly table for graduated coins. Coins earn points in ranked battles. Points reset every season. The top 8 coins play the quarterly finals. It is a separate competition from the six weekly and monthly leagues. Its prize pool comes from 20% of every battle buy-in.
+
+URL: https://app.memewar.zone/faq/major-war-league-explained
+
+### How do coins earn Major War League points?
+
+Mainly through battles: a ranked win is 3 points and a ranked loss is 1. An Open War win is 1.5 and a loss is 0.5. A tournament win adds a bonus of 2 points. A draw gives 0. The owner of a coin can also check in. A daily check-in gives 0.1 point, and every 7th day in a row adds 0.5 more. A coin must have fought at least once in the current month before check-in points land.
+
+URL: https://app.memewar.zone/faq/major-war-league-points
+
+### What is a daily check-in?
+
+A check-in is one signed action per UTC day by the owner of a coin, either the creator or a verified owner of an imported coin. It builds a streak that shows as a badge on the coin and the profile. Every 7th day in a row earns one free UpVote credit. For coins in the Major War League the check-in also adds league points, as described in the points article. Missing a day resets the streak. 1. Connect the wallet that owns the coin. 2. Open the check-in on the Major War League page or the coin. 3. Sign the message. It names the chain, the coin and the day.
+
+URL: https://app.memewar.zone/faq/what-is-a-check-in
+
+### How is the Major War League prize pool split?
+
+20% of every battle buy-in goes to the league. On BNB Chain and Robinhood Chain each deposit is split: 60% to the current month and 40% to the quarterly finals. The page shows the monthly prize pool and the quarterly finals pot. On Solana one pot pays both the monthly round and the quarterly finals. League prizes are claimed in the Command Center under Rewards and claims. Major War League prizes do not expire.
+
+URL: https://app.memewar.zone/faq/major-war-league-prize-pool
+
+### How do the quarterly finals work?
+
+The top 8 coins of the quarter play the finals. The projected matchups are 1 against 8, 4 against 5, 3 against 6 and 2 against 7. A coin needs at least 3 finished fights in the quarter to appear in the projected field. The Quarter Finals tab shows the projected field, the last coin inside the cut and the first coin outside it.
+
+URL: https://app.memewar.zone/faq/major-war-league-quarter-finals
+
+### Which coins can join the Major War League?
+
+Graduated coins can. A coin enters the table by fighting a ranked battle. There is no separate sign-up. The Your tokens list on the Major War League page shows the coins your connected wallet created. The page follows the chain you have selected.
+
+URL: https://app.memewar.zone/faq/who-can-join-major-war-league
+
+## Rewards, claims and airdrops
+
+### What are all the ways to earn on MemeWarzone?
+
+There are several reward lanes. None of them is guaranteed, and they depend on activity, timing and eligibility. Battle prizes: the owner of the winning coin claims the war pool share. Leagues: top places in the weekly and monthly leagues and the Major War League. Creator fees: a share of the trade fee on coins you launched, and pool fees after graduation. Recruiter earnings: a share of the trade fee from wallets linked to your code. Squad pool: a weekly pool shared by eligible squad members by contribution. Weekly airdrops: a pot split over eligible traders and creators.
+
+URL: https://app.memewar.zone/faq/ways-to-earn-on-memewarzone
+
+### Are rewards guaranteed? Does every holder get paid?
+
+No. Rewards depend on activity, rankings, timing and fair-play checks. A prize pool shown on screen does not mean your wallet will win. MemeWarzone does not pay out automatically to every holder of a coin. Holding a coin is not a claim on any pot. Trading carries the risk of losing money, so do not use money you cannot afford to lose.
+
+URL: https://app.memewar.zone/faq/rewards-are-not-guaranteed
+
+### How do I claim my rewards?
+
+Rewards are claimed in the Command Center under Rewards and claims. The tab shows what the connected wallet has earned on the selected chain. Claims work on BNB Chain, Solana and Robinhood Chain, and each claim is a wallet transaction that you confirm yourself. 1. Connect the wallet that earned the reward. 2. Check that the chain at the top of the tab is the right one. 3. Claim only rows marked Ready or Failed. 4. Confirm in your wallet, wait for the confirmation, then check the row again. League Rewards: weekly, monthly, Major War League and quarterly prizes Airdrop Rewards: weekly airdrop wins Squad Rewards: your share of the squad pool Recruiter Rewards: recruiter earnings, after one signature with the recruiter wallet Creator fees: one line per coin you launched Battle and tournament wins: one row per battle
+
+URL: https://app.memewar.zone/faq/claim-rewards-command-center
+
+### What do Ready, Pending, Failed and Expired mean on a claim?
+
+Ready means you can claim now. Pending means a claim is already in progress. Failed means the last attempt did not finish, and the button changes to Retry Claim. Expired means the claim window has closed. No rewards yet means there is nothing to claim on that row. A failed or cancelled claim never removes the reward. It stays on the row until you claim it.
+
+URL: https://app.memewar.zone/faq/claim-statuses
+
+### What does Claim all ready do?
+
+When more than one row is Ready, a Claim all ready button appears at the top with the number of ready rows. It runs the claims one after another. Your wallet asks you to confirm each claim, so expect one signature per reward. The button shows progress, for example Claiming 2 of 3.
+
+URL: https://app.memewar.zone/faq/claim-all-ready
+
+### Do rewards expire? How long do I have to claim?
+
+Weekly airdrop wins can be claimed for 60 days. After that, unclaimed drops go back into the airdrop pot for a later week. Major War League prizes do not expire. A row that can no longer be claimed is marked Expired in Rewards and claims. Do not leave a reward unclaimed on purpose, because the window for other reward types is not listed here.
+
+URL: https://app.memewar.zone/faq/do-rewards-expire
+
+### Which coin are rewards paid in?
+
+Rewards are paid in the coin of the chain they were earned on. BNB stays BNB and SOL stays SOL. Earnings are not converted between chains, and Rewards and claims shows one chain at a time. Weekly airdrops are paid in the chain's own coin. League prizes are claimed on the chain you earned them on.
+
+URL: https://app.memewar.zone/faq/which-coin-are-rewards-paid-in
+
+### Do claims cost gas? Why is there a Solana minimum?
+
+Yes. Each claim is a wallet transaction, so you pay the normal network fee for the chain. Keep a small balance of the chain's coin in your wallet. On Solana every claim also creates a receipt that needs a deposit of about 0.0013 SOL. That is why Solana prizes have a minimum of 0.005 SOL. A smaller amount is not paid on its own: it rolls over or adds up until it is worth claiming.
+
+URL: https://app.memewar.zone/faq/claim-gas-and-solana-minimum
+
+### How do the weekly airdrops work?
+
+Warzone Airdrops are a weekly reward for active traders and creators who are not the biggest wallets. Each chain runs its own airdrop with its own pot, in that chain's coin. The weekly window closes on Monday at 00:00 UTC. Winners are picked from the closed week and published shortly after. The pot is split over the winners, so a bigger pot means more winners. The Airdrops tab shows the running week, the current pool, a preview of who is eligible and past winners. The preview is an estimate, and the final list is made at the drop.
+
+URL: https://app.memewar.zone/faq/weekly-airdrops-explained
+
+### Am I eligible for the weekly airdrop?
+
+Two groups can qualify in a weekly window: traders with real buying and selling, and creators whose coins attract real buyers. Traders need a minimum volume, a minimum number of trades and activity on more than one day in the week. A creator's own buys do not count toward their coin. Wallets flagged by security checks are left out. Very large activity is capped, so the pot spreads over more people. The limits are the same in US dollars on every chain. The exact numbers are not published.
+
+URL: https://app.memewar.zone/faq/airdrop-eligibility
+
+### Can I win the airdrop every week? What happens to unclaimed airdrops?
+
+A wallet that won sits out for 14 days before it can win again. Airdrop wins can be claimed for 60 days. After that, unclaimed drops go back into the pot and help a later week.
+
+URL: https://app.memewar.zone/faq/airdrop-cooldown-and-return
+
+### Where does the airdrop pot come from?
+
+Airdrops are funded from the trade fee. When a trader has no recruiter, the recruiter and squad slices of that trade's fee go to the airdrop pot instead. That is 15% of the 2% fee on those trades. The pot therefore depends on how many traders have no recruiter, so it changes from week to week.
+
+URL: https://app.memewar.zone/faq/where-airdrop-money-comes-from
+
+### How do I claim creator fees from my coin?
+
+Open the Command Center, then Rewards and claims. If you launched coins, a Creator fees card lists each coin with the amount you can claim. After graduation, pool fees from the locked liquidity are collected from My coins. Open the coin and use the claim button on its row. If the pool is not ready or nothing is waiting, the row says so. Your share depends on the launch and the chain, so check the fee page for the current split.
+
+URL: https://app.memewar.zone/faq/creator-fee-claims
+
+### Where do I claim squad and recruiter rewards?
+
+Squad rewards are on the Squad Rewards row of Rewards and claims. The row shows when you are in a squad or have a squad reward. Recruiter earnings are in a separate Recruiter Rewards card. Sign once with your recruiter wallet to view and claim.
+
+URL: https://app.memewar.zone/faq/squad-and-recruiter-rewards-claims
+
+### I cannot see my reward. What should I check?
+
+Rewards and claims shows one chain and one wallet at a time. Most missing rewards are on another chain or another wallet. If the amount is still missing, the round may not have closed or the result may not be published yet. Weekly rewards close on Monday 00:00 UTC. Anti-abuse checks can also exclude activity from a reward. Product questions go to Discord support, and impersonation or phishing goes to Report Abuse. 1. Connect the wallet that earned the reward. 2. Switch the chain at the top of the tab. 3. Check the round has closed and results are published. 4. Ask in Discord support with your wallet address and the round.
+
+URL: https://app.memewar.zone/faq/reward-missing-or-wrong-wallet
+
+### When are weekly rewards calculated and published?
+
+The standard weekly close is Monday at 00:00 UTC. After that, results for the completed window are checked and published. Eligible reward rows then appear in Rewards and claims, and you claim them with your wallet. Monthly leagues close on the 1st of the month at 00:00 UTC.
+
+URL: https://app.memewar.zone/faq/reward-timing-weekly-close
+
+## Importing coins
+
+### What is an imported coin?
+
+An imported coin is a memecoin that launched somewhere else and was brought to MemeWarzone. It gets the same coin page as a coin launched here, with chart, Buy and Sell panel, posts and holders. The difference is underneath. An imported coin trades in its own DEX pool, not on a MemeWarzone bonding curve. Its name and ticker come from the token and cannot be changed.
+
+URL: https://app.memewar.zone/faq/what-are-imported-coins
+
+### Which coins can I import?
+
+A coin can be imported when all of these are true: It is on BNB Chain, Solana or Robinhood Chain. It has finished its bonding phase on the platform where it launched. A coin still bonding on Pump.fun, Four.meme or a similar launchpad is refused. Come back after it graduates. It trades in a DEX pool with real liquidity. It passes the safety checks.
+
+URL: https://app.memewar.zone/faq/which-coins-can-be-imported
+
+### How do I import a coin?
+
+Anyone can import a coin. Your wallet signs the import request, but it does not need to hold or own the token. The signature is not a transaction and costs nothing. 1. Open Import memecoin in the menu. You can also start from Command Center, My coins, Import memecoin. 2. Choose the chain: BNB, Solana or Robinhood. 3. Connect a wallet on that chain. 4. Paste the coin's contract address. On Solana this is the mint address. 5. Press IMPORT MEMECOIN and sign the message in your wallet. MemeWarzone looks up the token, checks its market and runs the safety scan. When that passes you land on the coin's new page.
+
+URL: https://app.memewar.zone/faq/how-to-import-a-coin
+
+### How do I import a Pump.fun coin?
+
+Wait until the coin has graduated on Pump.fun. A coin that is still bonding is refused. Then follow the normal import steps on the Solana chain and paste the coin's mint address. If you want to claim the coin as its owner, you will need the wallet Pump.fun recorded as the creator. Pump.fun may have created a separate wallet for you when you signed up, which can differ from the Phantom or Solflare wallet you normally use. The import page has a Got a Pump.fun token? guide with the official export and import steps.
+
+URL: https://app.memewar.zone/faq/import-a-pumpfun-coin
+
+### Do I need to own or hold a coin to import it, and does it cost anything?
+
+No on both. Any wallet can import a coin, and it does not need to hold the token. Importing costs nothing because it is a signature and not a transaction. Importing does not make you the owner. The real owner claims the coin separately, and trading does not wait for that claim.
+
+URL: https://app.memewar.zone/faq/do-i-need-to-own-the-token-to-import
+
+### Why was my import refused?
+
+An import is refused when the scan finds a problem that nobody can override. The coin is also refused while it is still bonding. The address is not a token on the chain you chose. Selling fails (a honeypot). The token cannot be transferred, or transfers are paused. The transfer tax is above 10%. The coin is still bonding on its original launchpad.
+
+URL: https://app.memewar.zone/faq/why-was-my-import-refused
+
+### My import is waiting for review. What does that mean?
+
+Some findings do not refuse an import but send it to review, for example when the safety scan could not finish or the market data is unclear. The page exists, but the coin is not listed until the review is done. If the lookup was only busy, nothing is rejected: press IMPORT again.
+
+URL: https://app.memewar.zone/faq/import-sent-to-review
+
+### How do I prove I own an imported coin?
+
+An imported coin starts unclaimed, and trading does not wait for the claim. If you run the project, open the coin page and press CLAIM MEMECOIN. The popup lists the ways you can prove ownership. Which ones you see depends on the chain and the token. The options appear in this order: the owner wallet, the project's X account, and last, manual review. Use the first one that works for you. 1. Owner wallet: on BNB Chain and Robinhood Chain connect the wallet that is the token contract's current owner. On Solana connect the recorded project authority wallet. 2. Project X account: if the token lists an official X account, press VERIFY WITH X and sign in to that exact account. 3. Manual review: press REQUEST MANUAL REVIEW and give an X account where the team can reach you. The team checks the claim and contacts you. Until the claim is verified the coin shows Ownership pending.
+
+URL: https://app.memewar.zone/faq/claim-an-imported-coin
+
+### The claim popup does not offer the owner wallet option. Why?
+
+On BNB Chain and Robinhood Chain the owner wallet option reads the token contract's current owner. If the contract exposes no active owner, for example because ownership was renounced, the option is not available. Use the project's official X account if the token lists one, or request manual review. If you connect a wallet that is not the owner, the owner option shows the recorded owner but cannot be used.
+
+URL: https://app.memewar.zone/faq/claim-popup-has-no-owner-wallet-option
+
+### Verify with X says I used the wrong account. What now?
+
+The claim only works with the exact X account attached to the token. Signing in with a different account fails and the popup tells you that was not the correct account. Sign in with the project's X account, verify the owner wallet instead, or request manual review.
+
+URL: https://app.memewar.zone/faq/wrong-x-account-when-claiming
+
+### What happens to the creator's half of the fee if nobody has claimed the coin?
+
+The creator's 0.5% builds up while the coin is unclaimed. It is held for 90 days per trade. Claim the coin within that time to collect it. Whatever is still unclaimed after 90 days goes to MemeWarzone.
+
+URL: https://app.memewar.zone/faq/unclaimed-creator-share-90-days
+
+### Why does my coin already have a MemeWarzone page?
+
+If a coin earned creator fees through the swap box on a website but had no page here, MemeWarzone imports it itself, through the same checks as a user import. The creator then finds the coin with a Creator earned notice and a Claim button. A coin that is refused, for example because it is still bonding, is retried about every 6 hours.
+
+URL: https://app.memewar.zone/faq/creator-earned-claim-it-auto-import
+
+### Where do imported coins trade?
+
+In the coin's own DEX pool, through the same Buy and Sell panel as other coins. The coin page shows a Trading on line, and the button names the DEX, for example Buy on Jupiter. Trading is switched off on a coin when the safety scan reports a honeypot or a blocked transfer. Solana: Jupiter, which routes through the coin's pools. BNB Chain: PancakeSwap pools. Robinhood Chain: Uniswap.
+
+URL: https://app.memewar.zone/faq/where-do-imported-coins-trade
+
+### Can imported coins battle and get UpVotes?
+
+Yes. Imported coins can battle in the Warzone and have their own UpVotes. Imported and graduated coins are featured in the Warzone overview. Once the coin is claimed, the owner can challenge other coins. Imported coins also appear in Search, in the Imported coins panel on Coins, and in the War Room under the Imported tab.
+
+URL: https://app.memewar.zone/faq/imported-coins-battles-and-upvotes
+
+### What can I do after I claim an imported coin?
+
+Connect the owner wallet and press EDIT on the coin page to change the description, website, X and Telegram links, and upload the project image. Open Edit page from Command Center, My coins, for tags, links, a pinned post, the Story text and Story images. You can also post updates as the coin, turn auto updates (launch, graduation and battle results) on or off, and challenge other coins to battles. The name and ticker cannot be changed, and every edit is signed by your wallet.
+
+URL: https://app.memewar.zone/faq/what-can-the-owner-do-after-claiming
+
+### Someone else claimed my imported coin. What can I do?
+
+Claims have to be proven with the token's owner wallet, the project's X account, or manual review by the team, so a claim made without one of these does not go through. If you believe someone claimed your coin falsely, report it with Report Abuse in the Command Center under Support and safety, and include the coin address and what proves you are the owner.
+
+URL: https://app.memewar.zone/faq/someone-else-claimed-my-coin
+
+## Recruiters and squads
+
+### What is a MemeWarzone recruiter?
+
+A recruiter brings creators and traders to MemeWarzone with a personal code and link. The wallets that join through that link form the recruiter's squad. Recruiters earn a share of the trade fee from the wallets they brought in. They do not own those users and they do not change the rules for rewards, claims or eligibility.
+
+URL: https://app.memewar.zone/faq/what-is-a-recruiter
+
+### How do I become a recruiter?
+
+Anyone with a BNB Chain, Solana or Robinhood Chain wallet can sign up. The recruiter account is created as active when you submit the signed form. You can also start from the Recruiter tab in the Command Center. A wallet can be a recruiter only once, and a code can be used only once. 1. Open the recruiter signup page and connect your wallet. 2. Choose a recruiter code: lowercase letters, numbers, dashes or underscores. The page tells you if it is taken. 3. Enter a display name, an email and a short pitch about your audience. Telegram, Discord and X handles are optional. 4. Accept the recruiter terms and sign the signup message in your wallet.
+
+URL: https://app.memewar.zone/faq/become-a-recruiter
+
+### What is my referral link and how do I change my code?
+
+Your referral link ends in /r/ followed by your code, for example /r/yourcode. The Recruiter tab in the Command Center shows your referral link and a home link, each with a copy button, plus Share on X. To change your code, open the Recruiter tab, press Sign in to manage with the recruiter wallet, type the new code and press Save code. A code that another recruiter already has cannot be used.
+
+URL: https://app.memewar.zone/faq/recruiter-referral-link
+
+### How does a wallet get linked to a recruiter?
+
+When someone opens a referral link, the app remembers the recruiter's code for a limited time. The person can connect a wallet afterwards. On connect, and after the wallet signs in, the wallet is linked to that recruiter and joins the squad. A new member chooses whether they join as a creator, a trader or both. A wallet is linked to one recruiter at a time. A wallet that already has a recruiter keeps it, and an opened link for another recruiter does not replace it.
+
+URL: https://app.memewar.zone/faq/how-recruiter-attribution-works
+
+### Can I change my recruiter after I joined? What is the lock?
+
+The link is meant to stay in place so reward routing is auditable and nobody can hop between codes. Once a wallet has activity on MemeWarzone, its link is locked. If you opened the wrong link, fix it before you trade, create or take part in anything. After the lock, a different link will not replace your recruiter.
+
+URL: https://app.memewar.zone/faq/recruiter-link-lock
+
+### How much does a recruiter earn?
+
+A recruiter earns 12.5% of the trade fee paid by wallets they brought in. The trade fee is 2%, so that is 0.25% of each trade. A recruiter also earns 15% of the graduation fee of coins those wallets create, which is 0.30% of the raise. Earnings are paid in the chain's own coin and claimed in the Command Center under Rewards and claims. They depend on the real trading of your linked wallets, so they can be zero.
+
+URL: https://app.memewar.zone/faq/recruiter-earnings
+
+### What are OG recruiters?
+
+OG recruiters are an early recruiter class. They earn 15% of the trade fee (0.30% of each trade) and 17.5% of the graduation fee (0.35%). The extra comes out of MemeWarzone's share, not from the traders. OG status is shown on the recruiter's public page.
+
+URL: https://app.memewar.zone/faq/og-recruiters
+
+### What is a squad?
+
+A squad is the group of wallets linked to one recruiter. If you joined through a recruiter's link, you are in that recruiter's squad. The Squad tab in the Command Center appears only when your wallet is in a squad. The tab shows the squad status, the members, how many members are eligible and the pending pool. Public squad standings are on the Squads page.
+
+URL: https://app.memewar.zone/faq/what-is-a-squad
+
+### How does the squad pool work?
+
+The squad pool is 2.5% of the 2% trade fee. It is shared every week by eligible members, based on their contribution. It is not an equal split, and it is not a reward for showing up once. Squad rewards are claimed in Rewards and claims, on the Squad Rewards row. The pool does not guarantee the same result for every member.
+
+URL: https://app.memewar.zone/faq/squad-pool-explained
+
+### Why am I not eligible for squad rewards?
+
+Being a member is not enough. Your own activity has to qualify under the weekly rules, and fair-play checks apply before rewards are shown. The Eligible tile on the Squad tab shows how many members qualify. A wallet that is detached from the squad or flagged under the fair-play rules can lose eligibility for that week.
+
+URL: https://app.memewar.zone/faq/why-not-eligible-squad-rewards
+
+### Can I leave a squad?
+
+There is no leave button in the app. A squad link is tied to the recruiter that brought the wallet in, and it locks once the wallet has activity. If you have a problem with your link, ask in Discord support.
+
+URL: https://app.memewar.zone/faq/leave-or-switch-squad
+
+### Are there fair-play checks on recruiters and squads?
+
+Yes. Fair-play checks apply to recruiters and squads, and anti-abuse checks can affect eligibility, ranking, winner selection and claim status. Activity that looks like self trading, wash trading, circular activity or linked wallet farming can be excluded. Joins from one network are limited, only the wallet's owner can join, and a recruiter's own wallets cannot be linked to their own code. A recruiter can be suspended for scripted or fake squads. The exact triggers are not published.
+
+URL: https://app.memewar.zone/faq/squad-join-limits-fair-play
+
+### What does the recruiter dashboard show?
+
+The Recruiter tab in the Command Center shows tiles for linked wallets, creators, traders, your code and your status. After you press Sign in to manage and sign with the recruiter wallet, it also lists recent referrals with their role and join date. You can copy your links, share on X, upload a squad image (PNG, JPG or WebP) for your public squad page and open your public recruiter page. Recruiter rewards are claimed in Rewards and claims.
+
+URL: https://app.memewar.zone/faq/recruiter-dashboard
+
+### Where are the recruiter and squad leaderboards?
+
+The recruiter leaderboard is at /recruiters. It compares recruiters by network growth, activity, earnings and performance score, sorted by total earned and then by linked wallets. The squad leaderboard is at /squads. It shows how squads rank this week, the estimated share of the squad pool for each squad and how members rank by contribution. Estimates are not payouts.
+
+URL: https://app.memewar.zone/faq/recruiter-and-squad-leaderboards
+
+### Is there a prize for the best recruiters?
+
+Yes. The Recruiter League is a weekly and monthly prize league on every chain, paid from the league fee. It is one all-chains ranking, and a paid place needs referred trading in the current round. Prizes go to your recruiter wallet on each chain. Prizes are not guaranteed and are claimed in Rewards and claims.
+
+URL: https://app.memewar.zone/faq/recruiter-league-prizes
+
+## UpVotes and promotion
+
+### What is an UpVote?
+
+An UpVote is a paid push for a coin's visibility. It helps the coin rank higher on Coins, in Featured and Trending, and on the Warzone pages. It does not buy the coin and it gives you no tokens. It is not a safety label, a quality mark or an endorsement by MemeWarzone. It only shows that somebody paid to push the coin. Promotion is usually hidden. UpVotes make it visible.
+
+URL: https://app.memewar.zone/faq/what-is-an-upvote
+
+### How do I UpVote a coin?
+
+You need a connected wallet on the coin's chain. An UpVote is a payment, so your wallet asks you to confirm a transaction. 1. Press UpVote on a coin card on Coins, on a Featured card or on the coin page. 2. Read the popup. It shows the price, fixed at 3 dollars and paid in the chain's own coin. 3. Confirm the payment in your wallet. One transaction is one vote.
+
+URL: https://app.memewar.zone/faq/how-to-upvote-a-coin
+
+### How much is an UpVote and is there a limit?
+
+An UpVote costs 3 dollars on every chain, paid in BNB, SOL or ETH. The popup converts the 3 dollars at the current price. The fee goes to MemeWarzone. A cooldown and daily limits apply to keep UpVotes fair. The popup tells you when you hit one.
+
+URL: https://app.memewar.zone/faq/upvote-price-and-limits
+
+### Does an UpVote mean a coin is safe?
+
+No. An UpVote does not certify a coin, remove risk or make other traders follow. Money spent on visibility is only visibility. Check the coin yourself: the official links, the holders and the wallet request. Be careful with links that offer to UpVote for you.
+
+URL: https://app.memewar.zone/faq/upvotes-and-safety
+
+### What is the Featured list, and what is the Warzone Featured rail?
+
+Coins that are still on their bonding curve are ranked in the launchpad Featured list by UpVotes over a window you can pick: the last 24 hours, 7 days or all time. Graduated and imported coins have their own UpVotes, and they are featured in the Warzone overview. Each chain has its own list, because the Coins pages show one chain at a time.
+
+URL: https://app.memewar.zone/faq/featured-lists-explained
+
+### How do I advertise my project on MemeWarzone?
+
+You can apply for a paid ad spot. There are two: a banner tile in the row at the top of Home (up to 6 sponsors at once) and a Sponsored card in the Featured row on Coins. Each spot has its own packages and prices. Use the Your ad here tile on Home, Advertise here in the Featured row, or the application page. A sponsored spot is paid visibility, not an endorsement. 1. Open the application and fill in your project name, contact, website, short bio and a creative image. 2. Pick a package and your preferred dates. 3. Send it. The team reviews your project and creative. 4. After approval you get payment details. The spot goes live after payment.
+
+URL: https://app.memewar.zone/faq/apply-for-a-sponsorship
+
+### What happens after I apply for a sponsorship?
+
+Applying starts a review. It does not book the spot, and no payment is due yet. The team checks the project and the creative, confirms the dates and then sends payment details. Make sure the bio, image and dates are final before you send the form. Your draft is saved in your browser until you submit. Only pay what the team confirms. Nobody from MemeWarzone asks for payment in a direct message.
+
+URL: https://app.memewar.zone/faq/after-sponsorship-application
+
+### What is a Story page?
+
+A Story is a full-screen page for one coin, in the style of social stories. It has chapters written by the creator and an automatic chronicle built from real data. The creator cannot edit the chronicle. A launched coin can have up to 10 chapters and an imported coin up to 8. Every Story has a share link. When you post that link on X, it shows a preview card with the coin's picture.
+
+URL: https://app.memewar.zone/faq/story-pages
+
+### How do I share a coin so people land on the right page?
+
+Share the MemeWarzone coin page link. It carries the chain, so the person lands on the right coin. If you share a bare address, say which chain it is on. A Story share link gives X a preview card. In posts on MemeWarzone, paste the contract address and it turns into a coin card with a Buy button. Each post also has a Share menu with Copy link and Share on X.
+
+URL: https://app.memewar.zone/faq/share-a-coin-link
+
+### How do drafts, the Prepare page and Push Live help promote a launch?
+
+A draft can have a public Prepare page. People can read it, follow it and comment before trading opens. Use that time to settle your links, logo, message and launch time. Push Live is the last step. It turns a prepared draft into a live launch. If the launch is scheduled, trading can open up to 30 days later. Do not push live while links or timing are still changing.
+
+URL: https://app.memewar.zone/faq/prepare-page-and-push-live
+
+### Can I put a buy and sell box on my own website?
+
+Yes, for Solana coins. The swap box lets visitors buy and sell from your site with their own wallet. You paste a few lines of code into a Custom HTML block. It works for coins launched on MemeWarzone while they are on the curve and for imported coins. Imported coin swaps pay 1%, of which 0.5% goes to the coin's creator. A launched coin pays the normal fees. The box shows the fee before anyone confirms.
+
+URL: https://app.memewar.zone/faq/swap-box-for-your-website
+
+### Can I stream live on my MemeWarzone profile?
+
+Live streams from Kick can show on a profile, with a flashing red LIVE tab after Posts while the channel is live. At the moment only one partner profile has this. There is no setting yet for other users to add their own stream. The stream plays in Kick's own player, so Kick sets cookies when it loads. MemeWarzone asks for cookie consent first. If you decline, the stream stays off and you can watch on kick.com instead.
+
+URL: https://app.memewar.zone/faq/kick-live-streams
+
+### How can a creator keep holders informed?
+
+The owner of a coin can post updates as the coin from the Posts tab of its coin page. An update is up to 280 characters with up to 4 images. It shows the coin's logo and a Creator update label. Tick Also in the home feed to share it more widely. The coin page also posts automatic updates for the launch, graduation and battles. Owners can turn those off on the edit page. Battles, UpVotes and league pushes are the other ways to get attention.
+
+URL: https://app.memewar.zone/faq/post-updates-as-your-coin
+
+### What is the difference between an UpVote and a Boost?
+
+An UpVote is a 3 dollar push for a coin's visibility in lists and the Crowd Favorite league. A Boost is a 1 dollar vote inside a battle. It adds 1 point for the coin you back in that battle. A wallet can Boost twice per battle, and Boosts close when the last 20% of the battle starts. UpVotes have a cooldown and daily limits.
+
+URL: https://app.memewar.zone/faq/upvote-vs-boost
+
+## Profiles and the feed
+
+### How do I set up my profile?
+
+Every wallet has one public profile. Open Command Center, then Edit profile, or press Edit on your own profile. You can set a picture, a banner, a display name, an @username, a bio of up to 280 characters, and links to your website, X and Telegram. Press Save profile. Your wallet signs a message to prove it is you. This is not a transaction and costs no fee. Without a picture, your profile shows the default green operative.
+
+URL: https://app.memewar.zone/faq/set-up-your-profile
+
+### How do usernames work?
+
+Your @username is how people tag you in posts. It has 3 to 20 characters: letters, numbers and underscore. It is unique and case does not matter, so Trader and trader are the same name. Some names, such as admin, support and memewarzone, are reserved. You can change it once every 30 days. Setting or changing it asks for a wallet signature, with no fee. Without a username nobody can tag you. Your profile also opens at /profile/yourname.
+
+URL: https://app.memewar.zone/faq/username-rules
+
+### Do I need a separate profile for each chain?
+
+No. A profile belongs to a wallet, and its picture, name, @username and bio show on every chain. An EVM wallet address is the same on BNB Chain and Robinhood Chain, so one profile covers both. A Solana wallet has its own address and its own profile. Social features work across chains. You can follow any coin or wallet on any chain. Only buying and selling depends on the chain you picked.
+
+URL: https://app.memewar.zone/faq/one-profile-on-every-chain
+
+### How do I write a post and add images?
+
+Use the composer at the top of Home or on your own profile. A post can be up to 1,000 characters. The feed shows the first 280 characters with a Read more link. You can add up to 4 images, each PNG, JPG or WebP up to 5 MB. Paste a coin's contract address and it turns into a coin card with the price and a Buy button. Type @ and the first letters of a name to tag someone who has a username. 1. Connect your wallet. 2. Type your post in the composer. Use the image button to add up to 4 images. 3. Press Post. The first time, your wallet asks for one free signature.
+
+URL: https://app.memewar.zone/faq/write-a-post
+
+### What are reposts, quote posts and rockets?
+
+A rocket is your like. Tap it again to take it back. Repost puts a post in your followers' feeds and on your profile. Quote post lets you add your own text and up to 4 images on top of someone else's post. Reply opens the post page where you write an answer. Share has Copy link and Share on X. Views count a unique viewer once per post.
+
+URL: https://app.memewar.zone/faq/replies-reposts-quotes-rockets
+
+### What can I follow, and on which chains?
+
+You can follow any wallet and any coin, on any chain. Press Follow on a profile or a coin page. Their posts, reposts and coin updates then show in the Following tab on Home. You need a connected wallet to follow, but no extra signature. You can also follow a draft before the coin exists. Followers and following lists are on your profile, and tapping a count opens the list.
+
+URL: https://app.memewar.zone/faq/follow-coins-and-wallets
+
+### What notifications do I get, and can I turn them off?
+
+The bell in the top bar shows the latest ones, and View all opens Command Center, then Notifications. You are notified about replies, quotes, reposts, rockets, mentions and follows, about battle challenges, about rewards ready to claim and about events on coins you created. Open Command Center, then Settings, then Notification settings. Each of the four categories has a Bell switch and an Email switch. Email works only after you add an address and open the link we send. Saving asks for a free wallet signature.
+
+URL: https://app.memewar.zone/faq/notifications-and-email
+
+### Do I have to sign every post, rocket or chat message?
+
+No. The first time you post, reply or react, your wallet asks for one signature. It covers posts, replies, reposts, rockets, deleting your own posts, comments, War Room chat, reports, hide and block, and creator updates for 30 days. A signature is a message, not a transaction. It costs no gas, moves no funds and gives nobody access to your money. The message starts with MemeWarzone API Action. If a prompt asks you to approve a transaction or spend tokens when you only wanted to post, reject it. The signature is kept in this browser. On another browser or device, or with another wallet, you sign once more. Payments, claims, votes and challenges ask each time.
+
+URL: https://app.memewar.zone/faq/sign-once-for-30-days
+
+### Can I delete my own post?
+
+Yes. Open the three dots menu on your own post or reply and choose Delete post or Delete reply. You are asked to confirm. A deleted post disappears from the feed, your profile and search. This cannot be undone. Copies others made elsewhere, such as a screenshot or a share on X, are not removed.
+
+URL: https://app.memewar.zone/faq/delete-a-post
+
+### How do I report, hide or block someone?
+
+Every post, reply, comment and profile has a three dots menu. It offers Report, Hide for single posts and comments, and Block for accounts. Hide and Block only change what you see. Report goes to the team, who review every report. To report, describe what is wrong in 20 to 1,000 characters and press Send report. Follow your reports in Command Center, then Support and safety, then My Abuse Reports. To unblock someone, open Settings and use the Blocked accounts card. For impersonation or stolen identity, use File Abuse Report on the Support and safety page.
+
+URL: https://app.memewar.zone/faq/report-hide-and-block
+
+### What can other people see about my wallet?
+
+Blockchains are public. Anyone can look up a wallet address in an explorer and see its balances and transactions. MemeWarzone cannot hide that. Your profile page shows the address, your coin holdings and your activity, such as launches and trades. You can shape the holdings lists in Command Center, then Settings, then Portfolio display. You can hide native coins and stablecoins and holdings under 1 dollar. These settings only change the lists, not your real balances or your total value. No account or email is needed to use MemeWarzone. Your wallet is your identity. MemeWarzone never asks for your seed phrase or private key.
+
+URL: https://app.memewar.zone/faq/what-is-public-about-my-wallet
+
+### What is the LIVE tab on a profile?
+
+A profile can show a LIVE tab after Posts while its owner is streaming on Kick. The tab flashes red. It plays Kick's own player and chat. Right now this is only set up for one partner profile. Kick sets cookies when the player loads, so MemeWarzone asks for cookie consent before it plays. Declining keeps the player off and you can open the stream on kick.com.
+
+URL: https://app.memewar.zone/faq/profile-live-tab
+
+### What is the difference between comments and the War Room chat?
+
+Every coin page has a Posts tab with the owner's updates, automatic updates and comments. The War Room is a live chat for that coin. Anyone can read both without a wallet. To post, connect and sign once. Prepare pages for drafts have comments instead of a live chat. Moderation removes obvious spam, phishing links and impersonation, but it cannot make every message safe.
+
+URL: https://app.memewar.zone/faq/coin-comments-and-chat
+
+### How are views on a post counted?
+
+A view counts when a post is at least half on screen for about one second, or when you open its page. Each viewer counts once per post. A wallet that signed in for social actions counts once, and everyone else counts once per IP address. Opening the same post again does not add views.
+
+URL: https://app.memewar.zone/faq/post-views-counted
+
+### What do the tabs on Home show?
+
+For you shows posts, reposts, creator updates, launches, graduations and battles, newest first. Following shows only wallets you follow, with chips for People, Coins and Auto updates. Launches, Battles and Graduations filter by type for the chain you picked. Posts with a Taking off label collected reactions fast in the last 48 hours. On phones the extra cards, such as Trending and League, move into tabs.
+
+URL: https://app.memewar.zone/faq/home-feed-tabs
+
+## Safety and security
+
+### Will MemeWarzone ever ask for my seed phrase or private key?
+
+No. MemeWarzone never asks for your seed phrase, recovery phrase or private key, in the app, in Discord, on X, in Telegram or by email. Anyone who asks is a scammer, even if they look like staff. A wallet only needs you to approve or sign a message or transaction. Signing does not require your seed phrase.
+
+URL: https://app.memewar.zone/faq/never-share-seed-phrase
+
+### What are the official MemeWarzone links and channels?
+
+Use only these official places. Type the address yourself or use a bookmark. App: app.memewar.zone Website: memewar.zone Docs: docs.memewar.zone X: x.com/memewarzone Telegram: t.me/memewarzonehq Discord: discord.gg/aXTkn3Asu Email: support@memewar.zone
+
+URL: https://app.memewar.zone/faq/official-links-and-channels
+
+### How do I spot a fake coin or an impersonator?
+
+Anyone can launch a coin with any name, image and ticker. A matching name or logo does not prove the coin belongs to a project, a person or a company. Check the contract address against the one the project posts on its own official channels, and check which chain the coin is on. Look at who created the coin and how old it is. An UpVote, a Featured spot, a rising chart or a crowded page does not make a coin safe. Compare the full contract address, not only the name or ticker. Be careful with coins launched seconds after a famous name starts trending. Ignore DMs that point you to a coin or a claim page. If someone uses your name or images, file a Report Abuse case.
+
+URL: https://app.memewar.zone/faq/spot-fake-coins-and-impersonation
+
+### How do I report impersonation, stolen images or phishing?
+
+Use File Abuse Report in the Command Center under Support and safety. Abuse reports are for identity problems: someone impersonating you, using your images or content, a fake project pretending to be you, or phishing that pretends to be you or MemeWarzone. You can also report a post, comment or profile from its menu. A failed trade or a missing reward is not abuse. Take those to Discord support. 1. Open Command Center, then Support and safety, and press File Abuse Report. 2. Pick a category and, if you know it, what you are reporting: a profile, coin, token, wallet, post or website. Add the link or address. 3. Describe what happened and how it targets you. 4. Enter your email and add evidence if you have it: JPG, PNG, WEBP or PDF, up to 5 files of 10 MB each.
+
+URL: https://app.memewar.zone/faq/report-abuse
+
+### How will I hear back about my abuse report?
+
+After you submit you get a case number and a link to the case. My Abuse Reports lists your cases with type, date, status and last update. Staff replies appear only there. You get an email when there is a reply, but do not answer the email. Reply inside the case, where you can also add more evidence. Only you and the abuse team can see your reports. Regular Discord support cannot.
+
+URL: https://app.memewar.zone/faq/abuse-report-replies
+
+### What does MemeWarzone control and what does it not?
+
+MemeWarzone is non-custodial. It does not hold your coins, and fees are split inside the same transaction as the trade. You sign every transaction from your own wallet. The team does not control the market price of a coin, other people's trades or what a coin's creator does with their own tokens. The platform can improve structure and visibility, but it cannot remove market risk.
+
+URL: https://app.memewar.zone/faq/what-memewarzone-controls
+
+### Who owns the contracts, and are they audited?
+
+On BNB Chain and Robinhood Chain the contracts are owned by a Safe multisig and cannot be changed after deployment. On Solana the programs can only be upgraded through a Squads multisig. An external audit is pending on every chain. Until it is done, treat the contracts as unaudited by an outside firm. Protocol earnings above a fixed cap move to a multisig wallet. The contract addresses are listed on the About page.
+
+URL: https://app.memewar.zone/faq/contracts-owners-and-audit
+
+### Can a creator rug a coin? What is locked after graduation?
+
+When a coin graduates, its liquidity moves into a DEX pool and is locked for good. The creator cannot withdraw that liquidity. On BNB Chain and Robinhood Chain the pool is on Uniswap V4. On Solana it is on Meteora. That does not remove all risk. A creator can still sell the tokens they hold, and a coin can lose most of its value. The creator reserve is 2% of supply (20M tokens). On Solana it is released at graduation. On BNB Chain and Robinhood Chain it is released no earlier than 1 hour after graduation, and only while the price is at or above the graduation price.
+
+URL: https://app.memewar.zone/faq/rug-risk-and-locked-liquidity
+
+### What safety checks run on imported coins?
+
+When you import a coin, MemeWarzone checks that the address is a real token on the chosen chain, that the coin has left its bonding stage and has a funded DEX pool, and that the token can be sold and moved freely. An import is refused when the address is not a token, selling fails (a honeypot), transfers are blocked or paused, or the transfer tax is above 10%. Some findings send the coin to review instead, and it is not listed until the review is done. Trading is switched off on a coin when a later scan reports a honeypot or a blocked transfer. A passed check lowers some risks. It is not a promise that a coin is safe.
+
+URL: https://app.memewar.zone/faq/import-safety-checks
+
+### What wallet prompts should make me stop and not sign?
+
+Read every prompt before you approve. Stop if anything does not match what you meant to do. The website domain in the prompt is not an official one. The chain is not the one you chose. It asks for an approval of unlimited spending, or to give another address control of your tokens. It asks you to sign a message you cannot read, or a transaction you did not start. A message, DM or email says you must claim something urgently or your wallet will be locked. Someone offers support or recovery help that you did not ask for.
+
+URL: https://app.memewar.zone/faq/phishing-signatures-to-watch
+
+### What does MemeWarzone ask me to sign?
+
+You sign once when you connect, and that sign-in covers social actions such as posts, follows and comments for 30 days. You also sign for actions that move money or change something on chain: buying, selling, creating a coin, buying Boosts or UpVotes, signing up as a recruiter and claiming rewards. A sign-in message is not a transaction and cannot move your coins. Still, read each prompt. If a prompt appears that you did not trigger, close it.
+
+URL: https://app.memewar.zone/faq/what-memewarzone-asks-you-to-sign
+
+### What information about me is public?
+
+Blockchain data is public. Anyone can see your wallet address, your trades and your balances on a block explorer. Your MemeWarzone profile is tied to your wallet and is the same on every chain: picture, name, @username and bio. Posts, follows, comments and league and battle results are public. No account or email is needed to use the app. The email you give in an abuse report is used only to tell you when the report is updated, and only you and the abuse team see the report.
+
+URL: https://app.memewar.zone/faq/what-data-is-public
+
+### How do I keep my wallet and account secure?
+
+Your wallet is your account, so its security is your security. MemeWarzone cannot reset a wallet, reverse a transaction or recover lost keys. Keep your seed phrase offline and never type it into a website or chat. Use a separate wallet for trading, with only the funds you are ready to risk. Consider a hardware wallet for larger balances. Bookmark the official app and do not follow links from DMs or replies. Check the domain, chain and action in each prompt before you sign. Review and revoke token approvals you no longer need. Do not use money you cannot afford to lose.
+
+URL: https://app.memewar.zone/faq/account-security-tips
+
+### How do I contact MemeWarzone support?
+
+For product questions about wallets, trading, launches and rewards, use the MemeWarzone Discord. You can also write to support@memewar.zone. Legal questions go to legal@memewar.zone. Use Report Abuse in the Command Center for impersonation, stolen images or phishing. Support never asks for your seed phrase or private key and never asks you to send funds to get a reward.
+
+URL: https://app.memewar.zone/faq/contact-support
+
+### What are the risks of trading memecoins on MemeWarzone?
+
+You can lose all the money you put into a memecoin. Prices are volatile and can change fast. Weak coins, bad timing, bad links, infrastructure delays and bad judgment can all cost money. MemeWarzone gives information and tools, not financial advice. Rewards are never guaranteed income. Use only money you can afford to lose. The service is operated under Dutch law and is for users aged 18 or older.
+
+URL: https://app.memewar.zone/faq/memewarzone-risk-disclosure
+
+## Troubleshooting
+
+### Why did my buy or sell fail?
+
+The usual reasons are: the price moved more than your slippage allows, you do not have enough of the chain's coin left for the network fee, the order is large and moves the price too much, or your wallet is on a different network than the coin. A new coin can also be not open for trading yet. A failed transaction can still cost the network fee. The trade panel and your wallet show the actual error. Do not report a failed trade as abuse. Abuse reports are for identity problems. 1. Try a smaller amount. 2. Keep some BNB, SOL or ETH in the wallet for the network fee. 3. Check that your wallet is on the coin's chain. 4. If the panel offers it, try again with slightly higher slippage.
+
+URL: https://app.memewar.zone/faq/my-transaction-failed
+
+### What does 'slippage exceeded' mean?
+
+The price moved past your limit between the quote and the moment the trade ran, so the trade was stopped to protect you. It happens on fast coins, on large orders and in the first minute after a launch. Retry with a smaller amount. Where the panel has a slippage menu, as on BNB Chain, pick a higher value only if you accept a worse price. On Solana the limit is fixed at 5%.
+
+URL: https://app.memewar.zone/faq/slippage-exceeded-error
+
+### My wallet shows a warning on a trade. Is it a scam?
+
+Not always. Wallets scan every transaction and show a warning for things they cannot recognize. New sites, new tokens and thin liquidity often trigger one. A warning is a reason to read, not proof of a scam and not proof of safety. Read what the wallet says it will do. A MemeWarzone trade sends your coin or token to the curve or pool and gives you the other side. It should never ask you to approve unlimited spending for unknown addresses or to share your seed phrase. If the request does not match what you pressed, reject it. If the site is brand new on a partner website that uses the swap box, Phantom can show a message that the domain is new or not reviewed. That comes from Phantom checking the website and usually goes away within days.
+
+URL: https://app.memewar.zone/faq/wallet-shows-a-warning
+
+### Why does Phantom show more instructions than I expected on Solana?
+
+Phantom rewrites the transaction before you sign. It adds compute budget instructions and a Lighthouse safety check for each account the transaction writes. Lighthouse is Phantom's own guard. It checks that the accounts end up in the expected state and fails the transaction if not. So an app buy can show more instructions and a larger size in the wallet than the app built. That is normal. If the wallet shows an action you did not ask for, such as an unrelated transfer, reject it.
+
+URL: https://app.memewar.zone/faq/extra-instructions-in-phantom
+
+### My transaction is stuck on pending. What now?
+
+Wait a few minutes. The network can be busy. Many wallets offer Speed up or Cancel on EVM chains. On Solana, a transaction that does not land within about a minute usually expires and no funds move. Before you try again, check your wallet history and the chain explorer. If the first one succeeded, a second one buys twice.
+
+URL: https://app.memewar.zone/faq/transaction-stuck-pending
+
+### My balance or position does not update after a trade.
+
+Refresh the page. Then check that the right wallet is connected. Check your wallet history to see whether the transaction succeeded. If you added Robinhood Chain to your wallet through MemeWarzone before October 14, it may use an old RPC address that now fails often. MemeWarzone offers to switch your wallet to the public RPC. Accept it, or update the network in your wallet.
+
+URL: https://app.memewar.zone/faq/balance-not-updating
+
+### I cannot find a coin.
+
+Coins and search show one chain at a time. Check the chain buttons first. Then search by ticker, name or the full address. Search finds coins launched or imported on MemeWarzone, people by display name or @username, and any wallet by its address. A draft or scheduled coin may not be open for trading yet. A coin that was launched elsewhere is not listed until someone imports it.
+
+URL: https://app.memewar.zone/faq/cannot-find-a-coin
+
+### The page shows the wrong chain or asks me to switch networks.
+
+Coins, Leagues, the War Trade Room and search show one chain at a time. Use the chain buttons to pick BNB, Solana or Robinhood. Your choice is remembered. A coin page always opens on the coin's own chain. For a trade, your wallet must be on the coin's network. BNB Chain and Robinhood Chain use the same EVM address, so the wallet only needs to switch network. Solana needs a Solana wallet.
+
+URL: https://app.memewar.zone/faq/page-shows-the-wrong-chain
+
+### My wallet keeps asking me to sign.
+
+One signature covers social actions for 30 days. It is kept in this browser. You sign again on another browser or device, with another wallet, or after the 30 days. Actions such as saving your profile, voting, payments and claims ask every time by design. If the same request returns again and again, check that you are using the same wallet account and that the browser keeps site data. Private windows and blocked site data cannot keep the signature. Reject any prompt that asks you to approve a transaction or spend tokens when you only wanted to post.
+
+URL: https://app.memewar.zone/faq/signature-request-keeps-appearing
+
+### Why does it say 'Boosts are closed'?
+
+Boosts close when the last 20% of a battle's clock starts. A 24 hour battle closes Boosts at 19 hours 12 minutes. A 1 hour battle closes them at 48 minutes. After that you can no longer add a Boost to either side. Each wallet can also Boost only twice per battle, both sides together. Free votes are separate from Boosts.
+
+URL: https://app.memewar.zone/faq/boosts-are-closed
+
+### My UpVote does not show up.
+
+Wait a minute and refresh the page. Then check your wallet history to see whether the payment went through. An UpVote counts after its transaction is confirmed. If the transaction failed, no vote was cast. A cooldown and daily limits apply to UpVotes. If the popup says you reached a limit, try later. Do not use links from strangers that claim to UpVote for you.
+
+URL: https://app.memewar.zone/faq/upvote-not-counted
+
+### I cannot find my claim button.
+
+Claims live in Command Center, under Rewards and claims, for the wallet that earned them. Check that you have connected the right wallet and picked the right chain. League, airdrop, recruiter, battle and creator payouts are listed there once they are ready. A reward that is still Pending is not claimable yet. Prizes are not paid automatically to every holder and are not guaranteed. For an imported coin, creator earnings can only be claimed after you prove you own the coin.
+
+URL: https://app.memewar.zone/faq/claim-button-missing
+
+### Wallet will not connect on my phone.
+
+A phone browser has no wallet inside the page. Tap your wallet in the connect window and MemeWarzone opens inside that wallet's own browser, ready to connect. You can also open the site from the browser inside the wallet app yourself. If the wallet does not open on a site you visit, try the wallet browser. Unlock the wallet first, then refresh.
+
+URL: https://app.memewar.zone/faq/mobile-wallet-browser
+
+### The app looks wrong or old. Should I clear my cache?
+
+Start with a hard refresh. Then try another browser or a private window to see whether the problem is local. If a page works there, clear the site data for memewar.zone and connect again. Clearing site data removes the stored social signature and your cookie choice, so your wallet asks you to sign again. Your coins and profile live on the chain and on our servers. Clearing the cache does not touch them. Never share a seed phrase while troubleshooting.
+
+URL: https://app.memewar.zone/faq/clear-cache-and-refresh
+
+### A coin page says trading has not opened.
+
+Drafts have a public Prepare page, but they do not trade. A scheduled launch can open trading up to 30 days after it is created. The page shows the countdown. Buying is not possible before then. In the first 60 seconds after trading opens, the fee starts at 90% and falls to 2%. Check the fee in the quote before you buy.
+
+URL: https://app.memewar.zone/faq/coin-not-open-for-trading
+
+(227 Help Center answers)

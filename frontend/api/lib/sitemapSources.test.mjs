@@ -189,3 +189,12 @@ test("handlers: a failed source is retried within 2 minutes", async () => {
   const b = fakeRes(); await h.child({ params: { file: "posts.xml" } }, b);
   assert.match(b.body, /\/post\/9/);
 });
+
+test("static sitemap lists the Help Center, every topic and every article", async () => {
+  const { staticEntries } = await import("./sitemapSources.js");
+  const { HELP_ARTICLES, HELP_TOPICS } = await import("../../shared/helpContent.mjs");
+  const locs = new Set(staticEntries().map((e) => e.loc));
+  assert.ok(locs.has("https://app.memewar.zone/faq"));
+  for (const t of HELP_TOPICS) assert.ok(locs.has(`https://app.memewar.zone/faq/${t.id}`), t.id);
+  for (const a of HELP_ARTICLES) assert.ok(locs.has(`https://app.memewar.zone/faq/${a.slug}`), a.slug);
+});
