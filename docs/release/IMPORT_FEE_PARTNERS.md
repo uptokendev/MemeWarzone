@@ -68,3 +68,46 @@ fingerprint names the partner (`financeImportSwapFees.js` scanEvmImportSwapFees 
 The indexer (`realtime-indexer/src/importCreatorFeesEvm.ts`) pays the partner share from that vault. Robinhood has
 its vault live; BNB waits for its ImportFeeVault (see above). The API refuses a Robinhood widget build when the
 Robinhood split is not configured (`IMPORT_FEE_VAULT_4663` = `IMPORT_SWAP_FEE_RECEIVER_4663`): never a fee-free swap.
+
+## Graduated gen-8 coins (BNB 56, Robinhood 4663)
+
+Founder 2026-10-22: a widget partner earns **0.25% of the volume** of a graduated gen-8 MemeWarzone coin swap that
+came through its widget, out of MemeWarzone's 0.50%. **Nothing during bonding.** Same fingerprint rule as imports.
+
+- **Fees do not change.** The gen-8 hook keeps sending MemeWarzone's share hook -> MwzFeeSplitter -> ProtocolRevenueVault
+  (Safe only). Nothing pays from there.
+- **Ledger** (`gen8_partner_fees`, written by the indexer, `realtime-indexer/src/evm/gen8PartnerFees.ts`): post-graduation
+  trade accruals (`evm_gen8_fee_accruals`, phase `post`) with the widget referrer tag -> the landed transaction's
+  to / input / value -> the fingerprint the API recorded when it built that partner's swap (`api/gen8Swap.js`) -> the
+  partner, if its row on that chain is **active**. Share = floor(volume x 25 / 10000), never above the trade's protocol
+  slice. A failed RPC read is retried on the next run, never recorded as "no partner". Re-runs insert nothing twice.
+- **Payout**: the existing EVM import worker pays it from the chain's **ImportFeeVault**, in the same partner payout as the
+  import share (`import_fee_transfers` kind `partner`, `gen8_raw` = the gen-8 part), same operator key, caps, minimum,
+  resend and dry-run rules. The gen-8 part only comes out of **MemeWarzone's free share** of the vault:
+  min(vault balance - creator accruals waiting or paying - import partner dues, MemeWarzone's recorded import share +
+  verified Safe top-ups - what gen-8 already took). Creator and import partner money is never used. When that share is
+  short, the rest **waits** (the pass log says so) and the daily sweep keeps every gen-8 due in the vault.
+- **Top-up** when the share is short: send ETH / BNB from the **Safe** (the vault admin) to the ImportFeeVault, then
+  record it (production SQL, lower-case hex):
+  ```sql
+  insert into public.gen8_partner_topups (chain_id, vault, tx_hash, amount_raw, note)
+  values (4663, lower('<ImportFeeVault>'), lower('<top-up tx hash>'), <wei>, 'gen-8 partner top-up');
+  ```
+  The worker counts it only after the receipt shows a Deposit of exactly that amount from the vault admin into the
+  vault (and the transaction is not an import fee); otherwise the row becomes `rejected` with the reason.
+- **Report**: `GET /api/admin/finance/gen8` partner block reads earned / paid / sending / due from the ledger once the
+  indexer has run on the chain (`partner.ledger`).
+- BNB has no ImportFeeVault yet: the ledger fills, nothing is paid until `IMPORT_FEE_VAULT_56` is set.
+
+### Go-live (each step a founder go)
+
+1. Production SQL: `database/prod_apply_gen8_partner_fees.sql` (same statements as
+   `db/migrations/20261022_000010_gen8_partner_fees.sql`), then the check at its bottom.
+2. Merge and redeploy the indexer (and the API for the report). Nothing changes yet.
+3. Indexer env, ledger: `GEN8_PARTNER_FEES_ENABLED=true` (optional `GEN8_PARTNER_FEES_BATCH`,
+   `GEN8_PARTNER_FEES_POLL_MS`). Log `[gen8] partner fees {...}`. Check `select * from public.gen8_partner_fees`.
+4. Dry run of the payout: leave `GEN8_PARTNER_PAYOUT_SEND` unset. The `[import-fees-evm] pass` log shows `gen8.roomWei`,
+   `gen8.outstandingWei` and `gen8.planned` (what it would pay); import partner and creator payouts run as today.
+5. Send: `GEN8_PARTNER_PAYOUT_SEND=true` on the indexer. Existing env stays: `IMPORT_FEE_EVM_WORKER_ENABLED`,
+   `IMPORT_FEE_PAYOUT_SEND`, `IMPORT_FEE_VAULT_<chainId>`, `IMPORT_FEE_PAYOUT_OPERATOR_PK_<chainId>`,
+   `IMPORT_PARTNER_MIN_PAYOUT_WEI_<chainId>`.
