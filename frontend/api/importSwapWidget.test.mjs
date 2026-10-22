@@ -37,11 +37,16 @@ test("rate limit: fixed one-minute window per IP", () => {
   assert.equal(allow("a"), true);
 });
 
-test("the widget only swaps Solana coins", async () => {
+test("the widget swaps on Solana, BNB Chain and Robinhood Chain only", async () => {
   const res = fakeRes();
-  await widgetQuote({ method: "POST", body: { chainId: 56, token: "0x0", side: "buy", amountRaw: "1" }, headers: {} }, res);
+  await widgetQuote({ method: "POST", body: { chainId: 1, token: "0x0", side: "buy", amountRaw: "1" }, headers: {} }, res);
   assert.equal(res.statusCode, 400);
   assert.match(String(res.body), /Solana/);
+  // 56 reaches the shared import handler (here: its own input check)
+  const bnb = fakeRes();
+  await widgetQuote({ method: "POST", body: { chainId: 56, token: "0x0", side: "buy", amountRaw: "1" }, headers: {} }, bnb);
+  assert.equal(bnb.statusCode, 400);
+  assert.match(String(bnb.body), /Invalid BNB token/);
 });
 
 test("coin kind: our launchpad / DBC coins are bonding while on the curve; graduated, migrated and non-SOL DBC are not tradable here", async () => {

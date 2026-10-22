@@ -78,6 +78,7 @@ import tokenShareCard from "./token-share-card.js";
 import { importSwapBuild, importSwapQuote } from "./importSwap.js";
 import importCreatorFees, { importCreatorFeesOwner } from "./importCreatorFees.js";
 import { widgetBalances, widgetBuild, widgetCors, widgetQuote, widgetStatus, widgetToken } from "./importSwapWidget.js";
+import { evmWidgetBalances, evmWidgetStatus, evmWidgetToken } from "./widgetSwapEvm.js";
 import { gen8SwapBalances, gen8SwapBuild, gen8SwapQuote, gen8SwapStatus, gen8SwapToken } from "./gen8Swap.js";
 import airdropPool from "./airdropPool.js";
 import battleShareCard from "./battle-share-card.js";
@@ -538,7 +539,7 @@ router.all("/drafts/:draftId/archive", wrap(draftArchive));
 router.all("/drafts/:draftId/deploy", wrap(draftDeploy));
 router.all("/solana/campaign-account", wrap(solanaCampaignAccount));
 router.get("/solana/holders", wrap(solanaHolders));
-// Imported memecoins: Jupiter (Solana) / KyberSwap on PancakeSwap pools (BNB), 0.5% platform fee.
+// Imported memecoins: Jupiter (Solana) / KyberSwap (BNB) / Uniswap V3 (Robinhood, built by the API for the widget).
 router.post("/imports/swap/quote", wrap(importSwapQuote));
 router.post("/imports/swap/build", wrap(importSwapBuild));
 router.get("/imports/creator-fees/owner", wrap(importCreatorFeesOwner));
@@ -548,6 +549,11 @@ router.get("/widget/swap/balances", wrap(widgetBalances));
 router.post("/widget/swap/quote", wrap(widgetQuote));
 router.post("/widget/swap/build", wrap(widgetBuild));
 router.get("/widget/swap/status", wrap(widgetStatus));
+// Imported and graduated coins on BNB Chain / Robinhood Chain in the widget (api/widgetSwapEvm.js); quote and build are
+// the routes above with chainId 56 / 4663. evm/token also answers gen-8 coins (kind "gen8") so one EVM box serves all.
+router.get("/widget/swap/evm/token", wrap(evmWidgetToken));
+router.get("/widget/swap/evm/balances", wrap(evmWidgetBalances));
+router.get("/widget/swap/evm/status", wrap(evmWidgetStatus));
 // Generation 8 coins in the widget (api/gen8Swap.js): the API builds the UniversalRouter call and records the partner fingerprint.
 router.get("/widget/swap/gen8/token", wrap(gen8SwapToken));
 router.get("/widget/swap/gen8/balances", wrap(gen8SwapBalances));

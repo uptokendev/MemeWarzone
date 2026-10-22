@@ -24,6 +24,19 @@ import { badMethod, json, readJson } from "../server/http.js";
 import { evmFingerprint, recordFingerprint, solanaFingerprintFromBuilt } from "./lib/importSwapFingerprint.js";
 import { gen8ConfigFor } from "./lib/evmGen8Config.js";
 import { findGen8Coin } from "./lib/evmGen8Coins.js";
+import { ethers } from "ethers";
+import {
+  ROBINHOOD_MAINNET_CHAIN_ID,
+  UNIVERSAL_ROUTER_4663,
+  WETH_4663,
+  QUOTER_V2_4663,
+  encodeImportBuy,
+  encodeImportSell,
+  importSwapFee,
+  importSwapFeeTerms4663,
+  quoteImportSwap4663,
+} from "../src/lib/robinhoodImportSwap.mjs";
+import { PERMIT2_ABI, PERMIT2_ADDRESS, gen8PriceImpactBps, gen8ReferenceAmount, gen8SellSetup } from "../shared/evmGen8Swap.mjs";
 
 export const IMPORT_SWAP_FEE_BPS = Math.max(0, Math.min(200, Number(process.env.IMPORT_SWAP_FEE_BPS || 50)));
 
@@ -138,7 +151,7 @@ function positiveRaw(value) {
   return n > 0n ? n : null;
 }
 
-function slippageBps(value) {
+export function slippageBps(value) {
   const n = Math.round(Number(value ?? 100));
   if (!Number.isFinite(n) || n < 1) return 100;
   return Math.min(MAX_SLIPPAGE_BPS, n);
@@ -435,7 +448,250 @@ async function bscBuild({ token, side, wallet, quote, slippage, partner = null }
   return { chainId: 56, provider: "kyberswap", to: KYBER_ROUTER, data: data.data, value, amountOut: data.amountOut, spender: KYBER_ROUTER };
 }
 
-function readSwapInput(body) {
+// ---------------------------------------------------------------- Robinhood Chain (4663), built by the API
+
+/**
+ * Robinhood imports built on the server (swap widget, 2026-10-22). The app keeps building its own in the browser
+ * (src/lib/robinhoodImportSwap.mjs executeImportSwap4663, sell with a signed Permit2 permit inside the call). The API
+ * builds with the same module's encoders (encodeImportBuy / encodeImportSell) and the same quote
+ * (quoteImportSwap4663), so a buy is byte-for-byte the app's buy. A sell has no PERMIT2_PERMIT command: a permit the
+ * user signs inside the calldata would change the data after we recorded its fingerprint. It spends a standing Permit2
+ * allowance instead (one-time ERC20 approve(Permit2) + Permit2.approve(token, router), as gen-8 sells in the widget).
+ *
+ * Only in split mode: 1% (IMPORT_SWAP_FEE_BPS_4663) to the ImportFeeVault (IMPORT_FEE_VAULT_4663 =
+ * IMPORT_SWAP_FEE_RECEIVER_4663), half of it the creator's, paid by the indexer from the vault. The API reads the plain
+ * names, the same ones the finance scanner and the indexer read. Without split mode it refuses (503): it never builds
+ * the old 0.5% protocol-only terms and never a swap without PAY_PORTION.
+ */
+const UNIVERSAL_ROUTER_IFACE = new ethers.Interface(["function execute(bytes commands, bytes[] inputs, uint256 deadline) payable"]);
+const QUOTER_V2_ABI = ["function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96)) returns (uint256 amountOut,uint160,uint32,uint256)"];
+const ERC20_ALLOWANCE_ABI = ["function allowance(address owner, address spender) view returns (uint256)"];
+const ERC20_APPROVE_IFACE = new ethers.Interface(["function approve(address spender, uint256 amount) returns (bool)"]);
+const ROBINHOOD_DEADLINE_SECONDS = 20 * 60;
+const MAX_UINT160 = (1n << 160n) - 1n;
+const MAX_UINT256 = (1n << 256n) - 1n;
+const RH_CMD = Object.freeze({ V3_SWAP_EXACT_IN: 0x00, SWEEP: 0x04, PAY_PORTION: 0x06, PERMIT2_PERMIT: 0x0a, WRAP_ETH: 0x0b, UNWRAP_WETH: 0x0c });
+const abi = ethers.AbiCoder.defaultAbiCoder();
+
+function httpError(status, code, message) {
+  return Object.assign(new Error(message), { status, code });
+}
+
+async function defaultEvmProvider(chainId) {
+  const { getRpcUrls, getServerReadProvider } = await import("./lib/getServerReadProvider.js");
+  return getRpcUrls(chainId).length ? getServerReadProvider(chainId) : null;
+}
+
+async function evmProvider(chainId, deps) {
+  const provider = await (deps.getProvider || defaultEvmProvider)(chainId);
+  if (!provider) throw httpError(503, "RPC_NOT_CONFIGURED", `No RPC is configured for chain ${chainId}.`);
+  return provider;
+}
+
+/** The 4663 fee terms the API builds with: split mode only, else a 503. Plain env names (as the scanner and indexer). */
+export function robinhoodImportTerms(env = process.env) {
+  const terms = importSwapFeeTerms4663({
+    IMPORT_FEE_VAULT_4663: env.IMPORT_FEE_VAULT_4663,
+    IMPORT_SWAP_FEE_RECEIVER_4663: env.IMPORT_SWAP_FEE_RECEIVER_4663,
+    IMPORT_SWAP_FEE_BPS_4663: env.IMPORT_SWAP_FEE_BPS_4663,
+  });
+  if (!terms.split || !(terms.feeBps > 0) || /^0x0{40}$/i.test(terms.feeReceiver) || !(terms.creatorShareBps > 0)) {
+    throw httpError(503, "IMPORT_SWAP_FEE_NOT_CONFIGURED", "Swaps on Robinhood Chain are paused here: the import fee vault is not configured.");
+  }
+  return terms;
+}
+
+/** True when the API can build an import swap on this EVM chain with a fee (56: Kyber fee bps > 0; 4663: split mode). */
+export function evmImportFeeReady(chainId, env = process.env) {
+  if (Number(chainId) === 56) {
+    const receiver = String(env.IMPORT_SWAP_FEE_RECEIVER_56 || "0xc2d4E6f846446f3921a34A34e007295dbc19Bc4c").trim().toLowerCase();
+    return importSwapFeeBps(56, env) > 0 && /^0x[0-9a-f]{40}$/.test(receiver) && !/^0x0{40}$/.test(receiver);
+  }
+  if (Number(chainId) === ROBINHOOD_MAINNET_CHAIN_ID) {
+    try {
+      robinhoodImportTerms(env);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+/** The fee terms an EVM import on this chain is quoted with (display: the widget's token answer). */
+export function evmImportFeeTerms(chainId, env = process.env) {
+  if (Number(chainId) === 56) {
+    const feeBps = importSwapFeeBps(56, env);
+    return { feeBps, creatorShareBps: bscImportFeeVault(env) ? Math.floor(feeBps / 2) : 0, split: Boolean(bscImportFeeVault(env)) };
+  }
+  if (Number(chainId) === ROBINHOOD_MAINNET_CHAIN_ID) {
+    const terms = importSwapFeeTerms4663({ IMPORT_FEE_VAULT_4663: env.IMPORT_FEE_VAULT_4663, IMPORT_SWAP_FEE_RECEIVER_4663: env.IMPORT_SWAP_FEE_RECEIVER_4663, IMPORT_SWAP_FEE_BPS_4663: env.IMPORT_SWAP_FEE_BPS_4663 });
+    return { feeBps: terms.split ? terms.feeBps : 0, creatorShareBps: terms.split ? terms.creatorShareBps : 0, split: terms.split };
+  }
+  return { feeBps: 0, creatorShareBps: 0, split: false };
+}
+
+/**
+ * Quote of a Robinhood import swap (quoteImportSwap4663 with the API's terms), in the shape of the other chains'
+ * quotes. amountOut is what the wallet receives after the fee; minAmountOut too (a sell: the SWEEP minimum).
+ * The price impact compares with a quote of 1/1000 of the amount in the same pool (as gen-8, gen8PriceImpactBps).
+ */
+export async function robinhoodQuoteCore({ token, side, amountRaw, slippage = 100 }, deps = {}) {
+  const env = deps.env || process.env;
+  const terms = robinhoodImportTerms(env);
+  const provider = await evmProvider(ROBINHOOD_MAINNET_CHAIN_ID, deps);
+  const address = ethers.getAddress(String(token).toLowerCase());
+  let q;
+  try {
+    q = await quoteImportSwap4663({ provider, token: address, side, amountIn: BigInt(amountRaw), slippageBps: slippage, terms });
+  } catch (error) {
+    if (/No Uniswap V3 pool/.test(String(error?.message))) throw httpError(422, "IMPORT_SWAP_NO_ROUTE", "No Uniswap pool with ETH for this token on Robinhood Chain");
+    if (error?.code === "CALL_EXCEPTION") throw httpError(422, "IMPORT_SWAP_NO_QUOTE", "No quote for this amount (the pool refused it)");
+    console.warn("[api/importSwap] Robinhood quote failed", String(error?.shortMessage || error?.message || error));
+    throw httpError(502, "RPC_FAILED", "Robinhood Chain could not be read. Try again.");
+  }
+  const swapIn = side === "buy" ? q.amountIn - q.feeWei : q.amountIn;
+  const swapOut = side === "buy" ? q.amountOut : q.grossOut;
+  const refIn = gen8ReferenceAmount(swapIn);
+  let refOut = null;
+  if (refIn != null) {
+    const [tokenIn, tokenOut] = side === "buy" ? [WETH_4663, address] : [address, WETH_4663];
+    refOut = await new ethers.Contract(QUOTER_V2_4663, QUOTER_V2_ABI, provider).quoteExactInputSingle
+      .staticCall({ tokenIn, tokenOut, amountIn: refIn, fee: q.route.fee, sqrtPriceLimitX96: 0n })
+      .then((out) => BigInt(out[0]))
+      .catch(() => null);
+  }
+  const priceImpactBps = gen8PriceImpactBps({ amountIn: swapIn, amountOut: swapOut, refIn, refOut });
+  const minAmountOut = side === "buy" ? q.minOut : q.minOut - importSwapFee(q.minOut, terms.feeBps);
+  return {
+    chainId: ROBINHOOD_MAINNET_CHAIN_ID,
+    provider: "uniswap-v3",
+    side,
+    amountIn: q.amountIn.toString(),
+    amountOut: q.amountOut.toString(),
+    minAmountOut: minAmountOut.toString(),
+    slippageBps: q.slippageBps,
+    priceImpactBps,
+    priceImpactPct: priceImpactBps == null ? null : priceImpactBps / 100,
+    feeBps: terms.feeBps,
+    feeNativeRaw: q.feeWei.toString(),
+    creatorShareBps: terms.creatorShareBps,
+    feeReceiver: terms.feeReceiver,
+    route: [`uniswap-v3-${q.route.fee}`],
+    quote: { pool: q.route.pool, poolFee: q.route.fee, side, amountIn: q.amountIn.toString(), minOut: q.minOut.toString(), feeBps: terms.feeBps, feeReceiver: terms.feeReceiver },
+  };
+}
+
+/**
+ * The Permit2 setup a Robinhood import sell needs before the swap can go alone, or null. Same transactions as a gen-8
+ * sell (gen8SellSetup: approve(Permit2, max), Permit2.approve(token, router, max uint160, one year)); the ERC20 step is
+ * skipped while the token's allowance to Permit2 already covers the sell (some tokens lower a max allowance).
+ */
+export function robinhoodSellSetup({ token, erc20Allowance, permit2Allowance, amountIn, nowSec }) {
+  const covered = BigInt(erc20Allowance) >= BigInt(amountIn);
+  return gen8SellSetup({ token, router: UNIVERSAL_ROUTER_4663, erc20Allowance: covered ? MAX_UINT256 : BigInt(erc20Allowance), permit2Allowance, amountIn, nowSec });
+}
+
+/**
+ * Self-check of what leaves the API: one execute() on the Universal Router whose commands are exactly the fee-paying
+ * sequence, with PAY_PORTION(ETH, the fee receiver, the fee bps), no PERMIT2_PERMIT, and the swap's token and amount.
+ */
+export function assertRobinhoodImportCall({ data, value, side, token, amountIn, terms }) {
+  const fail = () => {
+    throw httpError(500, "IMPORT_SWAP_BUILD_MISMATCH", "The swap could not be built.");
+  };
+  let decoded;
+  try {
+    decoded = UNIVERSAL_ROUTER_IFACE.decodeFunctionData("execute", data);
+  } catch {
+    fail();
+  }
+  const commands = Array.from(ethers.getBytes(decoded.commands));
+  const inputs = decoded.inputs;
+  const expected = side === "buy"
+    ? [RH_CMD.PAY_PORTION, RH_CMD.WRAP_ETH, RH_CMD.V3_SWAP_EXACT_IN]
+    : [RH_CMD.V3_SWAP_EXACT_IN, RH_CMD.UNWRAP_WETH, RH_CMD.PAY_PORTION, RH_CMD.SWEEP];
+  if (commands.length !== expected.length || commands.some((c, i) => c !== expected[i]) || inputs.length !== expected.length) fail();
+  const pay = abi.decode(["address", "address", "uint256"], inputs[expected.indexOf(RH_CMD.PAY_PORTION)]);
+  if (pay[0] !== ethers.ZeroAddress || pay[1].toLowerCase() !== terms.feeReceiver.toLowerCase() || pay[2] !== BigInt(terms.feeBps) || !(pay[2] > 0n)) fail();
+  const swap = abi.decode(["address", "uint256", "uint256", "bytes", "bool", "uint256[]"], inputs[expected.indexOf(RH_CMD.V3_SWAP_EXACT_IN)]);
+  const path = ethers.getBytes(swap[3]);
+  if (path.length !== 43) fail();
+  const pathIn = ethers.getAddress(ethers.hexlify(path.slice(0, 20)));
+  const pathOut = ethers.getAddress(ethers.hexlify(path.slice(23, 43)));
+  const coin = ethers.getAddress(String(token).toLowerCase());
+  if (side === "buy") {
+    if (pathIn !== ethers.getAddress(WETH_4663) || pathOut !== coin || BigInt(value) !== BigInt(amountIn) || swap[4] !== false) fail();
+  } else {
+    if (pathIn !== coin || pathOut !== ethers.getAddress(WETH_4663) || swap[1] !== BigInt(amountIn) || BigInt(value) !== 0n || swap[4] !== true) fail();
+  }
+}
+
+/**
+ * Build of a Robinhood import swap: fee terms first, then a fresh quote (the client's quote is never trusted), then a
+ * sell's allowance check, then the router call, its self-check, and last the partner fingerprint of exactly what is
+ * returned. A sell without the standing allowance answers { needsAllowance, approval, permit2Approval, quote } and
+ * records nothing.
+ */
+export async function robinhoodBuildCore({ token, side, wallet, amountRaw, slippage = 100, partner = null }, deps = {}) {
+  const env = deps.env || process.env;
+  const terms = robinhoodImportTerms(env);
+  if (!isEvmAddress(wallet)) throw httpError(400, "BAD_WALLET", "Invalid wallet");
+  const amount = positiveRaw(amountRaw);
+  if (!amount || amount > MAX_UINT160) throw httpError(400, "BAD_AMOUNT", "amountRaw must be a positive integer");
+  const provider = await evmProvider(ROBINHOOD_MAINNET_CHAIN_ID, deps);
+  const quote = await robinhoodQuoteCore({ token, side, amountRaw: amount, slippage }, { ...deps, env, getProvider: async () => provider });
+  const coin = ethers.getAddress(String(token).toLowerCase());
+  const owner = ethers.getAddress(String(wallet).toLowerCase());
+  const nowSec = Number(deps.nowSec ?? (await provider.getBlock("latest")).timestamp);
+
+  if (side === "sell") {
+    const [erc20Allowance, permit2Allowance] = await Promise.all([
+      new ethers.Contract(coin, ERC20_ALLOWANCE_ABI, provider).allowance(owner, PERMIT2_ADDRESS),
+      new ethers.Contract(PERMIT2_ADDRESS, PERMIT2_ABI, provider).allowance(owner, coin, UNIVERSAL_ROUTER_4663),
+    ]);
+    const setup = robinhoodSellSetup({ token: coin, erc20Allowance, permit2Allowance, amountIn: amount, nowSec });
+    if (setup) return { chainId: ROBINHOOD_MAINNET_CHAIN_ID, needsAllowance: true, approval: setup.approval, permit2Approval: setup.permit2Approval, quote };
+  }
+
+  const fee = Number(quote.quote.poolFee);
+  const minOut = BigInt(quote.quote.minOut);
+  const call = side === "buy"
+    ? encodeImportBuy({ token: coin, fee, amountInWei: amount, minTokensOut: minOut, feeReceiver: terms.feeReceiver, feeBps: terms.feeBps })
+    : encodeImportSell({ token: coin, fee, amountIn: amount, minGrossEthOut: minOut, permit: null, feeReceiver: terms.feeReceiver, feeBps: terms.feeBps });
+  const deadline = BigInt(nowSec + ROBINHOOD_DEADLINE_SECONDS);
+  const data = UNIVERSAL_ROUTER_IFACE.encodeFunctionData("execute", [call.commands, call.inputs, deadline]);
+  const value = call.value.toString();
+  assertRobinhoodImportCall({ data, value, side, token: coin, amountIn: amount, terms });
+
+  let partnerId = null;
+  if (partner) {
+    const row = await (deps.readPartner || readPartner)(partner, ROBINHOOD_MAINNET_CHAIN_ID);
+    if (row) {
+      partnerId = row.id;
+      await (deps.rememberPartnerSwap || rememberPartnerSwap)({ fingerprint: evmFingerprint(UNIVERSAL_ROUTER_4663, data, value), chainId: ROBINHOOD_MAINNET_CHAIN_ID, partnerId, wallet: owner.toLowerCase(), token: coin.toLowerCase() });
+    }
+  }
+  return { chainId: ROBINHOOD_MAINNET_CHAIN_ID, provider: "uniswap-v3", to: UNIVERSAL_ROUTER_4663, data, value, deadline: deadline.toString(), spender: null, partner: partnerId, quote };
+}
+
+/**
+ * The widget's BNB sell: Kyber's router pulls the coin with transferFrom, so a wallet without an allowance that covers
+ * the sell first approves exactly the amount (as the app, src/lib/importSwap.ts). Returns that approval, or null.
+ * Only the widget asks; the app approves on its own before it calls build.
+ */
+export async function bscSellAllowanceStep({ token, wallet, amountIn }, deps = {}) {
+  const provider = await evmProvider(56, deps);
+  const coin = ethers.getAddress(String(token).toLowerCase());
+  const owner = ethers.getAddress(String(wallet).toLowerCase());
+  const allowance = BigInt(await new ethers.Contract(coin, ERC20_ALLOWANCE_ABI, provider).allowance(owner, KYBER_ROUTER));
+  if (allowance >= BigInt(amountIn)) return null;
+  return { to: coin, data: ERC20_APPROVE_IFACE.encodeFunctionData("approve", [KYBER_ROUTER, BigInt(amountIn)]), value: "0" };
+}
+
+export { bscBuild };
+
+export function readSwapInput(body) {
   const chainId = Number(body?.chainId);
   const side = String(body?.side || "").toLowerCase();
   const token = String(body?.token || body?.tokenAddress || "").trim();
@@ -444,10 +700,12 @@ function readSwapInput(body) {
     if (!isSolanaAddress(token) || token === WSOL) throw Object.assign(new Error("Invalid Solana token"), { status: 400 });
   } else if (chainId === 56) {
     if (!isEvmAddress(token)) throw Object.assign(new Error("Invalid BNB token"), { status: 400 });
+  } else if (chainId === ROBINHOOD_MAINNET_CHAIN_ID) {
+    if (!isEvmAddress(token) || token.toLowerCase() === WETH_4663.toLowerCase()) throw Object.assign(new Error("Invalid Robinhood Chain token"), { status: 400 });
   } else {
-    throw Object.assign(new Error("Import swaps run on Solana and BNB Chain"), { status: 400 });
+    throw Object.assign(new Error("Import swaps run on Solana, BNB Chain and Robinhood Chain"), { status: 400 });
   }
-  return { chainId, side, token: chainId === 56 ? token.toLowerCase() : token };
+  return { chainId, side, token: chainId === 101 ? token : token.toLowerCase() };
 }
 
 /**
@@ -480,7 +738,9 @@ export async function importSwapQuote(req, res) {
     if (!amountRaw) return json(res, 400, { ok: false, error: "amountRaw must be a positive integer" });
     const quote = input.chainId === 101
       ? await solanaQuote({ ...input, amountRaw, slippage: slippageBps(body.slippageBps) })
-      : await bscQuote({ ...input, amountRaw });
+      : input.chainId === ROBINHOOD_MAINNET_CHAIN_ID
+        ? await robinhoodQuoteCore({ ...input, amountRaw, slippage: slippageBps(body.slippageBps) })
+        : await bscQuote({ ...input, amountRaw });
     res.setHeader("cache-control", "no-store");
     return json(res, 200, { ok: true, ...quote });
   } catch (error) {
@@ -499,7 +759,9 @@ export async function importSwapBuild(req, res) {
     if (input.chainId === 101 ? !isSolanaAddress(wallet) : !isEvmAddress(wallet)) return json(res, 400, { ok: false, error: "Invalid wallet" });
     const built = input.chainId === 101
       ? await solanaBuild({ ...input, wallet, quote: body.quote, partner: body.partner })
-      : await bscBuild({ ...input, wallet, quote: body.quote, slippage: slippageBps(body.slippageBps), partner: body.partner });
+      : input.chainId === ROBINHOOD_MAINNET_CHAIN_ID
+        ? await robinhoodBuildCore({ ...input, wallet, amountRaw: body.amountRaw ?? body.quote?.amountIn, slippage: slippageBps(body.slippageBps), partner: body.partner })
+        : await bscBuild({ ...input, wallet, quote: body.quote, slippage: slippageBps(body.slippageBps), partner: body.partner });
     res.setHeader("cache-control", "no-store");
     return json(res, 200, { ok: true, ...built });
   } catch (error) {
