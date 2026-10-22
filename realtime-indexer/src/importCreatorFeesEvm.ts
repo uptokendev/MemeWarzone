@@ -754,11 +754,7 @@ export type EvmPassResult = {
   };
 };
 
-/**
- * One pass for one chain. `operator` is the import payout operator's address (the key behind `chain`'s
- * signer in send mode; the vault's operator() in a dry run). Dry run: reads only, writes and sends nothing.
- */
-export async function runImportCreatorFeeEvmPass(input: {
+type EvmPassInput = {
   db: Pool;
   chain: ImportFeeChain;
   operator: string;
@@ -766,7 +762,40 @@ export async function runImportCreatorFeeEvmPass(input: {
   settings: ImportFeeEvmSettings;
   now?: Date;
   ownerIndex?: ReturnType<typeof ownerWalletIndex>;
-}): Promise<EvmPassResult> {
+};
+
+/** Advisory lock class of the EVM import payout pass ("IMPF"); the second key is the chain id. */
+export const IMPORT_FEE_EVM_LOCK_CLASS = 0x494d5046;
+
+/**
+ * One pass for one chain. `operator` is the import payout operator's address (the key behind `chain`'s
+ * signer in send mode; the vault's operator() in a dry run). Dry run: reads only, writes and sends nothing.
+ *
+ * Send mode holds a per-chain transaction-level advisory lock (pg_try_advisory_xact_lock(IMPORT_FEE_EVM_LOCK_CLASS,
+ * chainId)) on a dedicated connection for the whole pass, so a second worker process with the same key skips the chain
+ * for that pass instead of signing the same nonce (two rows for one payout, both resolved 'landed', would count it
+ * twice). A transaction lock, not a session lock, so it is safe behind a transaction pooler. A db without connect()
+ * (the unit tests' fakes) runs unlocked.
+ */
+export async function runImportCreatorFeeEvmPass(input: EvmPassInput): Promise<EvmPassResult> {
+  if (!input.send || typeof input.db.connect !== "function") return runPassUnlocked(input);
+  const client = await input.db.connect();
+  let open = false;
+  try {
+    await client.query("begin");
+    open = true;
+    const { rows } = await client.query(`select pg_try_advisory_xact_lock($1::int, $2::int) as locked`, [IMPORT_FEE_EVM_LOCK_CLASS, input.settings.chainId]);
+    if (rows[0]?.locked !== true) {
+      return { chainId: input.settings.chainId, resolved: null, expired: 0, sweep: null, payouts: [], partnerPayouts: [], skipped: [`another worker holds the chain ${input.settings.chainId} payout lock; skipped this pass`] };
+    }
+    return await runPassUnlocked(input);
+  } finally {
+    if (open) await client.query("commit").catch(() => {}); // releases the lock
+    client.release?.();
+  }
+}
+
+async function runPassUnlocked(input: EvmPassInput): Promise<EvmPassResult> {
   const { db, chain, send, settings } = input;
   const now = input.now || new Date();
   const chainId = settings.chainId;
