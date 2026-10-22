@@ -95,6 +95,19 @@ came through its widget, out of MemeWarzone's 0.50%. **Nothing during bonding.**
   ```
   The worker counts it only after the receipt shows a Deposit of exactly that amount from the vault admin into the
   vault (and the transaction is not an import fee); otherwise the row becomes `rejected` with the reason.
+  - Register **only** Safe transactions that are top-ups (a plain transfer from the Safe to the vault). Never register a
+    Safe transaction that was an import swap or anything else that paid the vault.
+  - `verified` and `rejected` are final: the worker never re-checks them. A wrong row has to be fixed by hand.
+  - A top-up larger than the gen-8 dues still outstanding is **swept back** to the ProtocolRevenueVault by the next
+    daily sweep (it counts as MemeWarzone's share once the dues are covered). Top up what `gen8.outstandingWei` minus
+    `gen8.roomWei` shows, not more.
+- **Stalled scan**: a transaction the RPC cannot return is retried every run and never recorded as "no partner"; later
+  widget swaps wait behind it. After 10 failed runs in a row the indexer logs an error with chain, tx hash and accrual
+  id (then at most once an hour), and `partner.ledger.stalled` on the finance page shows it.
+- **One pass per chain at a time**: a sending pass holds a per-chain advisory lock; a second worker process with the
+  same key skips that chain for the pass.
+- **Command Center partners list** shows import earned / paid / owed without the gen-8 part, and the gen-8 figures
+  apart (`gen8EarnedRaw`, `gen8PaidRaw`, `gen8SendingRaw`, `gen8OwedRaw`).
 - **Report**: `GET /api/admin/finance/gen8` partner block reads earned / paid / sending / due from the ledger once the
   indexer has run on the chain (`partner.ledger`).
 - BNB has no ImportFeeVault yet: the ledger fills, nothing is paid until `IMPORT_FEE_VAULT_56` is set.

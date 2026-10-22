@@ -222,5 +222,69 @@ test("gen-8 partner ledger + payout on real SQL", { skip: runnable ? false : "Po
     assert.equal(report.partner.attributedWei, earned.toString());
     assert.equal(report.partner.byPartner.crypticpump.paidWei, earned.toString());
     assert.equal(report.partner.byPartner.crypticpump.dueWei, "0");
+
+    // Command Center partners list: the gen-8 part of the payouts is not counted as import paid.
+    await db.query(
+      `insert into public.finance_import_swap_fees (chain_id, tx_hash, log_index, occurred_at, fee_raw, fee_asset, fee_receiver, source, creator_raw, partner_id, partner_raw)
+       values ($1, $2, 0, now(), $3, 'ETH', $4, 'evm_vault_deposit', $5, 'crypticpump', $6)`,
+      [CHAIN, hash(0x1002), milli(4).toString(), VAULT, milli(2).toString(), milli(1).toString()],
+    );
+    const { listPartners } = await import("../../../frontend/api/lib/importFeePartnersAdmin.js");
+    const listed = (await listPartners(db)).find((p: any) => p.id === "crypticpump" && p.chainId === CHAIN);
+    assert.deepEqual([listed.earnedRaw, listed.paidRaw, listed.owedRaw], [milli(1).toString(), "0", milli(1).toString()], "import owed is not reduced by gen-8 payouts");
+    assert.deepEqual([listed.gen8EarnedRaw, listed.gen8PaidRaw, listed.gen8OwedRaw], [earned.toString(), earned.toString(), "0"]);
+
+    // Two worker processes with the same key: the second pass skips the chain while the first holds the lock.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let entered!: () => void;
+    const inside = new Promise<void>((r) => { entered = r; });
+    const slow: ImportFeeChain = { ...chain, async readVault() { entered(); await gate; return chain.readVault(); } };
+    const firstPass = runImportCreatorFeeEvmPass({ db, chain: slow, operator: OPERATOR, send: true, settings });
+    await inside;
+    const concurrent = await runImportCreatorFeeEvmPass({ db, chain, operator: OPERATOR, send: true, settings });
+    assert.deepEqual(concurrent.skipped, [`another worker holds the chain ${CHAIN} payout lock; skipped this pass`]);
+    assert.equal(concurrent.resolved, null, "nothing read or resolved");
+    release();
+    const done = await firstPass;
+    assert.ok(!done.skipped.some((x) => /payout lock/.test(x)));
+    const after = await runImportCreatorFeeEvmPass({ db, chain, operator: OPERATOR, send: true, settings });
+    assert.ok(!after.skipped.some((x) => /payout lock/.test(x)), "the lock is released after the pass");
+  });
+
+  await t.test("a transaction the RPC never returns stalls the scan: retried, counted, one error after 10 runs, then hourly", async () => {
+    const J = hash(0x4a4a);
+    await build(J, "0x0a", "crypticpump");
+    await accrual(J, "post", WIDGET, milli(100), milli(1));
+    const missing = { async getTransaction(h: string) { if (h === J) return null; return provider.getTransaction(h); } };
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => { errors.push(args.map(String).join(" ")); };
+    try {
+      let last: any = null;
+      for (let i = 1; i <= 11; i += 1) {
+        last = await runGen8PartnerAttributionOnce({ db, chainId: CHAIN, hook: HOOK, provider: missing, settleSeconds: 0 });
+        assert.equal(last.retry?.txHash, J);
+        assert.equal(last.retry?.consecutiveFailures, i);
+        assert.equal(last.stalled == null, i < 10);
+      }
+      assert.equal(errors.length, 1, "one error log, not one per run");
+      const jId = Number((await db.query(`select id from public.evm_gen8_fee_accruals where tx_hash = $1`, [J])).rows[0].id);
+      assert.match(errors[0], new RegExp(`chain ${CHAIN}: tx ${J} \\(accrual ${jId}\\) failed 10 runs`));
+      assert.equal(last.stalled.accrualId, jId);
+      assert.equal((await ledger()).some(([tx]) => tx === J), false, "never recorded as no partner or as a share");
+      const { buildGen8Finance } = await import("../../../frontend/api/lib/financeGen8.js");
+      const report = await buildGen8Finance({ db, chainId: CHAIN, env: { EVM_GEN8_LAUNCHER_4663: `${ROUTER}@1`, EVM_GEN8_HOOK_4663: `${HOOK}@1` } });
+      assert.equal(report.partner.ledger.stalled.txHash, J);
+      assert.equal(report.partner.ledger.stalled.failures, 11);
+      // The RPC returns it: recorded, the stall is cleared.
+      const ok = await runGen8PartnerAttributionOnce({ db, chainId: CHAIN, hook: HOOK, provider, settleSeconds: 0 });
+      assert.equal(ok.retry, null);
+      assert.equal(ok.inserted, 1);
+      const c = (await db.query(`select stalled_tx_hash, stalled_failures from public.gen8_partner_fee_cursors where chain_id = $1`, [CHAIN])).rows[0];
+      assert.deepEqual(c, { stalled_tx_hash: null, stalled_failures: 0 });
+    } finally {
+      console.error = original;
+    }
   });
 });
