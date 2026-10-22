@@ -135,8 +135,9 @@ export default [
     "slug": "do-rewards-expire",
     "q": "Do rewards expire? How long do I have to claim?",
     "a": [
+      "Yes. Weekly and monthly league prizes can be claimed for 90 days. After that, an unclaimed prize goes back into the league prize pool.",
       "Weekly airdrop wins can be claimed for 60 days. After that, unclaimed drops go back into the airdrop pot for a later week. Major War League prizes do not expire.",
-      "A row that can no longer be claimed is marked Expired in Rewards and claims. Do not leave a reward unclaimed on purpose, because the window for other reward types is not listed here."
+      "A reward that can no longer be claimed is marked Expired in Rewards and claims, so claim your rewards in time."
     ],
     "keywords": [
       "expire",
@@ -147,10 +148,11 @@ export default [
       "claim window",
       "lost reward"
     ],
-    "needsReview": "Claim windows for weekly and monthly league prizes, squad, recruiter and battle prizes are not documented. Only airdrops (60 days) and MWL (no expiry) are confirmed.",
+    "needsReview": "Claim windows for squad, recruiter and battle prizes are still not documented.",
     "sources": [
       "docs-site/src/content/rewards/epochs-and-claims.md:108-114",
-      "docs-site/src/content/command-center/claims.md:173-175"
+      "docs-site/src/content/command-center/claims.md:173-175",
+      "founder 2026-10-23"
     ]
   },
   {

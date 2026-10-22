@@ -54,7 +54,7 @@ export const HELP_TOPICS = [
   { id: "imports", label: "Importing coins", description: "Bringing a coin from another launchpad and claiming it.", legacy: "create" },
   { id: "recruiters", label: "Recruiters and squads", description: "Referral links, recruiter earnings and squad pools.", legacy: "recruiters" },
   { id: "promotion", label: "UpVotes and promotion", description: "UpVotes, Featured lists, Stories and sponsorships.", legacy: "create" },
-  { id: "social", label: "Profiles and the feed", description: "Your profile, posts, follows and live streams.", legacy: "community" },
+  { id: "social", label: "Profiles and the feed", description: "Your profile, posts, follows and notifications.", legacy: "community" },
   { id: "safety", label: "Safety and security", description: "Scams, impersonation, reporting abuse and keeping your wallet safe.", legacy: "safety" },
   { id: "troubleshooting", label: "Troubleshooting", description: "Failed transactions, wallet warnings and things that look wrong.", legacy: "trading" },
 ];

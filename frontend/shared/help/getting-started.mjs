@@ -198,9 +198,9 @@ export default [
       "next chain"
     ],
     "sources": [
-      "founder 2026-10-22"
-    ],
-    "needsReview": "Confirm the DogeOS wording and the 500,000 wallets figure are still approved for public copy."
+      "founder 2026-10-22",
+      "founder 2026-10-23"
+    ]
   },
   {
     "slug": "cost-to-get-started",

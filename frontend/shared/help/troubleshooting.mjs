@@ -275,7 +275,7 @@ export default [
     "q": "My UpVote does not show up.",
     "a": [
       "Wait a minute and refresh the page. Then check your wallet history to see whether the payment went through. An UpVote counts after its transaction is confirmed. If the transaction failed, no vote was cast.",
-      "A cooldown and daily limits apply to UpVotes. If the popup says you reached a limit, try later. Do not use links from strangers that claim to UpVote for you."
+      "A wallet can cast 3 UpVotes per 24 hours. If the popup says you reached the limit, try again later. Do not use links from strangers that claim to UpVote for you."
     ],
     "keywords": [
       "upvote missing",
@@ -289,9 +289,9 @@ export default [
     ],
     "sources": [
       "frontend/src/components/token/UpvoteDialog.tsx:694",
-      "docs-site/src/content/fees/upvotes.md:36-42"
-    ],
-    "needsReview": "How long the indexer takes to show a confirmed UpVote, and which limit message the popup shows."
+      "docs-site/src/content/fees/upvotes.md:36-42",
+      "founder 2026-10-23"
+    ]
   },
   {
     "slug": "claim-button-missing",

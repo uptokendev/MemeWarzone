@@ -400,6 +400,7 @@ export default [
     "q": "Why did my challenge or battle disappear or not start?",
     "a": [
       "A battle goes live only after the other owner accepts and both sides have paid the buy-in. A challenge that is declined or not answered in time moves to the expired state and never goes live. If you were declined, the inbox shows the decline message when the other owner wrote one.",
+      "If a challenge expires or is cancelled after one side has already paid the buy-in, that buy-in is refunded.",
       "If a battle you expected is not on the Live tab, check Upcoming, My battles and Finished, and check that the chain filter matches the battle's chain."
     ],
     "keywords": [
@@ -410,35 +411,10 @@ export default [
       "missing battle",
       "cancelled"
     ],
-    "needsReview": "How long a challenge stays open, and whether buy-ins are refunded when a paid battle is cancelled, were not found in code. Check before publishing refund wording.",
     "sources": [
       "frontend/api/arenaBattles.js:70-75",
-      "frontend/api/lib/arenaChallengeInbox.js:13,45"
-    ]
-  },
-  {
-    "slug": "coin-graduates-or-delisted-mid-battle",
-    "q": "What happens if a coin is hidden or delisted during a battle?",
-    "a": [
-      "Only graduated and imported coins can enter a battle, so a coin does not graduate in the middle of one. Eligibility is checked when the battle is set up.",
-      "A coin that is later hidden or has trading switched off after a safety finding is handled by the team on a case by case basis. If this happens to a battle you are in, ask in Discord support."
-    ],
-    "links": [
-      {
-        "href": "https://discord.gg/aXTkn3Asu",
-        "text": "MemeWarzone Discord"
-      }
-    ],
-    "keywords": [
-      "delisted",
-      "hidden coin",
-      "removed coin",
-      "battle void",
-      "coin removed"
-    ],
-    "needsReview": "No code path was found that settles or voids a battle when a coin is hidden mid-fight. Confirm the real behavior with the founder before stating it.",
-    "sources": [
-      "frontend/api/lib/arenaEligibility.js:16-23"
+      "frontend/api/lib/arenaChallengeInbox.js:13,45",
+      "founder 2026-10-23"
     ]
   },
   {

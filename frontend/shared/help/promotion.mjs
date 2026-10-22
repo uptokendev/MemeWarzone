@@ -60,7 +60,7 @@ export default [
     "q": "How much is an UpVote and is there a limit?",
     "a": [
       "An UpVote costs 3 dollars on every chain, paid in BNB, SOL or ETH. The popup converts the 3 dollars at the current price. The fee goes to MemeWarzone.",
-      "A cooldown and daily limits apply to keep UpVotes fair. The popup tells you when you hit one."
+      "Each wallet can cast 3 UpVotes per 24 hours. The popup tells you when you have reached the limit."
     ],
     "keywords": [
       "upvote cost",
@@ -74,9 +74,9 @@ export default [
     ],
     "sources": [
       "frontend/src/components/token/UpvoteDialog.tsx:38-39,694",
-      "frontend/src/pages/Playbook.tsx:478"
-    ],
-    "needsReview": "The exact cooldown length and daily cap are not in the frontend code. Check the contract or API and add the numbers."
+      "frontend/src/pages/Playbook.tsx:478",
+      "founder 2026-10-23"
+    ]
   },
   {
     "slug": "upvotes-and-safety",
@@ -281,7 +281,7 @@ export default [
     "slug": "swap-box-for-your-website",
     "q": "Can I put a buy and sell box on my own website?",
     "a": [
-      "Yes, for Solana coins. The swap box lets visitors buy and sell from your site with their own wallet. You paste a few lines of code into a Custom HTML block. It works for coins launched on MemeWarzone while they are on the curve and for imported coins.",
+      "Yes. The swap box lets visitors buy and sell from your site with their own wallet, for coins on BNB Chain, Solana and Robinhood Chain. You paste a few lines of code into a Custom HTML block. It works for coins launched on MemeWarzone while they are on the curve and for imported coins.",
       "Imported coin swaps pay 1%, of which 0.5% goes to the coin's creator. A launched coin pays the normal fees. The box shows the fee before anyone confirms."
     ],
     "links": [
@@ -303,33 +303,9 @@ export default [
       "create"
     ],
     "sources": [
-      "docs-site/src/content/creators/swap-widget.md"
-    ],
-    "needsReview": "The founder's memory notes say the same script also serves gen-8 BNB and Robinhood coins (checked 2026-10-22), but the public guide still says BNB Chain and Robinhood Chain come later."
-  },
-  {
-    "slug": "kick-live-streams",
-    "q": "Can I stream live on my MemeWarzone profile?",
-    "a": [
-      "Live streams from Kick can show on a profile, with a flashing red LIVE tab after Posts while the channel is live. At the moment only one partner profile has this. There is no setting yet for other users to add their own stream.",
-      "The stream plays in Kick's own player, so Kick sets cookies when it loads. MemeWarzone asks for cookie consent first. If you decline, the stream stays off and you can watch on kick.com instead."
-    ],
-    "keywords": [
-      "live stream",
-      "kick",
-      "stream on profile",
-      "live tab",
-      "streamer"
-    ],
-    "alsoIn": [
-      "social"
-    ],
-    "sources": [
-      "frontend/shared/profileStreams.mjs:6-9",
-      "frontend/src/components/profile/ProfileLiveStream.tsx:20-60",
-      "frontend/src/pages/PublicProfile.tsx:774"
-    ],
-    "needsReview": "Confirm the founder still wants this described as partner-only and whether coin pages get streams."
+      "docs-site/src/content/creators/swap-widget.md",
+      "founder 2026-10-23"
+    ]
   },
   {
     "slug": "post-updates-as-your-coin",

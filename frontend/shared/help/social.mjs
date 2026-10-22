@@ -285,29 +285,6 @@ export default [
     "needsReview": "Which profile tabs (Portfolio, Activity) are public to all visitors, and the privacy policy wording."
   },
   {
-    "slug": "profile-live-tab",
-    "q": "What is the LIVE tab on a profile?",
-    "a": [
-      "A profile can show a LIVE tab after Posts while its owner is streaming on Kick. The tab flashes red. It plays Kick's own player and chat. Right now this is only set up for one partner profile.",
-      "Kick sets cookies when the player loads, so MemeWarzone asks for cookie consent before it plays. Declining keeps the player off and you can open the stream on kick.com."
-    ],
-    "keywords": [
-      "live tab",
-      "kick stream",
-      "streamer",
-      "watch live",
-      "cookie banner"
-    ],
-    "alsoIn": [
-      "promotion"
-    ],
-    "sources": [
-      "frontend/src/pages/PublicProfile.tsx:774",
-      "frontend/src/components/profile/ProfileLiveStream.tsx",
-      "frontend/shared/profileStreams.mjs:6-9"
-    ]
-  },
-  {
     "slug": "coin-comments-and-chat",
     "q": "What is the difference between comments and the War Room chat?",
     "a": [

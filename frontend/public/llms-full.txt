@@ -187,7 +187,7 @@ This is the main difference. On Pump.fun a coin's visibility comes from trading 
 - Battles. MemeWarzone: Metrics battles of 24 hours to 7 days and vote battles of 1 to 48 hours, with buy-ins and a war pool for the winner. Other: None in its public docs.
 - Tournaments. MemeWarzone: Brackets with free votes, Boosts and Final Salvo tie-breakers. Other: None in its public docs.
 - Leagues. MemeWarzone: Weekly and monthly leagues in six categories, plus the Major War League for graduated coins. Other: None in its public docs.
-- Social. MemeWarzone: One profile per wallet across chains, posts and follows, coin Stories and live streams. Other: Coin comments and livestreams.
+- Social. MemeWarzone: One profile per wallet across chains, posts and follows, and coin Stories. Other: Coin comments and livestreams.
 
 ## Scale and trust
 
@@ -476,7 +476,7 @@ URL: https://app.memewar.zone/faq/edit-or-hide-a-draft
 
 ### How do I schedule a launch for later?
 
-Scheduled launches are made from a draft. On the Push Live page choose the scheduled option and pick a time. The time must be at least five minutes ahead and no more than 30 days away. The page uses your local time zone. Trading stays closed until that time. On BNB Chain and Robinhood Chain the open time is part of the launch you sign, so the coin opens by itself and you do not need to come back to press anything. The anti-sniper fee runs from the open time, not from the moment you signed. 1. Save the coin as a Draft and finish promotion setup. 2. Open Push Live and choose the scheduled option. 3. Pick the trading-open time. 4. Confirm in your wallet.
+Scheduled launches are made from a draft. On the Push Live page choose the scheduled option and pick a time. The time must be at least five minutes ahead and no more than 30 days away. The page uses your local time zone. Trading stays closed until that time. On BNB Chain and Robinhood Chain the open time is part of the launch you sign, so the coin opens by itself and you do not need to come back. The anti-sniper fee runs from the open time, not from the moment you signed. On Solana the schedule is a timer on your draft. When the time arrives, MemeWarzone notifies you that your launch time has arrived, and you open the draft and deploy it with your wallet to go live. 1. Save the coin as a Draft and finish promotion setup. 2. Open Push Live and choose the scheduled option. 3. Pick the trading-open time. 4. Confirm in your wallet.
 
 URL: https://app.memewar.zone/faq/schedule-a-launch
 
@@ -862,15 +862,9 @@ URL: https://app.memewar.zone/faq/tournament-sponsorship
 
 ### Why did my challenge or battle disappear or not start?
 
-A battle goes live only after the other owner accepts and both sides have paid the buy-in. A challenge that is declined or not answered in time moves to the expired state and never goes live. If you were declined, the inbox shows the decline message when the other owner wrote one. If a battle you expected is not on the Live tab, check Upcoming, My battles and Finished, and check that the chain filter matches the battle's chain.
+A battle goes live only after the other owner accepts and both sides have paid the buy-in. A challenge that is declined or not answered in time moves to the expired state and never goes live. If you were declined, the inbox shows the decline message when the other owner wrote one. If a challenge expires or is cancelled after one side has already paid the buy-in, that buy-in is refunded. If a battle you expected is not on the Live tab, check Upcoming, My battles and Finished, and check that the chain filter matches the battle's chain.
 
 URL: https://app.memewar.zone/faq/why-challenge-disappeared
-
-### What happens if a coin is hidden or delisted during a battle?
-
-Only graduated and imported coins can enter a battle, so a coin does not graduate in the middle of one. Eligibility is checked when the battle is set up. A coin that is later hidden or has trading switched off after a safety finding is handled by the team on a case by case basis. If this happens to a battle you are in, ask in Discord support.
-
-URL: https://app.memewar.zone/faq/coin-graduates-or-delisted-mid-battle
 
 ### How do I watch battles live?
 
@@ -912,7 +906,7 @@ URL: https://app.memewar.zone/faq/how-many-ranks-are-paid
 
 ### How are league prizes paid and claimed?
 
-Nothing is paid out automatically. When a round closes, results are checked and published, winners show on the page and in the Hall of fame, and the prize moves into the claim flow in your Command Center. Prizes are paid in the coin of the chain you earned them on. Claim with the wallet that earned the place. 1. Open Command Center and go to Rewards and claims. 2. Connect the wallet that earned the place and check the chain at the top. 3. Press Claim on the League Rewards row when it is Ready. 4. Confirm in your wallet.
+Nothing is paid out automatically. When a round closes, results are checked and published, winners show on the page and in the Hall of fame, and the prize moves into the claim flow in your Command Center. Prizes are paid in the coin of the chain you earned them on. Claim with the wallet that earned the place. Claim within 90 days. After that, an unclaimed league prize goes back into the league prize pool. 1. Open Command Center and go to Rewards and claims. 2. Connect the wallet that earned the place and check the chain at the top. 3. Press Claim on the League Rewards row when it is Ready. 4. Confirm in your wallet.
 
 URL: https://app.memewar.zone/faq/league-prizes-paid-and-claimed
 
@@ -1010,7 +1004,7 @@ URL: https://app.memewar.zone/faq/claim-all-ready
 
 ### Do rewards expire? How long do I have to claim?
 
-Weekly airdrop wins can be claimed for 60 days. After that, unclaimed drops go back into the airdrop pot for a later week. Major War League prizes do not expire. A row that can no longer be claimed is marked Expired in Rewards and claims. Do not leave a reward unclaimed on purpose, because the window for other reward types is not listed here.
+Yes. Weekly and monthly league prizes can be claimed for 90 days. After that, an unclaimed prize goes back into the league prize pool. Weekly airdrop wins can be claimed for 60 days. After that, unclaimed drops go back into the airdrop pot for a later week. Major War League prizes do not expire. A reward that can no longer be claimed is marked Expired in Rewards and claims, so claim your rewards in time.
 
 URL: https://app.memewar.zone/faq/do-rewards-expire
 
@@ -1200,7 +1194,7 @@ URL: https://app.memewar.zone/faq/how-recruiter-attribution-works
 
 ### Can I change my recruiter after I joined? What is the lock?
 
-The link is meant to stay in place so reward routing is auditable and nobody can hop between codes. Once a wallet has activity on MemeWarzone, its link is locked. If you opened the wrong link, fix it before you trade, create or take part in anything. After the lock, a different link will not replace your recruiter.
+The link is meant to stay in place so reward routing is auditable and nobody can hop between codes. Once a wallet has activity on MemeWarzone, its link is locked. If you opened the wrong link, fix it before you trade, create or take part in anything. After the lock there is currently no way to change your recruiter.
 
 URL: https://app.memewar.zone/faq/recruiter-link-lock
 
@@ -1236,7 +1230,7 @@ URL: https://app.memewar.zone/faq/why-not-eligible-squad-rewards
 
 ### Can I leave a squad?
 
-There is no leave button in the app. A squad link is tied to the recruiter that brought the wallet in, and it locks once the wallet has activity. If you have a problem with your link, ask in Discord support.
+Not at the moment. There is no way to leave a squad or move to another squad in the app. A squad link is tied to the recruiter that brought the wallet in, and it locks once the wallet has activity. If something went wrong with your link, ask in Discord support.
 
 URL: https://app.memewar.zone/faq/leave-or-switch-squad
 
@@ -1280,7 +1274,7 @@ URL: https://app.memewar.zone/faq/how-to-upvote-a-coin
 
 ### How much is an UpVote and is there a limit?
 
-An UpVote costs 3 dollars on every chain, paid in BNB, SOL or ETH. The popup converts the 3 dollars at the current price. The fee goes to MemeWarzone. A cooldown and daily limits apply to keep UpVotes fair. The popup tells you when you hit one.
+An UpVote costs 3 dollars on every chain, paid in BNB, SOL or ETH. The popup converts the 3 dollars at the current price. The fee goes to MemeWarzone. Each wallet can cast 3 UpVotes per 24 hours. The popup tells you when you have reached the limit.
 
 URL: https://app.memewar.zone/faq/upvote-price-and-limits
 
@@ -1328,15 +1322,9 @@ URL: https://app.memewar.zone/faq/prepare-page-and-push-live
 
 ### Can I put a buy and sell box on my own website?
 
-Yes, for Solana coins. The swap box lets visitors buy and sell from your site with their own wallet. You paste a few lines of code into a Custom HTML block. It works for coins launched on MemeWarzone while they are on the curve and for imported coins. Imported coin swaps pay 1%, of which 0.5% goes to the coin's creator. A launched coin pays the normal fees. The box shows the fee before anyone confirms.
+Yes. The swap box lets visitors buy and sell from your site with their own wallet, for coins on BNB Chain, Solana and Robinhood Chain. You paste a few lines of code into a Custom HTML block. It works for coins launched on MemeWarzone while they are on the curve and for imported coins. Imported coin swaps pay 1%, of which 0.5% goes to the coin's creator. A launched coin pays the normal fees. The box shows the fee before anyone confirms.
 
 URL: https://app.memewar.zone/faq/swap-box-for-your-website
-
-### Can I stream live on my MemeWarzone profile?
-
-Live streams from Kick can show on a profile, with a flashing red LIVE tab after Posts while the channel is live. At the moment only one partner profile has this. There is no setting yet for other users to add their own stream. The stream plays in Kick's own player, so Kick sets cookies when it loads. MemeWarzone asks for cookie consent first. If you decline, the stream stays off and you can watch on kick.com instead.
-
-URL: https://app.memewar.zone/faq/kick-live-streams
 
 ### How can a creator keep holders informed?
 
@@ -1417,12 +1405,6 @@ URL: https://app.memewar.zone/faq/report-hide-and-block
 Blockchains are public. Anyone can look up a wallet address in an explorer and see its balances and transactions. MemeWarzone cannot hide that. Your profile page shows the address, your coin holdings and your activity, such as launches and trades. You can shape the holdings lists in Command Center, then Settings, then Portfolio display. You can hide native coins and stablecoins and holdings under 1 dollar. These settings only change the lists, not your real balances or your total value. No account or email is needed to use MemeWarzone. Your wallet is your identity. MemeWarzone never asks for your seed phrase or private key.
 
 URL: https://app.memewar.zone/faq/what-is-public-about-my-wallet
-
-### What is the LIVE tab on a profile?
-
-A profile can show a LIVE tab after Posts while its owner is streaming on Kick. The tab flashes red. It plays Kick's own player and chat. Right now this is only set up for one partner profile. Kick sets cookies when the player loads, so MemeWarzone asks for cookie consent before it plays. Declining keeps the player off and you can open the stream on kick.com.
-
-URL: https://app.memewar.zone/faq/profile-live-tab
 
 ### What is the difference between comments and the War Room chat?
 
@@ -1598,7 +1580,7 @@ URL: https://app.memewar.zone/faq/boosts-are-closed
 
 ### My UpVote does not show up.
 
-Wait a minute and refresh the page. Then check your wallet history to see whether the payment went through. An UpVote counts after its transaction is confirmed. If the transaction failed, no vote was cast. A cooldown and daily limits apply to UpVotes. If the popup says you reached a limit, try later. Do not use links from strangers that claim to UpVote for you.
+Wait a minute and refresh the page. Then check your wallet history to see whether the payment went through. An UpVote counts after its transaction is confirmed. If the transaction failed, no vote was cast. A wallet can cast 3 UpVotes per 24 hours. If the popup says you reached the limit, try again later. Do not use links from strangers that claim to UpVote for you.
 
 URL: https://app.memewar.zone/faq/upvote-not-counted
 
@@ -1626,4 +1608,4 @@ Drafts have a public Prepare page, but they do not trade. A scheduled launch can
 
 URL: https://app.memewar.zone/faq/coin-not-open-for-trading
 
-(227 Help Center answers)
+(224 Help Center answers)

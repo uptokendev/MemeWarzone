@@ -206,9 +206,9 @@ export default [
     ],
     "sources": [
       "docs-site/src/content/fees/after-graduation.md:26-38",
-      "founder 2026-10-22 (facts file, imports 1% on every chain)"
-    ],
-    "needsReview": "docs-site/src/content/fees/index.md:18 still says imports pay 0.5% on BNB Chain and Robinhood Chain. after-graduation.md and the founder say 1%."
+      "founder 2026-10-22 (facts file, imports 1% on every chain)",
+      "founder 2026-10-23"
+    ]
   },
   {
     "slug": "upvote-and-boost-prices",

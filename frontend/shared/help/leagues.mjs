@@ -150,7 +150,8 @@ export default [
     "q": "How are league prizes paid and claimed?",
     "a": [
       "Nothing is paid out automatically. When a round closes, results are checked and published, winners show on the page and in the Hall of fame, and the prize moves into the claim flow in your Command Center.",
-      "Prizes are paid in the coin of the chain you earned them on. Claim with the wallet that earned the place."
+      "Prizes are paid in the coin of the chain you earned them on. Claim with the wallet that earned the place.",
+      "Claim within 90 days. After that, an unclaimed league prize goes back into the league prize pool."
     ],
     "steps": [
       "Open Command Center and go to Rewards and claims.",
@@ -174,11 +175,11 @@ export default [
       "league payout",
       "claim"
     ],
-    "needsReview": "Whether weekly and monthly league prizes expire after a claim window was not found. The docs say only Major War League prizes do not expire.",
     "sources": [
       "docs-site/src/content/leagues/epochs-and-prizes.md:59-64",
       "docs-site/src/content/leagues/claims.md:76",
-      "docs-site/src/content/command-center/claims.md:139"
+      "docs-site/src/content/command-center/claims.md:139",
+      "founder 2026-10-23"
     ]
   },
   {

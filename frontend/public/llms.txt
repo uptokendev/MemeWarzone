@@ -32,7 +32,7 @@ Live on BNB Chain, Solana, Robinhood Chain. Next: DogeOS. MemeWarzone is among t
 - [Importing coins](https://app.memewar.zone/faq/imports): Bringing a coin from another launchpad and claiming it.
 - [Recruiters and squads](https://app.memewar.zone/faq/recruiters): Referral links, recruiter earnings and squad pools.
 - [UpVotes and promotion](https://app.memewar.zone/faq/promotion): UpVotes, Featured lists, Stories and sponsorships.
-- [Profiles and the feed](https://app.memewar.zone/faq/social): Your profile, posts, follows and live streams.
+- [Profiles and the feed](https://app.memewar.zone/faq/social): Your profile, posts, follows and notifications.
 - [Safety and security](https://app.memewar.zone/faq/safety): Scams, impersonation, reporting abuse and keeping your wallet safe.
 - [Troubleshooting](https://app.memewar.zone/faq/troubleshooting): Failed transactions, wallet warnings and things that look wrong.
 

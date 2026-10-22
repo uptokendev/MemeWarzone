@@ -125,7 +125,7 @@ export default [
     "q": "Can I change my recruiter after I joined? What is the lock?",
     "a": [
       "The link is meant to stay in place so reward routing is auditable and nobody can hop between codes. Once a wallet has activity on MemeWarzone, its link is locked.",
-      "If you opened the wrong link, fix it before you trade, create or take part in anything. After the lock, a different link will not replace your recruiter."
+      "If you opened the wrong link, fix it before you trade, create or take part in anything. After the lock there is currently no way to change your recruiter."
     ],
     "keywords": [
       "change recruiter",
@@ -135,10 +135,10 @@ export default [
       "wrong code",
       "attribution lock"
     ],
-    "needsReview": "No self-service way to leave a squad or change recruiter was found in the code. Founder to confirm whether support can detach a wallet and under what conditions.",
     "sources": [
       "docs-site/src/content/programs/attribution-and-links.md:28-30",
-      "frontend/api/dev-fix/attribution.js:536-566"
+      "frontend/api/dev-fix/attribution.js:536-566",
+      "founder 2026-10-23"
     ]
   },
   {
@@ -276,7 +276,8 @@ export default [
     "slug": "leave-or-switch-squad",
     "q": "Can I leave a squad?",
     "a": [
-      "There is no leave button in the app. A squad link is tied to the recruiter that brought the wallet in, and it locks once the wallet has activity. If you have a problem with your link, ask in Discord support."
+      "Not at the moment. There is no way to leave a squad or move to another squad in the app. A squad link is tied to the recruiter that brought the wallet in, and it locks once the wallet has activity.",
+      "If something went wrong with your link, ask in Discord support."
     ],
     "links": [
       {
@@ -291,10 +292,10 @@ export default [
       "unlink",
       "detach"
     ],
-    "needsReview": "No user-facing leave or detach flow was found, but the schema has detached_at. Founder to confirm the support policy before this is published.",
     "sources": [
       "frontend/api/leagueRecruiter.js:139-143",
-      "frontend/api/dev-fix/attribution.js:536-566"
+      "frontend/api/dev-fix/attribution.js:536-566",
+      "founder 2026-10-23"
     ]
   },
   {

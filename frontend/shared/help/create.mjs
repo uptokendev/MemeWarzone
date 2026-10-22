@@ -303,7 +303,8 @@ export default [
     "q": "How do I schedule a launch for later?",
     "a": [
       "Scheduled launches are made from a draft. On the Push Live page choose the scheduled option and pick a time. The time must be at least five minutes ahead and no more than 30 days away. The page uses your local time zone.",
-      "Trading stays closed until that time. On BNB Chain and Robinhood Chain the open time is part of the launch you sign, so the coin opens by itself and you do not need to come back to press anything. The anti-sniper fee runs from the open time, not from the moment you signed."
+      "Trading stays closed until that time. On BNB Chain and Robinhood Chain the open time is part of the launch you sign, so the coin opens by itself and you do not need to come back. The anti-sniper fee runs from the open time, not from the moment you signed.",
+      "On Solana the schedule is a timer on your draft. When the time arrives, MemeWarzone notifies you that your launch time has arrived, and you open the draft and deploy it with your wallet to go live."
     ],
     "steps": [
       "Save the coin as a Draft and finish promotion setup.",
@@ -330,9 +331,10 @@ export default [
       "frontend/src/pages/PushDraftLive.tsx:400-418",
       "frontend/shared/dbcSchedule.mjs:1-30",
       "frontend/shared/evmGen8.mjs:217-223,338-341",
-      "founder 2026-10-12"
-    ],
-    "needsReview": "Solana scheduling is a draft timer and the code shows a 'launch time has arrived, deploy now' prompt. Confirm whether the creator must return to press Deploy on Solana."
+      "founder 2026-10-12",
+      "frontend/api/dbc/create.js:850-880 (due Solana drafts: 'Your launch time has arrived. Deploy now to go live.')",
+      "founder 2026-10-23"
+    ]
   },
   {
     "slug": "change-launch-time-after-signing",
