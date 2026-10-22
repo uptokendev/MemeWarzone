@@ -54,6 +54,12 @@ CREATE TABLE IF NOT EXISTS public.gen8_partner_fee_cursors (
   updated_at      timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (chain_id, hook_address)
 );
+ALTER TABLE public.gen8_partner_fee_cursors ADD COLUMN IF NOT EXISTS stalled_tx_hash text NULL CHECK (stalled_tx_hash IS NULL OR char_length(stalled_tx_hash) BETWEEN 1 AND 120);
+ALTER TABLE public.gen8_partner_fee_cursors ADD COLUMN IF NOT EXISTS stalled_accrual_id bigint NULL;
+ALTER TABLE public.gen8_partner_fee_cursors ADD COLUMN IF NOT EXISTS stalled_failures integer NOT NULL DEFAULT 0 CHECK (stalled_failures >= 0);
+ALTER TABLE public.gen8_partner_fee_cursors ADD COLUMN IF NOT EXISTS stalled_error text NULL CHECK (stalled_error IS NULL OR char_length(stalled_error) <= 500);
+ALTER TABLE public.gen8_partner_fee_cursors ADD COLUMN IF NOT EXISTS stalled_since timestamptz NULL;
+ALTER TABLE public.gen8_partner_fee_cursors ADD COLUMN IF NOT EXISTS stalled_warned_at timestamptz NULL;
 
 -- The attribution scan: post-graduation trade accruals of one chain, in id order after the cursor.
 CREATE INDEX IF NOT EXISTS evm_gen8_fee_accruals_post_trade_idx

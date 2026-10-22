@@ -84,7 +84,8 @@ export function startEvmGen8Workers(env: NodeJS.ProcessEnv = process.env) {
         const batch = intEnv(env.GEN8_PARTNER_FEES_BATCH, 200, 1, 1000);
         loop(`partner fees ${cfg.chainId}`, intEnv(env.GEN8_PARTNER_FEES_POLL_MS, 60_000, 60_000), async () => {
           const r = await runGen8PartnerAttributionOnce({ db: pool, chainId: cfg.chainId, hook: cfg.hook.address, provider, batch });
-          if (r.inserted || r.retry || (r.skipped && !r.skipped.startsWith("no active partner"))) console.log("[gen8] partner fees", JSON.stringify(r));
+          // A failed read is retried quietly; a stall logs its own error (gen8PartnerFees.ts, after 10 runs, then hourly).
+          if (r.inserted || (r.skipped && !r.skipped.startsWith("no active partner"))) console.log("[gen8] partner fees", JSON.stringify(r));
         });
       }
     }

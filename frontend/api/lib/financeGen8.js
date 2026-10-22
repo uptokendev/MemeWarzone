@@ -113,9 +113,18 @@ export async function gen8PartnerLedger({ db, chainId, hook }) {
                      where table_schema = 'public' and table_name = 'import_fee_transfers' and column_name = 'gen8_raw') as split`,
   );
   if (probe.rows[0]?.ledger !== true) return null;
-  const cursorRow = await db.query(`select last_accrual_id::text as last from public.gen8_partner_fee_cursors where chain_id = $1 and hook_address = $2`, [Number(chainId), String(hook).toLowerCase()]);
+  const cursorRow = await db.query(
+    `select last_accrual_id::text as last, stalled_tx_hash, stalled_accrual_id::text as stalled_accrual_id, stalled_failures, stalled_error, stalled_since
+       from public.gen8_partner_fee_cursors where chain_id = $1 and hook_address = $2`,
+    [Number(chainId), String(hook).toLowerCase()],
+  );
   if (!cursorRow.rows.length) return null;
   const cursor = cursorRow.rows[0].last;
+  const c = cursorRow.rows[0];
+  // The transaction the indexer's scan is stuck on (failed RPC reads in a row); later widget swaps wait behind it.
+  const stalled = c.stalled_tx_hash
+    ? { txHash: String(c.stalled_tx_hash), accrualId: Number(c.stalled_accrual_id), failures: Number(c.stalled_failures || 0), error: c.stalled_error || null, since: c.stalled_since ? new Date(c.stalled_since).toISOString() : null }
+    : null;
   const earned = await db.query(
     `select partner_id, count(*)::int as swaps, coalesce(sum(curve_amount), 0)::text as volume, coalesce(sum(partner_raw), 0)::text as earned
        from public.gen8_partner_fees where chain_id = $1 group by partner_id order by partner_id`,
@@ -162,6 +171,7 @@ export async function gen8PartnerLedger({ db, chainId, hook }) {
     paidWei: paidWei.toString(),
     sendingWei: sendingWei.toString(),
     dueWei: dueWei.toString(),
+    stalled,
     byPartner,
   };
 }
@@ -323,7 +333,7 @@ export async function buildGen8Finance({ db, chainId, getProvider = null, env = 
         uncheckedSwaps: partnerLink.unchecked ?? 0,
         ...(partnerLink.error ? { error: partnerLink.error } : {}),
         ledger: ledgerReady
-          ? { available: true, earnedWei: partnerLedger.earnedWei, paidWei: partnerLedger.paidWei, sendingWei: partnerLedger.sendingWei, dueWei: partnerLedger.dueWei, cursor: partnerLedger.cursor }
+          ? { available: true, earnedWei: partnerLedger.earnedWei, paidWei: partnerLedger.paidWei, sendingWei: partnerLedger.sendingWei, dueWei: partnerLedger.dueWei, cursor: partnerLedger.cursor, stalled: partnerLedger.stalled }
           : { available: false, ...(partnerLedger?.error ? { error: partnerLedger.error } : {}) },
         note: ledgerReady
           ? "Widget swaps after graduation, matched to the partner by the fingerprint the API recorded when it built them (api/gen8Swap.js), from the gen8_partner_fees ledger. Paid from the chain's ImportFeeVault out of MemeWarzone's import share."
