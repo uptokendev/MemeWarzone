@@ -249,3 +249,12 @@ test("deadline jitter: the widget's builds get a random 0..3599 s on top of the 
   const gen8 = fs.readFileSync(new URL("./gen8Swap.js", import.meta.url), "utf8");
   assert.match(gen8, /deadline: BigInt\(nowSec \+ GEN8_SWAP_DEADLINE_SECONDS \+ widgetDeadlineJitter\(deps\)\)/, "gen-8 widget builds too");
 });
+
+test("dust: a Robinhood build whose fee rounds to 0 wei is refused (Amount too small)", async () => {
+  // 100 bps: 99 wei in -> fee floor(99 / 100) = 0
+  await assert.rejects(api.robinhoodBuildCore({ token: TOKEN, side: "buy", wallet: WALLET.address, amountRaw: "99" }, deps(fakeProvider())), (e) => e.status === 400 && e.code === "AMOUNT_TOO_SMALL" && e.message === "Amount too small");
+  await assert.doesNotReject(api.robinhoodBuildCore({ token: TOKEN, side: "buy", wallet: WALLET.address, amountRaw: "100" }, deps(fakeProvider())));
+  // sell: 99_000 tokens -> 99 wei gross out (fake quoter: /1000) -> fee 0
+  const allowed = fakeProvider({ erc20Allowance: (1n << 256n) - 1n, permit2Amount: (1n << 160n) - 1n, permit2Expiration: BigInt(NOW + 365 * 86400) });
+  await assert.rejects(api.robinhoodBuildCore({ token: TOKEN, side: "sell", wallet: WALLET.address, amountRaw: "99000" }, deps(allowed)), /Amount too small/);
+});

@@ -53,6 +53,7 @@ test("Robinhood import route in the widget: API-built buy and sell on a fork pay
       env: ENV,
       getProvider: async () => provider,
       gen8Refusal: async () => null,
+      db: null,
       readPartner: async (id) => (id === "testpartner" ? { id } : null),
       rememberPartnerSwap: async (row) => recorded.push(row),
     };

@@ -80,3 +80,17 @@ test("graduated coins: the widget trades them as imports only with the switch on
   const src = (await import("node:fs")).readFileSync(new URL("./importSwapWidget.js", import.meta.url), "utf8");
   assert.match(src, /bonding\?\.reason === "graduated" && graduatedImportRouteOn\(\)\) \{[\s\S]{0,900}kind: "import",[\s\S]{0,60}tradable: true/);
 });
+
+test("rate limit IP: the last x-forwarded-for entry (our proxy's), never the client-sent first one", async () => {
+  const { clientIp } = await import("./importSwapWidget.js");
+  assert.equal(clientIp({ headers: { "x-forwarded-for": "1.1.1.1, 2.2.2.2, 203.0.113.9" } }), "203.0.113.9");
+  assert.equal(clientIp({ headers: { "x-forwarded-for": "203.0.113.9" } }), "203.0.113.9");
+  assert.equal(clientIp({ headers: { "x-forwarded-for": "spoofed, " }, ip: "10.0.0.2" }), "10.0.0.2", "an empty last entry falls back to req.ip, never to a client entry");
+  assert.equal(clientIp({ headers: {}, ip: "::ffff:10.0.0.3" }), "10.0.0.3");
+  assert.equal(clientIp({ headers: {}, socket: { remoteAddress: "10.0.0.4" } }), "10.0.0.4");
+  // A client rotating the first entry does not get a fresh window.
+  const { widgetRateLimiter } = await import("./importSwapWidget.js");
+  const allow = widgetRateLimiter({ limit: 2, now: () => 0 });
+  const hits = ["a", "b", "c"].map((fake) => allow(clientIp({ headers: { "x-forwarded-for": `${fake}, 198.51.100.1` } })));
+  assert.deepEqual(hits, [true, true, false]);
+});

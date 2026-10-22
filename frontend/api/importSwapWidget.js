@@ -46,9 +46,14 @@ function isSolanaAddress(value) {
   }
 }
 
-function clientIp(req) {
-  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
-  return (forwarded || req.ip || req.socket?.remoteAddress || "unknown").replace(/^::ffff:/, "");
+/**
+ * The client's IP for the rate limit: the LAST x-forwarded-for entry, the one our own proxy (Coolify, no Cloudflare in
+ * front) appended. Earlier entries are whatever the client sent and are never trusted. Else req.ip / the socket.
+ */
+export function clientIp(req) {
+  const parts = String(req?.headers?.["x-forwarded-for"] || "").split(",");
+  const forwarded = parts[parts.length - 1].trim();
+  return (forwarded || req?.ip || req?.socket?.remoteAddress || "unknown").replace(/^::ffff:/, "");
 }
 
 /** Fixed one-minute window per IP. In memory: one API process; a restart forgives. */

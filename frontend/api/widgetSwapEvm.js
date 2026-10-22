@@ -25,6 +25,7 @@ import {
   evmImportFeeReady,
   evmImportFeeTerms,
   gen8ImportRouteRefusal,
+  importSwapFeeBps,
   importSwapQuote,
   readSwapInput,
   robinhoodBuildCore,
@@ -208,6 +209,32 @@ export async function evmWidgetStatusCore(input, deps = {}) {
 }
 
 /**
+ * The token endpoint's rule, repeated for quote and build: one of our own older coins goes through the import route
+ * only when it has graduated and the chain's import terms carry the creator's share. Else a 409 with the page link.
+ */
+export async function assertWidgetImportRoute(input, deps = {}) {
+  const env = deps.env || process.env;
+  const db = deps.db === undefined ? await defaultDb() : deps.db;
+  const campaign = await memewarzoneEvmCampaign(db, input.chainId, input.token);
+  if (!campaign) return;
+  const pageUrl = tokenPageUrl(campaign.campaign_address || input.token, input.chainId);
+  if (!evmCampaignGraduated(campaign)) {
+    throw new WidgetEvmError(409, "MEMEWARZONE_BONDING", "This coin is on its MemeWarzone bonding curve. Trade it on its MemeWarzone page.", { pageUrl });
+  }
+  if (!(evmImportFeeTerms(input.chainId, env).creatorShareBps > 0)) {
+    throw new WidgetEvmError(409, "GRADUATED_IMPORT_FEE_OFF", "This coin is not tradable here yet. Trade it on its MemeWarzone page.", { pageUrl });
+  }
+}
+
+async function defaultDb() {
+  try {
+    return (await import("../server/db.js")).pool || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The widget's import build on 56 / 4663. Checked in this order before anything is built or recorded: the input
  * (chain, side, token), the chain's fee terms, the gen-8 refusal, the wallet. Then per chain:
  *   4663  robinhoodBuildCore (fee terms again, fresh quote, allowance check, build, self-check, fingerprint)
@@ -222,6 +249,7 @@ export async function evmWidgetBuildCore(body, deps = {}) {
   if (!evmImportFeeReady(input.chainId, env)) throw new WidgetEvmError(503, "IMPORT_SWAP_FEE_NOT_CONFIGURED", "Swaps for this coin are paused here: the fee route is not configured.");
   const refusal = await (deps.gen8Refusal || gen8ImportRouteRefusal)(input);
   if (refusal) throw new WidgetEvmError(409, refusal.code, refusal.error, refusal);
+  await (deps.importRoute || assertWidgetImportRoute)(input, deps);
   const wallet = String(body.wallet || "").trim();
   if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) throw new WidgetEvmError(400, "BAD_WALLET", "Invalid wallet");
   const slippage = slippageBps(body.slippageBps);
@@ -229,6 +257,11 @@ export async function evmWidgetBuildCore(body, deps = {}) {
     return (deps.robinhoodBuild || robinhoodBuildCore)({ ...input, wallet, amountRaw: body.amountRaw ?? body.quote?.amountIn, slippage, partner: body.partner || null }, deps);
   }
   assertBscRouteTerms(body.quote, { token: input.token, side: input.side });
+  // Dust: a swap whose fee rounds to 0 wei is refused. Buy: the BNB in. Sell: Kyber's BNB out (after the fee, so a
+  // little stricter than the gross).
+  const bps = BigInt(importSwapFeeBps(56, env));
+  const feeBase = String(input.side === "buy" ? body.quote?.amountIn ?? "" : body.quote?.amountOut ?? "");
+  if (!/^\d+$/.test(feeBase) || (BigInt(feeBase) * bps) / 10_000n < 1n) throw new WidgetEvmError(400, "AMOUNT_TOO_SMALL", "Amount too small");
   if (input.side === "sell") {
     const raw = String(body.quote?.amountIn ?? "");
     if (!/^\d+$/.test(raw) || BigInt(raw) <= 0n) throw new WidgetEvmError(400, "BAD_AMOUNT", "The quote has no sell amount");
@@ -243,7 +276,10 @@ function query(req) {
 }
 
 function sendError(res, error, label) {
-  if (error instanceof WidgetEvmError) return json(res, error.status, { ok: false, error: error.message, code: error.code, ...(error.extra && typeof error.extra === "object" ? { tradePath: error.extra.tradePath ?? undefined } : {}) });
+  if (error instanceof WidgetEvmError) {
+    const extra = error.extra && typeof error.extra === "object" ? { tradePath: error.extra.tradePath ?? undefined, pageUrl: error.extra.pageUrl ?? undefined } : {};
+    return json(res, error.status, { ok: false, error: error.message, code: error.code, ...extra });
+  }
   if (error?.status) return json(res, error.status, { ok: false, error: String(error.message || "Request failed"), code: error.code || null });
   console.error(`[api/widget/evm] ${label}`, error);
   return json(res, 502, { ok: false, error: "The swap service could not answer. Try again.", code: "WIDGET_EVM_FAILED" });
@@ -255,7 +291,7 @@ function getHandler(core, cache, label) {
     try {
       const db = core === evmWidgetTokenCore ? (await import("../server/db.js")).pool || null : null;
       const out = await core(query(req), { db });
-      res.setHeader("cache-control", cache);
+      res.setHeader("cache-control", typeof cache === "function" ? cache(out) : cache);
       return json(res, 200, { ok: true, ...out });
     } catch (error) {
       return sendError(res, error, label);
@@ -263,7 +299,12 @@ function getHandler(core, cache, label) {
   };
 }
 
-export const evmWidgetToken = getHandler(evmWidgetTokenCore, "public, max-age=60", "token");
+/** A gen-8 coin's answer changes with its pool (phase, fee, opening): 15 s, as gen8SwapToken. Everything else 60 s. */
+export function evmWidgetTokenCache(out) {
+  return out?.kind === "gen8" ? "public, max-age=15" : "public, max-age=60";
+}
+
+export const evmWidgetToken = getHandler(evmWidgetTokenCore, evmWidgetTokenCache, "token");
 export const evmWidgetBalances = getHandler(evmWidgetBalancesCore, "no-store", "balances");
 export const evmWidgetStatus = getHandler(evmWidgetStatusCore, "no-store", "status");
 
@@ -273,6 +314,12 @@ export async function evmWidgetQuote(req, res) {
   if (!WIDGET_IMPORT_CHAINS.includes(Number(body?.chainId))) return json(res, 400, { ok: false, error: "chainId must be 56 or 4663", code: "BAD_CHAIN" });
   if (!evmImportFeeReady(Number(body.chainId))) {
     return json(res, 503, { ok: false, error: "Swaps for this coin are paused here: the fee route is not configured.", code: "IMPORT_SWAP_FEE_NOT_CONFIGURED" });
+  }
+  try {
+    await assertWidgetImportRoute(readSwapInput(body));
+  } catch (error) {
+    // A bad input is the shared handler's to answer (same message as the app's route).
+    if (error instanceof WidgetEvmError) return sendError(res, error, "quote");
   }
   req.body = body;
   return importSwapQuote(req, res);

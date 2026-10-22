@@ -107,12 +107,12 @@ test("token: a non-token address is a 404, a bad chain a 400", async () => {
 
 function bscRoute(side, amountIn = "5000000") {
   const pair = side === "buy" ? { tokenIn: BSC_NATIVE, tokenOut: TOKEN } : { tokenIn: TOKEN, tokenOut: BSC_NATIVE };
-  return { ...pair, amountIn, amountOut: "1", extraFee: { feeAmount: "50", isInBps: true, chargeFeeBy: side === "buy" ? "currency_in" : "currency_out", feeReceiver: "0xc2d4e6f846446f3921a34a34e007295dbc19bc4c" }, route: [[{ exchange: "pancake-v3" }]] };
+  return { ...pair, amountIn, amountOut: "5000000", extraFee: { feeAmount: "50", isInBps: true, chargeFeeBy: side === "buy" ? "currency_in" : "currency_out", feeReceiver: "0xc2d4e6f846446f3921a34a34e007295dbc19bc4c" }, route: [[{ exchange: "pancake-v3" }]] };
 }
 
 test("BNB sell without an allowance: needsAllowance with approve(Kyber router, exact amount), no build, no fingerprint", async () => {
   let built = 0;
-  const deps = { env: {}, gen8Refusal: async () => null, getProvider: async () => tokenProvider({ allowance: 0n }), bscBuild: async () => { built += 1; return { to: KYBER_ROUTER }; } };
+  const deps = { env: {}, gen8Refusal: async () => null, db: null, getProvider: async () => tokenProvider({ allowance: 0n }), bscBuild: async () => { built += 1; return { to: KYBER_ROUTER }; } };
   const out = await evm.evmWidgetBuildCore({ chainId: 56, token: TOKEN, side: "sell", wallet: WALLET, quote: bscRoute("sell"), partner: "testpartner" }, deps);
   assert.equal(out.needsAllowance, true);
   assert.equal(out.permit2Approval, null);
@@ -125,7 +125,7 @@ test("BNB sell without an allowance: needsAllowance with approve(Kyber router, e
 });
 
 test("BNB: a route without our fee is refused before the allowance read; a buy goes straight to bscBuild", async () => {
-  const deps = { env: {}, gen8Refusal: async () => null, getProvider: async () => { throw new Error("must not read the chain"); }, bscBuild: async (input) => ({ to: KYBER_ROUTER, partner: input.partner }) };
+  const deps = { env: {}, gen8Refusal: async () => null, db: null, getProvider: async () => { throw new Error("must not read the chain"); }, bscBuild: async (input) => ({ to: KYBER_ROUTER, partner: input.partner }) };
   const feeless = { ...bscRoute("sell"), extraFee: { ...bscRoute("sell").extraFee, feeAmount: "0" } };
   await assert.rejects(evm.evmWidgetBuildCore({ chainId: 56, token: TOKEN, side: "sell", wallet: WALLET, quote: feeless }, deps), /platform fee/);
   const buy = await evm.evmWidgetBuildCore({ chainId: 56, token: TOKEN, side: "buy", wallet: WALLET, quote: bscRoute("buy"), partner: "p1" }, deps);
@@ -135,13 +135,13 @@ test("BNB: a route without our fee is refused before the allowance read; a buy g
 test("refusals before anything is built: no fee route (503), a gen-8 coin (409), a bad wallet (400)", async () => {
   let built = 0;
   const robinhoodBuild = async () => { built += 1; return {}; };
-  await assert.rejects(evm.evmWidgetBuildCore({ chainId: 4663, token: TOKEN, side: "buy", wallet: WALLET, amountRaw: "1" }, { env: {}, robinhoodBuild }), (e) => e.status === 503);
-  await assert.rejects(evm.evmWidgetBuildCore({ chainId: 56, token: TOKEN, side: "buy", wallet: WALLET, quote: bscRoute("buy") }, { env: { IMPORT_SWAP_FEE_BPS: "0" }, robinhoodBuild }), (e) => e.status === 503);
-  await assert.rejects(evm.evmWidgetBuildCore({ chainId: 4663, token: TOKEN, side: "buy", wallet: WALLET, amountRaw: "1" }, { env: SPLIT_4663, gen8Refusal: async () => ({ code: "GEN8_POOL_ROUTE", error: "own pool", tradePath: "gen8_pool" }), robinhoodBuild }), (e) => e.status === 409 && e.code === "GEN8_POOL_ROUTE");
-  await assert.rejects(evm.evmWidgetBuildCore({ chainId: 4663, token: TOKEN, side: "buy", wallet: "nope", amountRaw: "1" }, { env: SPLIT_4663, gen8Refusal: async () => null, robinhoodBuild }), (e) => e.status === 400);
+  await assert.rejects(evm.evmWidgetBuildCore({ chainId: 4663, token: TOKEN, side: "buy", wallet: WALLET, amountRaw: "1" }, { env: {}, robinhoodBuild, db: null }), (e) => e.status === 503);
+  await assert.rejects(evm.evmWidgetBuildCore({ chainId: 56, token: TOKEN, side: "buy", wallet: WALLET, quote: bscRoute("buy") }, { env: { IMPORT_SWAP_FEE_BPS: "0" }, robinhoodBuild, db: null }), (e) => e.status === 503);
+  await assert.rejects(evm.evmWidgetBuildCore({ chainId: 4663, token: TOKEN, side: "buy", wallet: WALLET, amountRaw: "1" }, { env: SPLIT_4663, gen8Refusal: async () => ({ code: "GEN8_POOL_ROUTE", error: "own pool", tradePath: "gen8_pool" }), robinhoodBuild, db: null }), (e) => e.status === 409 && e.code === "GEN8_POOL_ROUTE");
+  await assert.rejects(evm.evmWidgetBuildCore({ chainId: 4663, token: TOKEN, side: "buy", wallet: "nope", amountRaw: "1" }, { env: SPLIT_4663, gen8Refusal: async () => null, db: null, robinhoodBuild }), (e) => e.status === 400);
   assert.equal(built, 0);
   const passed = [];
-  await evm.evmWidgetBuildCore({ chainId: 4663, token: TOKEN, side: "buy", wallet: WALLET, amountRaw: "1000", partner: "p1", slippageBps: 250 }, { env: SPLIT_4663, gen8Refusal: async () => null, robinhoodBuild: async (input) => { passed.push(input); return {}; } });
+  await evm.evmWidgetBuildCore({ chainId: 4663, token: TOKEN, side: "buy", wallet: WALLET, amountRaw: "1000", partner: "p1", slippageBps: 250 }, { env: SPLIT_4663, gen8Refusal: async () => null, db: null, robinhoodBuild: async (input) => { passed.push(input); return {}; } });
   assert.deepEqual(passed[0], { chainId: 4663, side: "buy", token: TOKEN, wallet: WALLET, amountRaw: "1000", slippage: 250, partner: "p1" });
 });
 
@@ -160,4 +160,37 @@ test("/api/widget/swap/quote|build: Solana, BNB Chain and Robinhood Chain only",
     assert.equal(res.statusCode, 400);
     assert.match(String(res.body), /Solana \(chainId 101\), BNB Chain \(56\) and Robinhood Chain \(4663\)/);
   }
+});
+
+test("build and quote repeat the token rule: our older coins only when graduated and the chain's terms carry the creator share", async () => {
+  const row = (over) => ({ campaign_address: "0x00000000000000000000000000000000000000ca", token_address: TOKEN, graduated_at_chain: null, market_stage: "BONDING", ...over });
+  const db = (r) => fakeDb({ campaigns: r ? [r] : [] });
+  const built = [];
+  const base = { gen8Refusal: async () => null, robinhoodBuild: async (input) => { built.push(input); return { to: "x" }; } };
+  const body = { chainId: 4663, token: TOKEN, side: "buy", wallet: WALLET, amountRaw: "1000000000000000" };
+  await assert.rejects(evm.evmWidgetBuildCore(body, { ...base, env: SPLIT_4663, db: db(row({})) }), (e) => e.status === 409 && e.code === "MEMEWARZONE_BONDING" && /MemeWarzone page/.test(e.message) && /\/token\/0x0+ca\?chainId=4663/.test(e.extra.pageUrl));
+  await evm.evmWidgetBuildCore(body, { ...base, env: SPLIT_4663, db: db(row({ graduated_at_chain: 1 })) });
+  assert.equal(built.length, 1, "graduated with the creator split: built");
+  const vault = "0x00000000000000000000000000000000000000b5";
+  const bnb = { chainId: 56, token: TOKEN, side: "buy", wallet: WALLET, quote: bscRoute("buy") };
+  await assert.rejects(evm.evmWidgetBuildCore(bnb, { ...base, env: {}, db: db(row({ graduated_at_chain: 1 })), bscBuild: async () => ({}) }), (e) => e.status === 409 && e.code === "GRADUATED_IMPORT_FEE_OFF");
+  await assert.doesNotReject(evm.assertWidgetImportRoute({ chainId: 56, token: TOKEN }, { env: { IMPORT_FEE_VAULT_56: vault, IMPORT_SWAP_FEE_RECEIVER_56: vault }, db: db(row({ graduated_at_chain: 1 })) }));
+  await assert.doesNotReject(evm.assertWidgetImportRoute({ chainId: 56, token: TOKEN }, { env: {}, db: db(null) }), "an import is not ours");
+  const src = (await import("node:fs")).readFileSync(new URL("./widgetSwapEvm.js", import.meta.url), "utf8");
+  assert.match(src, /export async function evmWidgetQuote[\s\S]{0,600}assertWidgetImportRoute\(readSwapInput\(body\)\)/, "the quote checks it too");
+});
+
+test("dust: a BNB build whose fee rounds to 0 wei is refused (Amount too small)", async () => {
+  const deps = { env: {}, db: null, gen8Refusal: async () => null, getProvider: async () => tokenProvider({ allowance: 10n ** 30n }), bscBuild: async () => ({ to: KYBER_ROUTER }) };
+  // 50 bps: 199 wei in -> floor(199 * 50 / 10000) = 0; 200 -> 1
+  await assert.rejects(evm.evmWidgetBuildCore({ chainId: 56, token: TOKEN, side: "buy", wallet: WALLET, quote: bscRoute("buy", "199") }, deps), (e) => e.status === 400 && /Amount too small/.test(e.message));
+  await assert.doesNotReject(evm.evmWidgetBuildCore({ chainId: 56, token: TOKEN, side: "buy", wallet: WALLET, quote: bscRoute("buy", "200") }, deps));
+  const tinyOut = { ...bscRoute("sell"), amountOut: "199" };
+  await assert.rejects(evm.evmWidgetBuildCore({ chainId: 56, token: TOKEN, side: "sell", wallet: WALLET, quote: tinyOut }, deps), /Amount too small/);
+});
+
+test("token answer cache: 15 s for gen-8 coins (as gen8SwapToken), 60 s otherwise", () => {
+  assert.equal(evm.evmWidgetTokenCache({ kind: "gen8" }), "public, max-age=15");
+  assert.equal(evm.evmWidgetTokenCache({ kind: "import" }), "public, max-age=60");
+  assert.equal(evm.evmWidgetTokenCache({ kind: "memewarzone" }), "public, max-age=60");
 });

@@ -47,6 +47,7 @@ test("BNB import route in the widget: API-built Kyber buy and sell on a fork pay
     const deps = {
       getProvider: async () => provider,
       gen8Refusal: async () => null,
+      db: null,
       readPartner: async (id) => (id === "testpartner" ? { id } : null),
       rememberPartnerSwap: async (row) => recorded.push(row),
     };

@@ -644,6 +644,8 @@ export async function robinhoodBuildCore({ token, side, wallet, amountRaw, slipp
   if (!amount || amount > MAX_UINT160) throw httpError(400, "BAD_AMOUNT", "amountRaw must be a positive integer");
   const provider = await evmProvider(ROBINHOOD_MAINNET_CHAIN_ID, deps);
   const quote = await robinhoodQuoteCore({ token, side, amountRaw: amount, slippage }, { ...deps, env, getProvider: async () => provider });
+  // Dust: a swap whose fee rounds to 0 wei (floor(x * bps / 10000) = 0, x = the ETH in or the gross ETH out) is refused.
+  if (BigInt(quote.feeNativeRaw) <= 0n) throw httpError(400, "AMOUNT_TOO_SMALL", "Amount too small");
   const coin = ethers.getAddress(String(token).toLowerCase());
   const owner = ethers.getAddress(String(wallet).toLowerCase());
   const nowSec = Number(deps.nowSec ?? (await provider.getBlock("latest")).timestamp);
