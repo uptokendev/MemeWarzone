@@ -94,6 +94,7 @@
     "check:launchpad-drill": "node scripts/check-launchpad-drill.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.137.0",
     "@hookform/resolvers": "^3.10.0",
     "@meteora-ag/cp-amm-sdk": "1.4.5",
     "@meteora-ag/dynamic-bonding-curve-sdk": "1.5.13",
