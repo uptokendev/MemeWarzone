@@ -106,6 +106,10 @@ test("quote: the fee is 1% of the ETH in (buy) or of the gross ETH out (sell), B
   assert.equal(sell.minAmountOut, (minGross - minGross / 100n).toString(), "the SWEEP minimum after the fee");
 });
 
+test("quote: an amount at or above 2^160 is refused before any chain read", async () => {
+  await assert.rejects(api.robinhoodQuoteCore({ token: TOKEN, side: "sell", amountRaw: 1n << 161n }, { env: SPLIT_ENV, getProvider: async () => { throw new Error("no read"); } }), (e) => e.status === 400 && e.code === "BAD_AMOUNT");
+});
+
 test("quote: a token without a WETH pool has no route (422 IMPORT_SWAP_NO_ROUTE)", async () => {
   const p = fakeProvider();
   const noPool = { ...p, call: async (tx) => (String(tx.to).toLowerCase() === app.V3_FACTORY_4663.toLowerCase() ? factory.encodeFunctionResult("getPool", [ethers.ZeroAddress]) : p.call(tx)) };

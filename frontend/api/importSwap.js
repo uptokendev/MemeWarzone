@@ -539,11 +539,13 @@ export function evmImportFeeTerms(chainId, env = process.env) {
 export async function robinhoodQuoteCore({ token, side, amountRaw, slippage = 100 }, deps = {}) {
   const env = deps.env || process.env;
   const terms = robinhoodImportTerms(env);
+  const amount = BigInt(amountRaw);
+  if (amount <= 0n || amount > MAX_UINT160) throw httpError(400, "BAD_AMOUNT", "amountRaw must be a positive integer below 2^160");
   const provider = await evmProvider(ROBINHOOD_MAINNET_CHAIN_ID, deps);
   const address = ethers.getAddress(String(token).toLowerCase());
   let q;
   try {
-    q = await quoteImportSwap4663({ provider, token: address, side, amountIn: BigInt(amountRaw), slippageBps: slippage, terms });
+    q = await quoteImportSwap4663({ provider, token: address, side, amountIn: amount, slippageBps: slippage, terms });
   } catch (error) {
     if (/No Uniswap V3 pool/.test(String(error?.message))) throw httpError(422, "IMPORT_SWAP_NO_ROUTE", "No Uniswap pool with ETH for this token on Robinhood Chain");
     if (error?.code === "CALL_EXCEPTION") throw httpError(422, "IMPORT_SWAP_NO_QUOTE", "No quote for this amount (the pool refused it)");
