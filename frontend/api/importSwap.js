@@ -430,7 +430,7 @@ async function bscQuote({ token, side, amountRaw }) {
   };
 }
 
-async function bscBuild({ token, side, wallet, quote, slippage, partner = null }) {
+async function bscBuild({ token, side, wallet, quote, slippage, partner = null }, deps = {}) {
   assertBscRouteTerms(quote, { token, side });
   const body = await fetchJson(
     `${KYBER_BASE}/route/build`,
@@ -443,8 +443,8 @@ async function bscBuild({ token, side, wallet, quote, slippage, partner = null }
   }
   const value = side === "buy" ? String(data.transactionValue ?? data.amountIn ?? "0") : "0";
   if (side === "buy" && String(value) !== String(quote.amountIn)) throw Object.assign(new Error("Kyber changed the swap amount"), { status: 502 });
-  const partnerRow = await readPartner(partner, 56);
-  if (partnerRow) await rememberPartnerSwap({ fingerprint: evmFingerprint(KYBER_ROUTER, data.data, value), chainId: 56, partnerId: partnerRow.id, wallet, token });
+  const partnerRow = await (deps.readPartner || readPartner)(partner, 56);
+  if (partnerRow) await (deps.rememberPartnerSwap || rememberPartnerSwap)({ fingerprint: evmFingerprint(KYBER_ROUTER, data.data, value), chainId: 56, partnerId: partnerRow.id, wallet, token });
   return { chainId: 56, provider: "kyberswap", to: KYBER_ROUTER, data: data.data, value, amountOut: data.amountOut, spender: KYBER_ROUTER };
 }
 
@@ -689,7 +689,7 @@ export async function bscSellAllowanceStep({ token, wallet, amountIn }, deps = {
   return { to: coin, data: ERC20_APPROVE_IFACE.encodeFunctionData("approve", [KYBER_ROUTER, BigInt(amountIn)]), value: "0" };
 }
 
-export { bscBuild };
+export { bscBuild, bscQuote };
 
 export function readSwapInput(body) {
   const chainId = Number(body?.chainId);

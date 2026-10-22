@@ -235,7 +235,7 @@ export async function evmWidgetBuildCore(body, deps = {}) {
     const approval = await (deps.bscSellAllowanceStep || bscSellAllowanceStep)({ token: input.token, wallet, amountIn: BigInt(raw) }, deps);
     if (approval) return { chainId: 56, needsAllowance: true, approval, permit2Approval: null, quote: body.quote };
   }
-  return (deps.bscBuild || bscBuild)({ ...input, wallet, quote: body.quote, slippage, partner: body.partner || null });
+  return (deps.bscBuild || bscBuild)({ ...input, wallet, quote: body.quote, slippage, partner: body.partner || null }, deps);
 }
 
 function query(req) {
