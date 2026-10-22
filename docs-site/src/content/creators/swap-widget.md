@@ -12,7 +12,7 @@ It works for two kinds of Solana coins:
 
 ## What you need
 
-- A Solana coin: launched on MemeWarzone (on its bonding curve) or imported. BNB Chain and Robinhood Chain come later.
+- A coin on BNB Chain, Solana or Robinhood Chain: launched on MemeWarzone (on its bonding curve) or imported.
 - Your coin's mint address (its contract address on Solana).
 - A website where you can add your own HTML code. Most site builders have a block for this, usually called **Custom HTML**, **Embed code** or **Code**.
 
