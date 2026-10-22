@@ -102,39 +102,81 @@ function publicRow(row) {
   };
 }
 
-/** Every partner with what it earned (partner_raw), what was paid / is being sent, and its swaps. */
+/**
+ * True once migration 20261022_000010_gen8_partner_fees.sql is applied: import_fee_transfers.gen8_raw (the gen-8 part of a
+ * partner payout) and the gen-8 ledger gen8_partner_fees. Before that every partner payout is an import payout.
+ */
+async function gen8PartnerColumns(db) {
+  const { rows } = await db.query(
+    `select to_regclass('public.gen8_partner_fees') is not null
+        and exists (select 1 from information_schema.columns
+                     where table_schema = 'public' and table_name = 'import_fee_transfers' and column_name = 'gen8_raw') as ready`,
+  );
+  return rows[0]?.ready === true;
+}
+
+/**
+ * Every partner with what it earned (partner_raw), what was paid / is being sent, and its swaps. With the gen-8 ledger
+ * the import figures exclude the gen-8 part of each payout (gen8_raw), and the gen-8 figures (graduated gen-8 widget
+ * swaps, gen8_partner_fees) are reported on their own: gen8EarnedRaw / gen8PaidRaw / gen8SendingRaw / gen8OwedRaw.
+ */
 export async function listPartners(db) {
+  const gen8 = await gen8PartnerColumns(db);
+  const importPart = gen8 ? "amount_raw - gen8_raw" : "amount_raw";
   const { rows } = await db.query(
     `select p.id, p.chain_id, p.name, p.fee_account, p.payout_wallet, p.creator_bps, p.partner_bps, p.active, p.created_at, p.updated_at,
             coalesce(f.earned, 0)::text as earned_raw, coalesce(f.swaps, 0)::int as swaps, f.last_swap_at,
-            coalesce(t.paid, 0)::text as paid_raw, coalesce(t.sending, 0)::text as sending_raw, t.last_paid_at
+            coalesce(t.paid, 0)::text as paid_raw, coalesce(t.sending, 0)::text as sending_raw, t.last_paid_at${gen8 ? `,
+            coalesce(g.earned, 0)::text as gen8_earned_raw, coalesce(g.swaps, 0)::int as gen8_swaps,
+            coalesce(t.gen8_paid, 0)::text as gen8_paid_raw, coalesce(t.gen8_sending, 0)::text as gen8_sending_raw` : ""}
        from public.import_fee_partners p
        left join lateral (
          select sum(partner_raw) as earned, count(*) as swaps, max(occurred_at) as last_swap_at
            from public.finance_import_swap_fees where chain_id = p.chain_id and partner_id = p.id
        ) f on true
        left join lateral (
-         select sum(amount_raw) filter (where status = 'landed') as paid,
-                sum(amount_raw) filter (where status = 'sending') as sending,
-                max(updated_at) filter (where status = 'landed') as last_paid_at
+         select sum(${importPart}) filter (where status = 'landed') as paid,
+                sum(${importPart}) filter (where status = 'sending') as sending,
+                max(updated_at) filter (where status = 'landed') as last_paid_at${gen8 ? `,
+                sum(gen8_raw) filter (where status = 'landed') as gen8_paid,
+                sum(gen8_raw) filter (where status = 'sending') as gen8_sending` : ""}
            from public.import_fee_transfers where chain_id = p.chain_id and kind = 'partner' and partner_id = p.id
-       ) t on true
+       ) t on true${gen8 ? `
+       left join lateral (
+         select sum(partner_raw) as earned, count(*) as swaps
+           from public.gen8_partner_fees where chain_id = p.chain_id and partner_id = p.id
+       ) g on true` : ""}
       order by p.active desc, p.id, p.chain_id`,
   );
+  const owedOf = (earned, paid, sending) => {
+    const owed = earned - paid - sending;
+    return (owed > 0n ? owed : 0n).toString();
+  };
   return rows.map((row) => {
     const earned = BigInt(row.earned_raw || "0");
     const paid = BigInt(row.paid_raw || "0");
     const sending = BigInt(row.sending_raw || "0");
-    const owed = earned - paid - sending;
-    return {
+    const out = {
       ...publicRow(row),
       swaps: Number(row.swaps || 0),
       lastSwapAt: row.last_swap_at ? new Date(row.last_swap_at).toISOString() : null,
       earnedRaw: earned.toString(),
       paidRaw: paid.toString(),
       sendingRaw: sending.toString(),
-      owedRaw: (owed > 0n ? owed : 0n).toString(),
+      owedRaw: owedOf(earned, paid, sending),
       lastPaidAt: row.last_paid_at ? new Date(row.last_paid_at).toISOString() : null,
+    };
+    if (!gen8) return out;
+    const gEarned = BigInt(row.gen8_earned_raw || "0");
+    const gPaid = BigInt(row.gen8_paid_raw || "0");
+    const gSending = BigInt(row.gen8_sending_raw || "0");
+    return {
+      ...out,
+      gen8Swaps: Number(row.gen8_swaps || 0),
+      gen8EarnedRaw: gEarned.toString(),
+      gen8PaidRaw: gPaid.toString(),
+      gen8SendingRaw: gSending.toString(),
+      gen8OwedRaw: owedOf(gEarned, gPaid, gSending),
     };
   });
 }
