@@ -13,7 +13,7 @@ import { Wallet, verifyTypedData, TypedDataEncoder, SigningKey, getBytes, Signat
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const compiled = await build({
   absWorkingDir: dir,
-  stdin: { contents: `export { hexValue, typedDataJson, findEvmWallet, formatPriceImpact, slippageRequest, shouldOfferProtectedRpc, GEN8_WIDGET_REFRESH_MS, ensureWalletChain, WALLET_CHAIN_PARAMS } from "./gen8Widget.ts";`, resolveDir: dir, sourcefile: "gen8Harness.ts", loader: "ts" },
+  stdin: { contents: `export { hexValue, typedDataJson, findEvmWallet, formatPriceImpact, slippageRequest, shouldOfferProtectedRpc, GEN8_WIDGET_REFRESH_MS, ensureWalletChain, WALLET_CHAIN_PARAMS, assertImportBuild, notTradableText, IMPORT_ROUTERS } from "./gen8Widget.ts";`, resolveDir: dir, sourcefile: "gen8Harness.ts", loader: "ts" },
   bundle: true,
   write: false,
   format: "esm",
@@ -142,4 +142,30 @@ test("WALLET_CHAIN_PARAMS: BNB Chain and Robinhood Chain mainnet", () => {
   assert.equal(mod.WALLET_CHAIN_PARAMS[56].chainId, "0x38");
   assert.equal(mod.WALLET_CHAIN_PARAMS[4663].chainId, "0x1237");
   assert.equal(mod.WALLET_CHAIN_PARAMS[4663].nativeCurrency.symbol, "ETH");
+});
+
+test("import builds: only the chain's router (Kyber on 56, Universal Router on 4663) with the swap's own value", () => {
+  const amount = 10n ** 16n;
+  assert.doesNotThrow(() => mod.assertImportBuild({ to: "0x6131b5fae19ea4f9d964eac0408e4408b66337b5", value: amount.toString() }, 56, "buy", amount));
+  assert.doesNotThrow(() => mod.assertImportBuild({ to: mod.IMPORT_ROUTERS[4663], value: "0" }, 4663, "sell", amount));
+  assert.throws(() => mod.assertImportBuild({ to: mod.IMPORT_ROUTERS[4663], value: amount.toString() }, 56, "buy", amount), /unexpected router/);
+  assert.throws(() => mod.assertImportBuild({ to: mod.IMPORT_ROUTERS[56], value: "1" }, 56, "buy", amount), /amount/);
+  assert.throws(() => mod.assertImportBuild({ to: mod.IMPORT_ROUTERS[56], value: "1" }, 56, "sell", amount), /amount/);
+  assert.throws(() => mod.assertImportBuild({ to: mod.IMPORT_ROUTERS[56], value: "0" }, 97, "sell", amount), /unexpected router/);
+});
+
+test("EVM box: gen-8 keeps its flow; imports quote and build through /api/widget/swap/quote|build with the coin's decimals", () => {
+  const src = fs.readFileSync(path.join(dir, "gen8Widget.ts"), "utf8");
+  assert.match(src, /\/api\/widget\/swap\/evm\/token\?chainId=/);
+  assert.match(src, /\/api\/widget\/swap\/gen8\/token\?chainId=/, "fallback for an API without the evm route");
+  assert.match(src, /"\/api\/widget\/swap\/gen8\/quote"/);
+  assert.match(src, /"\/api\/widget\/swap\/gen8\/build"/);
+  assert.match(src, /"\/api\/widget\/swap\/quote"/);
+  assert.match(src, /"\/api\/widget\/swap\/build"/);
+  assert.match(src, /return this\.isImport\(\) \? Number\(this\.token\?\.decimals \?\? 18\) : 18;/);
+  assert.match(src, /IMPORT_SWAP_NO_ROUTE/);
+  assert.match(src, /No route here\. Trade it on its MemeWarzone page\./);
+  assert.doesNotMatch(src, /eth_signTypedData/);
+  assert.match(mod.notTradableText("bonding"), /MemeWarzone page/);
+  assert.match(mod.notTradableText("fee"), /paused/);
 });
