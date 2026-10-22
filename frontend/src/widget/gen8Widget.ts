@@ -98,6 +98,38 @@ export function shouldOfferProtectedRpc(chainId: number | null | undefined, conn
   return connected && offersProtectedRpc(Number(chainId)) && !choice;
 }
 
+/**
+ * wallet_addEthereumChain params for a wallet that does not know the coin's chain yet (wallet_switchEthereumChain
+ * answers 4902). Public keyless RPCs only: a URL written into a visitor's wallet stays there (as the app's
+ * getChainParams, src/lib/chainConfig.ts; Robinhood's public RPC is the one the live app uses).
+ */
+export const WALLET_CHAIN_PARAMS: Record<number, { chainId: string; chainName: string; nativeCurrency: { name: string; symbol: string; decimals: number }; rpcUrls: string[]; blockExplorerUrls: string[] }> = {
+  56: { chainId: "0x38", chainName: "BNB Smart Chain", nativeCurrency: { name: "BNB", symbol: "BNB", decimals: 18 }, rpcUrls: ["https://bsc-dataseed.bnbchain.org"], blockExplorerUrls: ["https://bscscan.com/"] },
+  4663: { chainId: "0x1237", chainName: "Robinhood Chain", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: ["https://rpc.mainnet.chain.robinhood.com"], blockExplorerUrls: ["https://robinhoodchain.blockscout.com/"] },
+};
+
+/** EIP-1193 error code of a wallet error (MetaMask nests the 4902 of a mobile switch in data.originalError). */
+export function walletErrorCode(error: unknown): number {
+  const e = error as { code?: unknown; data?: { originalError?: { code?: unknown } } } | null;
+  return Number(e?.code ?? e?.data?.originalError?.code ?? 0);
+}
+
+/** Puts the wallet on chain `want`: switch; a wallet without that chain (4902) adds it, then switches again. */
+export async function ensureWalletChain(wallet: Eip1193, want: number) {
+  const readChain = async () => Number(BigInt(String(await wallet.request({ method: "eth_chainId" }))));
+  if ((await readChain()) === want) return;
+  try {
+    await wallet.request({ method: "wallet_switchEthereumChain", params: [{ chainId: hexValue(BigInt(want)) }] });
+  } catch (error) {
+    const params = WALLET_CHAIN_PARAMS[want];
+    if (walletErrorCode(error) !== 4902 || !params) throw error;
+    await wallet.request({ method: "wallet_addEthereumChain", params: [params] });
+    // EIP-3085 does not require the wallet to stay on the added chain: switch again (as the app's useWallet).
+    await wallet.request({ method: "wallet_switchEthereumChain", params: [{ chainId: hexValue(BigInt(want)) }] });
+  }
+  if ((await readChain()) !== want) throw new Error("Switch your wallet to this coin's chain and try again.");
+}
+
 export function findEvmWallet(scope: Record<string, any> = globalThis as any): Eip1193 | null {
   const w = scope.ethereum;
   return w && typeof w.request === "function" ? (w as Eip1193) : null;
@@ -382,12 +414,7 @@ export class Gen8SwapWidget {
   }
 
   private async ensureChain(wallet: Eip1193) {
-    const want = Number(this.token?.chainId);
-    const current = Number(BigInt(String(await wallet.request({ method: "eth_chainId" }))));
-    if (current === want) return;
-    await wallet.request({ method: "wallet_switchEthereumChain", params: [{ chainId: hexValue(BigInt(want)) }] });
-    const after = Number(BigInt(String(await wallet.request({ method: "eth_chainId" }))));
-    if (after !== want) throw new Error("Switch your wallet to this coin's chain and try again.");
+    await ensureWalletChain(wallet, Number(this.token?.chainId));
   }
 
   private async onGo() {
