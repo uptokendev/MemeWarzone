@@ -13,7 +13,7 @@ This page lists every fee MemeWarzone charges. The pages after it show the exact
 | Launch fee, first 60 seconds of a new coin | starts at 90%, falls to 2% | traders who buy in the first minute | the same split as the trade fee |
 | Graduation fee | 2% of the coin's raise | the coin's raise, once, when it graduates | recruiters, squads or airdrops, and MemeWarzone. The creator gets nothing from it. |
 | DEX pool fee after graduation | set by the pool (0.25% on Solana) | traders in the pool | 80% to the creator side, 20% to MemeWarzone |
-| Imported coin swap | 1% on Solana, 0.5% on BNB Chain and Robinhood Chain | the trader | Solana: half to the coin's creator, half to MemeWarzone |
+| Imported coin swap | 1% on every chain | the trader | half to the coin's creator, half to MemeWarzone |
 | Battle buy-in | 25% of the buy-in | the coin owners in the battle | 20% to the Major War League, 5% to MemeWarzone. The other 75% is the prize. |
 | Battle boost | 10% of the boost | the person who boosts | MemeWarzone. The other 90% is the prize. |
 | Event sponsorship | 30% of the sponsorship | the sponsor | 20% marketing, 10% MemeWarzone. The other 70% is the event prize. |

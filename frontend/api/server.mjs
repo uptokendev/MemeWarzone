@@ -219,6 +219,7 @@ import analyticsAdmin from "./analytics/admin.js";
 import prepareOg from "./prepare-og.js";
 import { sitemapChild, sitemapIndex } from "./sitemap.js";
 import seoRender from "./seoRender.js";
+import { createHelpAssistant } from "./helpAssistant.js";
 import story, { handleSharePage as storySharePage } from "./story.js";
 import battleOg from "./battle-og.js";
 import adminAbuseMe from "./admin/abuse/me.js";
@@ -469,6 +470,10 @@ router.all("/chat/send", wrap(chatSend));
 router.all("/diagnostics", wrap(diagnostics));
 router.all("/epochPools", wrap(epochPools));
 router.all("/featured", wrap(featured));
+// Help Center assistant (api/helpAssistant.js): off unless ANTHROPIC_API_KEY is set.
+const helpAssistant = createHelpAssistant();
+router.get("/help/assistant", wrap(helpAssistant.status));
+router.post("/help/ask", wrap(helpAssistant.ask));
 router.all("/follows/campaign-list", wrap(followsCampaignList));
 router.all("/follows/campaign", wrap(followsCampaign));
 router.all("/follows/user-counts", wrap(followsUserCounts));
