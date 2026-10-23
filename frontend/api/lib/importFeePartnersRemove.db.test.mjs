@@ -29,10 +29,10 @@ for (const name of [
 }
 await db.query(migration("20261023_000010_import_fee_partner_audit_delete.sql"));
 
-async function addPartner(id, chainId = 56) {
+async function addPartner(id, chainId = 56, active = false) {
   await db.query(
-    `insert into public.import_fee_partners (id, chain_id, name, payout_wallet, creator_bps, partner_bps, active) values ($1, $2, $3, $4, 5000, 2500, true)`,
-    [id, chainId, `Name ${id}`, W],
+    `insert into public.import_fee_partners (id, chain_id, name, payout_wallet, creator_bps, partner_bps, active) values ($1, $2, $3, $4, 5000, 2500, $5)`,
+    [id, chainId, `Name ${id}`, W, active],
   );
 }
 const exists = async (id, chainId = 56) => (await db.query(`select 1 from public.import_fee_partners where id = $1 and chain_id = $2`, [id, chainId])).rowCount === 1;
@@ -50,6 +50,13 @@ test("removable is true only without history; a clean partner is removed and aud
   assert.equal(rows[0].actor_email, "ops@memewar.zone");
   assert.equal(rows[0].before.id, "clean-one");
   assert.equal(rows[0].after, null);
+});
+
+test("an active partner is refused with 409 PARTNER_ACTIVE and is not removable, even with no history", async () => {
+  await addPartner("still-on", 56, true);
+  assert.equal(await removableOf("still-on"), false);
+  await assert.rejects(removePartner(db, { id: "still-on", chainId: 56 }, actor), (e) => e.status === 409 && e.code === "PARTNER_ACTIVE" && /Switch the partner off first/.test(e.message));
+  assert.equal(await exists("still-on"), true);
 });
 
 test("unknown partner is a 404", async () => {

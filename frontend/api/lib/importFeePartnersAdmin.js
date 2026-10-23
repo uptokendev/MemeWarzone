@@ -8,7 +8,7 @@
  * afterwards but is still paid what it earned. A payout wallet change sends everything still owed to the new
  * wallet. Every create / update / delete writes import_fee_partner_audit in the same transaction.
  *
- * Remove (founder, 2026-10-23): a row can only be deleted while it has no history at all on its chain (no swap fee rows,
+ * Remove (founder, 2026-10-23): a row can only be deleted once it is switched off and has no history at all on its chain (no swap fee rows,
  * no payouts, no gen-8 partner fees, no swap fingerprints); otherwise the only option is switching it off, so payouts and
  * accounting stay complete. The history check runs in the delete's transaction after locking the partner row. The audit
  * `delete` action needs database/prod_apply_import_fee_partner_audit_delete.sql; without it the delete answers 503.
@@ -173,8 +173,8 @@ export async function listPartners(db) {
       sendingRaw: sending.toString(),
       owedRaw: owedOf(earned, paid, sending),
       lastPaidAt: row.last_paid_at ? new Date(row.last_paid_at).toISOString() : null,
-      // Only a row with no history on its chain can be removed (swaps counted from the fee ledger, the rest from their tables).
-      removable: Number(row.swaps || 0) + Number(row.h_transfers || 0) + Number(row.h_fingerprints || 0) + Number(row.h_gen8 || 0) === 0,
+      // Only a switched-off row with no history on its chain can be removed (swaps counted from the fee ledger, the rest from their tables).
+      removable: !row.active && Number(row.swaps || 0) + Number(row.h_transfers || 0) + Number(row.h_fingerprints || 0) + Number(row.h_gen8 || 0) === 0,
     };
     if (!gen8) return out;
     const gEarned = BigInt(row.gen8_earned_raw || "0");
@@ -289,6 +289,8 @@ export async function removePartner(db, { id, chainId }, actor) {
   return inTransaction(db, async (client) => {
     const current = (await client.query(`select ${ROW} from public.import_fee_partners where id = $1 and chain_id = $2 for update`, [key.id, key.chainId])).rows[0];
     if (!current) fail("Unknown partner.", "PARTNER_NOT_FOUND", 404);
+    // An inactive partner gets no new attribution (readPartner filters `and active`), so no new history can appear during the delete.
+    if (current.active) fail("Switch the partner off first.", "PARTNER_ACTIVE", 409);
     const count = async (table) => Number((await client.query(`select count(*)::int as n from public.${table} where partner_id = $1 and chain_id = $2`, [key.id, key.chainId])).rows[0]?.n || 0);
     const hasGen8 = (await client.query(`select to_regclass('public.gen8_partner_fees') is not null as ok`)).rows[0]?.ok === true;
     const history = {
