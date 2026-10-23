@@ -91,6 +91,29 @@ Generation 8 coins: the partner's 0.25% of a graduated swap comes from MemeWarzo
   from the API (`/api/widget/swap/*`, open to every origin, rate limited per IP).
 - The Solana bonding part is a second file, `mwz-swap-bonding.js`, loaded next to `mwz-swap.js` only for those coins.
 
+## What we count (usage and revenue)
+
+MemeWarzone counts how the widget is used and what it earns, so partners and the team see the same numbers in the
+Command Center. Counting happens on our API after it has answered the widget: it never changes, slows or fails a
+quote or a swap, and a counting error is only logged.
+
+- **Usage per day**: one counter per day, chain, partner, website and event. Events: `load` (the widget looked up a
+  coin), `quote`, `build` (the API handed out a swap transaction), `approval` (a sell needed an approval first) and
+  `bonding_trade` (a Solana launchpad bonding trade was authorized). Solana DBC bonding trades do not pass our API and
+  are not counted.
+- **Website**: the hostname your visitors' browsers send with the request (`Origin`, else `Referer`), for example
+  `crypticpump.io`. Never the path, never a full URL. After 500 different websites on one chain in one day, new ones
+  count as `other`.
+- **Partner**: the `partner` option is sent with token lookups, quotes and builds. It counts for a partner only while
+  that partner is active on the chain; anything else counts as no partner.
+- **Swaps and revenue**: every swap the API builds for the widget is stored with the same fingerprint the partner split
+  uses and the wallet it was built for. When that wallet lands that exact swap, the fee ledger marks it as a widget
+  swap. Generation 8 swaps are recognised by the widget tag the API puts in the swap.
+
+Privacy: no cookies, no IP addresses and no visitor ids are stored. The per-IP rate limit is kept in memory for one
+minute and never written anywhere. Wallet addresses are stored only for the swaps a wallet asked the widget to build
+(they are public on chain once the swap lands), never for page views or quotes.
+
 ## API routes (for reference)
 
 | Route | |

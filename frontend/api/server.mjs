@@ -80,6 +80,7 @@ import importCreatorFees, { importCreatorFeesOwner } from "./importCreatorFees.j
 import { widgetBalances, widgetBuild, widgetCors, widgetQuote, widgetStatus, widgetToken } from "./importSwapWidget.js";
 import { evmWidgetBalances, evmWidgetStatus, evmWidgetToken } from "./widgetSwapEvm.js";
 import { gen8SwapBalances, gen8SwapBuild, gen8SwapQuote, gen8SwapStatus, gen8SwapToken } from "./gen8Swap.js";
+import { trackWidget } from "./lib/widgetTracking.js";
 import airdropPool from "./airdropPool.js";
 import battleShareCard from "./battle-share-card.js";
 import status from "./status.js";
@@ -555,26 +556,28 @@ router.post("/imports/swap/quote", wrap(importSwapQuote));
 router.post("/imports/swap/build", wrap(importSwapBuild));
 router.get("/imports/creator-fees/owner", wrap(importCreatorFeesOwner));
 router.get("/imports/creator-fees", wrap(importCreatorFees));
-router.get("/widget/swap/token", wrap(widgetToken));
+// Usage and build tracking (api/lib/widgetTracking.js): each handler runs unchanged and answers first; the wrapper
+// counts the answered request afterwards (best effort, never blocks a swap). The app's own routes are not wrapped.
+router.get("/widget/swap/token", wrap(trackWidget({ event: "load", chainId: 101 }, widgetToken)));
 router.get("/widget/swap/balances", wrap(widgetBalances));
-router.post("/widget/swap/quote", wrap(widgetQuote));
-router.post("/widget/swap/build", wrap(widgetBuild));
+router.post("/widget/swap/quote", wrap(trackWidget({ event: "quote" }, widgetQuote)));
+router.post("/widget/swap/build", wrap(trackWidget({ event: "build" }, widgetBuild)));
 router.get("/widget/swap/status", wrap(widgetStatus));
 // Imported and graduated coins on BNB Chain / Robinhood Chain in the widget (api/widgetSwapEvm.js); quote and build are
 // the routes above with chainId 56 / 4663. evm/token also answers gen-8 coins (kind "gen8") so one EVM box serves all.
-router.get("/widget/swap/evm/token", wrap(evmWidgetToken));
+router.get("/widget/swap/evm/token", wrap(trackWidget({ event: "load" }, evmWidgetToken)));
 router.get("/widget/swap/evm/balances", wrap(evmWidgetBalances));
 router.get("/widget/swap/evm/status", wrap(evmWidgetStatus));
 // Generation 8 coins in the widget (api/gen8Swap.js): the API builds the UniversalRouter call and records the partner fingerprint.
-router.get("/widget/swap/gen8/token", wrap(gen8SwapToken));
+router.get("/widget/swap/gen8/token", wrap(trackWidget({ event: "load" }, gen8SwapToken)));
 router.get("/widget/swap/gen8/balances", wrap(gen8SwapBalances));
-router.post("/widget/swap/gen8/quote", wrap(gen8SwapQuote));
-router.post("/widget/swap/gen8/build", wrap(gen8SwapBuild));
+router.post("/widget/swap/gen8/quote", wrap(trackWidget({ event: "quote" }, gen8SwapQuote)));
+router.post("/widget/swap/gen8/build", wrap(trackWidget({ event: "build", kind: "gen8" }, gen8SwapBuild)));
 router.get("/widget/swap/gen8/status", wrap(gen8SwapStatus));
 // Bonding coins in the widget: the same handlers as the app's /solana/* routes, reached through the
 // widget's open CORS (no credentials, rate limited). The app's own routes and their CORS are unchanged.
 router.all("/widget/solana/campaign-account", wrap(solanaCampaignAccount));
-router.post("/widget/solana/trade-authorize", wrap(solanaTradeAuthorizationV1));
+router.post("/widget/solana/trade-authorize", wrap(trackWidget({ event: "bonding_trade", chainId: 101 }, solanaTradeAuthorizationV1)));
 router.all("/solana/direct-create", wrap(solanaDirectCreateV4));
 router.all("/solana/trade-authorize", wrap(solanaTradeAuthorizationV1));
 router.all("/solana/graduation-authorize", wrap(solanaGraduationAuthorizationV1));

@@ -4,9 +4,12 @@
  * handlers, open CORS without credentials) and refuses anything else.
  */
 let base = "https://api.memewar.zone";
+let partner = "";
 
-export function setWidgetApiBase(value: string) {
+/** partner: the host's partner id, sent as ?partner= on the trade authorization so usage is counted per partner. */
+export function setWidgetApiBase(value: string, partnerId?: string) {
   base = String(value || base).replace(/\/+$/, "");
+  partner = String(partnerId ?? "").trim();
 }
 
 const ROUTES: Record<string, string> = {
@@ -18,5 +21,8 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
   const [pathname, query] = String(path).split("?");
   const mapped = ROUTES[pathname];
   if (!mapped) throw new Error(`The swap widget does not call ${pathname}.`);
-  return fetch(`${base}${mapped}${query ? `?${query}` : ""}`, { ...init, credentials: "omit" });
+  const params = new URLSearchParams(query || "");
+  if (partner && pathname === "/api/solana/trade-authorize") params.set("partner", partner);
+  const search = params.toString();
+  return fetch(`${base}${mapped}${search ? `?${search}` : ""}`, { ...init, credentials: "omit" });
 }

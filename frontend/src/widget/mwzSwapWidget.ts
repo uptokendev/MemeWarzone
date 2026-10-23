@@ -18,7 +18,7 @@ import { VersionedTransaction } from "@solana/web3.js";
 
 import { assertJupiterSwapForWallet } from "../lib/jupiterSwapGuard";
 import type { BondingKind, BondingQuote } from "./bonding";
-import { STYLE, fromRaw, toRaw } from "./widgetShared";
+import { STYLE, fromRaw, partnerQuery, toRaw } from "./widgetShared";
 import { Gen8SwapWidget, formatPriceImpact, type Gen8MountOptions } from "./gen8Widget";
 
 export { fromRaw, toRaw };
@@ -27,7 +27,7 @@ export { fromRaw, toRaw };
 type BondingApi = {
   quoteBonding: (input: { kind: BondingKind; campaignAddress: string; side: Side; amountIn: bigint }) => Promise<BondingQuote>;
   tradeBonding: (input: { kind: BondingKind; campaignAddress: string; creator: string | null; side: Side; amountIn: bigint; trader: string }) => Promise<string>;
-  setWidgetApiBase: (base: string) => void;
+  setWidgetApiBase: (base: string, partner?: string) => void;
   setWidgetSolanaProvider: (provider: never) => void;
 };
 const SCRIPT_DIR = (() => {
@@ -39,12 +39,12 @@ const SCRIPT_DIR = (() => {
   }
 })();
 let bondingPromise: Promise<BondingApi> | null = null;
-function loadBonding(apiBase: string): Promise<BondingApi> {
+function loadBonding(apiBase: string, partner?: string): Promise<BondingApi> {
   if (!bondingPromise) {
     bondingPromise = new Promise<BondingApi>((resolve, reject) => {
       const ready = () => {
         const api = (globalThis as any).__MemeWarzoneSwapBonding as BondingApi | undefined;
-        if (api) { api.setWidgetApiBase(apiBase); resolve(api); } else reject(new Error("Could not load the trading module."));
+        if (api) resolve(api); else reject(new Error("Could not load the trading module."));
       };
       if ((globalThis as any).__MemeWarzoneSwapBonding) return ready();
       const script = document.createElement("script");
@@ -55,7 +55,11 @@ function loadBonding(apiBase: string): Promise<BondingApi> {
       document.head.appendChild(script);
     });
   }
-  return bondingPromise;
+  // The API base and the partner (usage counts per partner) for this box's trade, set on every call.
+  return bondingPromise.then((api) => {
+    api.setWidgetApiBase(apiBase, partner);
+    return api;
+  });
 }
 
 type Side = "buy" | "sell";
@@ -273,7 +277,7 @@ class SwapWidget {
       return;
     }
     try {
-      const token = await this.call<TokenInfo>(`/api/widget/swap/token?mint=${encodeURIComponent(mint)}`);
+      const token = await this.call<TokenInfo>(`/api/widget/swap/token?mint=${encodeURIComponent(mint)}${partnerQuery(this.options.partner)}`);
       // An API from before bonding support answers without kind / tradable: those coins are imports.
       this.token = { ...token, kind: token.kind || "import", tradable: token.tradable !== false };
       const short = `${mint.slice(0, 4)}...${mint.slice(-4)}`;
@@ -339,7 +343,7 @@ class SwapWidget {
     try {
       const quote = await this.call<Quote>("/api/widget/swap/quote", {
         method: "POST",
-        body: JSON.stringify({ chainId: 101, token: this.token.mint, side: this.side, amountRaw: raw.toString(), slippageBps: this.options.slippageBps ?? 100 }),
+        body: JSON.stringify({ chainId: 101, token: this.token.mint, side: this.side, amountRaw: raw.toString(), slippageBps: this.options.slippageBps ?? 100, ...(this.options.partner ? { partner: this.options.partner } : {}) }),
       });
       if (seq !== this.quoteSeq) return null;
       this.quote = quote;
@@ -357,7 +361,7 @@ class SwapWidget {
     const token = this.token;
     if (!token || token.kind === "import" || !token.campaignAddress || !token.tradable) return null;
     try {
-      const bonding = await loadBonding(this.api);
+      const bonding = await loadBonding(this.api, this.options.partner);
       const q = await bonding.quoteBonding({ kind: token.kind, campaignAddress: token.campaignAddress, side: this.side, amountIn: raw });
       if (seq !== this.quoteSeq) return null;
       const quote: Quote = {
@@ -453,7 +457,7 @@ class SwapWidget {
     this.busy = true;
     this.paintButton();
     try {
-      const bonding = await loadBonding(this.api);
+      const bonding = await loadBonding(this.api, this.options.partner);
       bonding.setWidgetSolanaProvider(wallet as never);
       this.say("Confirm the trade in your wallet...");
       const signature = await bonding.tradeBonding({ kind: token.kind, campaignAddress: token.campaignAddress, creator: token.creator ?? null, side: this.side, amountIn: raw, trader: this.account });

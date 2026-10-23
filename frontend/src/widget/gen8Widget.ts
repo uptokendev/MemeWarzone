@@ -22,7 +22,7 @@
  */
 import { gen8FormatAmount } from "../../shared/gen8FormatAmount.mjs";
 import { pollGen8Receipt } from "../../shared/gen8ReceiptPoll.mjs";
-import { STYLE, fromRaw, toRaw } from "./widgetShared";
+import { STYLE, fromRaw, partnerQuery, toRaw } from "./widgetShared";
 import { addProtectedBscRpc, offersProtectedRpc, readProtectedRpcChoice, rememberProtectedRpcChoice } from "../lib/bscProtectedRpc.mjs";
 
 type Side = "buy" | "sell";
@@ -477,10 +477,10 @@ export class Gen8SwapWidget {
    */
   private async loadTokenInfo(chainId: number, token: string): Promise<TokenInfo> {
     try {
-      return await this.call<TokenInfo>(`/api/widget/swap/evm/token?chainId=${chainId}&token=${token}`);
+      return await this.call<TokenInfo>(`/api/widget/swap/evm/token?chainId=${chainId}&token=${token}${partnerQuery(this.options.partner)}`);
     } catch (error) {
       try {
-        return { ...(await this.call<TokenInfo>(`/api/widget/swap/gen8/token?chainId=${chainId}&token=${token}`)), kind: "gen8" };
+        return { ...(await this.call<TokenInfo>(`/api/widget/swap/gen8/token?chainId=${chainId}&token=${token}${partnerQuery(this.options.partner)}`)), kind: "gen8" };
       } catch {
         throw error;
       }
@@ -557,7 +557,7 @@ export class Gen8SwapWidget {
     try {
       const quote = await this.call<Quote>("/api/widget/swap/gen8/quote", {
         method: "POST",
-        body: JSON.stringify({ chainId: this.token.chainId, token: this.token.token, side: this.side, amountRaw: raw.toString(), ...slippageRequest(this.options) }),
+        body: JSON.stringify({ chainId: this.token.chainId, token: this.token.token, side: this.side, amountRaw: raw.toString(), ...slippageRequest(this.options), ...(this.options.partner ? { partner: this.options.partner } : {}) }),
       });
       if (seq !== this.quoteSeq) return null;
       this.quote = quote;
@@ -577,7 +577,7 @@ export class Gen8SwapWidget {
     try {
       const quote = await this.call<Quote>("/api/widget/swap/quote", {
         method: "POST",
-        body: JSON.stringify({ chainId: token.chainId, token: token.token, side: this.side, amountRaw: raw.toString(), slippageBps: this.options.slippageBps ?? 100 }),
+        body: JSON.stringify({ chainId: token.chainId, token: token.token, side: this.side, amountRaw: raw.toString(), slippageBps: this.options.slippageBps ?? 100, ...(this.options.partner ? { partner: this.options.partner } : {}) }),
       });
       if (seq !== this.quoteSeq) return null;
       this.quote = quote;

@@ -24,6 +24,7 @@ import { getRpcUrls } from "./getServerReadProvider.js";
 import { isOwnerWallet } from "../../shared/ownerWallets.mjs";
 import { solanaFeeAccount, JUPITER_PROGRAM, KYBER_ROUTER } from "../importSwap.js";
 import { evmFingerprint, partnerSwapKey, partnersForSwaps, solanaFingerprintFromLanded } from "./importSwapFingerprint.js";
+import { markWidgetFeeRows } from "./widgetSwapLedger.js";
 
 const WSOL = "So11111111111111111111111111111111111111112";
 // keccak256("Deposit(address,uint256,uint256)"), NativeTreasuryVaultBase / ProtocolRevenueVault.
@@ -352,8 +353,11 @@ export async function ingestImportSwapFees({ db, chainId, env = process.env, fet
     : await scanEvmImportSwapFees({ source, rpc: call, fromBlock: fromBlock ?? (cursor == null ? null : Number(cursor)) });
   const nextCursor = source.kind === "solana" ? scan.cursor : String(scan.nextBlock);
   const inserted = dryRun ? 0 : await storeImportSwapFees(db, chainId, scan.rows, nextCursor);
+  // Swap widget (2026-10-23): marks the stored rows that match a widget build (swap_source / widget_host). Best effort,
+  // after the store; amounts and partner attribution are untouched. Landed wallet as for partners.
+  const widgetMarked = dryRun ? 0 : await markWidgetFeeRows(db, chainId, scan.rows, (row) => (source.kind === "solana" ? row.wallet : row.sender));
   const feeRaw = scan.rows.reduce((sum, r) => sum + BigInt(r.feeRaw), 0n).toString();
-  const summary = { chainId, dryRun, cursorBefore: cursor, cursorAfter: nextCursor, scanned: scan.scanned, found: scan.rows.length, inserted, feeRaw, asset: source.asset, complete: scan.complete, ...(scan.error ? { error: scan.error } : {}) };
+  const summary = { chainId, dryRun, cursorBefore: cursor, cursorAfter: nextCursor, scanned: scan.scanned, found: scan.rows.length, inserted, feeRaw, asset: source.asset, complete: scan.complete, ...(widgetMarked ? { widgetMarked } : {}), ...(scan.error ? { error: scan.error } : {}) };
   log?.(summary, scan.rows);
   const split = [];
   const splitSources = [...importSwapFeeSplitSources(env).filter((s) => s.chainId === chainId), ...partnerSplitSources(await readActivePartners(db, chainId), env)];
@@ -576,7 +580,9 @@ async function ingestSplitReceiver({ db, source, env, fetchImpl, dryRun, fromScr
   });
   const nextCursor = source.kind === "solana" ? scan.cursor : String(scan.nextBlock);
   const stored = dryRun ? { inserted: 0, accrued: 0 } : await storeSplitImportSwapFees(db, source, rows, nextCursor);
-  const summary = { chainId: source.chainId, receiver, split: true, ...(source.partner ? { partner: source.partner.id } : {}), dryRun, cursorBefore: cursor, cursorAfter: nextCursor, scanned: scan.scanned, found: rows.length, ...stored, complete: scan.complete, ...(scan.error ? { error: scan.error } : {}) };
+  // Swap widget marks (see ingestImportSwapFees): same landed-wallet rule as the partner match above.
+  const widgetMarked = dryRun ? 0 : await markWidgetFeeRows(db, source.chainId, rows, landedWallet);
+  const summary = { chainId: source.chainId, receiver, split: true, ...(source.partner ? { partner: source.partner.id } : {}), dryRun, cursorBefore: cursor, cursorAfter: nextCursor, scanned: scan.scanned, found: rows.length, ...stored, complete: scan.complete, ...(widgetMarked ? { widgetMarked } : {}), ...(scan.error ? { error: scan.error } : {}) };
   log?.(summary, rows);
   return summary;
 }
