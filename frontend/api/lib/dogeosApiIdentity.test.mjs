@@ -253,6 +253,8 @@ test("getRpcUrls(6281971): DogeOS env first, DogeOS public RPC last, never a BSC
   await withEnv(BSC_SENTINELS, () => assert.deepEqual(getRpcUrls(DOGEOS), [DOGEOS_PUBLIC_RPC]));
 });
 
+// The before/after tables below are the outputs of origin/staging-live-gen8 cea3f9b4d (Patrick's RPC policy: no public
+// mainnet fallback, the BSC testnet on publicnode), the code DogeOS was merged onto.
 test("getRpcUrls: existing chains unchanged (before/after table)", async () => {
   await withEnv(
     {
@@ -274,10 +276,8 @@ test("getRpcUrls: existing chains unchanged (before/after table)", async () => {
       assert.deepEqual(getRpcUrls(97), [
         "https://bsc-sentinel-97.example",
         "https://bsc-sentinel-vite-testnet.example",
-        "https://bsc-sentinel-generic.example",
-        "https://data-seed-prebsc-1-s1.binance.org:8545",
-        "https://data-seed-prebsc-2-s1.binance.org:8545",
-        "https://bsc-testnet.bnbchain.org",
+        "https://bsc-sentinel-testnet-http.example",
+        "https://bsc-testnet-rpc.publicnode.com",
       ]);
       assert.deepEqual(getRpcUrls(4663), ["https://rh-4663.example", "https://rh-mainnet-url.example", "https://rpc.mainnet.chain.robinhood.com"]);
       assert.deepEqual(getRpcUrls(46630), ["https://rh-46630.example", "https://rh-testnet-url.example", "https://rpc.testnet.chain.robinhood.com"]);
@@ -311,9 +311,10 @@ test("rpcUsage.chainOfRpcUrl maps the DogeOS RPC to 6281971; existing chains unc
     assert.equal(chainOfRpcUrl(DOGEOS_PUBLIC_RPC), DOGEOS);
     assert.equal(chainOfRpcUrl(`${DOGEOS_PUBLIC_RPC}/some/path`), DOGEOS, "matched by host");
     assert.equal(chainOfRpcUrl("https://rpc.testnet.chain.robinhood.com"), 46630);
-    assert.equal(chainOfRpcUrl("https://rpc.mainnet.chain.robinhood.com"), 4663);
-    assert.equal(chainOfRpcUrl("https://bsc-dataseed.binance.org"), 56);
-    assert.equal(chainOfRpcUrl("https://bsc-testnet.bnbchain.org"), 97);
+    // No public mainnet fallback, so with no env a mainnet public URL maps to no chain.
+    assert.equal(chainOfRpcUrl("https://rpc.mainnet.chain.robinhood.com"), null);
+    assert.equal(chainOfRpcUrl("https://bsc-dataseed.binance.org"), null);
+    assert.equal(chainOfRpcUrl("https://bsc-testnet-rpc.publicnode.com"), 97);
     assert.equal(chainOfRpcUrl("https://unknown.example"), null);
   });
   const custom = (id) => (id === DOGEOS ? ["https://custom-dogeos.example"] : []);
@@ -335,8 +336,8 @@ test("evmCampaignProgress RPC: 6281971 reads DogeOS env or the DogeOS public RPC
     assert.equal(progressRpcUrl(56), "https://bsc-sentinel-56.example");
     assert.equal(progressRpcUrl(97), "https://bsc-sentinel-97.example");
     assert.equal(progressRpcUrl(46630), "https://rpc.testnet.chain.robinhood.com");
-    assert.equal(progressRpcUrl(4663), "https://rpc.mainnet.chain.robinhood.com");
-    assert.equal(progressRpcUrl(12345), "");
+    assert.equal(progressRpcUrl(4663), "", "no configured Robinhood mainnet RPC, no call");
+    assert.equal(progressRpcUrl(12345), "https://bsc-sentinel-generic.example", "getRpcUrl: an unknown chain reads the generic BSC env");
   });
 });
 

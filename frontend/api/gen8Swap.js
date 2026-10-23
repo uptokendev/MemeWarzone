@@ -46,7 +46,9 @@ import {
   permitFromJson,
 } from "../shared/evmGen8Swap.mjs";
 import { gen8V4ConfigFor } from "./lib/evmGen8Config.js";
+import { gen8LaunchReadiness, gen8TradeGap } from "../shared/gen8LaunchReadiness.mjs";
 import { evmFingerprint } from "./lib/importSwapFingerprint.js";
+import { widgetDeadlineJitter } from "./lib/widgetDeadline.js";
 
 const HOOK_ABI = [
   "function pools(bytes32) view returns (address creator, uint40 openAt, bool graduated, int24 tickGrad, int24 tickStart, uint128 liqA, uint128 liqB, uint160 sqrtGrad, tuple(uint16 bondingBps, uint16 postBps, uint16 creatorPostBps, uint16 sniperStartBps, uint16 creatorBondingBps) fees, uint40 graduatedAt)",
@@ -89,10 +91,19 @@ async function defaultPartnerDeps() {
  */
 export function gen8SwapSetup(chainId, env = process.env) {
   const cfg = gen8V4ConfigFor(chainId, env);
-  if (!cfg) throw new Gen8SwapError(400, "GEN8_NOT_CONFIGURED", "Generation 8 coins are not set up on this chain.");
+  if (!cfg) {
+    const gap = gen8LaunchReadiness(chainId, env, { vite: false, scope: "create" });
+    throw new Gen8SwapError(400, "GEN8_NOT_CONFIGURED", gap.message || "Generation 8 coins are not set up on this chain.");
+  }
   const router = gen8RouterFor(chainId, env);
   const quoter = gen8QuoterFor(chainId, env);
-  if (!router || !quoter) throw new Gen8SwapError(503, "GEN8_ROUTER_NOT_CONFIGURED", "No Uniswap router or quoter is configured for this chain.");
+  if (!router || !quoter) {
+    const gap = gen8TradeGap(chainId, env, { vite: false });
+    const names = gap.missing.filter((item) => !String(item.env).includes("HOOK")).map((item) => item.env);
+    const listed = (names.length ? names : gap.missing.map((item) => item.env)).join(", ");
+    const detail = listed ? ` Missing ${listed}.` : "";
+    throw new Gen8SwapError(503, "GEN8_ROUTER_NOT_CONFIGURED", `No Uniswap router or quoter is configured for this chain.${detail}`);
+  }
   return { ...cfg, router, quoter };
 }
 
@@ -310,7 +321,9 @@ export async function gen8SwapBuildCore(input, deps = {}) {
     exactIn: true,
     amount: amountIn,
     limit: BigInt(quote.minAmountOut),
-    deadline: BigInt(nowSec + GEN8_SWAP_DEADLINE_SECONDS),
+    // Random extra 0..3599 s (never shorter than before): two wallets that build the same swap in the same second get
+    // different bytes, so a recorded fingerprint names one build (and finance also checks the landed wallet).
+    deadline: BigInt(nowSec + GEN8_SWAP_DEADLINE_SECONDS + widgetDeadlineJitter(deps)),
     hookData: gen8HookData(GEN8_REFERRER_WIDGET),
     permit,
   });

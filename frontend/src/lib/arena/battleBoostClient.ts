@@ -26,6 +26,9 @@ export type BattleBoostQuote = {
   signature: string;
 };
 
+/** Boost cap and close, as the server enforces them (api/lib/arenaBoostRules.js). */
+export type BoostRules = { maxUnitsPerWallet: number; windowFraction: number; closesAt: string | null; open: boolean };
+
 export type BattleBoostSummary = {
   left?: { boostUnits?: string; grossNativeRaw?: string; poolNativeRaw?: string; protocolNativeRaw?: string };
   right?: { boostUnits?: string; grossNativeRaw?: string; poolNativeRaw?: string; protocolNativeRaw?: string };
@@ -57,6 +60,9 @@ export type BattleBoostState = {
   battlePointsV3?: BattlePointsV3BoostState[];
   scoringActive?: boolean;
   scoringReason?: string | null;
+  pointsPerBoost?: number | null;
+  boostRules?: BoostRules | null;
+  walletBoostUnits?: string | null;
   updatedAt?: string;
 };
 
@@ -125,11 +131,11 @@ function parseQuote(value: unknown): BattleBoostQuote {
 function parseSolanaQuote(value: unknown): SolanaBattleBoostQuote {
   const quote = value as SolanaBattleBoostQuote | null;
   if (!quote?.quoteId || quote.product !== "normal_battle" || !quote.transaction?.programId || !quote.transaction.dataBase64 || !Array.isArray(quote.transaction.accounts)) throw new Error("Solana Battle Boost quote is incomplete.");
-  // A Vote Battle boost is worth VOTE_BATTLE_BOOST_POINTS_PER_UNIT (2) regulation points and is not
-  // scored by the V3 curve; the API quotes it that way (arenaSolanaBoosts.js). Only the metrics
-  // battle shape was accepted here, so every Vote Battle boost was refused (2026-09-25).
+  // A Vote Battle boost is worth VOTE_BATTLE_BOOST_POINTS_PER_UNIT (1 regulation point since
+  // 2026-10-15, was 2) and is not scored by the V3 curve; the API quotes it that way
+  // (arenaSolanaBoosts.js). A metrics battle quote carries 1 as its V3 marker.
   const voteBattle = quote.voteBattle === true;
-  const expectedPoints = voteBattle ? 2 : 1;
+  const expectedPoints = 1;
   if (Number(quote.pointsPerBoost) !== expectedPoints || String(quote.usdPerBoostMicros) !== "1000000") throw new Error("Solana Battle Boost quote has unexpected unit economics.");
   if (Number(quote.split?.prizeBps) !== 9000 || Number(quote.split?.protocolBps) !== 1000 || Number(quote.split?.leagueBps) !== 0) throw new Error("Solana Battle Boost quote has unexpected split economics.");
   if (voteBattle) {
@@ -168,8 +174,9 @@ function solanaRoute(battleId: string, suffix: string) {
   return `/api/arena/boosts/${encodeURIComponent(battleId)}/${suffix}`;
 }
 
-export async function fetchBattleBoostState(battleId: string, signal?: AbortSignal): Promise<BattleBoostState> {
-  const res = await apiFetch(`/api/arena/boosts/${encodeURIComponent(battleId)}`, { cache: "no-store", signal });
+export async function fetchBattleBoostState(battleId: string, signal?: AbortSignal, wallet?: string | null): Promise<BattleBoostState> {
+  const qs = wallet ? `?${new URLSearchParams({ wallet })}` : "";
+  const res = await apiFetch(`/api/arena/boosts/${encodeURIComponent(battleId)}${qs}`, { cache: "no-store", signal });
   const json = await res.json().catch(() => ({}));
   if (!res.ok || json?.ok === false) throw new Error(String(json?.error || `Battle Boost state failed (${res.status})`));
   return { ...json, battlePointsV3: normalizeV3Rows(json.battlePointsV3) } as BattleBoostState;
@@ -207,6 +214,24 @@ export async function createSolanaBattleBoostQuote(input: { battleId: string; ch
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ wallet: input.wallet, targetToken: input.targetToken, boostUnits: input.boostUnits, auth }),
   }), "Solana Battle Boost quote"));
+}
+
+/**
+ * Reports a confirmed EVM Boost transaction so its points are recorded now. The server reads the
+ * BattleBoosted event from chain; if this call is lost, the realtime worker records it within minutes.
+ * Returns true when the points are recorded.
+ */
+export async function reportBattleBoostPayment(input: { chainId: number; battleId: string; txHash: string }): Promise<boolean> {
+  try {
+    const res = await apiFetch("/api/arena/boosts/evm-payment", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ chainId: input.chainId, battleId: input.battleId, txHash: input.txHash }),
+    });
+    const json = await res.json().catch(() => ({}));
+    return res.ok && json?.ok !== false && json?.pending !== true;
+  } catch {
+    return false;
+  }
 }
 
 export async function submitBattleBoost(input: { signer: JsonRpcSigner; quote: BattleBoostQuote }) {

@@ -5,13 +5,13 @@ import { createWorkingProvider, parseRpcList } from "./rpcProvider.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
 import { BNB_WAD, bnbCurveStateFor, readBnbCurveParams } from "./bnbCurvePricing.js";
 import { bondingCandleConflictSetSql } from "./canonicalCandleRebuild.js";
+import { solanaConfiguredRpcUrls } from "./solanaRpcConfig.js";
 
 const LOOP_SYMBOL = Symbol.for("memewarzone.canonicalCandleMaterializerStarted");
 const globalState = globalThis as any;
 const VERSION = 4;
 const WAD = BNB_WAD;
 const LAMPORTS_PER_SOL = 1_000_000_000;
-const DEFAULT_SOLANA_RPC = "https://api.mainnet-beta.solana.com";
 const DEFAULT_SOLANA_PROGRAM = "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt";
 
 const BNB_CURVE_ABI = [
@@ -198,8 +198,19 @@ function decodeSolanaCurve(data: Buffer): {
 }
 
 function solanaRpcUrls(): string[] {
-  const configured = String(ENV.SOLANA_RPC_HTTP || process.env.SOLANA_RPC_URL || "").trim();
-  return parseRpcList(configured || DEFAULT_SOLANA_RPC);
+  return solanaConfiguredRpcUrls();
+}
+
+const rpcSkippedChains = new Set<number>();
+
+function skipChainWithoutRpc(chainId: number): boolean {
+  const urls = chainId === 101 ? solanaRpcUrls() : isEvmCurveChain(chainId) ? bscRpcUrls(chainId) : [];
+  if (urls.length) return false;
+  if (!rpcSkippedChains.has(chainId)) {
+    rpcSkippedChains.add(chainId);
+    console.log("[canonical-candles] no RPC for chain; skipping", { chainId });
+  }
+  return true;
 }
 
 async function solanaRpc<T>(method: string, params: unknown[]): Promise<T> {
@@ -483,8 +494,10 @@ export async function runCanonicalCandleMaterializerOnce() {
   const candidates = await staleCampaigns();
   const results: Array<Record<string, unknown>> = [];
   for (const row of candidates.rows) {
+    const chainId = Number(row.chain_id);
+    if (skipChainWithoutRpc(chainId)) continue;
     try {
-      results.push(await materializeCanonicalCandles(Number(row.chain_id), String(row.campaign_address)));
+      results.push(await materializeCanonicalCandles(chainId, String(row.campaign_address)));
     } catch (error) {
       console.warn("[canonical-candles] materialization failed", {
         chainId: row.chain_id,

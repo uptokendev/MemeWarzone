@@ -63,7 +63,7 @@ test("entity 200 injects title, canonical, json-ld, summary", async () => {
   assert.match(res.body, /<title>Doge · MemeWarzone<\/title>/);
   assert.match(res.body, /rel="canonical" href="https:\/\/app\.memewar\.zone\/token\/x"/);
   assert.match(res.body, /application\/ld\+json/);
-  assert.match(res.body, /<div id="root"><h1>Doge<\/h1><p>line one<\/p>/);
+  assert.match(res.body, /<div id="root"><div data-ssr-summary="" style="[^"]+"><h1>Doge<\/h1><p>line one<\/p>/);
   assert.match(res.body, /<a href="\/coins">All<\/a>/);
 });
 
@@ -316,4 +316,102 @@ test("a synchronously throwing loader is not stuck in the coalescing map", async
   mode = "ok";
   assert.equal((await run()).statusCode, 200);
   assert.equal(calls, 2);
+});
+
+test("/about serves the full About copy and its JSON-LD to crawlers", async () => {
+  const { ABOUT_SECTIONS, ABOUT_INTRO } = await import("../shared/aboutContent.mjs");
+  const { run, calls } = setup();
+  const res = await run("/__render/about");
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.headers["x-robots-tag"], undefined);
+  assert.match(res.body, /<title>About MemeWarzone · MemeWarzone<\/title>/);
+  assert.match(res.body, /rel="canonical" href="https:\/\/app\.memewar\.zone\/about"/);
+  assert.match(res.body, /"@type":"AboutPage"/);
+  assert.match(res.body, /<h1>About MemeWarzone<\/h1>/);
+  for (const s of ABOUT_SECTIONS) assert.ok(res.body.includes(`<h2>${s.heading.replace(/'/g, "&#39;")}</h2>`), s.heading);
+  assert.ok(res.body.includes("Call of Duty: Warzone"));
+  assert.ok(res.body.includes('<a href="https://t.me/memewarzonehq">Telegram</a>'));
+  assert.equal(ABOUT_INTRO.length, 2);
+  assert.ok(res.body.includes("Vote battle (1 hour, 6 hours, 12 hours, 24 hours, 48 hours)"));
+  assert.ok(res.body.includes("Perfect Run: Coins that graduated"));
+  assert.equal(calls.length, 0);
+});
+
+test("About copy follows the copy rules", async () => {
+  const { ABOUT_SECTIONS, aboutAllText } = await import("../shared/aboutContent.mjs");
+  for (const t of aboutAllText()) assert.doesNotMatch(t, /[–—]/, t);
+  for (const s of ABOUT_SECTIONS) for (const l of s.links || []) assert.match(l.href, /^(\/[a-z]|https:\/\/)/, l.href);
+  const fs = await import("node:fs");
+  for (const s of ABOUT_SECTIONS) for (const img of [s.image, ...(s.categories || []).map((c) => c.image)].filter(Boolean)) {
+    assert.ok(fs.existsSync(new URL(`../public${img}`, import.meta.url)), img);
+  }
+});
+
+test("comparison page serves its table, FAQ and sources to crawlers", async () => {
+  const { COMPARE_PAGES, compareAllText } = await import("../shared/comparePages.mjs");
+  const page = COMPARE_PAGES[0];
+  const { run, calls } = setup();
+  const res = await run(`/__render${page.path}`);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.headers["x-robots-tag"], undefined);
+  assert.match(res.body, /<title>MemeWarzone vs Pump\.fun · MemeWarzone<\/title>/);
+  assert.match(res.body, /rel="canonical" href="https:\/\/app\.memewar\.zone\/memewarzone-vs-pumpfun"/);
+  assert.match(res.body, /"@type":"FAQPage"/);
+  assert.match(res.body, /<table>/);
+  assert.ok(res.body.includes("1.25% on every buy and sell."));
+  assert.ok(res.body.includes('href="https://pump.fun/docs/fees"'));
+  assert.equal(calls.length, 0);
+  for (const t of compareAllText(page)) assert.doesNotMatch(t, /[–—]/, t);
+  for (const s of page.sections) for (const l of s.links || []) assert.match(l.href, /^(\/[a-z]|https:\/\/)/, l.href);
+});
+
+test("About contract addresses are checksummed and link to the right explorer", async () => {
+  const { ethers } = await import("ethers");
+  const { ABOUT_SECTIONS } = await import("../shared/aboutContent.mjs");
+  const c = ABOUT_SECTIONS.find((s) => s.id === "contracts").contracts;
+  for (const group of c) for (const e of group.entries) {
+    assert.ok(e.href.endsWith(e.address), e.label);
+    if (e.address.startsWith("0x")) assert.equal(ethers.getAddress(e.address.toLowerCase()), e.address, e.address);
+    else assert.match(e.address, /^[1-9A-HJ-NP-Za-km-z]{32,44}$/);
+    const host = new URL(e.href).host;
+    assert.equal(host, group.chain === "BNB Chain" ? "bscscan.com" : group.chain === "Solana" ? "solscan.io" : "robinhoodchain.blockscout.com");
+  }
+});
+
+test("Help Center: index, topic and article render for crawlers; unknown slug is 410", async () => {
+  const { HELP_ARTICLES, HELP_TOPICS } = await import("../shared/helpContent.mjs");
+  const { run, calls } = setup();
+  const idx = await run("/__render/faq");
+  assert.equal(idx.statusCode, 200);
+  assert.match(idx.body, /<title>Help Center · MemeWarzone<\/title>/);
+  assert.match(idx.body, /rel="canonical" href="https:\/\/app\.memewar\.zone\/faq"/);
+  for (const t of HELP_TOPICS) assert.ok(idx.body.includes(`href="/faq/${t.id}"`), t.id);
+  const topic = await run(`/__render/faq/${HELP_TOPICS[0].id}`);
+  assert.equal(topic.statusCode, 200);
+  assert.ok(topic.body.includes(`<h1>${HELP_TOPICS[0].label}</h1>`));
+  if (HELP_ARTICLES.length) {
+    const a = HELP_ARTICLES[0];
+    const art = await run(`/__render/faq/${a.slug}`);
+    assert.equal(art.statusCode, 200);
+    assert.match(art.body, /"@type":"FAQPage"/);
+    assert.match(art.body, new RegExp(`rel="canonical" href="https://app\\.memewar\\.zone/faq/${a.slug}"`));
+    assert.equal(art.headers["x-robots-tag"], undefined);
+  }
+  const miss = await run("/__render/faq/this-answer-does-not-exist");
+  assert.equal(miss.statusCode, 410);
+  assert.equal(calls.length, 0);
+});
+
+test("content pages link their own share card; other fixed pages keep the default image", async () => {
+  const { run } = setup();
+  for (const p of ["/about", "/memewarzone-vs-pumpfun", "/faq", "/faq/battles", "/faq/battle-boosts"]) {
+    const res = await run(`/__render${p}`);
+    assert.equal(res.statusCode, 200, p);
+    const m = res.body.match(/<meta property="og:image" content="([^"]+)"/);
+    assert.ok(m, p);
+    assert.match(m[1].replace(/&amp;/g, "&"), new RegExp(`^https://api\\.memewar\\.zone/api/og/page\\.jpg\\?path=${encodeURIComponent(p).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}&v=[0-9a-f]{10}$`), p);
+    assert.match(res.body, /<meta name="twitter:image" content="https:\/\/api\.memewar\.zone\/api\/og\/page\.jpg/);
+  }
+  const coins = await run("/__render/coins");
+  assert.doesNotMatch(coins.body, /api\/og\/page\.jpg/);
 });

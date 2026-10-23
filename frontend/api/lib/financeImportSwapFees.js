@@ -23,7 +23,7 @@
 import { getRpcUrls } from "./getServerReadProvider.js";
 import { isOwnerWallet } from "../../shared/ownerWallets.mjs";
 import { solanaFeeAccount, JUPITER_PROGRAM, KYBER_ROUTER } from "../importSwap.js";
-import { evmFingerprint, partnersForFingerprints, solanaFingerprintFromLanded } from "./importSwapFingerprint.js";
+import { evmFingerprint, partnerSwapKey, partnersForSwaps, solanaFingerprintFromLanded } from "./importSwapFingerprint.js";
 
 const WSOL = "So11111111111111111111111111111111111111112";
 // keccak256("Deposit(address,uint256,uint256)"), NativeTreasuryVaultBase / ProtocolRevenueVault.
@@ -64,7 +64,7 @@ export function solanaImportSwapRpcUrls(env = process.env) {
       if (url && !/devnet|testnet/i.test(url) && !urls.includes(url)) urls.push(url);
     }
   }
-  urls.push("https://api.mainnet-beta.solana.com");
+  if (urls.length) urls.push("https://api.mainnet-beta.solana.com");
   return [...new Set(urls)];
 }
 
@@ -279,6 +279,8 @@ export async function scanEvmImportSwapFees({ source, rpc, fromBlock, maxBlocks 
         occurredAt: new Date(blockTimes.get(blockNumber) * 1000).toISOString(),
         wallet, tokenAddress: token, side, feeRaw: amount.toString(), feeAsset: source.asset,
         fingerprint: evmFingerprint(tx?.to, tx?.input, tx?.value),
+        // The landed sender, for partner attribution only (the recorded build wallet must equal it). Not stored.
+        sender: String(tx?.from || "").toLowerCase() || null,
         feeReceiver: source.receiver, router: source.payers ? topicAddress(log.topics[1]) : source.payer, source: "evm_vault_deposit",
         internalWallet: Boolean(wallet && isOwnerWallet(wallet)),
       });
@@ -559,14 +561,16 @@ async function ingestSplitReceiver({ db, source, env, fetchImpl, dryRun, fromScr
     ? await scanSolanaImportSwapFees({ source, rpc: call, cursor })
     : await scanEvmImportSwapFees({ source, rpc: call, fromBlock: cursor == null ? null : Number(cursor) });
   // A partner's own receiver splits by that partner; elsewhere a recorded build fingerprint names the partner.
+  // Only the wallet the build was recorded for can land a partner's swap (EVM: tx.from; Solana: the fee payer).
+  const landedWallet = (row) => (source.kind === "solana" ? row.wallet : row.sender);
   let byFingerprint = new Map();
   let partnerTerms = new Map();
   if (!source.partner && scan.rows.some((row) => row.fingerprint)) {
-    byFingerprint = await partnersForFingerprints(db, source.chainId, scan.rows.map((row) => row.fingerprint));
+    byFingerprint = await partnersForSwaps(db, source.chainId, scan.rows.map((row) => ({ fingerprint: row.fingerprint, wallet: landedWallet(row) })));
     if (byFingerprint.size) partnerTerms = await partnerTermsById(db, source.chainId);
   }
   const rows = scan.rows.map((row) => {
-    const partnerId = source.partner ? null : byFingerprint.get(row.fingerprint);
+    const partnerId = source.partner || !row.fingerprint ? null : byFingerprint.get(partnerSwapKey(source.chainId, row.fingerprint, landedWallet(row)));
     const partner = source.partner || (partnerId ? partnerTerms.get(partnerId) || null : null);
     return { ...row, ...splitFee(row.feeRaw, partner) };
   });

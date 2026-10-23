@@ -26,8 +26,12 @@ import { isSyntheticLogIndex, isValidTradeTxHash } from "@/lib/tradeDedupe";
 import { timestampSec } from "@/lib/chart/normalizeTrade";
 import {
   assembleMarketCapCandles,
+  continueFlatCandleBodies,
   marketCandlesForChart,
+  omitUnchangedFlatSpots,
+  openFlatCandleAt,
   patchActiveLatestBucket,
+  priceAxisMinMove,
   shouldEstablishChartRange,
 } from "@/lib/chart/canonicalChartCandles";
 import { layoutCreatorPins } from "@/lib/chart/creatorTradePins";
@@ -95,6 +99,16 @@ export type UnifiedMarketChartProps = {
   onExpandedChange?: (expanded: boolean) => void;
   /** Hide the expand control (partner iframe fills a fixed box). */
   showExpand?: boolean;
+  /**
+   * Gen-8 only. Indexer spots are flat (one print per bucket). Link each flat bar's open
+   * to the previous close so the move is a candle body, the way Solana stores its bars.
+   */
+  continueFlatBodies?: boolean;
+  /**
+   * Gen-8 launch price in native per whole coin. The first flat bar opens here, so the
+   * buy that leaves the launch tick is a candle instead of a speck at the fill price.
+   */
+  launchPriceNative?: number | null;
 };
 
 type CreatorTradePin = {
@@ -383,7 +397,10 @@ function formatValue(value: number, metric: UnifiedChartMetric, denomination: Un
   if (abs >= 1_000_000_000) return `${prefix}${(value / 1_000_000_000).toFixed(2)}B${suffix}`;
   if (abs >= 1_000_000) return `${prefix}${(value / 1_000_000).toFixed(2)}M${suffix}`;
   if (abs >= 1_000) return `${prefix}${(value / 1_000).toFixed(2)}K${suffix}`;
-  if (metric === "price" && abs > 0 && abs < 0.01) return `${prefix}${trimFixed(value, nativeSymbol === "SOL" ? 12 : 10)}${suffix}`;
+  if (metric === "price" && abs > 0 && abs < 0.01) {
+    const decimals = nativeSymbol === "SOL" ? 12 : abs < 1e-8 ? 14 : 10;
+    return `${prefix}${trimFixed(value, decimals)}${suffix}`;
+  }
   if (metric === "marketcap" && denomination === "USD") {
     if (abs >= 1) return `$${value.toFixed(2)}`;
     if (abs >= 0.01) return `$${value.toFixed(4)}`;
@@ -456,6 +473,8 @@ export function UnifiedMarketChart({
   expanded,
   onExpandedChange,
   showExpand = true,
+  continueFlatBodies = false,
+  launchPriceNative = null,
 }: UnifiedMarketChartProps) {
   const solana = isSolanaChainId(chainId);
   const nativeSymbol = getNativeSymbol(chainId);
@@ -600,26 +619,29 @@ export function UnifiedMarketChart({
           fallbackRows: tradeFallback,
           supplyWhole: postBurnSupply(marketState, tokenDecimals) || liveSupplyWhole || null,
           fixedSupplyWhole,
+          continueFlatBodies,
+          launchPriceNative,
         }),
       );
     }
 
-    const fromServer = toChartRows(marketCandlesForChart(marketCandles, metric, denomination, nativeUsd));
-    const fromTrades = toChartRows(tradeFallback);
-    const authoritative = fromServer.length ? fromServer : fromTrades;
+    const fromServer = marketCandlesForChart(marketCandles, metric, denomination, nativeUsd);
+    const authoritative = fromServer.length ? fromServer : tradeFallback;
+    const launchPrice = Number(launchPriceNative);
+    const priceOpen = continueFlatBodies && Number.isFinite(launchPrice) && launchPrice > 0
+      ? (denomination === "USD" && nativeUsd > 0 ? launchPrice * nativeUsd : launchPrice)
+      : null;
+    const spots = continueFlatBodies ? omitUnchangedFlatSpots(authoritative) : authoritative;
+    const linked = continueFlatBodies
+      ? continueFlatCandleBodies(openFlatCandleAt(spots, priceOpen))
+      : spots;
     const canPatchLivePrice =
       Number.isFinite(livePrice) && livePrice > 0 && (denomination !== "USD" || nativeUsd > 0);
-    if (!canPatchLivePrice) return authoritative;
+    if (!canPatchLivePrice) return toChartRows(linked);
     const liveValue = denomination === "USD" && nativeUsd > 0 ? livePrice * nativeUsd : livePrice;
     return toChartRows(
       patchActiveLatestBucket(
-        authoritative.map((row) => ({
-          time: timeToSec(row.time),
-          open: row.open,
-          high: row.high,
-          low: row.low,
-          close: row.close,
-        })),
+        linked,
         liveValue,
         intervalSeconds,
         Math.floor(Date.now() / 1000),
@@ -639,6 +661,8 @@ export function UnifiedMarketChart({
     nativeUsd,
     seriesPoints,
     solana,
+    continueFlatBodies,
+    launchPriceNative,
     waitingForUsd,
   ]);
 
@@ -837,14 +861,17 @@ export function UnifiedMarketChart({
   }, [autoScaleEnabled]);
 
   useEffect(() => {
+    const fallback = metric === "price" ? (solana ? 0.000000000001 : 0.00000001) : denomination === "USD" ? 0.01 : solana ? 0.000001 : 0.00001;
+    const samples = data.flatMap((row) => [row.open, row.high, row.low, row.close]);
+    const minMove = continueFlatBodies && metric === "price" ? priceAxisMinMove(samples, fallback) : fallback;
     seriesRef.current?.applyOptions({
       priceFormat: {
         type: "custom",
-        minMove: metric === "price" ? (solana ? 0.000000000001 : 0.00000001) : denomination === "USD" ? 0.01 : solana ? 0.000001 : 0.00001,
+        minMove,
         formatter: (value: number) => formatValue(value, metric, denomination, nativeSymbol),
       },
     });
-  }, [denomination, metric, nativeSymbol, solana]);
+  }, [continueFlatBodies, data, denomination, metric, nativeSymbol, solana]);
 
   useEffect(() => {
     initialRangeSetRef.current = false;

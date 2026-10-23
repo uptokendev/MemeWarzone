@@ -18,18 +18,20 @@
  *   EVM_GEN8_HOLDERS_POLL_MS      holder census interval (60000; floor 60000)  EVM_GEN8_SIDE_POLL_MS   side-pool watcher (60000; floor 60000)
  *   EVM_GEN8_SIDE_POOLS=0         turns the side-pool watcher off
  *   EVM_GEN8_FEE_ROUTING_ENABLED / _SEND / EVM_GEN8_OPERATOR_KEY_<id>: evmGen8FeeRouting.ts
+ *   GEN8_PARTNER_FEES_ENABLED / _BATCH / _POLL_MS: widget partner ledger of graduated swaps, gen8PartnerFees.ts (off by default)
  */
 import { ethers } from "ethers";
 import { pool } from "../db.js";
 import { bscRpcUrls } from "../canonicalCandleMaterializer.js";
 import { createStaticJsonRpcProvider, parseRpcList } from "../rpcProvider.js";
-import { configuredGen8BarkChains, configuredGen8Chains, gen8HolderPollMs, gen8SidePollMs } from "./evmGen8Config.js";
+import { configuredGen8BarkChains, configuredGen8Chains, gen8HolderPollMs, gen8SidePollMs, intEnv, truthyEnv } from "./evmGen8Config.js";
 import { startEvmGen8Indexer } from "./evmGen8Pool.js";
 import { startEvmGen8BarkIndexer } from "./evmGen8Bark.js";
 import { startEvmGen8FeeRoutingWorker } from "./evmGen8FeeRouting.js";
 import { runGen8HolderCensusOnce } from "./evmGen8Holders.js";
 import { GEN8_SIDE_ALERT_TYPE, runGen8SidePoolWatcherOnce } from "./evmGen8SidePools.js";
 import { startDogeosBarkKeepers } from "./dogeosBarkKeepers.js";
+import { runGen8PartnerAttributionOnce } from "./gen8PartnerFees.js";
 
 const providers = new Map<number, ethers.JsonRpcProvider>();
 
@@ -93,6 +95,14 @@ export function startEvmGen8Workers(env: NodeJS.ProcessEnv = process.env) {
         loop(`side pools ${cfg.chainId}`, gen8SidePollMs(env), () =>
           runGen8SidePoolWatcherOnce({ db: pool, cfg, provider: provider as any, env, alert: (a) => watchdog.raiseAlert(pool as any, { ...a, rewardType: GEN8_SIDE_ALERT_TYPE }) }),
         );
+      }
+      if (truthyEnv(env.GEN8_PARTNER_FEES_ENABLED)) {
+        const batch = intEnv(env.GEN8_PARTNER_FEES_BATCH, 200, 1, 1000);
+        loop(`partner fees ${cfg.chainId}`, intEnv(env.GEN8_PARTNER_FEES_POLL_MS, 60_000, 60_000), async () => {
+          const r = await runGen8PartnerAttributionOnce({ db: pool, chainId: cfg.chainId, hook: cfg.hook.address, provider, batch });
+          // A failed read is retried quietly; a stall logs its own error (gen8PartnerFees.ts, after 10 runs, then hourly).
+          if (r.inserted || (r.skipped && !r.skipped.startsWith("no active partner"))) console.log("[gen8] partner fees", JSON.stringify(r));
+        });
       }
     }
     for (const cfg of barkChains) {

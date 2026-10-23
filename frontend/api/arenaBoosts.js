@@ -5,7 +5,12 @@ import { badMethod, isAddress, json, readJson } from "../server/http.js";
 import { requireInternalAuth } from "./lib/apiAuth.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { getServerReadProvider } from "./lib/getServerReadProvider.js";
-import { verifyBattleBoostPayment } from "./lib/arenaBoostChainVerification.mjs";
+import {
+  battleBoostTreasuryV2Address,
+  decodeBattleBoostLog,
+  expectedBattleBoostPoolId,
+  verifyBattleBoostPayment,
+} from "./lib/arenaBoostChainVerification.mjs";
 import { BATTLE_POINTS_V3_CONFIG } from "./lib/arenaBattlePointsConfig.js";
 import { calculateBattlePointsV3Boost } from "./lib/arenaBattlePointsV3.js";
 import { battlePoolId } from "./lib/arenaWarPoolEscrow.js";
@@ -25,8 +30,20 @@ import {
   resolveBattlePointsV3BoostSaleStatus,
   resolveBattleSide,
   serializeBoostSummary,
+  expectedBoostSplit,
   validateConfirmedBoost,
 } from "./lib/arenaBoostRuntime.mjs";
+import {
+  boostRulesShape,
+  boostWindowClosed,
+  clampedQuoteDeadlineSeconds,
+  evmWalletBoostUnitsUsed,
+  insertEvmBoostReservation,
+  lockWalletBoostCap,
+  readEvmBoostNonceUsed,
+  solanaWalletBoostUnitsUsed,
+  walletBoostCapExceeded,
+} from "./lib/arenaBoostRules.js";
 
 function safeBattleId(value) {
   const id = String(value || "").trim();
@@ -37,6 +54,7 @@ function routeInfo(req) {
   const path = String(req.path || new URL(req.url, "http://localhost").pathname);
   if (path === "/arena/boosts/quote") return { action: "quote", battleId: "" };
   if (path === "/arena/boosts/confirm") return { action: "confirm", battleId: "" };
+  if (path === "/arena/boosts/evm-payment") return { action: "evm-payment", battleId: "" };
   const match = path.match(/^\/arena\/boosts\/([^/]+)$/);
   return match ? { action: "read", battleId: safeBattleId(decodeURIComponent(match[1])) } : { action: "unknown", battleId: "" };
 }
@@ -108,7 +126,8 @@ function chainProofShape(proof) {
 
 async function battleForBoost(battleId) {
   const result = await pool.query(
-    `select id, chain_id, state, battle_mode, source, tournament_id, competition_generation, contest_scoring_version, participants, ends_at
+    `select id, chain_id, state, battle_mode, source, tournament_id, competition_generation, contest_scoring_version, participants,
+            started_at, ends_at, duration_hours
        from public.arena_battles
       where id = $1
       limit 1`,
@@ -118,7 +137,7 @@ async function battleForBoost(battleId) {
 }
 
 // Normal battles and standalone Vote Battles share this route: same pool,
-// same on-chain boost, different scoring (Vote Battles: 2 pts per unit in
+// same on-chain boost, different scoring (Vote Battles: 1 pt per unit in
 // arena_contest_actions, no Battle Points V3 projection).
 function validateNormalV2Battle(battle, chainId, targetToken) {
   if (!battle) return { status: 404, error: "Battle not found" };
@@ -244,12 +263,34 @@ async function loadBattlePointsV3Runtime(battle, db = pool) {
   };
 }
 
-async function readBattleBoosts(res, battleId) {
+function readNonceUsedOn(chainId) {
+  let provider = null;
+  return async ({ treasuryAddress, wallet, nonce }) => {
+    provider = provider || (await getServerReadProvider(chainId));
+    return readEvmBoostNonceUsed({ provider, treasuryAddress, wallet, nonce });
+  };
+}
+
+/** Boost units this wallet already holds or has open in the battle; null when no valid wallet is given. */
+async function walletBoostUnitsFor(battle, rawWallet) {
+  const chainId = Number(battle.chain_id);
+  const wallet = String(rawWallet || "").trim();
+  if (!wallet) return null;
+  if (chainId === 101 || chainId === 102) {
+    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(wallet)) return null;
+    return solanaWalletBoostUnitsUsed(pool, { chainId, battleId: String(battle.id), wallet });
+  }
+  if (!isAddress(wallet)) return null;
+  return evmWalletBoostUnitsUsed(pool, { chainId, battleId: String(battle.id), wallet: wallet.toLowerCase(), readNonceUsed: readNonceUsedOn(chainId) });
+}
+
+async function readBattleBoosts(req, res, battleId) {
   if (!battleId) return json(res, 400, { ok: false, error: "Invalid battle id" });
   const battle = await battleForBoost(battleId);
   if (!battle) return json(res, 404, { ok: false, error: "Battle not found" });
 
-  const [actionsResult, runtime] = await Promise.all([
+  const walletParam = new URL(req.url, "http://localhost").searchParams.get("wallet");
+  const [actionsResult, runtime, walletBoostUnits] = await Promise.all([
     pool.query(
       `select side, boost_units, gross_native_raw, pool_native_raw, protocol_native_raw
          from public.arena_contest_actions
@@ -261,6 +302,10 @@ async function readBattleBoosts(res, battleId) {
       [battleId],
     ),
     loadBattlePointsV3Runtime(battle),
+    walletBoostUnitsFor(battle, walletParam).catch((error) => {
+      console.warn("[api/arenaBoosts] wallet Boost count unavailable", error?.message || error);
+      return null;
+    }),
   ]);
 
   res.setHeader("cache-control", "no-store");
@@ -280,6 +325,9 @@ async function readBattleBoosts(res, battleId) {
     battlePointsV3: runtime.rows,
     scoringActive: runtime.authority.active === true,
     scoringReason: runtime.authority.reason,
+    pointsPerBoost: isStandaloneVoteBattle(battle) ? VOTE_BATTLE_BOOST_POINTS_PER_UNIT : null,
+    boostRules: boostRulesShape(battle),
+    walletBoostUnits: walletBoostUnits == null ? null : walletBoostUnits.toString(),
     updatedAt: new Date().toISOString(),
   });
 }
@@ -302,6 +350,12 @@ async function createBattleBoostQuote(req, res) {
   const battle = await battleForBoost(battleId);
   const battleCheck = validateNormalV2Battle(battle, chainId, targetToken);
   if (battleCheck.error) return json(res, battleCheck.status, { ok: false, error: battleCheck.error });
+
+  const windowClosed = boostWindowClosed(battle);
+  if (windowClosed) {
+    const { status, ...body } = windowClosed;
+    return json(res, status, { ok: false, ...body });
+  }
 
   let runtime = null;
   if (battleCheck.voteBattle) {
@@ -346,19 +400,53 @@ async function createBattleBoostQuote(req, res) {
     return json(res, 503, { ok: false, error: "Battle Boost pricing is unavailable" });
   }
 
+  // Cap check, signature and reservation in one transaction under a per-wallet lock, so two quote
+  // requests cannot both pass the cap (arenaBoostRules.js).
+  const client = await pool.connect();
+  let signed;
+  let deadline;
   try {
+    await client.query("BEGIN");
+    await lockWalletBoostCap(client, { chainId, battleId, wallet });
+    const used = await evmWalletBoostUnitsUsed(client, { chainId, battleId, wallet, readNonceUsed: readNonceUsedOn(chainId) });
+    const capped = walletBoostCapExceeded(used, boostUnits);
+    if (capped) {
+      await client.query("ROLLBACK");
+      const { status, ...rest } = capped;
+      return json(res, status, { ok: false, ...rest });
+    }
     const now = Math.floor(Date.now() / 1000);
-    const deadline = now + quoteTtlSeconds();
-    const signed = await signBoostQuote(config, {
+    deadline = clampedQuoteDeadlineSeconds(battle, now, quoteTtlSeconds());
+    if (deadline === null) {
+      await client.query("ROLLBACK");
+      const { status, ...rest } = boostWindowClosed(battle, Number.POSITIVE_INFINITY);
+      return json(res, status, { ok: false, ...rest });
+    }
+    const nonce = randomBoostNonce();
+    signed = await signBoostQuote(config, {
       poolId: battlePoolId(battleId),
       matchId: ZeroHash,
       roundNumber: 0,
       booster: wallet,
       sideToken: targetToken,
       boostUnits,
-      nonce: randomBoostNonce(),
+      nonce,
       deadline,
     });
+    await insertEvmBoostReservation(client, {
+      chainId, battleId, wallet, side: battleCheck.side, boostUnits,
+      treasuryAddress: config.treasuryAddress, nonce, deadlineSeconds: deadline,
+    });
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[api/arenaBoosts] quote signing failed", error);
+    return json(res, 503, { ok: false, error: "Battle Boost quote could not be created" });
+  } finally {
+    client.release();
+  }
+
+  try {
     res.setHeader("cache-control", "no-store");
     return json(res, 200, {
       ok: true,
@@ -369,6 +457,7 @@ async function createBattleBoostQuote(req, res) {
       boostCurveVersion: runtime ? runtime.lock.boost_curve_version : null,
       voteBattle: Boolean(battleCheck.voteBattle),
       pointsPerBoost: battleCheck.voteBattle ? VOTE_BATTLE_BOOST_POINTS_PER_UNIT : null,
+      boostRules: boostRulesShape(battle),
       quote: serializeSignedBoostQuote(signed),
       expiresAt: new Date(deadline * 1000).toISOString(),
     });
@@ -380,7 +469,82 @@ async function createBattleBoostQuote(req, res) {
 
 async function confirmBattleBoost(req, res) {
   if (!requireInternalAuth(req, res, { routeLabel: "arena_boost_confirm" })) return;
-  const body = await readJson(req);
+  const result = await recordBattleBoostPayment(await readJson(req));
+  return json(res, result.status, result.body);
+}
+
+function reply(status, body) {
+  return { status, body };
+}
+
+/** The quote reservation that this payment used: paid, and its points are recorded. */
+async function markReservationRecorded(db, { chainId, wallet, nonce, txHash, logIndex }) {
+  await db.query(
+    `update public.arena_boost_quote_reservations
+        set status = 'paid', resolved_at = coalesce(resolved_at, now()), tx_hash = $4, log_index = $5,
+            recorded_at = now(), record_note = null
+      where chain_id = $1 and wallet = $2 and nonce = $3 and recorded_at is null`,
+    [Number(chainId), String(wallet).toLowerCase(), String(nonce), txHash, logIndex],
+  );
+}
+
+/**
+ * Records every BattleBoosted event for `battleId` in one transaction. The browser calls this after its
+ * Boost transaction confirms; all fields come from the chain event. 202 while the receipt is not
+ * available yet (the realtime worker records it later either way).
+ */
+export async function recordBattleBoostTransaction({ chainId: rawChainId, battleId: rawBattleId, txHash: rawTxHash, provider = null }) {
+  const chainId = Number(rawChainId);
+  const battleId = safeBattleId(rawBattleId);
+  const txHash = safeTxHash(rawTxHash);
+  if (!Number.isInteger(chainId) || chainId <= 0 || chainId === 101 || chainId === 102 || !battleId || !txHash) {
+    return reply(400, { ok: false, error: "Invalid Battle Boost payment report" });
+  }
+  let receipt;
+  let treasuryAddress;
+  let rpc;
+  try {
+    treasuryAddress = battleBoostTreasuryV2Address(chainId);
+    rpc = provider || (await getServerReadProvider(chainId));
+    receipt = await rpc.getTransactionReceipt(txHash);
+  } catch (error) {
+    console.error("[api/arenaBoosts] payment report receipt read failed", error?.message || error);
+    return reply(503, { ok: false, error: "Battle Boost transaction could not be read" });
+  }
+  if (!receipt) return reply(202, { ok: true, pending: true });
+  if (Number(receipt.status) !== 1) return reply(409, { ok: false, error: "Battle Boost transaction did not succeed", code: "BOOST_TX_FAILED" });
+
+  const poolId = expectedBattleBoostPoolId(battleId).toLowerCase();
+  const results = [];
+  for (const log of receipt.logs || []) {
+    let event;
+    try { event = decodeBattleBoostLog(log, { treasuryAddress }); } catch { continue; }
+    if (event.poolId.toLowerCase() !== poolId) continue;
+    const split = expectedBoostSplit(event.grossNativeRaw);
+    results.push(await recordBattleBoostPayment({
+      chainId,
+      battleId,
+      txHash,
+      logIndex: Number(log.index ?? log.logIndex),
+      wallet: event.booster.toLowerCase(),
+      targetToken: event.sideToken.toLowerCase(),
+      boostUnits: event.boostUnits.toString(),
+      grossNativeRaw: split.gross.toString(),
+      poolNativeRaw: split.pool.toString(),
+      protocolNativeRaw: split.protocol.toString(),
+    }, { provider: rpc }));
+  }
+  if (!results.length) return reply(404, { ok: false, error: "No Battle Boost for this battle in that transaction", code: "BOOST_EVENT_NOT_FOUND" });
+  const failed = results.find((result) => result.status >= 400);
+  return failed || results[results.length - 1];
+}
+
+/**
+ * Verifies one BattleBoosted event on chain and records its points. Shared by the internal confirm
+ * route, the browser's evm-payment report and the realtime worker (arenaEvmBoostReconcile.js); every
+ * field is checked against the chain event, so a caller can only record a real payment.
+ */
+export async function recordBattleBoostPayment(body, { provider: givenProvider = null } = {}) {
   const chainId = Number(body.chainId);
   const battleId = safeBattleId(body.battleId);
   const txHash = safeTxHash(body.txHash);
@@ -389,10 +553,10 @@ async function confirmBattleBoost(req, res) {
   const wallet = String(body.wallet || "").trim().toLowerCase();
 
   if (!Number.isInteger(chainId) || chainId <= 0 || chainId === 101 || chainId === 102) {
-    return json(res, 400, { ok: false, error: "Confirmed Battle Boost ingestion currently requires an active EVM money path" });
+    return reply(400, { ok: false, error: "Confirmed Battle Boost ingestion currently requires an active EVM money path" });
   }
   if (!battleId || !txHash || logIndex == null || !isAddress(targetToken) || !isAddress(wallet)) {
-    return json(res, 400, { ok: false, error: "Invalid confirmed Boost event identity" });
+    return reply(400, { ok: false, error: "Invalid confirmed Boost event identity" });
   }
 
   let split;
@@ -404,12 +568,12 @@ async function confirmBattleBoost(req, res) {
       protocolNativeRaw: body.protocolNativeRaw,
     });
   } catch (error) {
-    return json(res, 400, { ok: false, error: error?.message || "Invalid Boost split" });
+    return reply(400, { ok: false, error: error?.message || "Invalid Boost split" });
   }
 
   let chainProof;
   try {
-    const provider = await getServerReadProvider(chainId);
+    const provider = givenProvider || (await getServerReadProvider(chainId));
     chainProof = await verifyBattleBoostPayment({
       provider,
       chainId,
@@ -423,7 +587,7 @@ async function confirmBattleBoost(req, res) {
     });
   } catch (error) {
     console.error("[api/arenaBoosts] on-chain payment verification failed", error?.message || error);
-    return json(res, 409, {
+    return reply(409, {
       ok: false,
       error: "Battle Boost payment could not be verified on-chain",
       code: "BOOST_PAYMENT_UNVERIFIED",
@@ -432,7 +596,7 @@ async function confirmBattleBoost(req, res) {
 
   const confirmedAt = chainProof.confirmedAt || safeConfirmedAt(body.confirmedAt);
   if (!confirmedAt) {
-    return json(res, 409, {
+    return reply(409, {
       ok: false,
       error: "Battle Boost confirmation time could not be verified",
       code: "BOOST_CONFIRMATION_TIME_UNVERIFIED",
@@ -454,7 +618,7 @@ async function confirmBattleBoost(req, res) {
     const battleCheck = validateNormalV2Battle(battle, chainId, targetToken);
     if (battleCheck.error) {
       await client.query("ROLLBACK");
-      return json(res, battleCheck.status, { ok: false, error: battleCheck.error });
+      return reply(battleCheck.status, { ok: false, error: battleCheck.error });
     }
 
     const insertResult = await client.query(
@@ -478,7 +642,7 @@ async function confirmBattleBoost(req, res) {
         txHash,
         logIndex,
         confirmedAt,
-        // Vote Battles score boosts directly (2 pts per unit); normal battles
+        // Vote Battles score boosts directly (1 pt per unit); normal battles
         // score through the Battle Points V3 projection below.
         battleCheck.voteBattle ? (split.boostUnits * BigInt(VOTE_BATTLE_BOOST_POINTS_PER_UNIT)).toString() : 0,
       ],
@@ -500,9 +664,10 @@ async function confirmBattleBoost(req, res) {
         String(existing.pool_native_raw) === split.pool.toString() &&
         String(existing.protocol_native_raw) === split.protocol.toString();
       await client.query("ROLLBACK");
-      if (!sameEvent) return json(res, 409, { ok: false, error: "Transaction log is already bound to another contest action" });
+      if (!sameEvent) return reply(409, { ok: false, error: "Transaction log is already bound to another contest action" });
+      await markReservationRecorded(pool, { chainId, wallet, nonce: chainProof.nonce, txHash, logIndex });
       const runtime = await loadBattlePointsV3Runtime(battle);
-      return json(res, 200, {
+      return reply(200, {
         ok: true,
         confirmed: true,
         idempotent: true,
@@ -512,6 +677,8 @@ async function confirmBattleBoost(req, res) {
         scoringReason: runtime.authority.reason,
       });
     }
+
+    await markReservationRecorded(client, { chainId, wallet, nonce: chainProof.nonce, txHash, logIndex });
 
     const lock = (await client.query(
       `select battle_id, scoring_version, boost_curve_version, boost_curve_parameters, locked_at
@@ -572,7 +739,7 @@ async function confirmBattleBoost(req, res) {
       ),
       loadBattlePointsV3Runtime(battle),
     ]);
-    return json(res, 201, {
+    return reply(201, {
       ok: true,
       confirmed: true,
       idempotent: false,
@@ -591,7 +758,7 @@ async function confirmBattleBoost(req, res) {
       await client.query("ROLLBACK");
     } catch {}
     console.error("[api/arenaBoosts] confirm failed", error);
-    return json(res, 500, { ok: false, error: "Failed to confirm Battle Boost" });
+    return reply(500, { ok: false, error: "Failed to confirm Battle Boost" });
   } finally {
     client.release();
   }
@@ -602,7 +769,7 @@ export default async function handler(req, res) {
   const method = String(req.method || "GET").toUpperCase();
   if (route.action === "read") {
     if (method !== "GET") return badMethod(res);
-    return readBattleBoosts(res, route.battleId);
+    return readBattleBoosts(req, res, route.battleId);
   }
   if (route.action === "quote") {
     if (method !== "POST") return badMethod(res);
@@ -611,6 +778,12 @@ export default async function handler(req, res) {
   if (route.action === "confirm") {
     if (method !== "POST") return badMethod(res);
     return confirmBattleBoost(req, res);
+  }
+  if (route.action === "evm-payment") {
+    if (method !== "POST") return badMethod(res);
+    const body = await readJson(req);
+    const result = await recordBattleBoostTransaction({ chainId: body.chainId, battleId: body.battleId, txHash: body.txHash });
+    return json(res, result.status, result.body);
   }
   return json(res, 404, { ok: false, error: "Unknown Arena Boost route" });
 }

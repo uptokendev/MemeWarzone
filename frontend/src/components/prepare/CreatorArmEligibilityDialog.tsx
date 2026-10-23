@@ -144,14 +144,18 @@ export function CreatorArmEligibilityDialog() {
               </span>
               <span className="grid gap-2 text-foreground/90">
                 <span>• Prepare, edit, and publish as many drafts as your draft limit allows.</span>
-                <span>• Arm or deploy at most one campaign every 24 hours per creator wallet.</span>
-                <span>
-                  • Hold at most your tier&apos;s live campaigns at once
-                  {liveKnown
-                    ? ` (currently ${liveCount} / ${liveLimit})`
-                    : " (Tier 1 = 3, including timed arms not yet trading)"}
-                  .
-                </span>
+                {/* Current launch types (Solana DBC, BNB and Robinhood) have no launch cooldown and no live-coin
+                    limit (founder 2026-10-10, api/lib/dbc/dbcCreateLimits.js). These lines show only when the server
+                    reports that block. */}
+                {detail?.reason === "cooldown" ? (
+                  <span>• Arm or deploy at most one campaign every 24 hours per creator wallet.</span>
+                ) : null}
+                {detail?.reason === "live_limit" ? (
+                  <span>
+                    • Hold at most your tier&apos;s live campaigns at once
+                    {liveKnown ? ` (currently ${liveCount} / ${liveLimit})` : ""}.
+                  </span>
+                ) : null}
                 {detail?.reason === "live_limit" ? (
                   <span>• Free a slot by graduating an existing live campaign, then try again.</span>
                 ) : null}

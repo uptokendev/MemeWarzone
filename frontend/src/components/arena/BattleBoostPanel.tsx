@@ -13,12 +13,15 @@ import {
   formatBoostLamports,
   formatBoostNative,
   recoverSolanaBattleBoost,
+  reportBattleBoostPayment,
   submitBattleBoost,
   submitSolanaBattleBoost,
   type BattleBoostSummary,
   type BattlePointsV3BoostState,
+  type BoostRules,
   type SolanaBattleBoostRecoveryState,
 } from "@/lib/arena/battleBoostClient";
+import { boostAllowance, boostQuantityOptions } from "@/lib/arena/battleBoostPresentation.mjs";
 
 const APPROVED_V3_CURVE = "boost_hyperbolic_100_v1";
 const SOLANA_ARENA_CHAIN_IDS = new Set([101]);
@@ -52,23 +55,29 @@ export function useBattleBoost({ battleId, chainId, left, right }: { battleId: s
   const [busySide, setBusySide] = useState<"left" | "right" | null>(null);
   const [quantity, setQuantity] = useState(1);
   const [paymentStates, setPaymentStates] = useState<PaymentStates>({ left: null, right: null });
+  const [boostRules, setBoostRules] = useState<BoostRules | null>(null);
+  const [walletBoostUnits, setWalletBoostUnits] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const recoveringRef = useRef(false);
   const isSolana = SOLANA_ARENA_CHAIN_IDS.has(Number(chainId));
   const nativeSymbol = isSolana ? "SOL" : getNativeSymbol(chainId);
+  const boostWallet = isSolana ? solana.solanaAccount || null : wallet.account || null;
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     try {
-      const json = await fetchBattleBoostState(battleId, signal);
+      const json = await fetchBattleBoostState(battleId, signal, boostWallet);
       setSummary(json.summary || null);
       setV3Rows(Array.isArray(json.battlePointsV3) ? json.battlePointsV3 : []);
       setV3TotalAuthoritative(json.scoringActive === true);
+      setBoostRules(json.boostRules || null);
+      setWalletBoostUnits(json.walletBoostUnits ?? null);
       setRuntimeReady(true);
       return json;
     } catch {
       if (!signal?.aborted) { setSummary(null); setV3Rows([]); setV3TotalAuthoritative(false); setRuntimeReady(false); }
       return null;
     }
-  }, [battleId]);
+  }, [battleId, boostWallet]);
 
   const refreshSolanaPayments = useCallback(async (signal?: AbortSignal) => {
     if (!isSolana || !solana.solanaAccount) {
@@ -116,6 +125,18 @@ export function useBattleBoost({ battleId, chainId, left, right }: { battleId: s
     return () => controller.abort();
   }, [recoverUnresolved, refresh, refreshSolanaPayments]);
 
+  // Re-render when Boosts close (last 20% of the battle) so the buttons lock without a reload.
+  useEffect(() => {
+    const closesMs = boostRules?.closesAt ? Date.parse(boostRules.closesAt) : Number.NaN;
+    if (!Number.isFinite(closesMs) || closesMs <= Date.now()) return;
+    const timer = window.setTimeout(() => setNowMs(Date.now()), Math.min(closesMs - Date.now() + 250, 2_147_000_000));
+    return () => window.clearTimeout(timer);
+  }, [boostRules?.closesAt]);
+
+  const allowance = useMemo(() => boostAllowance({ boostRules, walletBoostUnits, nowMs }), [boostRules, walletBoostUnits, nowMs]);
+  const quantityOptions = useMemo(() => boostQuantityOptions(allowance), [allowance]);
+  const effectiveQuantity = allowance.remaining !== null && allowance.remaining > 0 ? Math.min(quantity, allowance.remaining) : quantity;
+
   const totals = useMemo(() => ({ left: unitsFor(summary, "left"), right: unitsFor(summary, "right") }), [summary]);
   const approvedRows = useMemo(() => v3Rows.filter((row) => row.boostCurveVersion === APPROVED_V3_CURVE), [v3Rows]);
 
@@ -133,16 +154,18 @@ export function useBattleBoost({ battleId, chainId, left, right }: { battleId: s
           state = await fetchSolanaBattleBoostPaymentState({ battleId, wallet: solana.solanaAccount, targetToken: tokenId });
         }
         if (state.unresolved || state.newPaymentAllowed !== true) throw new Error("A prior SOL Battle Boost payment is still unresolved. No replacement payment will be signed.");
-        const quote = await createSolanaBattleBoostQuote({ battleId, chainId, wallet: solana.solanaAccount, targetToken: tokenId, boostUnits: quantity });
+        const quote = await createSolanaBattleBoostQuote({ battleId, chainId, wallet: solana.solanaAccount, targetToken: tokenId, boostUnits: effectiveQuantity });
         const payment = await submitSolanaBattleBoost({ battleId, wallet: solana.solanaAccount, quote });
         toast.success(`Battle Boost confirmed${payment.signature ? `: ${payment.signature.slice(0, 10)}…` : "."}`);
         await refreshSolanaPayments();
       } else {
         if (!wallet.signer || !wallet.account) return toast.error("Connect an EVM wallet to Boost this battle.");
         if (Number(wallet.chainId) !== Number(chainId)) return toast.error("Switch your wallet to the battle chain before Boosting.");
-        const quoted = await createBattleBoostQuote({ battleId, chainId, wallet: wallet.account, targetToken: tokenId, boostUnits: quantity, signer: wallet.signer });
+        const quoted = await createBattleBoostQuote({ battleId, chainId, wallet: wallet.account, targetToken: tokenId, boostUnits: effectiveQuantity, signer: wallet.signer });
         const submitted = await submitBattleBoost({ signer: wallet.signer, quote: quoted.quote });
-        toast.success(`Battle Boost submitted${submitted.txHash ? `: ${submitted.txHash.slice(0, 10)}…` : "."}`);
+        const recorded = submitted.txHash ? await reportBattleBoostPayment({ chainId, battleId, txHash: submitted.txHash }) : false;
+        if (recorded) toast.success(`Battle Boost confirmed: ${submitted.txHash.slice(0, 10)}…`);
+        else toast.success("Battle Boost paid. Its points are added within a few minutes.");
       }
       for (let attempt = 0; attempt < 4; attempt += 1) {
         await new Promise((resolve) => window.setTimeout(resolve, attempt === 0 ? 1_000 : 1_500));
@@ -157,9 +180,9 @@ export function useBattleBoost({ battleId, chainId, left, right }: { battleId: s
   }
 
   const sideBlocked = (side: "left" | "right") => Boolean(paymentStates[side]?.unresolved) || paymentStates[side]?.newPaymentAllowed === false;
-  const disabled = Boolean(busySide) || runtimeReady !== true;
+  const disabled = Boolean(busySide) || runtimeReady !== true || !allowance.open || allowance.remaining === 0;
 
-  return { isSolana, nativeSymbol, summary, runtimeReady, busySide, quantity, setQuantity, paymentStates, totals, approvedRows, v3TotalAuthoritative, boost, sideBlocked, disabled };
+  return { isSolana, nativeSymbol, summary, runtimeReady, busySide, quantity: effectiveQuantity, setQuantity, quantityOptions, allowance, paymentStates, totals, approvedRows, v3TotalAuthoritative, boost, sideBlocked, disabled };
 }
 
 export function boostPaymentLabel(state: SolanaBattleBoostRecoveryState | null) {
@@ -172,7 +195,7 @@ export function BattleBoostPanel({ battleId, chainId, left, right }: {
   left: Side;
   right: Side;
 }) {
-  const { isSolana, nativeSymbol, summary, runtimeReady, quantity, setQuantity, paymentStates, totals, approvedRows, v3TotalAuthoritative, boost, sideBlocked, disabled } =
+  const { isSolana, nativeSymbol, summary, runtimeReady, quantity, setQuantity, quantityOptions, allowance, paymentStates, totals, approvedRows, v3TotalAuthoritative, boost, sideBlocked, disabled } =
     useBattleBoost({ battleId, chainId, left, right });
 
   return (
@@ -183,8 +206,9 @@ export function BattleBoostPanel({ battleId, chainId, left, right }: {
       </div>
       {runtimeReady === null ? <div role="status" aria-live="polite" className="text-xs text-mw-muted">Checking Battle Boost runtime…</div> : runtimeReady === false ? <div role="status" aria-live="polite" data-battle-boost-runtime="unavailable" className="text-xs text-mw-accent-soft">Battle Boost unavailable</div> : null}
       <div className="flex flex-wrap gap-2" aria-label="Battle Boost quantity">
-        {[1, 5, 10].map((value) => <Button key={value} type="button" size="sm" variant={quantity === value ? "default" : "outline"} className={`mw-focus inline-flex min-h-11 min-w-14 items-center justify-center whitespace-nowrap rounded-full border px-4 font-mw-mono text-sm font-semibold disabled:opacity-50 ${quantity === value ? "border-[#7A3A0C] bg-[#2A1609] text-mw-accent-soft hover:bg-[#341C0B]" : "border-mw-edge bg-[#171B20] text-[#C9CED4] hover:bg-[#1F252C] hover:text-mw-text"}`} disabled={runtimeReady !== true} onClick={() => setQuantity(value)}>{value}x</Button>)}
+        {quantityOptions.map(({ value, disabled: optionDisabled }) => <Button key={value} type="button" size="sm" variant={quantity === value ? "default" : "outline"} className={`mw-focus inline-flex min-h-11 min-w-14 items-center justify-center whitespace-nowrap rounded-full border px-4 font-mw-mono text-sm font-semibold disabled:opacity-50 ${quantity === value ? "border-[#7A3A0C] bg-[#2A1609] text-mw-accent-soft hover:bg-[#341C0B]" : "border-mw-edge bg-[#171B20] text-[#C9CED4] hover:bg-[#1F252C] hover:text-mw-text"}`} disabled={runtimeReady !== true || optionDisabled} onClick={() => setQuantity(value)}>{value}x</Button>)}
       </div>
+      {runtimeReady === true ? <div data-battle-boost-allowance={allowance.open ? "open" : "closed"} className="text-xs text-mw-muted">{allowance.label}</div> : null}
       <div className="grid min-w-0 gap-2 md:grid-cols-2">
         <div className="min-w-0 space-y-1"><Button type="button" variant="outline" className="mw-focus inline-flex min-h-11 items-center justify-between gap-2 rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60 w-full min-w-0" disabled={disabled || !left.tokenId || sideBlocked("left")} onClick={() => void boost("left", left.tokenId)}><span className="truncate">Boost {left.ticker || left.name || "left"}</span><span className="shrink-0 font-mw-mono text-sm text-mw-muted">{totals.left}</span></Button>{isSolana && paymentLabel(paymentStates.left) ? <div data-solana-boost-state="left" className="text-xs text-mw-muted">{paymentLabel(paymentStates.left)}</div> : null}</div>
         <div className="min-w-0 space-y-1"><Button type="button" variant="outline" className="mw-focus inline-flex min-h-11 items-center justify-between gap-2 rounded-[10px] border border-mw-edge bg-mw-raised px-4 text-[15px] font-semibold text-mw-text hover:bg-[#222830] hover:text-mw-text disabled:opacity-60 w-full min-w-0" disabled={disabled || !right.tokenId || sideBlocked("right")} onClick={() => void boost("right", right.tokenId)}><span className="truncate">Boost {right.ticker || right.name || "right"}</span><span className="shrink-0 font-mw-mono text-sm text-mw-muted">{totals.right}</span></Button>{isSolana && paymentLabel(paymentStates.right) ? <div data-solana-boost-state="right" className="text-xs text-mw-muted">{paymentLabel(paymentStates.right)}</div> : null}</div>

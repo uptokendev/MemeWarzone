@@ -214,7 +214,7 @@ const EVM = "0x1234567890abcdef1234567890abcdef12345678";
 const MINT = "So11111111111111111111111111111111111111112";
 
 test("index routes go to the renderer proxy", () => {
-  const index = ["/", "/coins", "/warzone", "/warzone/battles", "/warzone/major-war-league", "/warzone/tournaments", "/league", "/war-room", "/airdrops", "/airdrops/winners", "/recruiters", "/squads", "/playbook", "/sponsorships/apply", "/create",
+  const index = ["/", "/coins", "/warzone", "/warzone/battles", "/warzone/major-war-league", "/warzone/tournaments", "/league", "/war-room", "/airdrops", "/airdrops/winners", "/recruiters", "/squads", "/playbook", "/sponsorships/apply", "/create", "/about", "/faq", "/faq/which-chains", "/memewarzone-vs-pumpfun",
     `/token/${EVM}`, `/token/${MINT}`, "/warzone/battles/arena-mprhklw2-c5aa2c", "/warzone/tournaments/t-12", "/prepare/my-coin_1", "/post/12345", "/recruiters/ABC123", `/profile/${EVM}`, `/profile/${MINT}`];
   for (const p of index) {
     const l = pickLocation(p);
@@ -255,8 +255,9 @@ test("renderer proxy directives and @spa fallback", () => {
     assert.deepEqual(ep[0].args, ["401", "403", "404", "408", "429", "500", "502", "503", "504", "=", "@spa"]);
     assert.ok(!ep[0].args.includes("410"));
     const hidden = dirsOf(l, "proxy_hide_header").map((d) => d.args[0]).sort();
-    assert.deepEqual(hidden, ["Access-Control-Allow-Credentials", "Access-Control-Allow-Origin", "Content-Security-Policy", "Set-Cookie", "Strict-Transport-Security", "X-Frame-Options", "X-Powered-By"].sort());
-    assert.ok(!hidden.includes("X-Robots-Tag"));
+    // X-Robots-Tag is hidden: Coolify's proxy stamps "noindex, nofollow" on every API response. Noindex pages
+    // still carry the robots meta from the renderer and the $robots_tag header from the map.
+    assert.deepEqual(hidden, ["Access-Control-Allow-Credentials", "Access-Control-Allow-Origin", "Content-Security-Policy", "Set-Cookie", "Strict-Transport-Security", "X-Frame-Options", "X-Powered-By", "X-Robots-Tag"].sort());
     assert.deepEqual(headerNames(l), DEFAULT_SET);
     assert.equal(dirsOf(l, "add_header").filter((d) => d.args[0] === "X-Robots-Tag").length, 1);
     for (const d of dirsOf(l, "add_header")) assert.equal(d.args.at(-1), "always");
@@ -274,4 +275,13 @@ test("regex order: trailing slash, aliases, proxy, allowlist", () => {
   const lastAlias = regex.map((l, i) => (isRedirect(l) ? i : -1)).reduce((a, b) => Math.max(a, b));
   assert.ok(idx(isRenderProxy) > lastAlias);
   assert.ok(idx((l) => dirsOf(l, "try_files").length > 0) > idx(isRenderProxy));
+});
+
+test("sitemap proxies replace the API's noindex, nofollow with plain noindex", () => {
+  for (const l of [locations.find((x) => x.mod === "=" && x.pattern === "/sitemap.xml"), locations.find((x) => x.mod === "^~" && x.pattern === "/sitemaps/")]) {
+    assert.ok(l, "sitemap location missing");
+    assert.ok(dirsOf(l, "proxy_hide_header").some((d) => d.args[0] === "X-Robots-Tag"), l.pattern);
+    const robots = dirsOf(l, "add_header").filter((d) => d.args[0] === "X-Robots-Tag");
+    assert.deepEqual(robots.map((d) => d.args.slice(1)), [["noindex", "always"]], l.pattern);
+  }
 });

@@ -2,9 +2,18 @@
 // nginx proxies app page requests here. Same HTML for people and crawlers; React replaces #root on load.
 // Loader DATA is cached (never HTML, never errors); the CURRENT shell is fetched on every request.
 import { createAppShell } from "./lib/appShell.mjs";
-import { injectSeo, h1, p, link } from "./lib/seoInject.mjs";
+import { injectSeo, esc, h1, h2, p, ul, link } from "./lib/seoInject.mjs";
 import { createSeoEntities } from "./lib/seoEntities.js";
 import { DEFAULT_DESCRIPTION, headForPath, matchRoute } from "../shared/seoRoutes.mjs";
+import {
+  ABOUT_CHAINS, ABOUT_DISAMBIGUATION, ABOUT_HERO_LINKS, ABOUT_HIGHLIGHTS, ABOUT_INTRO, ABOUT_NEXT_CHAIN, ABOUT_PATH, ABOUT_SECTIONS,
+  ABOUT_TITLE, aboutJsonLd,
+} from "../shared/aboutContent.mjs";
+import { COMPARE_PAGES, compareJsonLd } from "../shared/comparePages.mjs";
+import { pageCardUrl } from "./lib/pageCard.mjs";
+import {
+  HELP_PATH, HELP_TITLE, HELP_DESCRIPTION, HELP_TOPICS, helpArticlesForTopic, helpHead, helpJsonLd, helpPopular, helpRelated,
+} from "../shared/helpContent.mjs";
 
 const BRAND = "MemeWarzone";
 const NOINDEX = "noindex,follow";
@@ -60,6 +69,96 @@ function summaryOf(s) {
   if (links.length) html += `<p>${links.map((l) => link(l?.href, l?.text)).join(" ")}</p>`;
   return html;
 }
+
+// Fixed pages whose full text is server-rendered (the same copy the app page shows), keyed by route pattern.
+function sectionsHtml(sections) {
+  let html = "";
+  for (const s of sections) {
+    html += h2(s.heading);
+    if (s.lead) html += p(s.lead);
+    if (s.steps?.length) html += ul(s.steps.map((x) => `${x.title}: ${x.text}`));
+    if (s.chips?.length) html += p(`${s.chipsLabel || ""} ${s.chips.join(", ")}`.trim());
+    for (const m of s.modes || []) html += p(`${m.name} (${m.durations.join(", ")}): ${m.text}`);
+    for (const x of s.splits || []) html += p(`${x.title}: ${x.segments.map((g) => `${g.pct}% ${g.label}`).join(", ")}.`);
+    if (s.items?.length) html += ul(s.items);
+    if (s.categories?.length) html += ul(s.categories.map((c) => `${c.name}: ${c.text}`));
+    if (s.members?.length) html += ul(s.members.map((m) => `${m.name}, ${m.role}`));
+    for (const c of s.contracts || []) {
+      html += p(`${c.chain}. ${c.audit}.`);
+      html += `<ul>${c.entries.map((e) => `<li>${esc(e.label)}: ${link(e.href, e.address)}</li>`).join("")}</ul>`;
+    }
+    for (const x of s.qa || []) html += `<h3>${esc(x.q)}</h3>${p(x.a)}`;
+    if (s.rows?.length) {
+      html += `<table><thead><tr><th>Feature</th><th>MemeWarzone</th><th>Pump.fun</th></tr></thead><tbody>`;
+      for (const r of s.rows) html += `<tr><td>${esc(r.feature)}</td><td>${esc(r.mwz)}</td><td>${esc(r.other)}</td></tr>`;
+      html += "</tbody></table>";
+    }
+    if (s.note) html += p(s.note);
+    if (s.links?.length) html += `<p>${s.links.map((l) => link(l.href, l.text)).join(" ")}</p>`;
+  }
+  return html;
+}
+
+function aboutBody() {
+  let html = h1(ABOUT_TITLE) + ABOUT_INTRO.map((t) => p(t)).join("") + p(ABOUT_DISAMBIGUATION);
+  html += p(`Live on ${ABOUT_CHAINS.join(", ")}. ${ABOUT_NEXT_CHAIN.name}: ${ABOUT_NEXT_CHAIN.label.toLowerCase()}. ${ABOUT_NEXT_CHAIN.text}`);
+  html += ul(ABOUT_HIGHLIGHTS.map((x) => `${x.value}: ${x.label}`));
+  html += `<p>${ABOUT_HERO_LINKS.map((l) => link(l.href, l.text)).join(" ")}</p>`;
+  html += sectionsHtml(ABOUT_SECTIONS);
+  return { html, jsonLd: aboutJsonLd() };
+}
+
+function compareBody(page) {
+  let html = h1(page.title) + page.intro.map((t) => p(t)).join("") + p(page.disclaimer);
+  for (const v of page.verdicts) html += h2(v.title) + ul(v.items);
+  html += sectionsHtml(page.sections);
+  html += h2("Sources") + `<ul>${page.sources.map((x) => `<li>${link(x.href, x.text)} (${esc(x.date)})</li>`).join("")}</ul>`;
+  return { html, jsonLd: compareJsonLd(page) };
+}
+function helpArticleHtml(a) {
+  let html = (a.a || []).map((t) => p(t)).join("");
+  if (a.steps?.length) html += `<ol>${a.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>`;
+  if (a.bullets?.length) html += ul(a.bullets);
+  if (a.links?.length) html += `<p>${a.links.map((l) => link(l.href, l.text)).join(" ")}</p>`;
+  return html;
+}
+
+const helpLink = (slug, text) => link(`${HELP_PATH}/${slug}`, text);
+
+function helpIndexBody() {
+  let html = h1(HELP_TITLE) + p(HELP_DESCRIPTION);
+  const popular = helpPopular();
+  if (popular.length) html += h2("Popular questions") + `<ul>${popular.map((a) => `<li>${helpLink(a.slug, a.q)}</li>`).join("")}</ul>`;
+  for (const t of HELP_TOPICS) {
+    const list = helpArticlesForTopic(t.id);
+    html += h2(t.label) + p(t.description) + `<p>${helpLink(t.id, `All ${list.length} answers about ${t.label.toLowerCase()}`)}</p>`;
+    html += `<ul>${list.map((a) => `<li>${helpLink(a.slug, a.q)}</li>`).join("")}</ul>`;
+  }
+  return { html, jsonLd: helpJsonLd(null) };
+}
+
+function helpItemBody({ slug }) {
+  const head = helpHead(String(slug || ""));
+  if (!head) return { notFound: true };
+  const back = `<p>${link(HELP_PATH, HELP_TITLE)}</p>`;
+  let html;
+  if (head.kind === "topic") {
+    html = back + h1(head.topic.label) + p(head.topic.description);
+    for (const a of helpArticlesForTopic(head.topic.id)) html += h2(a.q) + helpArticleHtml(a) + `<p>${helpLink(a.slug, "Open this answer")}</p>`;
+  } else {
+    html = back + `<p>${helpLink(head.topic.id, head.topic.label)}</p>` + h1(head.article.q) + helpArticleHtml(head.article);
+    const related = helpRelated(head.article);
+    if (related.length) html += h2("Related questions") + `<ul>${related.map((a) => `<li>${helpLink(a.slug, a.q)}</li>`).join("")}</ul>`;
+  }
+  return { html, jsonLd: helpJsonLd(head), head: { title: head.title, description: head.description } };
+}
+
+const PAGE_BODIES = {
+  [HELP_PATH]: helpIndexBody,
+  [`${HELP_PATH}/:slug`]: helpItemBody,
+  [ABOUT_PATH]: aboutBody,
+  ...Object.fromEntries(COMPARE_PAGES.map((page) => [page.path, () => compareBody(page)])),
+};
 
 function splitUrl(req) {
   const raw = String(req.originalUrl || req.url || req.path || "");
@@ -199,15 +298,25 @@ export function createSeoRenderer({
       }), robots);
     }
 
-    const head = headForPath(path);
+    const page = rule && PAGE_BODIES[rule.pattern] ? PAGE_BODIES[rule.pattern](rule.params || {}) : null;
+    if (page?.notFound) return notFound(res, html);
+    const head = headForPath(path, page?.head || {});
     const title = titleOf(head.title);
     return send(res, 200, injectSeo(html, {
       title,
       description: head.description || DEFAULT_DESCRIPTION,
       canonical: head.canonical,
       robots: head.robots,
-      og: { title, description: head.description || DEFAULT_DESCRIPTION, url: head.canonical || undefined, type: "website" },
-      summaryHtml: h1(head.title || BRAND) + (head.description ? p(head.description) : ""),
+      // Content pages (About, comparisons, Help Center) get their own share card; other fixed pages keep the default.
+      og: {
+        title,
+        description: head.description || DEFAULT_DESCRIPTION,
+        url: head.canonical || undefined,
+        type: "website",
+        ...(page && head.canonical ? { image: pageCardUrl(path) || undefined, imageAlt: page.head?.title || head.title } : {}),
+      },
+      jsonLd: page ? page.jsonLd : undefined,
+      summaryHtml: page ? page.html : h1(head.title || BRAND) + (head.description ? p(head.description) : ""),
     }), head.robots);
   }
 

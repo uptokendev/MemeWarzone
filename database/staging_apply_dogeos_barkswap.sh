@@ -10,7 +10,10 @@
 #     RLS on and anon/authenticated revoked; adds one index on evm_gen8_fee_accruals (if not exists); re-creates
 #     evm_gen8_side_pools_venue_chk with every existing venue plus 'algebra'. No insert / update / delete / drop
 #     table / drop column, no view, no market_trades_v change
-#   - both are idempotent; their own begin/commit lines are dropped so the bundle is one transaction
+#   - 20261023_000010: drops and re-adds campaign_drafts_graduation_target_check as 20261019_000001 has it (the $150
+#     gen-8 test target on 97 and 46630, on staging since 2026-10-19) plus 6281971; it runs after 20261010, which
+#     re-creates the same check from an older definition, so the bundle never takes 97 / 46630 out again
+#   - all three are idempotent; their own begin/commit lines are dropped so the bundle is one transaction
 #
 # Refuses any URL that is not the staging project, and the production project explicitly. lock_timeout makes a
 # blocked statement fail instead of waiting.
@@ -32,6 +35,7 @@ case "$MODE" in dryrun|apply) ;; *) echo "usage: $0 [dryrun|apply]" >&2; exit 1;
 FILES=(
   db/migrations/20261010_000020_dogeos_chain_launch_path.sql
   db/migrations/20261015_000010_dogeos_barkswap.sql
+  db/migrations/20261023_000010_dogeos_drafts_graduation_target.sql
 )
 
 WORK="$(mktemp -d)"

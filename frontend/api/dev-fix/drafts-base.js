@@ -76,7 +76,7 @@ function cleanStringArray(value, maxItems = 12, maxLen = 600) {
   return value.map((item) => cleanText(item, maxLen)).filter(Boolean).slice(0, maxItems);
 }
 
-function normalizeDraftGraduationTarget(chainId, value, launchType = "launchpad") {
+export function normalizeDraftGraduationTarget(chainId, value, launchType = "launchpad") {
   let target = DEFAULT_GRADUATION_TARGET_WEI;
   if (value != null && String(value).trim()) {
     try {

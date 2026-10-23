@@ -9,7 +9,7 @@ import { build } from "esbuild";
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const compiled = await build({
   absWorkingDir: dir,
-  stdin: { contents: `export { toRaw, fromRaw, findInjectedWallet } from "./mwzSwapWidget.ts";`, resolveDir: dir, sourcefile: "widgetHarness.ts", loader: "ts" },
+  stdin: { contents: `export { toRaw, fromRaw, findInjectedWallet, mountTarget } from "./mwzSwapWidget.ts";`, resolveDir: dir, sourcefile: "widgetHarness.ts", loader: "ts" },
   bundle: true,
   write: false,
   format: "esm",
@@ -25,7 +25,7 @@ try {
 } finally {
   fs.rmSync(harness, { force: true });
 }
-const { toRaw, fromRaw, findInjectedWallet } = widget;
+const { toRaw, fromRaw, findInjectedWallet, mountTarget } = widget;
 
 test("amounts are parsed to raw units without floats; too many decimals or junk is refused", () => {
   assert.equal(toRaw("0.5", 9), 500_000_000n);
@@ -69,4 +69,24 @@ test("widget build: the app's two Solana API calls go to the widget routes, noth
     ["https://api.example/api/widget/solana/trade-authorize", "omit"],
     ["https://api.example/api/widget/solana/campaign-account?address=abc", "omit"],
   ]);
+});
+
+test("mount routing: { mint } and { chainId: 101, token } get the Solana box; { chainId: 56 | 4663, token } the EVM box", () => {
+  const mint = "2wT8AcQFEzXMEjb6qbs1GDg3mJ3DKBw6eBWp7GqsBAGS";
+  const evm = "0x1a95c10e4839033686225eaad3ac348f0d8edc4f";
+  assert.deepEqual(mountTarget({ mint }), { box: "solana", options: { mint } });
+  const sol = mountTarget({ chainId: 101, token: mint, partner: "p" });
+  assert.deepEqual([sol.box, sol.options.mint, sol.options.partner], ["solana", mint, "p"]);
+  for (const chainId of [56, 4663, 97, 46630]) assert.equal(mountTarget({ chainId, token: evm }).box, "evm", `chain ${chainId}`);
+  assert.equal(mountTarget({ chainId: 56, token: evm, mint }).box, "solana", "mint wins, as before");
+  assert.equal(mountTarget({}).box, "solana", "nothing given: the Solana box says what is missing");
+  assert.equal(mountTarget({ token: evm }).box, "solana", "a token without a chain is not guessed");
+});
+
+test("Solana box: price impact and minimum rows, Unlisted coin, onSwap carries chainId 101 and token", () => {
+  const src = fs.readFileSync(path.join(dir, "mwzSwapWidget.ts"), "utf8");
+  assert.match(src, /data-k="impactRow" hidden/);
+  assert.match(src, /data-k="minRow" hidden/);
+  assert.match(src, /"Unlisted coin"/);
+  assert.equal((src.match(/onSwap\?\.\(\{ signature, side: this\.side, mint: [a-zA-Z.]+, chainId: 101, token: [a-zA-Z.]+ \}\)/g) || []).length, 2);
 });

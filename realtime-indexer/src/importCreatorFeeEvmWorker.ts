@@ -10,6 +10,7 @@
  *   IMPORT_FEE_PAYOUT_OPERATOR_PK_<chainId>     the vault's operator key (send mode only; must equal vault.operator())
  *   PROTOCOL_REVENUE_VAULT_ADDRESS_<chainId>    sweep target (mainnet defaults built in; testnets need it)
  *   IMPORT_FEE_EVM_CHAINS                       optional subset, e.g. "97,46630"
+ *   GEN8_PARTNER_PAYOUT_SEND=true               partner payouts also pay gen-8 widget dues (gen8_partner_fees); listed only otherwise
  * RPC: BSC_RPC_HTTP_56 / BSC_RPC_HTTP_97 / ROBINHOOD_RPC_HTTP_4663 / ROBINHOOD_RPC_HTTP_46630 (first URL).
  */
 import { pool } from "./db.js";
@@ -95,7 +96,7 @@ export async function startImportCreatorFeeEvmWorker() {
     w.running = true;
     try {
       const result = await runImportCreatorFeeEvmPass({ db: pool, chain: w.chain, operator: w.operator, send: w.send, settings: w.settings });
-      if (result.payouts.length || result.partnerPayouts.length || result.sweep || result.expired || result.skipped.length || result.resolved?.landed || result.resolved?.reset || result.resolved?.resent) {
+      if (result.payouts.length || result.partnerPayouts.length || result.sweep || result.expired || result.skipped.length || result.resolved?.landed || result.resolved?.reset || result.resolved?.resent || result.gen8?.planned.length) {
         console.log("[import-fees-evm] pass", JSON.stringify(result));
       }
     } catch (error) {

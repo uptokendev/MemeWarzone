@@ -10,7 +10,8 @@
  *   - money rows (buy accruals, the graduation fee) only up to the money head (latest - 20 on 6281971);
  *   - getLogs never spans more than 10,000 blocks on DogeOS;
  *   - the V4 path writes exactly what it wrote before the venue seam (src/tests/fixtures/gen8-v4-ingest-writes.json,
- *     recorded from the code before t18 with MWZ_RECORD_GEN8_V4_WRITES=1).
+ *     recorded from the code before t18 with MWZ_RECORD_GEN8_V4_WRITES=1; re-recorded from origin/staging-live-gen8
+ *     cea3f9b4d, the V4 code as Patrick ships it, when that branch was merged in).
  */
 import "./gen8/gen8TestEnv.js";
 import assert from "node:assert/strict";

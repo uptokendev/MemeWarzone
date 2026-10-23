@@ -78,6 +78,7 @@ import tokenShareCard from "./token-share-card.js";
 import { importSwapBuild, importSwapQuote } from "./importSwap.js";
 import importCreatorFees, { importCreatorFeesOwner } from "./importCreatorFees.js";
 import { widgetBalances, widgetBuild, widgetCors, widgetQuote, widgetStatus, widgetToken } from "./importSwapWidget.js";
+import { evmWidgetBalances, evmWidgetStatus, evmWidgetToken } from "./widgetSwapEvm.js";
 import { gen8SwapBalances, gen8SwapBuild, gen8SwapQuote, gen8SwapStatus, gen8SwapToken } from "./gen8Swap.js";
 import airdropPool from "./airdropPool.js";
 import battleShareCard from "./battle-share-card.js";
@@ -218,6 +219,9 @@ import analyticsAdmin from "./analytics/admin.js";
 import prepareOg from "./prepare-og.js";
 import { sitemapChild, sitemapIndex } from "./sitemap.js";
 import seoRender from "./seoRender.js";
+import { createLinkPreview } from "./linkPreview.js";
+import { createPageCardRenderer } from "./lib/pageCard.mjs";
+import { createHelpAssistant } from "./helpAssistant.js";
 import story, { handleSharePage as storySharePage } from "./story.js";
 import battleOg from "./battle-og.js";
 import adminAbuseMe from "./admin/abuse/me.js";
@@ -468,6 +472,14 @@ router.all("/chat/send", wrap(chatSend));
 router.all("/diagnostics", wrap(diagnostics));
 router.all("/epochPools", wrap(epochPools));
 router.all("/featured", wrap(featured));
+// Link preview cards for links in feed posts (api/linkPreview.js; public addresses only).
+router.get("/link-preview", wrap(createLinkPreview()));
+// Share cards for About, comparison and Help Center pages (api/lib/pageCard.mjs).
+router.get("/og/page.jpg", wrap(createPageCardRenderer()));
+// Help Center assistant (api/helpAssistant.js): off unless ANTHROPIC_API_KEY is set.
+const helpAssistant = createHelpAssistant();
+router.get("/help/assistant", wrap(helpAssistant.status));
+router.post("/help/ask", wrap(helpAssistant.ask));
 router.all("/follows/campaign-list", wrap(followsCampaignList));
 router.all("/follows/campaign", wrap(followsCampaign));
 router.all("/follows/user-counts", wrap(followsUserCounts));
@@ -538,7 +550,7 @@ router.all("/drafts/:draftId/archive", wrap(draftArchive));
 router.all("/drafts/:draftId/deploy", wrap(draftDeploy));
 router.all("/solana/campaign-account", wrap(solanaCampaignAccount));
 router.get("/solana/holders", wrap(solanaHolders));
-// Imported memecoins: Jupiter (Solana) / KyberSwap on PancakeSwap pools (BNB), 0.5% platform fee.
+// Imported memecoins: Jupiter (Solana) / KyberSwap (BNB) / Uniswap V3 (Robinhood, built by the API for the widget).
 router.post("/imports/swap/quote", wrap(importSwapQuote));
 router.post("/imports/swap/build", wrap(importSwapBuild));
 router.get("/imports/creator-fees/owner", wrap(importCreatorFeesOwner));
@@ -548,6 +560,11 @@ router.get("/widget/swap/balances", wrap(widgetBalances));
 router.post("/widget/swap/quote", wrap(widgetQuote));
 router.post("/widget/swap/build", wrap(widgetBuild));
 router.get("/widget/swap/status", wrap(widgetStatus));
+// Imported and graduated coins on BNB Chain / Robinhood Chain in the widget (api/widgetSwapEvm.js); quote and build are
+// the routes above with chainId 56 / 4663. evm/token also answers gen-8 coins (kind "gen8") so one EVM box serves all.
+router.get("/widget/swap/evm/token", wrap(evmWidgetToken));
+router.get("/widget/swap/evm/balances", wrap(evmWidgetBalances));
+router.get("/widget/swap/evm/status", wrap(evmWidgetStatus));
 // Generation 8 coins in the widget (api/gen8Swap.js): the API builds the UniversalRouter call and records the partner fingerprint.
 router.get("/widget/swap/gen8/token", wrap(gen8SwapToken));
 router.get("/widget/swap/gen8/balances", wrap(gen8SwapBalances));

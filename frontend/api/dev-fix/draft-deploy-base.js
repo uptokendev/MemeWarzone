@@ -562,6 +562,10 @@ export async function draftDeploy(req, res) {
                   visibility = 'public',
                   token_address = coalesce($3, token_address),
                   deploy_tx_hash = coalesce(deploy_tx_hash, $5),
+                  scheduled_launch_at = case
+                    when $4::bigint is not null then to_timestamp($4)
+                    else scheduled_launch_at
+                  end,
                   deployed_at = coalesce(deployed_at, now()),
                   updated_at = now()
             where id::text = $1
@@ -675,7 +679,9 @@ export async function draftDeploy(req, res) {
   }
 
   const draft = deployed.draft;
-  const target = `/token/${tokenAddress || campaignAddress}`;
+  const target = isScheduled && draft?.slug
+    ? `/prepare/${draft.slug}`
+    : `/token/${tokenAddress || campaignAddress}`;
   const launchNotification = isScheduled
     ? {
         eventType: "schedule",
@@ -691,7 +697,8 @@ export async function draftDeploy(req, res) {
       };
 
   await notifyDraftOwner(pool, draft, launchNotification);
-  await notifyDraftSubscribers(pool, draft, launchNotification);
+  // The public launch message waits until trading opens. The feed emits it then.
+  if (!isScheduled) await notifyDraftSubscribers(pool, draft, launchNotification);
 
   return json(res, 200, {
     draft,

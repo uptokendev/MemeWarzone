@@ -57,9 +57,7 @@ function chainIdFromParams(params: RequestArgs["params"]) {
 function rpcMapFor(chains: number[]) {
   const env = import.meta.env as Record<string, string | undefined>;
   const fallbacks: Record<number, string> = {
-    56: "https://bsc-dataseed.binance.org/",
-    97: "https://data-seed-prebsc-1-s1.binance.org:8545/",
-    4663: "https://rpc.mainnet.chain.robinhood.com",
+    97: "https://bsc-testnet-rpc.publicnode.com",
     46630: "https://rpc.testnet.chain.robinhood.com",
     6281971: "https://rpc.testnet.dogeos.com",
   };

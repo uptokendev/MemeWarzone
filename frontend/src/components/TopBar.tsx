@@ -149,6 +149,8 @@ export const TopBar = ({ mobileMenuOpen, setMobileMenuOpen, leftSidebarWidth = 0
       { label: "Launchpad", path: "/", priority: "primary" },
       ...(warRoomEnabled ? [{ label: "Trade War Room", path: "/war-room", priority: "primary" as const }] : []),
       { label: "Profile", path: "/profile?tab=balances", priority: "secondary" },
+      { label: "About", path: "/about", priority: "secondary" },
+      { label: "Help Center", path: "/faq", priority: "secondary" },
       { label: "Docs", path: "https://docs.memewar.zone", priority: "secondary" },
     ],
     []

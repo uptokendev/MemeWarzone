@@ -22,7 +22,9 @@ import {
   releaseGen8Reserve,
 } from "@/lib/evmGen8Client.mjs";
 import type { Gen8CoinState } from "@/hooks/useGen8Coin";
+import { useGen8EscrowBuys } from "@/hooks/useGen8EscrowBuys";
 import { GEN8_RATES } from "../../../shared/evmGen8.mjs";
+import { gen8EscrowPosition, gen8EscrowUnlockLabel } from "../../../shared/gen8EscrowSchedule.mjs";
 
 // 560 bps of the 2% bonding fee = 0.112% of volume; 50 bps of volume after graduation (MwzV4Launcher constants).
 const CREATOR_BONDING_PCT = ((GEN8_RATES.bondingBps * GEN8_RATES.creatorBondingBps) / 1_000_000).toString();
@@ -85,6 +87,101 @@ export function Gen8CoinStatus({ chainId, state, explorerBase, nativeUsd = null 
   );
 }
 
+function escrowWei(value: string | null | undefined): bigint {
+  return /^\d+$/.test(String(value || "")) ? BigInt(String(value)) : 0n;
+}
+
+/**
+ * Coins this wallet bought into the gen-8 escrow. Locked amount is the contract total.
+ * The next date comes from EscrowBuy logs. Claim is shown only once a tranche is unlocked.
+ */
+export function Gen8EscrowLock({
+  chainId,
+  state,
+  symbol,
+  onDone,
+}: {
+  chainId: number;
+  state: Gen8CoinState;
+  symbol: string;
+  onDone?: () => void;
+}) {
+  const wallet = useWallet();
+  const native = getNativeSymbol(chainId as SupportedChainId);
+  const cfg = gen8AppConfig(chainId);
+  const account = wallet.account ? String(wallet.account) : "";
+  const escrow = state.creatorClaims?.escrow;
+  const totalRaw = escrowWei(escrow?.totalTokens);
+  const claimedRaw = escrowWei(escrow?.claimedTokens);
+  const claimableRaw = escrowWei(escrow?.claimableTokens);
+  const { buys, failed } = useGen8EscrowBuys({
+    chainId,
+    escrow: escrow?.address || cfg?.escrow || null,
+    token: state.token,
+    beneficiary: account,
+    launchAt: state.tradeFee?.launchAt ?? state.openAt ?? null,
+    enabled: totalRaw > 0n && Boolean(account && (escrow?.address || cfg?.escrow)),
+  });
+  const [busy, setBusy] = useState(false);
+  if (totalRaw <= 0n || !cfg) return null;
+  const pos = gen8EscrowPosition({
+    buys: buys ?? [],
+    claimed: claimedRaw,
+    claimable: claimableRaw,
+    now: Math.floor(Date.now() / 1000),
+    knownTotal: totalRaw,
+  });
+  const next = buys && buys.length > 0 && !failed ? pos.next : null;
+  const ticker = symbol || "tokens";
+  async function claim() {
+    setBusy(true);
+    try {
+      if (!wallet.signer) throw new Error(`Connect the ${native} wallet first.`);
+      let signer = wallet.signer as any;
+      if (Number(wallet.chainId) !== Number(chainId)) {
+        const switched = await wallet.switchToChain(chainId as SupportedChainId);
+        if (Number(switched?.chainId) !== Number(chainId) || !switched?.signer) throw new Error("The wallet did not switch chains.");
+        signer = switched.signer;
+      }
+      // Barkswap: the claim is estimated and its receipt polled on the app's read provider (V4 ignores it).
+      let readProvider = null;
+      if (isGen8BarkAppConfig(cfg)) {
+        try {
+          readProvider = getReadProvider(chainId as SupportedChainId);
+        } catch {
+          readProvider = null;
+        }
+      }
+      await claimGen8Escrow({ signer, chainId, cfg, token: state.token, readProvider });
+      toast.success("Unlocked tokens claimed.");
+      onDone?.();
+    } catch (error) {
+      toast.error(gen8ErrorMessage(error) || String((error as Error)?.message || "The transaction failed."));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="flex items-start justify-between gap-3" data-gen8-escrow-lock="true">
+      <div className="min-w-0">
+        <div className="font-semibold text-mw-text">Your locked buys</div>
+        <p className="text-[11px] text-mw-muted">20% unlocks after 30 days, then 20% every 7 days.</p>
+        <p className="font-mw-mono text-xs text-mw-text">Locked {fmtTokens(pos.locked)} {ticker}</p>
+        {next ? (
+          <p className="font-mw-mono text-xs text-mw-text" data-gen8-escrow-next="true">
+            Next unlock {gen8EscrowUnlockLabel(next.at)}: {fmtTokens(next.amount)} {ticker}
+          </p>
+        ) : null}
+      </div>
+      {claimableRaw > 0n ? (
+        <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void claim()}>
+          {busy ? "…" : "Claim"}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 type Action = { key: string; title: string; detail: string; amount?: string; disabled?: boolean; button: string; run: () => Promise<unknown> };
 
 /**
@@ -96,7 +193,7 @@ type Action = { key: string; title: string; detail: string; amount?: string; dis
  * Barkswap (DogeOS): the same actions keyed by the coin address; the creator ledger and the keep-coin transfer live in
  * MwzBarkLauncher (the API's creatorClaims.claimContract), the rest in the Bark vault / reserve lock / escrow.
  */
-export function Gen8CreatorPanel({ chainId, state, onDone }: { chainId: number; state: Gen8CoinState; onDone?: () => void }) {
+export function Gen8CreatorPanel({ chainId, state, symbol = "tokens", onDone }: { chainId: number; state: Gen8CoinState; symbol?: string; onDone?: () => void }) {
   const wallet = useWallet();
   const native = getNativeSymbol(chainId as SupportedChainId);
   const cfg = gen8AppConfig(chainId);
@@ -116,7 +213,6 @@ export function Gen8CreatorPanel({ chainId, state, onDone }: { chainId: number; 
   const pendingHook = claims.hookPendingCreator;
   const pendingVault = claims.vault?.pendingCreator || null;
   const canAccept = (pendingHook && same(account, pendingHook)) || (pendingVault && same(account, pendingVault));
-  const escrowClaimable = claims.escrow?.claimableTokens ? BigInt(claims.escrow.claimableTokens) : 0n;
   const escrowTotal = claims.escrow?.totalTokens ? BigInt(claims.escrow.totalTokens) : 0n;
   if (!isHookCreator && !isHumanCreator && !canAccept && escrowTotal === 0n) return null;
 
@@ -212,17 +308,7 @@ export function Gen8CreatorPanel({ chainId, state, onDone }: { chainId: number; 
       run: () => run("reserve", (signer) => releaseGen8Reserve({ signer, chainId, cfg, poolId, readProvider }), "Reserve released."),
     });
   }
-  if (escrowTotal > 0n) {
-    actions.push({
-      key: "escrow",
-      title: "Your locked buys",
-      detail: `Bought ${fmtTokens(escrowTotal)}, claimed ${fmtTokens(claims.escrow?.claimedTokens)}. 20% unlocks after 30 days, then 20% every 7 days.`,
-      amount: `${fmtTokens(escrowClaimable)} tokens unlocked`,
-      disabled: escrowClaimable <= 0n,
-      button: "Claim",
-      run: () => run("escrow", (signer) => claimGen8Escrow({ signer, chainId, cfg, token: state.token, readProvider }), "Unlocked tokens claimed."),
-    });
-  }
+  const showEscrow = escrowTotal > 0n;
 
   // Two-step transfer: on the hook for keep coins, in the vault for holders / split / buyback coins.
   const creatorLedger = bark ? cfg.launcher : cfg.hook;
@@ -240,6 +326,7 @@ export function Gen8CreatorPanel({ chainId, state, onDone }: { chainId: number; 
           {!toValid ? <span className="text-mw-down">Enter a valid address.</span> : null}
         </label>
       ) : null}
+      {showEscrow ? <Gen8EscrowLock chainId={chainId} state={state} symbol={symbol} onDone={onDone} /> : null}
       {actions.map((a) => (
         <div key={a.key} className="flex items-start justify-between gap-3">
           <div className="min-w-0">

@@ -9,7 +9,7 @@ Every battle has a prize pool, called the war pool. It holds the buy-ins of both
 
 1. A coin owner sends a challenge with a buy-in.
 2. When both sides agree, each side pays the buy-in into the pool.
-3. During the fight, anyone can buy boosts. Each boost adds to the pool.
+3. During the fight, anyone can buy boosts, 2 per wallet per battle, until 80% of the battle time has passed. Each boost adds to the pool.
 
 The battle card and the battle page show the pool as it grows.
 

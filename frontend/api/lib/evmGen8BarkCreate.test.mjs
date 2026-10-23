@@ -595,7 +595,10 @@ test("Bark create: a request is a gen-8 request on DogeOS by generation or by th
   assert.equal(isGen8CreateRequest({ chainId: DOGE, generation: 8 }, BARK_ENV), true);
   assert.equal(isGen8CreateRequest({ chainId: DOGE, launcherAddress: L }, BARK_ENV), true);
   assert.equal(isGen8CreateRequest({ chainId: DOGE, factoryAddress: P }, BARK_ENV), false);
-  assert.equal(isGen8CreateRequest({ chainId: DOGE, generation: 8 }, {}), false, "inert without the Bark env");
+  // As on V4 (staging-live-gen8): generation 8 stays on the gen-8 path without the env, which answers GEN8_NOT_CONFIGURED
+  // naming the missing Bark env (gen8LaunchReadiness, Barkswap branch).
+  assert.equal(isGen8CreateRequest({ chainId: DOGE, generation: 8 }, {}), true);
+  assert.equal(isGen8CreateRequest({ chainId: DOGE, launcherAddress: L }, {}), false, "no launcher env, no address match");
 });
 
 // ================================================================== route-key resolution (moved from t14; beca35dbe dogeosRouteAuth L212-273)

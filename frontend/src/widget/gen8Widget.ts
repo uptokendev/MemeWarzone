@@ -1,8 +1,18 @@
 /**
- * The swap widget for MemeWarzone generation 8 coins on BNB Chain and Robinhood Chain:
+ * The swap widget's EVM box on BNB Chain and Robinhood Chain:
  *
  *   MemeWarzoneSwap.mount("#mwz-swap", { chainId: 56, token: "0x...", partner: "crypticpump" });
  *
+ * It asks the API what the coin is (/api/widget/swap/evm/token, frontend/api/widgetSwapEvm.js):
+ *   gen8    a MemeWarzone generation 8 coin: the flow below, unchanged.
+ *   import  an imported coin, or a graduated MemeWarzone coin: the import route (KyberSwap on BNB Chain, Uniswap V3 on
+ *           Robinhood Chain), quoted and built by our API (/api/widget/swap/quote|build) with the import fee in it
+ *           (1%, half to the creator, where the chain's split is on; the API's quote says what it is). The partner's
+ *           share is paid from that fee after the swap, by the build fingerprint the API records.
+ *   memewarzone  our own coin the widget does not trade (still bonding, or graduated where the creator split is off):
+ *           a link to its MemeWarzone page.
+ *
+ * Generation 8 coins:
  * Every swap is built by our API (/api/widget/swap/gen8/*, frontend/api/gen8Swap.js): a UniversalRouter V4_SWAP in
  * the coin's own Uniswap V4 pool, so a partner's builds carry the partner fingerprint the API records. The fee is the
  * pool's own (2% before graduation, 1% after, half of it to the coin's creator), taken on chain. The widget talks to
@@ -32,6 +42,7 @@ export type Gen8MountOptions = {
   onSwap?: (event: { txHash: string; side: Side; token: string; chainId: number }) => void;
 };
 
+type TokenKind = "gen8" | "import" | "memewarzone";
 type TokenInfo = {
   chainId: number;
   token: string;
@@ -40,15 +51,36 @@ type TokenInfo = {
   symbol: string | null;
   imageUrl: string | null;
   nativeSymbol: string;
-  phase: string;
-  feeBps: number;
+  phase?: string;
+  feeBps: number | null;
   pageUrl: string;
+  /** Missing on an API from before the EVM import box: gen8. */
+  kind?: TokenKind;
   tradable?: boolean;
+  reason?: string | null;
+  claimUrl?: string | null;
+  creatorShareBps?: number;
   tradingOpen?: boolean;
   openAt?: number;
   maxSellable?: string | null;
 };
-type Quote = { amountIn: string; amountOut: string; minAmountOut: string; slippageBps: number; slippageAuto?: boolean; priceImpactBps?: number | null; feeBps: number; feeNativeRaw: string; creatorShareNativeRaw: string; phase: string };
+type Quote = {
+  amountIn: string;
+  amountOut: string;
+  minAmountOut: string | null;
+  slippageBps?: number;
+  slippageAuto?: boolean;
+  priceImpactBps?: number | null;
+  /** Import quotes (Kyber, Uniswap V3): percent, null when not measured. */
+  priceImpactPct?: number | null;
+  feeBps: number;
+  feeNativeRaw: string | null;
+  creatorShareNativeRaw?: string;
+  creatorShareBps?: number;
+  phase?: string;
+  /** Import quotes: the route the build takes (Kyber's route summary on BNB Chain). */
+  quote?: unknown;
+};
 type Built = { to: string; data: string; value: string; quote: Quote };
 type TxStep = { to: string; data: string; value: string };
 type NeedsAllowance = { needsAllowance: true; approval: TxStep | null; permit2Approval: TxStep | null; quote: Quote };
@@ -56,6 +88,29 @@ type PermitTypedData = { domain: Record<string, unknown>; types: Record<string, 
 
 const DEFAULT_API = "https://api.memewar.zone";
 const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+/** Where an import swap must go (the API's build is checked against it before the wallet sees it). */
+export const IMPORT_ROUTERS: Record<number, string> = {
+  56: "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5", // KyberSwap MetaAggregationRouterV2 (api/importSwap.js KYBER_ROUTER)
+  4663: "0x8876789976decbfcbbbe364623c63652db8c0904", // Uniswap Universal Router (src/lib/robinhoodImportSwap.mjs)
+};
+const NO_ROUTE_TEXT = "No route here. Trade it on its MemeWarzone page.";
+
+/** Throws unless an import build goes to the chain's router with the swap's own value (buy: the amount in; sell: 0). */
+export function assertImportBuild(built: { to: string; value: string }, chainId: number, side: Side, amountRaw: bigint) {
+  const router = IMPORT_ROUTERS[chainId];
+  if (!router || String(built.to).toLowerCase() !== router.toLowerCase()) throw new Error("Swap targets an unexpected router.");
+  const value = BigInt(built.value || "0");
+  if (side === "buy" ? value !== amountRaw : value !== 0n) throw new Error("Swap amount does not match.");
+}
+
+/** Why an EVM coin is not tradable in the widget, in one line (the page link sits under it). */
+export function notTradableText(reason: string | null | undefined): string {
+  if (reason === "bonding") return "This coin is on its MemeWarzone bonding curve. Trade it on its MemeWarzone page.";
+  if (reason === "graduated") return "This coin is not tradable here yet. Trade it on its MemeWarzone page.";
+  if (reason === "fee") return "Swaps for this coin are paused here. Trade it on its MemeWarzone page.";
+  if (reason === "chain") return "Imported coins trade in the widget on BNB Chain and Robinhood Chain mainnet.";
+  return "This coin is not tradable here. Trade it on its MemeWarzone page.";
+}
 /** Lens and balances. A confirmed swap also reloads immediately. The 1 s paintOpens clock is not an RPC read. */
 export const GEN8_WIDGET_REFRESH_MS = 60_000;
 /** Native kept for gas on buys (as the app's evmBuyGasReserveWei). */
@@ -98,6 +153,38 @@ export function shouldOfferProtectedRpc(chainId: number | null | undefined, conn
   return connected && offersProtectedRpc(Number(chainId)) && !choice;
 }
 
+/**
+ * wallet_addEthereumChain params for a wallet that does not know the coin's chain yet (wallet_switchEthereumChain
+ * answers 4902). Public keyless RPCs only: a URL written into a visitor's wallet stays there (as the app's
+ * getChainParams, src/lib/chainConfig.ts; Robinhood's public RPC is the one the live app uses).
+ */
+export const WALLET_CHAIN_PARAMS: Record<number, { chainId: string; chainName: string; nativeCurrency: { name: string; symbol: string; decimals: number }; rpcUrls: string[]; blockExplorerUrls: string[] }> = {
+  56: { chainId: "0x38", chainName: "BNB Smart Chain", nativeCurrency: { name: "BNB", symbol: "BNB", decimals: 18 }, rpcUrls: ["https://bsc-dataseed.bnbchain.org"], blockExplorerUrls: ["https://bscscan.com/"] },
+  4663: { chainId: "0x1237", chainName: "Robinhood Chain", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: ["https://rpc.mainnet.chain.robinhood.com"], blockExplorerUrls: ["https://robinhoodchain.blockscout.com/"] },
+};
+
+/** EIP-1193 error code of a wallet error (MetaMask nests the 4902 of a mobile switch in data.originalError). */
+export function walletErrorCode(error: unknown): number {
+  const e = error as { code?: unknown; data?: { originalError?: { code?: unknown } } } | null;
+  return Number(e?.code ?? e?.data?.originalError?.code ?? 0);
+}
+
+/** Puts the wallet on chain `want`: switch; a wallet without that chain (4902) adds it, then switches again. */
+export async function ensureWalletChain(wallet: Eip1193, want: number) {
+  const readChain = async () => Number(BigInt(String(await wallet.request({ method: "eth_chainId" }))));
+  if ((await readChain()) === want) return;
+  try {
+    await wallet.request({ method: "wallet_switchEthereumChain", params: [{ chainId: hexValue(BigInt(want)) }] });
+  } catch (error) {
+    const params = WALLET_CHAIN_PARAMS[want];
+    if (walletErrorCode(error) !== 4902 || !params) throw error;
+    await wallet.request({ method: "wallet_addEthereumChain", params: [params] });
+    // EIP-3085 does not require the wallet to stay on the added chain: switch again (as the app's useWallet).
+    await wallet.request({ method: "wallet_switchEthereumChain", params: [{ chainId: hexValue(BigInt(want)) }] });
+  }
+  if ((await readChain()) !== want) throw new Error("Switch your wallet to this coin's chain and try again.");
+}
+
 export function findEvmWallet(scope: Record<string, any> = globalThis as any): Eip1193 | null {
   const w = scope.ethereum;
   return w && typeof w.request === "function" ? (w as Eip1193) : null;
@@ -117,6 +204,7 @@ export class Gen8SwapWidget {
   private openTimer: ReturnType<typeof setInterval> | null = null;
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
   private el: Record<string, HTMLElement> = {};
+  private noRoute = false;
 
   constructor(host: HTMLElement, private options: Gen8MountOptions) {
     this.root = host.shadowRoot || host.attachShadow({ mode: "open" });
@@ -147,10 +235,33 @@ export class Gen8SwapWidget {
     return this.token?.symbol || "token";
   }
 
+  /** An imported coin, a graduated MemeWarzone coin, or our coin the widget does not trade (not gen-8). */
+  private isImport(): boolean {
+    return Boolean(this.token && this.token.kind && this.token.kind !== "gen8");
+  }
+
+  /** The coin's decimals: 18 for gen-8 (as before), the chain's answer for every other coin. */
+  private tokenDecimals(): number {
+    return this.isImport() ? Number(this.token?.decimals ?? 18) : 18;
+  }
+
+  private inputDecimals(): number {
+    return this.side === "buy" ? 18 : this.tokenDecimals();
+  }
+
+  private outDecimals(): number {
+    return this.side === "buy" ? this.tokenDecimals() : 18;
+  }
+
+  /** Balances and receipts: the gen-8 routes for gen-8 coins (unchanged), the generic EVM routes for the others. */
+  private route(name: "balances" | "status"): string {
+    return this.isImport() ? `/api/widget/swap/evm/${name}` : `/api/widget/swap/gen8/${name}`;
+  }
+
   private async call<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(`${this.api}${path}`, { ...init, credentials: "omit", headers: { "content-type": "application/json", ...(init?.headers || {}) } });
     const body = await response.json().catch(() => ({}));
-    if (!response.ok || body?.ok === false) throw new Error(String(body?.error || `Request failed (${response.status})`));
+    if (!response.ok || body?.ok === false) throw Object.assign(new Error(String(body?.error || `Request failed (${response.status})`)), { code: body?.code ?? null, status: response.status });
     return body as T;
   }
 
@@ -162,8 +273,8 @@ export class Gen8SwapWidget {
         <div class="field"><input data-k="amount" inputmode="decimal" autocomplete="off" placeholder="0" aria-label="Amount" /><span class="unit" data-k="unit"></span></div>
         <div class="row"><span data-k="balance"></span><button type="button" class="max" data-k="max" hidden>MAX</button></div>
         <div class="row"><span>You receive ~</span><b data-k="out">-</b></div>
-        <div class="row"><span>Price impact</span><b data-k="impact">-</b></div>
-        <div class="row"><span data-k="minLabel">At least</span><b data-k="min">-</b></div>
+        <div class="row" data-k="impactRow"><span>Price impact</span><b data-k="impact">-</b></div>
+        <div class="row" data-k="minRow"><span data-k="minLabel">At least</span><b data-k="min">-</b></div>
         <div class="row"><span data-k="feeLabel">Fee</span><b data-k="fee">-</b></div>
         <div class="row" data-k="creatorRow" hidden><span>Of which to the coin's creator</span><b data-k="creator">-</b></div>
         <button type="button" class="go" data-k="go">CONNECT WALLET</button>
@@ -173,7 +284,9 @@ export class Gen8SwapWidget {
         </div>
         <div class="msg" data-k="opens" role="status"></div>
         <div class="msg" data-k="msg" role="status"></div>
-        <div class="foot">Swaps by <a data-k="link" href="https://app.memewar.zone" target="_blank" rel="noopener">MemeWarzone</a>, in the coin's Uniswap pool</div>
+        <div class="claim" data-k="page" hidden><a data-k="pageLink" target="_blank" rel="noopener">Open it on MemeWarzone</a></div>
+        <div class="claim" data-k="claim" hidden>Created this coin? <a data-k="claimLink" target="_blank" rel="noopener">Claim it on MemeWarzone</a></div>
+        <div class="foot">Swaps by <a data-k="link" href="https://app.memewar.zone" target="_blank" rel="noopener">MemeWarzone</a><span data-k="via">, in the coin's Uniswap pool</span></div>
       </div>`;
     this.root.querySelectorAll<HTMLElement>("[data-k]").forEach((node) => {
       this.el[node.dataset.k as string] = node;
@@ -236,12 +349,13 @@ export class Gen8SwapWidget {
       return;
     }
     const raw = this.side === "buy" ? this.balances.nativeRaw : this.balances.tokenRaw;
-    this.el.balance.textContent = `Balance ${gen8FormatAmount(raw)} ${this.side === "buy" ? this.native() : this.symbol()}`;
+    this.el.balance.textContent = `Balance ${gen8FormatAmount(raw, this.inputDecimals())} ${this.side === "buy" ? this.native() : this.symbol()}`;
     this.el.max.hidden = this.side !== "sell" || raw === 0n;
   }
 
   private tradingOpen(): boolean {
     if (!this.token) return false;
+    if (this.isImport()) return this.token.tradable !== false;
     const openAt = Number(this.token.openAt || 0);
     if (openAt > 0 && Math.floor(Date.now() / 1000) < openAt) return false;
     if (this.token.tradingOpen === false || this.token.tradable === false) return Math.floor(Date.now() / 1000) >= openAt;
@@ -251,7 +365,7 @@ export class Gen8SwapWidget {
   private paintOpens() {
     const node = this.el.opens;
     if (!node) return;
-    if (!this.token || this.tradingOpen()) {
+    if (!this.token || this.isImport() || this.tradingOpen()) {
       node.textContent = "";
       return;
     }
@@ -265,6 +379,11 @@ export class Gen8SwapWidget {
     const go = this.el.go as HTMLButtonElement;
     if (!this.token) {
       go.textContent = "LOADING...";
+      go.disabled = true;
+      return;
+    }
+    if (this.isImport() && (this.token.tradable === false || this.noRoute)) {
+      go.textContent = "NOT AVAILABLE HERE";
       go.disabled = true;
       return;
     }
@@ -283,6 +402,7 @@ export class Gen8SwapWidget {
   }
 
   private paintQuote() {
+    if (this.isImport()) return this.paintImportQuote();
     const q = this.quote;
     const outUnit = this.side === "buy" ? this.symbol() : this.native();
     this.el.out.textContent = q ? `${gen8FormatAmount(q.amountOut)} ${outUnit}` : "-";
@@ -291,10 +411,31 @@ export class Gen8SwapWidget {
     this.el.minLabel.textContent = q && Number.isFinite(Number(q.slippageBps)) ? `At least (${Number(q.slippageBps) / 100}% slippage)` : "At least";
     const feeBps = q?.feeBps ?? this.token?.feeBps ?? null;
     this.el.feeLabel.textContent = feeBps ? `Fee ${Number((feeBps / 100).toFixed(2))}%` : "Fee";
-    this.el.fee.textContent = q ? `${gen8FormatAmount(q.feeNativeRaw)} ${this.native()}` : "-";
+    this.el.fee.textContent = q ? `${gen8FormatAmount(q.feeNativeRaw || "0")} ${this.native()}` : "-";
     const creatorRaw = q ? BigInt(q.creatorShareNativeRaw || "0") : 0n;
     this.el.creatorRow.hidden = creatorRaw === 0n;
     this.el.creator.textContent = `${gen8FormatAmount(creatorRaw)} ${this.native()}`;
+    this.paintButton();
+  }
+
+  /** Import quotes: rows only for what the quote has (Kyber quotes carry no minimum or impact; a sell's fee comes off the native out). */
+  private paintImportQuote() {
+    const q = this.quote;
+    const outUnit = this.side === "buy" ? this.symbol() : this.native();
+    this.el.out.textContent = q ? `${gen8FormatAmount(q.amountOut, this.outDecimals())} ${outUnit}` : "-";
+    const impactBps = q ? (q.priceImpactBps ?? (q.priceImpactPct == null ? null : Math.round(Number(q.priceImpactPct) * 100))) : null;
+    this.el.impactRow.hidden = impactBps == null;
+    this.el.impact.textContent = formatPriceImpact(impactBps);
+    this.el.minRow.hidden = !q?.minAmountOut;
+    this.el.min.textContent = q?.minAmountOut ? `${gen8FormatAmount(q.minAmountOut, this.outDecimals())} ${outUnit}` : "-";
+    this.el.minLabel.textContent = q && Number.isFinite(Number(q.slippageBps)) ? `At least (${Number(q.slippageBps) / 100}% slippage)` : "At least";
+    const feeBps = q?.feeBps ?? this.token?.feeBps ?? null;
+    this.el.feeLabel.textContent = feeBps ? `Fee ${Number((feeBps / 100).toFixed(2))}%` : "Fee";
+    this.el.fee.textContent = q?.feeNativeRaw ? `${gen8FormatAmount(q.feeNativeRaw)} ${this.native()}` : q && feeBps ? `taken from the ${this.native()} out` : "-";
+    const creatorBps = Number(q?.creatorShareBps ?? this.token?.creatorShareBps ?? 0);
+    const creatorRaw = q?.feeNativeRaw && creatorBps > 0 && q.feeBps ? (BigInt(q.feeNativeRaw) * BigInt(creatorBps)) / BigInt(q.feeBps) : 0n;
+    this.el.creatorRow.hidden = !(creatorBps > 0);
+    this.el.creator.textContent = creatorRaw > 0n ? `${gen8FormatAmount(creatorRaw)} ${this.native()}` : `${Number((creatorBps / 100).toFixed(2))}% of the swap`;
     this.paintButton();
   }
 
@@ -307,14 +448,21 @@ export class Gen8SwapWidget {
       return;
     }
     try {
-      this.token = await this.call<TokenInfo>(`/api/widget/swap/gen8/token?chainId=${chainId}&token=${token}`);
-      this.el.title.textContent = this.token.symbol ? `Swap ${this.token.symbol}` : "Swap";
-      this.el.sub.textContent = this.token.name || `${token.slice(0, 6)}...${token.slice(-4)}`;
+      this.token = await this.loadTokenInfo(chainId, token);
+      const short = `${token.slice(0, 6)}...${token.slice(-4)}`;
+      if (this.isImport() && !this.token.name && !this.token.symbol) {
+        this.el.title.textContent = `Swap ${short}`;
+        this.el.sub.textContent = "Unlisted coin";
+      } else {
+        this.el.title.textContent = this.token.symbol ? `Swap ${this.token.symbol}` : "Swap";
+        this.el.sub.textContent = this.token.name || short;
+      }
       if (this.token.imageUrl) {
         (this.el.logo as HTMLImageElement).src = this.token.imageUrl;
         this.el.logo.hidden = false;
       }
       (this.el.link as HTMLAnchorElement).href = this.token.pageUrl;
+      if (this.isImport()) this.paintImportToken();
       this.paintSide();
       this.paintQuote();
       this.paintOpens();
@@ -323,10 +471,44 @@ export class Gen8SwapWidget {
     }
   }
 
+  /**
+   * What the coin is: /api/widget/swap/evm/token (kind gen8 / import / memewarzone). An API without that route (or a
+   * failed answer) falls back to the gen-8 answer, which is what this box loaded before.
+   */
+  private async loadTokenInfo(chainId: number, token: string): Promise<TokenInfo> {
+    try {
+      return await this.call<TokenInfo>(`/api/widget/swap/evm/token?chainId=${chainId}&token=${token}`);
+    } catch (error) {
+      try {
+        return { ...(await this.call<TokenInfo>(`/api/widget/swap/gen8/token?chainId=${chainId}&token=${token}`)), kind: "gen8" };
+      } catch {
+        throw error;
+      }
+    }
+  }
+
+  /** Import / not-tradable coins: route line, claim line, page link. */
+  private paintImportToken() {
+    const t = this.token;
+    if (!t) return;
+    this.el.via.textContent = t.kind !== "import" ? "" : t.chainId === 56 ? ", routed by KyberSwap" : ", routed by Uniswap";
+    if (t.claimUrl) {
+      (this.el.claimLink as HTMLAnchorElement).href = t.claimUrl;
+      this.el.claim.hidden = false;
+    } else {
+      this.el.claim.hidden = true;
+    }
+    (this.el.pageLink as HTMLAnchorElement).href = t.pageUrl;
+    const blocked = t.tradable === false || this.noRoute;
+    this.el.page.hidden = !blocked;
+    if (t.tradable === false) this.say(notTradableText(t.reason), "err");
+    else if (this.noRoute) this.say(NO_ROUTE_TEXT, "err");
+  }
+
   private async loadBalances() {
     if (!this.account || !this.token) return;
     try {
-      const out = await this.call<{ nativeRaw: string; tokenRaw: string }>(`/api/widget/swap/gen8/balances?chainId=${this.token.chainId}&wallet=${this.account}&token=${this.token.token}`);
+      const out = await this.call<{ nativeRaw: string; tokenRaw: string }>(`${this.route("balances")}?chainId=${this.token.chainId}&wallet=${this.account}&token=${this.token.token}`);
       this.balances = { nativeRaw: BigInt(out.nativeRaw), tokenRaw: BigInt(out.tokenRaw) };
     } catch {
       this.balances = null;
@@ -338,19 +520,25 @@ export class Gen8SwapWidget {
     if (!this.balances) return;
     const cap = this.token?.maxSellable ? BigInt(this.token.maxSellable) : this.balances.tokenRaw;
     const raw = cap < this.balances.tokenRaw ? cap : this.balances.tokenRaw;
-    (this.el.amount as HTMLInputElement).value = fromRaw(raw, 18, 18).replace(/,/g, "");
+    const decimals = this.tokenDecimals();
+    (this.el.amount as HTMLInputElement).value = fromRaw(raw, decimals, decimals).replace(/,/g, "");
     this.scheduleQuote();
   }
 
   private scheduleQuote() {
     if (this.timer) clearTimeout(this.timer);
+    if (this.noRoute) {
+      // A new amount gets a new route search; "no route" comes back with the next quote if it still holds.
+      this.noRoute = false;
+      this.paintImportToken();
+    }
     this.quote = null;
     this.paintQuote();
     this.timer = setTimeout(() => void this.fetchQuote(), 450);
   }
 
   private amountRaw(): bigint | null {
-    return toRaw((this.el.amount as HTMLInputElement).value, 18);
+    return toRaw((this.el.amount as HTMLInputElement).value, this.inputDecimals());
   }
 
   private async fetchQuote(): Promise<Quote | null> {
@@ -365,6 +553,7 @@ export class Gen8SwapWidget {
       return null;
     }
     const seq = ++this.quoteSeq;
+    if (this.isImport()) return this.fetchImportQuote(raw, seq);
     try {
       const quote = await this.call<Quote>("/api/widget/swap/gen8/quote", {
         method: "POST",
@@ -381,13 +570,35 @@ export class Gen8SwapWidget {
     }
   }
 
+  /** Import quote through our API (= /api/imports/swap/quote): the fee is in it, the API's terms. */
+  private async fetchImportQuote(raw: bigint, seq: number): Promise<Quote | null> {
+    const token = this.token;
+    if (!token) return null;
+    try {
+      const quote = await this.call<Quote>("/api/widget/swap/quote", {
+        method: "POST",
+        body: JSON.stringify({ chainId: token.chainId, token: token.token, side: this.side, amountRaw: raw.toString(), slippageBps: this.options.slippageBps ?? 100 }),
+      });
+      if (seq !== this.quoteSeq) return null;
+      this.quote = quote;
+      this.say("");
+      this.paintQuote();
+      return quote;
+    } catch (error) {
+      if (seq !== this.quoteSeq) return null;
+      if ((error as { code?: string })?.code === "IMPORT_SWAP_NO_ROUTE") {
+        this.noRoute = true;
+        this.paintImportToken();
+        this.paintButton();
+        return null;
+      }
+      this.say(error instanceof Error ? error.message : "No quote", "err");
+      return null;
+    }
+  }
+
   private async ensureChain(wallet: Eip1193) {
-    const want = Number(this.token?.chainId);
-    const current = Number(BigInt(String(await wallet.request({ method: "eth_chainId" }))));
-    if (current === want) return;
-    await wallet.request({ method: "wallet_switchEthereumChain", params: [{ chainId: hexValue(BigInt(want)) }] });
-    const after = Number(BigInt(String(await wallet.request({ method: "eth_chainId" }))));
-    if (after !== want) throw new Error("Switch your wallet to this coin's chain and try again.");
+    await ensureWalletChain(wallet, Number(this.token?.chainId));
   }
 
   private async onGo() {
@@ -433,6 +644,10 @@ export class Gen8SwapWidget {
     const reserve = GAS_RESERVE[this.token.chainId] ?? 0n;
     if (this.balances && (this.side === "buy" ? raw + reserve > this.balances.nativeRaw : raw > this.balances.tokenRaw)) {
       this.say(this.side === "buy" ? `Keep about ${gen8FormatAmount(reserve)} ${this.native()} for gas: lower the amount.` : "Amount is above your balance.", "err");
+      return;
+    }
+    if (this.isImport()) {
+      await this.swapImport(wallet, raw);
       return;
     }
     this.busy = true;
@@ -481,11 +696,71 @@ export class Gen8SwapWidget {
     }
   }
 
+  /**
+   * An import swap: a fresh quote, our API's build (partner fingerprint recorded there), a sell's one-time approvals
+   * when the API asks for them (BNB: this sell's amount to the Kyber router; Robinhood: Permit2, then the router), a
+   * new quote and build, a check of the build's router and value, then the wallet sends it.
+   */
+  private async swapImport(wallet: Eip1193, raw: bigint) {
+    const token = this.token;
+    if (!token || !this.account) return;
+    this.busy = true;
+    this.paintButton();
+    try {
+      await this.ensureChain(wallet);
+      this.say("Getting the latest price...");
+      const build = async (): Promise<Built | NeedsAllowance | null> => {
+        const quote = await this.fetchQuote();
+        if (!quote) return null;
+        const body = { chainId: token.chainId, token: token.token, side: this.side, wallet: this.account, amountRaw: raw.toString(), quote: quote.quote ?? null, slippageBps: this.options.slippageBps ?? 100, ...(this.options.partner ? { partner: this.options.partner } : {}) };
+        return this.call<Built | NeedsAllowance>("/api/widget/swap/build", { method: "POST", body: JSON.stringify(body) });
+      };
+      let built = await build();
+      if (!built) return;
+      let stepIndex = 1;
+      let stepTotal = 1;
+      if ((built as NeedsAllowance).needsAllowance) {
+        const step = built as NeedsAllowance;
+        stepTotal = (step.approval ? 1 : 0) + (step.permit2Approval ? 1 : 0) + 1;
+        const note = step.approval && step.permit2Approval ? "The first sell of a coin needs two one-time approvals. " : "";
+        if (step.approval) {
+          this.say(`${note}Step ${stepIndex} of ${stepTotal}: ${token.chainId === 56 ? "approve this sell's amount" : "approve the coin (one time)"}`);
+          await this.send(wallet, step.approval);
+          stepIndex += 1;
+        }
+        if (step.permit2Approval) {
+          this.say(`Step ${stepIndex} of ${stepTotal}: allow the Uniswap router (one time)`);
+          await this.send(wallet, step.permit2Approval);
+          stepIndex += 1;
+        }
+        built = await build();
+        if (!built) return;
+        if ((built as NeedsAllowance).needsAllowance) throw new Error("The allowance is not visible yet. Try the sell again.");
+      }
+      const tx = built as Built;
+      assertImportBuild(tx, token.chainId, this.side, raw);
+      this.say(`Step ${stepIndex} of ${stepTotal}: ${this.side === "buy" ? "buy" : "sell"}`);
+      const hash = await this.send(wallet, tx);
+      this.say(`Swap confirmed (${hash.slice(0, 10)}...).`, "ok");
+      (this.el.amount as HTMLInputElement).value = "";
+      this.quote = null;
+      this.paintQuote();
+      this.options.onSwap?.({ txHash: hash, side: this.side, token: token.token, chainId: token.chainId });
+      void this.loadBalances();
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String((error as { message?: string })?.message || "Swap failed.");
+      this.say(/user rejected|denied/i.test(text) ? "You rejected the request in your wallet." : text, "err");
+    } finally {
+      this.busy = false;
+      this.paintButton();
+    }
+  }
+
   private async waitFor(hash: string) {
     let status: { status?: string } | null;
     try {
       status = await pollGen8Receipt(
-        (signal: AbortSignal) => this.call<{ status: string }>(`/api/widget/swap/gen8/status?chainId=${this.token?.chainId}&txHash=${hash}`, { signal }).catch(() => null),
+        (signal: AbortSignal) => this.call<{ status: string }>(`${this.route("status")}?chainId=${this.token?.chainId}&txHash=${hash}`, { signal }).catch(() => null),
         {
           timeoutMs: 120_000,
           intervalMs: 250,

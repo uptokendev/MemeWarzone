@@ -15,6 +15,10 @@ import { ethers } from "ethers";
  *   ROBINHOOD_TESTNET_RPC_URL / ROBINHOOD_MAINNET_RPC_URL
  *   DOGEOS_RPC_HTTP_6281971 / EVM_RPC_HTTP_6281971 (DogeOS only; never a BSC env)
  *   BSC_RPC_HTTP / VITE_BSC_MAINNET_RPC / VITE_BSC_TESTNET_RPC
+ *
+ * Chain 97 never reads BSC_RPC_HTTP or a mainnet name. Chains 56 and 4663
+ * return nothing when their own env is empty: a missing mainnet RPC is a skip,
+ * not a public mainnet endpoint. The bnbchain dataseed is not a 97 fallback.
  */
 
 const providerCache = new Map();
@@ -26,9 +30,7 @@ const PUBLIC_FALLBACKS = {
     "https://bsc-dataseed2.binance.org",
   ],
   97: [
-    "https://data-seed-prebsc-1-s1.binance.org:8545",
-    "https://data-seed-prebsc-2-s1.binance.org:8545",
-    "https://bsc-testnet.bnbchain.org",
+    "https://bsc-testnet-rpc.publicnode.com",
   ],
   // Official Robinhood public RPCs are rate-limited; production should provide
   // managed endpoints through ROBINHOOD_RPC_HTTP_* instead of relying on these.
@@ -102,11 +104,10 @@ export function getRpcUrls(chainId) {
     );
   } else if (id === 97) {
     configured.push(
-      ...csvValues(process.env.BSC_RPC_HTTP_97),
       ...csvValues(process.env.VITE_BSC_TESTNET_RPC),
       ...csvValues(process.env.BSC_TESTNET_RPC),
       ...csvValues(process.env.BSC_TESTNET_RPC_URL),
-      ...csvValues(process.env.BSC_RPC_HTTP),
+      ...csvValues(process.env.BSC_TESTNET_RPC_HTTP),
     );
   } else if (id === 4663) {
     configured.push(
@@ -126,7 +127,10 @@ export function getRpcUrls(chainId) {
     configured.push(...csvValues(process.env.BSC_RPC_HTTP));
   }
 
-  return uniqueUrls([...configured, ...(PUBLIC_FALLBACKS[id] || [])]);
+  const configuredUrls = uniqueUrls(configured);
+  // No configured mainnet RPC means no call. Do not fill in a public mainnet.
+  if ((id === 56 || id === 4663) && configuredUrls.length === 0) return [];
+  return uniqueUrls([...configuredUrls, ...(PUBLIC_FALLBACKS[id] || [])]);
 }
 
 /** @deprecated Prefer getRpcUrls / getServerReadProvider with failover. */

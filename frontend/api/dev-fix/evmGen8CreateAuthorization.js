@@ -57,6 +57,7 @@ import {
 import { barkFirstBuyEstimate } from "../../shared/evmGen8Bark.mjs";
 import { gen8ConfigFor, isGen8BarkConfig } from "../lib/evmGen8Config.js";
 import { BARK_LAUNCHER_ABI, findBarkCoinSalt } from "../lib/evmGen8Bark.js";
+import { gen8LaunchReadiness } from "../../shared/gen8LaunchReadiness.mjs";
 import { strictEvmWallet } from "../lib/evmGen8StrictWallet.js";
 import { createCanaryRefusalBody, isCreateAllowedForWallet } from "../lib/createCanary.js";
 
@@ -104,14 +105,29 @@ export function gen8CreateSigner(env = process.env, fallbackKey = "", chainId = 
   }
 }
 
-/** True when the body asks for a gen-8 create on a chain where gen-8 is configured (either venue). */
+function gen8NotConfiguredBody(chainId, env) {
+  const gap = gen8LaunchReadiness(chainId, env, { vite: false, scope: "create" });
+  return {
+    error: gap.message || "Generation 8 launches are not configured on this chain.",
+    code: "GEN8_NOT_CONFIGURED",
+    missing: gap.missing.map((item) => item.env),
+  };
+}
+
+/**
+ * True when the body is a gen-8 create. Generation 8 stays on this path even when the hook or PoolManager
+ * is still missing, so the answer names that env instead of the gen-6 factory. A body with no generation
+ * is gen-8 only when its factory is this chain's launcher (complete config, or a launcher env with the
+ * rest still missing). A different factory stays on gen-6/7.
+ */
 export function isGen8CreateRequest(body, env = process.env) {
   const chainId = Number(body?.chainId);
-  const cfg = gen8ConfigFor(chainId, env);
-  if (!cfg) return false;
   if (Number(body?.generation) === EVM_GEN8_FACTORY_GENERATION) return true;
+  const cfg = gen8ConfigFor(chainId, env);
   const target = String(body?.launcherAddress || body?.factoryAddress || "").trim().toLowerCase();
-  return Boolean(target && target === cfg.launcher.toLowerCase());
+  if (cfg) return Boolean(target && target === cfg.launcher.toLowerCase());
+  const gap = gen8LaunchReadiness(chainId, env, { vite: false, scope: "create" });
+  return Boolean(gap.active && gap.launcher && target && target === gap.launcher.toLowerCase());
 }
 
 function parseUintField(value, label, fallback = null) {
@@ -443,7 +459,7 @@ export async function gen8CreateAuthorization(body, deps) {
   const env = deps.env || process.env;
   const chainId = Number(body?.chainId);
   const cfg = gen8ConfigFor(chainId, env);
-  if (!cfg) return { status: 400, body: { error: "Generation 8 launches are not configured on this chain.", code: "GEN8_NOT_CONFIGURED" } };
+  if (!cfg) return { status: 400, body: gen8NotConfiguredBody(chainId, env) };
   const bark = isGen8BarkConfig(cfg);
   const signer = deps.signer;
   if (!signer) {
@@ -608,7 +624,10 @@ export async function gen8CreateAuthorization(body, deps) {
  */
 export async function gen8RoutingStatus({ chainId, signer, getProvider, env = process.env }) {
   const cfg = gen8ConfigFor(chainId, env);
-  if (!cfg) return { ok: false, status: "gen8_not_configured", chainId };
+  if (!cfg) {
+    const gap = gen8NotConfiguredBody(chainId, env);
+    return { ok: false, status: "gen8_not_configured", chainId, missing: gap.missing, error: gap.error };
+  }
   if (isGen8BarkConfig(cfg)) return barkRoutingStatus({ cfg, chainId, signer, getProvider, env });
   const warnings = [];
   let onChain = null;

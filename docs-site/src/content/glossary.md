@@ -25,7 +25,7 @@ The market a launched coin trades on before graduation. Buys push the price up, 
 
 ## Boost
 
-A paid push for one side of a battle. $1 adds 2 points. Boosts go into the battle's prize pool.
+A paid push for one side of a battle. $1 adds 1 point. A wallet can Boost twice per battle, and Boosts close in the last 20% of the battle clock. 90% of Boost money goes into the battle's prize pool, 10% to MemeWarzone.
 
 ## Campaign
 

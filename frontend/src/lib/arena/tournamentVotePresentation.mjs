@@ -1,5 +1,5 @@
 export const VOTE_TOURNAMENT_FREE_VOTE_POINTS = 1;
-export const VOTE_TOURNAMENT_BOOST_POINTS_PER_UNIT = 2;
+export const VOTE_TOURNAMENT_BOOST_POINTS_PER_UNIT = 1;
 export const VOTE_TOURNAMENT_REGULATION_HOURS = 24;
 
 function finite(value) {
@@ -29,7 +29,7 @@ export function presentTournamentVoteSummary(payload = {}) {
     walletVote,
     walletEligible: Boolean(payload?.votingLive === true && !walletVote),
     regulationLabel: `${VOTE_TOURNAMENT_REGULATION_HOURS}H REGULATION`,
-    scoringLabel: "FREE VOTE = 1 PT · BOOST = 2 PTS",
+    scoringLabel: "FREE VOTE = 1 PT · BOOST = 1 PT",
     scoreScopeLabel: "FREE VOTE SCORE",
   };
 }

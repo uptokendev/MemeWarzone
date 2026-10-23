@@ -38,6 +38,9 @@ function whole(raw, decimals = 6) {
   return Math.floor(Number(BigInt(String(raw || 0))) / 10 ** decimals).toLocaleString("en-US");
 }
 
+/** Who counts as a holder for the weekly payout (dbcCreatorChoice.ts, weeks from 2026-10-26). */
+export const HOLDER_RULE = "A wallet counts if it holds at least 0.01% of the supply at all 4 random checks in the week.";
+
 /**
  * One plain line about where this coin's creator fees go, with what has been paid so far when the
  * totals are given (step 5b). Trading fees on the curve and LP fees after graduation both count.
@@ -53,11 +56,11 @@ export function feeChoiceLine({ feeChoice, creatorSharePct, totals, quote } = {}
     const creator = Number(creatorSharePct);
     const pct = Number.isFinite(creator) ? Math.trunc(creator) : 0;
     const base = `Split: ${pct}% to the creator, ${100 - pct}% to holders`;
-    return totals ? `${base}. Paid so far: ${inQuote(t.creatorLamports)} to the creator, ${sol(t.holdersLamports)} SOL to holders.` : base;
+    return totals ? `${base}. Paid so far: ${inQuote(t.creatorLamports)} to the creator, ${sol(t.holdersLamports)} SOL to holders. ${HOLDER_RULE}` : base;
   }
   if (choice === "holders") {
     return totals
-      ? `Holders: ${sol(t.holdersLamports)} SOL paid to holders so far, next payout Monday.`
+      ? `Holders: ${sol(t.holdersLamports)} SOL paid to holders so far, next payout Monday. ${HOLDER_RULE}`
       : "Holders: creator fees go to holders each week";
   }
   if (choice === "buyback") {

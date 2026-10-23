@@ -10,6 +10,10 @@ export function h1(text) {
   return `<h1>${esc(text)}</h1>`;
 }
 
+export function h2(text) {
+  return `<h2>${esc(text)}</h2>`;
+}
+
 export function p(text) {
   return `<p>${esc(text)}</p>`;
 }
@@ -113,6 +117,9 @@ function setMeta(html, attr, key, content, { addIfMissing = true } = {}) {
 
 const has = (v) => typeof v === "string" && v !== "";
 
+/** Screen-reader-only box for the server-rendered summary (same rules as Tailwind's sr-only). */
+export const SSR_SUMMARY_STYLE = "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0";
+
 export function injectSeo(shell, opts = {}) {
   const { title, description, canonical, robots, og = {}, jsonLd = [], summaryHtml } = opts || {};
   const src = String(shell ?? "");
@@ -172,7 +179,9 @@ export function injectSeo(shell, opts = {}) {
   }
 
   if (typeof summaryHtml === "string" && summaryHtml) {
-    html = replaceFirstUnmasked(html, ROOT_RE, () => `<div id="root">${summaryHtml}</div>`) ?? html;
+    // Visually hidden (screen-reader-only style): crawlers and AI tools read it in the HTML, people do not see it
+    // flash before the app loads. React replaces everything inside #root on mount.
+    html = replaceFirstUnmasked(html, ROOT_RE, () => `<div id="root"><div data-ssr-summary="" style="${SSR_SUMMARY_STYLE}">${summaryHtml}</div></div>`) ?? html;
   }
   return html;
 }

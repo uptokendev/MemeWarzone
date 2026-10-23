@@ -31,8 +31,8 @@ export function creatorRewardsVaultAddress(chainId) {
 function rpcUrl(chainId) {
   const perChain = String(process.env[`ROBINHOOD_RPC_HTTP_${chainId}`] || process.env[`BSC_RPC_HTTP_${chainId}`] || process.env[`VITE_PUBLIC_RPC_${chainId}`] || "").trim();
   if (perChain) return perChain.split(",")[0].trim();
-  if (chainId === 4663) return String(process.env.ROBINHOOD_MAINNET_RPC_URL || "https://rpc.mainnet.chain.robinhood.com").trim();
-  if (chainId === 56) return String(process.env.BSC_RPC_HTTP || "https://bsc-dataseed.binance.org").trim();
+  if (chainId === 4663) return String(process.env.ROBINHOOD_MAINNET_RPC_URL || "").trim();
+  if (chainId === 56) return String(process.env.BSC_RPC_HTTP || "").trim();
   return "";
 }
 

@@ -159,7 +159,7 @@ test("Final Salvo API is free-vote-only, shot-bound and exposes no Boost path", 
   assert.doesNotMatch(salvo, /arena_battle_boost_quote|BattleBoosted|boostUnits:\s*[1-9]/);
 });
 
-test("Vote Tournament Boost binds V2 event identity, 2 points per unit and 90/10 economics", () => {
+test("Vote Tournament Boost binds V2 event identity, 1 point per unit and 90/10 economics", () => {
   const boosts = readApi("arenaTournamentBoosts.js");
   const verifier = readApi("lib/arenaTournamentBoostVerification.mjs");
   const poolId = tournamentBoostPoolId("t-1");
@@ -168,7 +168,10 @@ test("Vote Tournament Boost binds V2 event identity, 2 points per unit and 90/10
   assert.match(matchId, /^0x[0-9a-f]{64}$/i);
   assert.match(verifier, /event TournamentBoosted/);
   assert.match(verifier, /event\.unitPriceNativeRaw \* event\.boostUnits !== event\.grossNativeRaw/);
-  assert.match(boosts, /points = split\.boostUnits \* 2n/);
+  // 1 point per Boost since 2026-10-15 (was 2n); the constant lives in arenaBattleMode.js.
+  assert.match(boosts, /points = split\.boostUnits \* BigInt\(VOTE_BATTLE_BOOST_POINTS_PER_UNIT\)/);
+  assert.match(boosts, /walletBoostCapExceeded/);
+  assert.match(boosts, /clampedQuoteDeadlineSeconds/);
   assert.match(boosts, /prizeBps:\s*9000, protocolBps:\s*1000, leagueBps:\s*0/);
   assert.match(boosts, /competition_generation \|\| ""\) !== "arena_competition_v2"/);
   assert.match(boosts, /TOURNAMENT_BOOST_OUTSIDE_REGULATION/);

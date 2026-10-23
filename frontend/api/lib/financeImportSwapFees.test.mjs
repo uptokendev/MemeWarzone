@@ -452,12 +452,62 @@ test("fingerprint attribution: a fee row whose landed swap matches a recorded pa
   };
   // Point the recorded fingerprint at the first tx's real fingerprint.
   const first = realFingerprint("0xr", "0x01", "0x0");
-  db.query = ((orig) => async (sql, params) => (/from public\.import_swap_fingerprints/.test(sql) ? { rows: [{ fingerprint: first, partner_id: "crypticpump" }] } : orig(sql, params)))(db.query);
+  db.query = ((orig) => async (sql, params) => (/from public\.import_swap_fingerprints/.test(sql) ? { rows: [{ fingerprint: first, partner_id: "crypticpump", wallet: USER_EVM.toUpperCase().replace("0X", "0x") }] } : orig(sql, params)))(db.query);
   await ingestImportSwapFees({ db, chainId: 56, env, rpc });
   const params = stored.at(-1);
   assert.deepEqual(params[14], ["500", "500"], "creator half either way");
   assert.deepEqual(params[16], ["crypticpump", null]);
   assert.deepEqual(params[17], ["250", "0"]);
+});
+
+test("fingerprint collision: two wallets land the same build bytes; only the wallet the build was recorded for credits the partner", async () => {
+  const stored = [];
+  const ATTACKER = "0x00000000000000000000000000000000000000a7";
+  const vault = "0x00000000000000000000000000000000000000aa";
+  const env = { IMPORT_FEE_VAULT_56: vault, IMPORT_FEE_VAULT_START_BLOCK_56: "100" };
+  const { evmFingerprint } = await import("./importSwapFingerprint.js");
+  // Same to:data:value from two senders (the same coin, amount and deadline built for both in one second).
+  const bytes = { to: "0xr", input: "0x0123", value: "0x10" };
+  const txs = { "0xb1": { from: ATTACKER, ...bytes }, "0xb2": { from: USER_EVM, ...bytes } };
+  const fp = evmFingerprint(bytes.to, bytes.input, bytes.value);
+  // The partner's script recorded the build for its own wallet first (on conflict do nothing keeps it).
+  let recordedFor = ATTACKER;
+  const db = {
+    query: async (sql, params) => {
+      if (/from public\.import_swap_fingerprints/.test(sql)) return { rows: [{ fingerprint: fp, partner_id: "scripted", wallet: recordedFor }] };
+      if (/select id, creator_bps, partner_bps from public\.import_fee_partners/.test(sql)) return { rows: [{ id: "scripted", creator_bps: 5000, partner_bps: 2500 }] };
+      if (/select id, chain_id, fee_account/.test(sql)) return { rows: [] };
+      if (/^select cursor/.test(sql.trim())) return { rows: [] };
+      if (/^with ins/i.test(sql.trim())) { stored.push(params); return { rows: [{ inserted: params[0].length, accrued: params[0].length }] }; }
+      return { rows: [], rowCount: 1 };
+    },
+  };
+  const rpc = async (method, params) => {
+    if (method === "eth_blockNumber") return "0x80";
+    if (method === "eth_getLogs") return Object.keys(txs).map((hash, i) => ({ removed: false, data: `0x${(1000n).toString(16).padStart(64, "0")}`, blockNumber: "0x64", logIndex: `0x${i}`, transactionHash: hash, topics: [VAULT_DEPOSIT_TOPIC, `0x${"0".repeat(24)}${KYBER_ROUTER.toLowerCase().slice(2)}`] }));
+    if (method === "eth_getTransactionByHash") return txs[params[0]];
+    if (method === "eth_getTransactionReceipt") return { logs: [] };
+    if (method === "eth_getBlockByNumber") return { timestamp: "0x6700" };
+    return null;
+  };
+  await ingestImportSwapFees({ db, chainId: 56, env, rpc });
+  assert.deepEqual(stored.at(-1)[16], ["scripted", null], "the attacker's own swap matches; the victim's identical bytes do not");
+  // A stored NULL wallet never matches.
+  recordedFor = null;
+  await ingestImportSwapFees({ db, chainId: 56, env, rpc });
+  assert.deepEqual(stored.at(-1)[16], [null, null]);
+});
+
+test("partnersForSwaps: EVM case-insensitive, Solana exact, NULL never; partnersForFingerprints unchanged", async () => {
+  const { partnersForSwaps, partnersForFingerprints, partnerSwapKey } = await import("./importSwapFingerprint.js");
+  const rows = [{ fingerprint: "evm:1", partner_id: "p", wallet: "0xAbC0000000000000000000000000000000000001" }, { fingerprint: "evm:2", partner_id: "p", wallet: null }];
+  const db = { query: async () => ({ rows }) };
+  const evm = await partnersForSwaps(db, 4663, [{ fingerprint: "evm:1", wallet: "0xabc0000000000000000000000000000000000001" }, { fingerprint: "evm:2", wallet: "0xabc0000000000000000000000000000000000001" }]);
+  assert.deepEqual([...evm], [[partnerSwapKey(4663, "evm:1", "0xabc0000000000000000000000000000000000001"), "p"]]);
+  const sol = await partnersForSwaps({ query: async () => ({ rows: [{ fingerprint: "sol:1", partner_id: "p", wallet: "WalletA" }] }) }, 101, [{ fingerprint: "sol:1", wallet: "walleta" }]);
+  assert.equal(sol.size, 0, "Solana addresses are case-sensitive");
+  assert.equal((await partnersForSwaps(db, 4663, [{ fingerprint: "evm:1", wallet: null }])).size, 0);
+  assert.deepEqual([...(await partnersForFingerprints(db, 4663, ["evm:1", "evm:2"]))], [["evm:1", "p"], ["evm:2", "p"]], "the old function keeps its behaviour");
 });
 
 test("a switched-off partner earns nothing on swaps that land afterwards: its part stays ours, the creator half is unchanged", async () => {

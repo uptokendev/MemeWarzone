@@ -80,7 +80,9 @@ test("fee rate: launch window 90% -> 2% over 60 s, launcher 2%, graduated 1%", (
 test("targets: $30K / $50K everywhere, $150 on testnets and local only", () => {
   assert.equal(isGen8TargetAllowed(56, GEN8_TARGET_FAST_USD), true);
   assert.equal(isGen8TargetAllowed(56, GEN8_TARGET_TEST_USD), false);
+  assert.equal(isGen8TargetAllowed(4663, GEN8_TARGET_TEST_USD), false);
   assert.equal(isGen8TargetAllowed(97, GEN8_TARGET_TEST_USD), true);
+  assert.equal(isGen8TargetAllowed(46630, GEN8_TARGET_TEST_USD), true);
   assert.equal(isGen8TargetAllowed(4663, 15_000n * 10n ** 18n), false);
   assert.equal(isGen8TargetAllowed(56, "nope"), false);
 });

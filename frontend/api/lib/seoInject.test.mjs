@@ -94,7 +94,7 @@ test("shell JSON-LD preserved, new blocks appended after it", () => {
 
 test("summary placed inside root", () => {
   const out = injectSeo(shell, { ...base, summaryHtml: h1("Hello") });
-  assert.match(out, /<div id="root"><h1>Hello<\/h1><\/div>/);
+  assert.match(out, /<div id="root"><div data-ssr-summary="" style="position:absolute;width:1px;height:1px;[^"]*clip:rect\(0,0,0,0\)[^"]*"><h1>Hello<\/h1><\/div><\/div>/);
 });
 
 test("shell unchanged when root anchor missing", () => {
@@ -180,7 +180,7 @@ test("root div inside a comment is skipped; the real root gets the summary", () 
   const c = '<!-- <div id="root"></div> -->';
   const out = injectSeo(mini("<title>T</title>", `${c}<div id="root"></div>`), { summaryHtml: "<p>S</p>" });
   assert.ok(out.includes(c));
-  assert.ok(out.includes('<div id="root"><p>S</p></div>'));
+  assert.match(out, /<div id="root"><div data-ssr-summary="" style="[^"]+"><p>S<\/p><\/div><\/div>/);
   const only = mini("<title>T</title>", c);
   assert.equal(injectSeo(only, { summaryHtml: "<p>S</p>" }), only);
 });

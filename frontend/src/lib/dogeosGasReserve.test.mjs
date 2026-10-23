@@ -248,8 +248,9 @@ test("wiring: the gen-8 trade panel and the launch surfaces keep back the live D
   const panel = read("components/evm/Gen8TradePanel.tsx");
   assert.match(panel, /const dogeosGasReserve = useDogeosGasReserve\(chainId, "buy"\);/);
   assert.match(panel, /const gasReserve = dogeos \? \(dogeosGasReserve \?\? evmBuyGasReserveWeiForChain\(chainId\)\) : evmBuyGasReserveWei\(robinhood\);/);
-  // before signing a DogeOS buy: a fresh read (cached 30 s) on the panel's read provider
-  assert.match(panel, /if \(dogeos && side === "buy" && balances\) \{\s*const fresh = \(await dogeosLiveGasReserveWei\(\{ chainId, kind: "buy", provider: readProvider \}\)\) \?\? gasReserve;\s*if \(amountRaw \+ fresh > balances\.nativeRaw\) \{\s*toast\.error\(dogeosBuyReserveMessage\(fresh, native\)\);\s*return;/);
+  // before signing a DogeOS buy: a fresh read (cached 30 s) on the panel's read provider, against the native the buy
+  // spends (tradeAmountIn: the typed DOGE, or the DOGE solved for a typed coin amount)
+  assert.match(panel, /if \(dogeos && side === "buy" && balances\) \{\s*const fresh = \(await dogeosLiveGasReserveWei\(\{ chainId, kind: "buy", provider: readProvider \}\)\) \?\? gasReserve;\s*if \(\(tradeAmountIn \?\? 0n\) \+ fresh > balances\.nativeRaw\) \{\s*toast\.error\(dogeosBuyReserveMessage\(fresh, native\)\);\s*return;/);
   assert.equal((panel.match(/dogeos \? dogeosBuyReserveMessage\(gasReserve, native\)/g) || []).length, 2);
   // the BNB / Robinhood words stay
   assert.match(panel, /`Not enough \$\{native\}\. Keep about \$\{ethers\.formatEther\(gasReserve\)\} \$\{native\} for gas\.`/);

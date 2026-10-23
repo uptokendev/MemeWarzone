@@ -36,7 +36,8 @@ export default async function handler(req, res) {
       return json(res, 400, { error: "Invalid wallet" });
     }
 
-    const rpc = chainScopedEnv("BSC_RPC_HTTP", chainId);
+    const scopedRpc = String(process.env[`BSC_RPC_HTTP_${chainId}`] || "").split(",").map((item) => item.trim()).find(Boolean) || "";
+    const rpc = scopedRpc || (Number(chainId) === 56 ? String(process.env.BSC_RPC_HTTP || "").split(",").map((item) => item.trim()).find(Boolean) || "" : "");
     if (!rpc) return json(res, 500, { error: "Server misconfigured: missing RPC url" });
 
     const network = ethers.Network.from(Number(chainId));

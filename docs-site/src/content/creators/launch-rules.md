@@ -24,7 +24,7 @@ Every coin has 1 billion tokens:
 | --- | ---: | --- |
 | 85% | 850M | the bonding curve |
 | 13% | 130M | the DEX pool at graduation |
-| 2% | 20M | the creator reserve, released at graduation |
+| 2% | 20M | the creator reserve: on Solana released at graduation, on BNB Chain and Robinhood Chain at least 1 hour after graduation while the price is at or above the graduation price |
 
 ## Launch fee
 
@@ -55,7 +55,7 @@ In the **Bond** step you choose what happens to your share of the trade fee: kee
 
 ## Graduation
 
-At graduation the coin's liquidity moves into its DEX pool and is locked for good: Topaz on BNB Chain, Meteora on Solana, Uniswap on Robinhood Chain. A 2% graduation fee goes to MemeWarzone's fee routing. The creator gets the 2% reserve, not a share of the graduation fee. Read **[Graduation](/platform/graduation)**.
+At graduation the coin's liquidity moves into its DEX pool and is locked for good: Uniswap V4 on BNB Chain and Robinhood Chain, Meteora on Solana. A 2% graduation fee goes to MemeWarzone's fee routing. The creator gets the 2% reserve, not a share of the graduation fee. Read **[Graduation](/platform/graduation)**.
 
 ## No wait between launches
 

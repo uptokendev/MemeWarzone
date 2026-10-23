@@ -87,8 +87,8 @@ export function evmImportRpcUrl(chainId, env = process.env) {
   const id = Number(chainId);
   const pick = (...keys) => keys.map((k) => String(env[k] || "").trim()).find(Boolean) || "";
   // Server env only: the app's VITE_ RPCs are browser settings.
-  if (id === 4663) return pick("ROBINHOOD_MAINNET_RPC_URL", "ROBINHOOD_RPC_URL") || "https://rpc.mainnet.chain.robinhood.com";
-  if (id === 56) return pick("BSC_RPC_URL", "BSC_RPC_HTTP") || "https://bsc-dataseed.binance.org";
+  if (id === 4663) return pick("ROBINHOOD_MAINNET_RPC_URL", "ROBINHOOD_RPC_URL", "ROBINHOOD_RPC_HTTP_4663");
+  if (id === 56) return pick("BSC_RPC_URL", "BSC_RPC_HTTP", "BSC_RPC_HTTP_56");
   return "";
 }
 

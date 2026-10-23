@@ -37,11 +37,16 @@ test("rate limit: fixed one-minute window per IP", () => {
   assert.equal(allow("a"), true);
 });
 
-test("the widget only swaps Solana coins", async () => {
+test("the widget swaps on Solana, BNB Chain and Robinhood Chain only", async () => {
   const res = fakeRes();
-  await widgetQuote({ method: "POST", body: { chainId: 56, token: "0x0", side: "buy", amountRaw: "1" }, headers: {} }, res);
+  await widgetQuote({ method: "POST", body: { chainId: 1, token: "0x0", side: "buy", amountRaw: "1" }, headers: {} }, res);
   assert.equal(res.statusCode, 400);
   assert.match(String(res.body), /Solana/);
+  // 56 reaches the shared import handler (here: its own input check)
+  const bnb = fakeRes();
+  await widgetQuote({ method: "POST", body: { chainId: 56, token: "0x0", side: "buy", amountRaw: "1" }, headers: {} }, bnb);
+  assert.equal(bnb.statusCode, 400);
+  assert.match(String(bnb.body), /Invalid BNB token/);
 });
 
 test("coin kind: our launchpad / DBC coins are bonding while on the curve; graduated, migrated and non-SOL DBC are not tradable here", async () => {
@@ -74,4 +79,18 @@ test("graduated coins: the widget trades them as imports only with the switch on
   assert.equal((await bondingCoin("m", db)).reason, "graduated", "a migrated DBC coin is graduated whatever its quote");
   const src = (await import("node:fs")).readFileSync(new URL("./importSwapWidget.js", import.meta.url), "utf8");
   assert.match(src, /bonding\?\.reason === "graduated" && graduatedImportRouteOn\(\)\) \{[\s\S]{0,900}kind: "import",[\s\S]{0,60}tradable: true/);
+});
+
+test("rate limit IP: the last x-forwarded-for entry (our proxy's), never the client-sent first one", async () => {
+  const { clientIp } = await import("./importSwapWidget.js");
+  assert.equal(clientIp({ headers: { "x-forwarded-for": "1.1.1.1, 2.2.2.2, 203.0.113.9" } }), "203.0.113.9");
+  assert.equal(clientIp({ headers: { "x-forwarded-for": "203.0.113.9" } }), "203.0.113.9");
+  assert.equal(clientIp({ headers: { "x-forwarded-for": "spoofed, " }, ip: "10.0.0.2" }), "10.0.0.2", "an empty last entry falls back to req.ip, never to a client entry");
+  assert.equal(clientIp({ headers: {}, ip: "::ffff:10.0.0.3" }), "10.0.0.3");
+  assert.equal(clientIp({ headers: {}, socket: { remoteAddress: "10.0.0.4" } }), "10.0.0.4");
+  // A client rotating the first entry does not get a fresh window.
+  const { widgetRateLimiter } = await import("./importSwapWidget.js");
+  const allow = widgetRateLimiter({ limit: 2, now: () => 0 });
+  const hits = ["a", "b", "c"].map((fake) => allow(clientIp({ headers: { "x-forwarded-for": `${fake}, 198.51.100.1` } })));
+  assert.deepEqual(hits, [true, true, false]);
 });

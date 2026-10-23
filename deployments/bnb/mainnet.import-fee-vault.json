@@ -1,0 +1,32 @@
+{
+  "kind": "import-fee-vault",
+  "changeOrder": "CO-IMP rev 2 CI1",
+  "network": "bscMainnet",
+  "chainId": 56,
+  "profile": "mainnet",
+  "contract": "RecruiterRewardsVault (unchanged bytecode, used as ImportFeeVault)",
+  "deployer": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "admin": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+  "protocolRevenueVault": "0xc2d4E6f846446f3921a34A34e007295dbc19Bc4c",
+  "startedAt": "2026-10-22T23:01:16.014Z",
+  "balanceBefore": "3966073981814104",
+  "operator": "0xCB83b1297E4198e37bBf050eE9Cb6E87E8252aD1",
+  "caps": {
+    "perTx": "2000000000000000000",
+    "daily": "10000000000000000000",
+    "perTxNative": "2.0",
+    "dailyNative": "10.0"
+  },
+  "vault": "0xF8A14d0e91A02DEc487615Ce13286b11dDad7efF",
+  "deployTx": "0xe4ca0ed7ad0891ddb44c3df67b091040404132f1bd8beebd2cbb848c00375110",
+  "startBlock": 129214326,
+  "runtimeCodeEqualsLiveRecruiterVault": "0x40ac5cD71bdB42cCF542b7f96C2083cDABa41e78",
+  "batchFile": "/home/patrick/mwz-wt/bnb-import-vault-deploy/deployments/bnb/mainnet.IF1-import-fee-vault.safe-batch.json",
+  "status": "deployed-paused (Safe batch IF1 pending)",
+  "env": {
+    "IMPORT_FEE_VAULT_56": "0xF8A14d0e91A02DEc487615Ce13286b11dDad7efF",
+    "IMPORT_FEE_PAYOUT_OPERATOR_56": "0xCB83b1297E4198e37bBf050eE9Cb6E87E8252aD1"
+  },
+  "balanceAfter": "3937241131814104",
+  "finishedAt": "2026-10-22T23:01:17.424Z"
+}

@@ -27,10 +27,12 @@ test("Tournament Boost uses the dedicated signed quote and treasury call only", 
   assert.match(client, /receipt\.status/);
 });
 
-test("Tournament Boost UI displays founder-locked 2-point and 90\/10 regulation rules", () => {
+test("Tournament Boost UI displays founder-locked 1-point, 2-per-wallet and 90\/10 regulation rules", () => {
   const controls = read("../../components/arena/TournamentBoostControls.tsx");
 
-  assert.match(controls, /TOURNAMENT BOOST · \$1 = 2 PTS/);
+  assert.match(controls, /TOURNAMENT BOOST · \$1 = 1 PT/);
+  assert.match(controls, /boostQuantityOptions/);
+  assert.match(controls, /disabled=\{Boolean\(busySide\) \|\| boostLocked\}/);
   assert.match(controls, /90% PRIZE · 10% PROTOCOL/);
   assert.match(controls, /authoritative Free Vote points \+ backend-confirmed Boost points/);
   assert.match(controls, /Winner and bracket advancement remain server-authoritative/);

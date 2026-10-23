@@ -686,11 +686,14 @@ test("create readiness on 56/97/4663/46630 still requires the creator registry a
   }
 });
 
-test("Create's direct-deploy gate follows the bnbContracts readiness of the configured EVM chain", () => {
+test("Create's direct-deploy gate follows the gen-8 launch readiness (else bnbContracts) of the configured EVM chain", () => {
   const create = read("pages/Create.tsx");
   assert.match(create, /const evmContractReadiness = useMemo\(\s*\(\) => getBnbContractReadiness\(configuredEvmChainId\),/);
   assert.match(create, /const evmAddresses = useMemo\(\s*\(\) => getBnbContractAddresses\(configuredEvmChainId\),/);
-  assert.match(create, /const evmContractsConfigured = evmContractReadiness\.ready && Boolean\(evmAddresses\.launchFactory\);/);
+  // staging-live-gen8: with a gen-8 launcher env the gate is gen8LaunchReadiness (its Barkswap branch on 6281971:
+  // launcher, plugin, lens; shared/gen8LaunchReadiness.test.mjs); the bnbContracts check only without one.
+  assert.match(create, /evmLaunchConfigured\(\{\s*chainId: configuredEvmChainId,\s*env: import\.meta\.env,\s*legacyReady: evmContractReadiness\.ready,\s*legacyFactory: evmAddresses\.launchFactory \|\| "",/);
+  assert.match(create, /const evmContractsConfigured = isSolanaCreator \? false : evmLaunchGate\.configured;/);
   assert.match(create, /!isSolanaCreator && evmDirectDeployEnabled && evmContractsConfigured && walletOkForEvmDeploy;/);
   // the gen-8 readiness lives in the lib and is keyed on isDogeosChainId, never on the Robinhood sets
   const lib = read("lib/bnbContracts.ts");

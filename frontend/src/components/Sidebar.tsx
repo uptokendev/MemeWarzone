@@ -4,7 +4,7 @@
  * Same items as the desktop menu (components/shell/AppSideNav), from lib/shellNav.mjs.
  */
 
-import { BookOpen, Plus, X } from "lucide-react";
+import { BookOpen, HelpCircle, Info, Plus, X } from "lucide-react";
 import { Link } from "react-router-dom";
 import { socialLinks } from "@/constants/navigation";
 import { cn } from "@/lib/utils";
@@ -91,7 +91,17 @@ export const Sidebar = ({ mobileMenuOpen, setMobileMenuOpen }: SidebarProps) => 
             Launch a coin
           </Link>
 
-          <a href="https://docs.memewar.zone" target="_blank" rel="noopener noreferrer" className={cn(rowClass(false), "mt-2")}>
+          <Link to="/about" onClick={close} className={cn(rowClass(false), "mt-2")}>
+            <Info className="h-5 w-5 shrink-0" aria-hidden="true" />
+            About
+          </Link>
+
+          <Link to="/faq" onClick={close} className={rowClass(false)}>
+            <HelpCircle className="h-5 w-5 shrink-0" aria-hidden="true" />
+            Help Center
+          </Link>
+
+          <a href="https://docs.memewar.zone" target="_blank" rel="noopener noreferrer" className={rowClass(false)}>
             <BookOpen className="h-5 w-5 shrink-0" aria-hidden="true" />
             Docs
           </a>

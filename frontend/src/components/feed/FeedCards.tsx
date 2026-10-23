@@ -4,6 +4,8 @@ import { useModeration } from "@/hooks/useModeration";
 import { CoinPriceLine, CoinSparkline, useCoinMiniMarket } from "@/components/feed/CoinSparkline";
 import { PostImage, PostImageGrid } from "@/components/feed/PostImage";
 import { MentionField } from "@/components/feed/MentionField";
+import { LinkPreviewCard } from "@/components/feed/LinkPreviewCard";
+import { linkLabel, openPostLink, splitLinks } from "../../../shared/postLinks.mjs";
 import { OperativeMark } from "@/components/ui-v2/OperativeMark";
 import { Link, useNavigate } from "react-router-dom";
 import { BarChart2, GraduationCap, ImagePlus, Link2, MessageCircle, PenLine, Repeat2, Rocket, Rocket as LaunchIcon, Share2, Swords, TrendingUp, Trophy, X } from "lucide-react";
@@ -132,8 +134,7 @@ function compactCount(n?: number | null) {
 const MENTION_RE = /(^|[^A-Za-z0-9_@])@([A-Za-z0-9_]{3,20})(?![A-Za-z0-9_])/g;
 
 /** @username in a post opens that profile (founder, 2026-10-02). The body sits inside the post link, so this is a button, not a nested link. */
-export function MentionText({ text }: { text: string }) {
-  const navigate = useNavigate();
+function mentionParts(text: string, keyBase: string, navigate: (path: string) => void): React.ReactNode[] {
   const parts: React.ReactNode[] = [];
   let last = 0;
   for (const m of text.matchAll(MENTION_RE)) {
@@ -142,7 +143,7 @@ export function MentionText({ text }: { text: string }) {
     const handle = m[2];
     parts.push(
       <span
-        key={`${start}-${handle}`}
+        key={`${keyBase}-${start}-${handle}`}
         role="link"
         tabIndex={0}
         data-mention={handle}
@@ -165,6 +166,44 @@ export function MentionText({ text }: { text: string }) {
     last = start + handle.length + 1;
   }
   if (last < text.length) parts.push(text.slice(last));
+  return parts;
+}
+
+/**
+ * Post text with @mentions and links. Links open in the app for MemeWarzone pages and in a new tab otherwise
+ * (founder, 2026-10-23: links in the feed did not work). Like mentions, they are role=link spans inside the post link.
+ */
+export function MentionText({ text }: { text: string }) {
+  const navigate = useNavigate();
+  const parts: React.ReactNode[] = [];
+  splitLinks(text).forEach((part: { kind: string; text: string; href?: string }, i: number) => {
+    if (part.kind !== "link" || !part.href) {
+      parts.push(...mentionParts(part.text, `t${i}`, navigate));
+      return;
+    }
+    const href = part.href;
+    const open = (event: React.SyntheticEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openPostLink(href, navigate);
+    };
+    parts.push(
+      <span
+        key={`l${i}`}
+        role="link"
+        tabIndex={0}
+        title={href}
+        data-post-link={href}
+        onClick={open}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") open(event);
+        }}
+        className="mw-focus cursor-pointer break-all text-mw-accent-soft underline-offset-2 hover:text-[#FFD0A8] hover:underline"
+      >
+        {linkLabel(part.text)}
+      </span>,
+    );
+  });
   return <>{parts}</>;
 }
 
@@ -204,6 +243,7 @@ export function FeedBody({ body, big = false }: { body?: string | null; big?: bo
           {open ? "Show less" : "Read more"}
         </button>
       ) : null}
+      <LinkPreviewCard text={text} />
     </>
   );
 }

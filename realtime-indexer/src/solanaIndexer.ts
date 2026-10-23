@@ -3,6 +3,7 @@ import { notPublicHiddenSql } from "./publicHidden.js";
 import { PublicKey } from "@solana/web3.js";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
+import { solanaConfiguredRpcUrls } from "./solanaRpcConfig.js";
 import {
   decodeEvents,
   type AnchorEvent,
@@ -263,8 +264,7 @@ export function deriveFeeEscrowAddress(campaign: string, launchpadProgramId = pr
 }
 
 function solanaRpcUrls(): string[] {
-  const configured = parseRpcList(String(ENV.SOLANA_RPC_HTTP || process.env.SOLANA_RPC_URL || "").trim());
-  return configured;
+  return solanaConfiguredRpcUrls();
 }
 
 function toSol(raw: bigint): number {
@@ -2394,6 +2394,10 @@ let started = false;
 export function startSolanaIndexerLoop() {
   if (started) return;
   started = true;
+  if (!solanaRpcUrls().length) {
+    console.log("[solana-indexer] skipped: no Solana RPC configured");
+    return;
+  }
   const defaultTipMs = Math.max(2_000, Math.min(5_000, ENV.SOLANA_INDEXER_INTERVAL_MS || 10_000));
   // SOLANA_TIP_INTERVAL_MS overrides the 2-5 s default; the backfill cadence stays as it was.
   const tipMs = ENV.SOLANA_TIP_INTERVAL_MS > 0

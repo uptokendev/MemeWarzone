@@ -66,7 +66,8 @@ import {
 import { DBC_LAUNCH_FEE_NOTE } from "../../shared/dbcAntiSniper.mjs";
 import { readEvmLaunchGeneration, type EvmLaunchGeneration } from "@/lib/evmGen6Client";
 import { EvmGen8LaunchOptions, assertEvmGen8LaunchBalance, freshEvmGen8FirstBuyCheck } from "@/components/create/EvmGen8LaunchOptions";
-import { GEN8_DEFAULT_GRADUATION_TARGET_WEI, gen8GraduationTiers, gen8LauncherFor, gen8PoolVenueLabel } from "@/lib/evmGen8Client.mjs";
+import { GEN8_DEFAULT_GRADUATION_TARGET_WEI, gen8GraduationTiers, gen8PoolVenueLabel } from "@/lib/evmGen8Client.mjs";
+import { evmLaunchConfigured, gen8LaunchReadiness } from "../../shared/gen8LaunchReadiness.mjs";
 import { createGen8Campaign } from "@/lib/evmGen8Create";
 import { getReadProvider } from "@/lib/readProvider";
 import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
@@ -335,7 +336,11 @@ const Create = () => {
     }
   };
   const evmGen7 = Boolean(evmGen6FactoryAddress) && evmLaunchGeneration === 7 && !isSolanaCreator;
-  const evmGen8Launcher: string | null = !isSolanaCreator && isEvmChainId(chainId) ? gen8LauncherFor(Number(chainId)) : null;
+  const gen8Launch = useMemo(
+    () => (!isSolanaCreator && isEvmChainId(chainId) ? gen8LaunchReadiness(Number(chainId), import.meta.env, { vite: true, scope: "launch" }) : null),
+    [chainId, isSolanaCreator],
+  );
+  const evmGen8Launcher: string | null = gen8Launch?.launcher || null;
   const evmGen8 = Boolean(evmGen8Launcher);
   const graduationOptions: GraduationTier[] = useMemo(
     () =>
@@ -369,11 +374,13 @@ const Create = () => {
       hasAccount: Boolean(wallet.account),
       walletChainId: wallet.chainId,
       contractReadiness: evmContractReadiness,
+      gen8: gen8Launch?.active ? gen8Launch : undefined,
     });
   }, [
     evmAddresses.launchFactory,
     evmContractReadiness,
     configuredEvmChainId,
+    gen8Launch,
     isSolanaCreator,
     launchpad,
     wallet.account,
@@ -389,7 +396,17 @@ const Create = () => {
   const evmDirectDeployEnabled = robinhoodSelected
     ? readFlag(import.meta.env.VITE_ENABLE_DIRECT_ROBINHOOD_DEPLOY, false)
     : readFlag(import.meta.env.VITE_ENABLE_DIRECT_BNB_DEPLOY, false);
-  const evmContractsConfigured = evmContractReadiness.ready && Boolean(evmAddresses.launchFactory);
+  const evmLaunchGate = useMemo(
+    () => evmLaunchConfigured({
+      chainId: configuredEvmChainId,
+      env: import.meta.env,
+      legacyReady: evmContractReadiness.ready,
+      legacyFactory: evmAddresses.launchFactory || "",
+      chainLabel: getChainLabel(configuredEvmChainId),
+    }),
+    [configuredEvmChainId, evmAddresses.launchFactory, evmContractReadiness.ready],
+  );
+  const evmContractsConfigured = isSolanaCreator ? false : evmLaunchGate.configured;
   const walletOkForEvmDeploy = !wallet.account || Number(wallet.chainId) === Number(configuredEvmChainId);
   const solanaDirectDeployReady = Boolean(isSolanaCreator && solanaWallet.solanaAccount);
   const evmDirectDeployReady =
@@ -1088,7 +1105,7 @@ const Create = () => {
       return;
     }
     if (!directDeployRouteReady) {
-      toast.error(`Direct ${evmChainLabel} deploy needs the final launchpad contract env values first.`);
+      toast.error(evmLaunchGate.gen8?.active ? evmLaunchGate.message : `Direct ${evmChainLabel} deploy needs the final launchpad contract env values first.`);
       return;
     }
     if (!wallet.account || !wallet.signer) {
@@ -1430,7 +1447,9 @@ const Create = () => {
                             : !evmDirectDeployEnabled
                               ? `Locked in this environment — pick Draft, or enable the Direct ${evmChainLabel} deployment flag.`
                               : !evmContractsConfigured
-                                ? `${evmChainLabel} contracts are incomplete in env — pick Draft or finish chain wiring.`
+                                ? (evmLaunchGate.gen8?.active
+                                  ? evmLaunchGate.message
+                                  : `${evmChainLabel} contracts are incomplete in env — pick Draft or finish chain wiring.`)
                                 : !walletOkForEvmDeploy
                                   ? `Switch wallet to chain ${configuredEvmChainId} (${evmChainLabel}) for Direct deploy.`
                                   : "Direct deploy is not ready — pick Draft for now."}
@@ -1698,7 +1717,7 @@ const Create = () => {
                             : !evmDirectDeployEnabled
                               ? `Direct ${evmChainLabel} deploy is disabled in this build — choose Draft.`
                               : !evmContractsConfigured
-                                ? `${evmChainLabel} launch contracts are incomplete — choose Draft or fix env wiring.`
+                                ? evmLaunchGate.message
                                 : !walletOkForEvmDeploy
                                   ? `Switch wallet to ${evmChainLabel} (chain ${configuredEvmChainId}).`
                                   : "Direct deploy is not ready — go back and choose Draft."}

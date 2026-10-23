@@ -166,20 +166,38 @@ function walletConnectionDetail(params, presentation) {
     : "Connect a BNB-compatible wallet to continue.";
 }
 
+function gen8ContractChecks(gen8, chainId) {
+  return [
+    {
+      id: "coreContracts",
+      label: "Launch availability",
+      state: gen8.ready ? "ready" : "blocked",
+      detail: gen8.ready
+        ? `Generation 8 launch contracts are ready for chain ${chainId}.`
+        : gen8.message,
+    },
+  ];
+}
+
 export function buildEvmLaunchpadSafetyStatus(params) {
   const presentation = getEvmLaunchpadPresentation(params.chainId);
+  const gen8 = params.gen8 && params.gen8.active ? params.gen8 : null;
   const readiness = params.contractReadiness;
-  const contractsReady = readiness.ready;
+  const contractsReady = gen8 ? Boolean(gen8.ready) : readiness.ready;
   const walletChainMatches = !params.hasAccount || params.walletChainId === params.chainId;
-  const protocolReady = Boolean(params.factoryAddress) && contractsReady && walletChainMatches;
+  const protocolReady = gen8
+    ? contractsReady && walletChainMatches
+    : Boolean(params.factoryAddress) && contractsReady && walletChainMatches;
   const wrongWalletNetwork = params.hasAccount && !walletChainMatches;
   const missingTopaz =
-    presentation.isBnb && readiness.missingRequired.some((item) => item.key.startsWith("topaz"));
+    !gen8 && presentation.isBnb && readiness.missingRequired.some((item) => item.key.startsWith("topaz"));
   const graduationKeys = new Set(["graduationOracle", "permanentLpLocker"]);
   const missingRobinhoodGraduation =
+    !gen8 &&
     presentation.isRobinhood &&
     readiness.missingRequired.some((item) => graduationKeys.has(item.key));
-  const graduationBlocked = presentation.isBnb ? missingTopaz : missingRobinhoodGraduation || !contractsReady;
+  const graduationBlocked = gen8 ? !contractsReady : presentation.isBnb ? missingTopaz : missingRobinhoodGraduation || !contractsReady;
+  const blockedDetail = gen8 && !contractsReady ? gen8.message : presentation.unavailableDescription;
 
   return {
     adapterId: "bnb",
@@ -201,7 +219,7 @@ export function buildEvmLaunchpadSafetyStatus(params) {
       ? `Your wallet is connected to chain ${params.walletChainId}. Switch to ${presentation.chainLabel} (chain ${params.chainId}) to continue.`
       : protocolReady
         ? presentation.routeReadyDescription
-        : presentation.unavailableDescription,
+        : blockedDetail,
     checks: [
       {
         id: "network",
@@ -221,7 +239,7 @@ export function buildEvmLaunchpadSafetyStatus(params) {
         state: params.hasSigner && params.hasAccount ? "ready" : "pending",
         detail: walletConnectionDetail(params, presentation),
       },
-      ...contractChecks(readiness, presentation),
+      ...(gen8 ? gen8ContractChecks(gen8, params.chainId) : contractChecks(readiness, presentation)),
     ],
     milestones: [
       {
@@ -236,7 +254,7 @@ export function buildEvmLaunchpadSafetyStatus(params) {
         state: contractsReady ? "ready" : "blocked",
         detail: contractsReady
           ? "Launch services are configured and ready."
-          : presentation.unavailableDescription,
+          : blockedDetail,
       },
       {
         id: "trading",
@@ -244,17 +262,23 @@ export function buildEvmLaunchpadSafetyStatus(params) {
         state: protocolReady ? "ready" : "blocked",
         detail: protocolReady
           ? "Buy and sell transactions are protected by MemeWarzone safety checks."
-          : presentation.isRobinhood
-            ? "Robinhood trading services are not configured for this environment."
-            : "Trading is temporarily unavailable on this network. Please try again later.",
+          : gen8 && !contractsReady
+            ? gen8.message
+            : presentation.isRobinhood
+              ? "Robinhood trading services are not configured for this environment."
+              : "Trading is temporarily unavailable on this network. Please try again later.",
       },
       {
         id: "graduation",
-        label: presentation.graduationLabel,
+        label: gen8 ? "Uniswap graduation" : presentation.graduationLabel,
         state: graduationBlocked ? "blocked" : "ready",
-        detail: graduationBlocked
-          ? presentation.graduationUnavailableDetail
-          : presentation.graduationReadyDetail,
+        detail: gen8
+          ? contractsReady
+            ? "Graduated coins keep trading in the same Uniswap pool."
+            : gen8.message
+          : graduationBlocked
+            ? presentation.graduationUnavailableDetail
+            : presentation.graduationReadyDetail,
       },
     ],
   };

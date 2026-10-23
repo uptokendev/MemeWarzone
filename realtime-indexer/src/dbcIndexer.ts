@@ -18,6 +18,7 @@ import { notPublicHiddenSql } from "./publicHidden.js";
 import { jupiterRawUnitUsd, solUsdPrice } from "./solanaMarketStats.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
 import { referralAccountsFromEnv } from "./dbc/dbcReferralSweep.js";
+import { solanaConfiguredRpcUrls } from "./solanaRpcConfig.js";
 
 const SOLANA_CHAIN_ID = 101;
 const DBC_PROGRAM_ID = "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN";
@@ -26,7 +27,6 @@ const SWAP2_DISC = Buffer.from([65, 75, 63, 76, 235, 91, 91, 136]);
 const SWAP_DISC = Buffer.from([248, 198, 158, 145, 225, 117, 135, 200]);
 const LAMPORTS_PER_SOL = 1_000_000_000;
 const TOKEN_DECIMALS = 6;
-const DEFAULT_SOLANA_RPC = "https://api.mainnet-beta.solana.com";
 const PAYER_ACCOUNT_INDEX = 9;
 
 const idlPath = join(dirname(fileURLToPath(import.meta.url)), "dbc/dynamicBondingCurve.idl.json");
@@ -99,13 +99,8 @@ export type DbcCurveTradeRow = {
   referral_ours?: boolean | null;
 };
 
-function parseRpcList(value: string): string[] {
-  return String(value || "").split(",").map((s) => s.trim()).filter(Boolean);
-}
-
 function solanaRpcUrls(): string[] {
-  const configured = String(ENV.SOLANA_RPC_HTTP || process.env.SOLANA_RPC_URL || "").trim();
-  return parseRpcList(configured || DEFAULT_SOLANA_RPC);
+  return solanaConfiguredRpcUrls();
 }
 
 async function rpc<T>(method: string, params: unknown[]): Promise<T> {
@@ -1077,6 +1072,10 @@ let running = false;
 export function startDbcIndexerLoop() {
   if (started) return;
   started = true;
+  if (!solanaRpcUrls().length) {
+    console.log("[dbcIndexer] skipped: no Solana RPC configured");
+    return;
+  }
   feed().start();
   const intervalMs = Math.max(4_000, Number(ENV.SOLANA_INDEXER_INTERVAL_MS || 8_000));
   console.log("[dbcIndexer] enabled", { chainId: SOLANA_CHAIN_ID, programId: DBC_PROGRAM_ID, intervalMs });

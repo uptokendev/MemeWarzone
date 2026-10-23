@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * E6: vote-battle durations offered in the challenge modal (6/12/24/48 h), a battle card without a
+ * E6: vote-battle durations offered in the challenge modal (1/6/12/24/48 h), a battle card without a
  * description, and the battle share card image with both coin images.
  *   node battles.mjs
  * Sends one vote-battle challenge (a wallet signature; no transaction) from the creator's graduated
@@ -41,8 +41,8 @@ try {
   await d.getByRole("button", { name: /^Next$/ }).first().click();
   await page.waitForTimeout(1500);
   const step3 = await d.innerText();
-  checks.durationsOffered = ["6 hours", "12 hours", "24 hours", "48 hours", "3 days", "7 days"].filter((l) => step3.toLowerCase().includes(l));
-  checks.voteDurationsOk = JSON.stringify(checks.durationsOffered) === JSON.stringify(["6 hours", "12 hours", "24 hours", "48 hours"]);
+  checks.durationsOffered = ["1 hour", "6 hours", "12 hours", "24 hours", "48 hours", "3 days", "7 days"].filter((l) => step3.toLowerCase().includes(l));
+  checks.voteDurationsOk = JSON.stringify(checks.durationsOffered) === JSON.stringify(["1 hour", "6 hours", "12 hours", "24 hours", "48 hours"]);
   await d.getByRole("button", { name: "6 hours" }).click();
   const stake = d.getByPlaceholder(/Amount in/);
   await stake.fill("0.0001");

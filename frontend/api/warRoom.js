@@ -4,6 +4,8 @@ import { withSolanaLaunchpadMarketCap } from "./lib/solanaCampaignProgress.js";
 import { liveVoteWindowsJoin } from "./lib/liveVoteWindows.js";
 import { badMethod, getQuery, isAddress, isSolanaAddress, isSolanaChain, json, normalizeAddress as normalizeChainAddress } from "../server/http.js";
 import { gen8PhaseRuleOn, gen8PlatformGraduatedColumn, graduatedSqlFor } from "./lib/evmGen8PlatformSql.js";
+import { tradingNotOpenSql } from "./lib/publicHiddenSql.js";
+import { gen8Tables } from "./lib/evmGen8Schema.js";
 
 const DEFAULT_GRAD_TARGET_BNB = 50;
 const BNB_CHAIN_ID = 56;
@@ -187,8 +189,9 @@ function detailPayload(row, watchlist) {
 
 async function fetchWarRoomRows({ chainIds, mode, search, detailAddress, limit, gradTargetBnb }) {
   const gen8On = await gen8RuleForChains(chainIds);
+  const gen8OpenAt = Boolean((await gen8Tables(pool)).phase);
   const params = [chainIds, gradTargetBnb];
-  const filters = ["c.chain_id = any($1::int[])", "c.campaign_address is not null"];
+  const filters = ["c.chain_id = any($1::int[])", "c.campaign_address is not null", `not (${tradingNotOpenSql("c", { gen8OpenAt })})`];
   const searchFilter = buildSearchFilter(search, params);
   const detailFilter = buildDetailFilter(detailAddress, params);
   const modeClause = detailAddress ? null : modeFilter(mode, gen8On);
@@ -403,8 +406,9 @@ ${gen8On ? `      gen8_platform_graduated as "gen8PlatformGraduated",\n` : ""}  
 
 async function fetchBasicWarRoomRows({ chainIds, mode, search, detailAddress, limit, gradTargetBnb }) {
   const gen8On = await gen8RuleForChains(chainIds);
+  const gen8OpenAt = Boolean((await gen8Tables(pool)).phase);
   const params = [chainIds, gradTargetBnb];
-  const filters = ["c.chain_id = any($1::int[])", "c.campaign_address is not null"];
+  const filters = ["c.chain_id = any($1::int[])", "c.campaign_address is not null", `not (${tradingNotOpenSql("c", { gen8OpenAt })})`];
   const searchFilter = buildSearchFilter(search, params);
   const detailFilter = buildDetailFilter(detailAddress, params);
   const modeClause = detailAddress ? null : modeFilter(mode, gen8On);

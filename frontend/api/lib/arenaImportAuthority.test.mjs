@@ -150,10 +150,12 @@ test("16 scanner binds supported chains explicitly and hard-blocks unknown netwo
 });
 
 test("17 Solana mainnet and devnet scans use the requested chain identity", () => {
-  assert.match(scannerSource, /if \(id === 101\)[\s\S]*api\.mainnet-beta\.solana\.com/);
+  assert.match(scannerSource, /if \(id === 101\)[\s\S]*SOLANA_RPC_URL/);
+  assert.doesNotMatch(scannerSource, /api\.mainnet-beta\.solana\.com/);
   assert.match(scannerSource, /if \(id === 102\)[\s\S]*api\.devnet\.solana\.com/);
   assert.match(scannerSource, /export async function scanSolana\(chainId, token\)/);
-  assert.match(scannerSource, /new Connection\(rpcUrl\(chainId\), "confirmed"\)/);
+  assert.match(scannerSource, /reasons: \["rpc_unconfigured"\]/);
+  assert.match(scannerSource, /new Connection\(url, "confirmed"\)/);
   // Since 8269f868 the public create path scans through arenaImportAdmission.js (Project Import is the only entry).
   assert.match(fs.readFileSync(path.resolve(here, "./arenaImportAdmission.js"), "utf8"), /scanSolana\(chainId, token\)/);
   assert.match(adminSource, /scanSolana\(chainId, token\)/);

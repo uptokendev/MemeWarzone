@@ -87,6 +87,7 @@ import {
   gen8LensNative,
   gen8MarketCapNative,
   gen8PlatformGraduated,
+  gen8LaunchPriceNative,
   gen8SpotNative,
   gen8SpotWindowChanges,
   gen8VenueHolderAddresses,
@@ -138,6 +139,8 @@ import {
 
 const CAMPAIGN_ABI = LaunchCampaignArtifact.abi as ethers.InterfaceAbi;
 const TOKEN_ABI = LaunchTokenArtifact.abi as ethers.InterfaceAbi;
+/** Gen-8 coins are plain ERC-20s. The launch-token ABI is the older campaign token. */
+const GEN8_ERC20_BALANCE_ABI = ["function balanceOf(address) view returns (uint256)"];
 const TOKEN_DECIMALS = 18;
 /** Fallback poll for chain reads that otherwise refresh on each new trade (latestTradeKey). */
 const TRADE_SAFETY_POLL_MS = 60_000;
@@ -621,9 +624,10 @@ import { useGen5Campaign } from "@/components/evm/useGen5Campaign";
 import { EvmGen5TradeNotes } from "@/components/evm/EvmGen5TradeNotes";
 import { EvmGen5CreatorPanel } from "@/components/evm/EvmGen5CreatorPanel";
 import { Gen8TradePanel } from "@/components/evm/Gen8TradePanel";
-import { Gen8CoinStatus, Gen8CreatorPanel } from "@/components/evm/Gen8CoinPanels";
+import { Gen8CoinStatus, Gen8CreatorPanel, Gen8EscrowLock } from "@/components/evm/Gen8CoinPanels";
 import { useGen8Coin } from "@/hooks/useGen8Coin";
 import { gen8AppConfig, readGen8PoolRecord } from "@/lib/evmGen8Client.mjs";
+import { gen8FormatAmount } from "../../shared/evmGen8Swap.mjs";
 import { isGen8CoinPage, shouldReadLegacyCampaign } from "@/lib/gen8LegacyCampaignReads.mjs";
 import { evmCreatorBadge } from "@/lib/evmGen6.mjs";
 
@@ -3386,8 +3390,10 @@ const toSeconds = (ts: number): number => {
           readProvider.getBalance(wallet.account),
           (async () => {
             try {
-              if (!campaign?.token) return 0n;
-              const t = new Contract(campaign.token, TOKEN_ABI, readProvider) as any;
+              const tokenAddress = gen8State?.token || campaign?.token;
+              if (!tokenAddress) return 0n;
+              const abi = gen8State ? GEN8_ERC20_BALANCE_ABI : TOKEN_ABI;
+              const t = new Contract(tokenAddress, abi, readProvider) as any;
               return (await t.balanceOf(wallet.account)) as bigint;
             } catch {
               return 0n;
@@ -3413,7 +3419,7 @@ const toSeconds = (ts: number): number => {
     return () => {
       cancelled = true;
     };
-  }, [readProvider, wallet.account, campaign?.token, campaign?.campaign, isSolanaPage, solanaBalanceTick, solanaQuote.mint, solanaQuote.native, walletMatchesCampaign]);
+  }, [readProvider, wallet.account, campaign?.token, campaign?.campaign, isSolanaPage, solanaBalanceTick, solanaQuote.mint, solanaQuote.native, walletMatchesCampaign, gen8State?.token, gen8State ? latestTradeKey : "", gen8State?.market?.sqrtPriceX96]);
 
   // Build transactions table rows from continuous market trade stream.
   useEffect(() => {
@@ -5820,6 +5826,8 @@ const toSeconds = (ts: number): number => {
                   resolution={marketResolution}
                   onResolutionChange={setMarketResolution}
                   denomination={displayDenom}
+                  continueFlatBodies={Boolean(gen8State)}
+                  launchPriceNative={gen8State ? gen8LaunchPriceNative(gen8State.gen8?.tickStart) : null}
                   historyReady={!unifiedMarket.loading}
                   loading={unifiedMarket.loading || ((marketTradePoints?.length ?? 0) === 0 && liveCurveLoading)}
                   error={unifiedMarket.error || ((marketTradePoints?.length ?? 0) > 0 ? null : liveCurveError || topazMarket.error)}
@@ -6145,13 +6153,13 @@ const toSeconds = (ts: number): number => {
           />
         </div>
 
-        <aside className="flex flex-col gap-4 self-start xl:sticky xl:top-[calc(var(--mwz-topbar-offset)+16px)]">
+        <aside className="flex flex-col gap-4 self-start">
           {gen8State ? (
             isXlUp ? (
               <section aria-label="Trade" className={`${cp.card} flex flex-col gap-4 p-4`} data-gen8-trade="true">
                 <Gen8TradePanel chainId={Number(chainIdForStorage)} state={gen8State} symbol={tokenData.ticker} onTraded={() => { gen8.refresh(); void unifiedMarket.refresh().catch(() => undefined); }} />
                 <Gen8CoinStatus chainId={Number(chainIdForStorage)} state={gen8State} explorerBase={getExplorerBase(chainIdForStorage)} nativeUsd={nativeUsd ?? null} />
-                <Gen8CreatorPanel chainId={Number(chainIdForStorage)} state={gen8State} onDone={() => gen8.refresh()} />
+                <Gen8CreatorPanel chainId={Number(chainIdForStorage)} state={gen8State} symbol={tokenData.ticker} onDone={() => gen8.refresh()} />
               </section>
             ) : null
           ) : solanaGraduatedImportTrade ? (
@@ -6608,8 +6616,13 @@ const toSeconds = (ts: number): number => {
               </div>
               <div>
                 <p className="text-mw-muted">Token balance</p>
-                <p className="mt-1 font-mw-mono text-mw-text break-words">{formatTokenFromWei(tokenBalanceWei)} {tokenData.ticker}</p>
+                <p className="mt-1 font-mw-mono text-mw-text break-words">{gen8State ? (tokenBalanceWei == null ? "—" : `${gen8FormatAmount(tokenBalanceWei)} ${tokenData.ticker}`) : `${formatTokenFromWei(tokenBalanceWei)} ${tokenData.ticker}`}</p>
               </div>
+              {gen8State ? (
+                <div className="col-span-2">
+                  <Gen8EscrowLock chainId={Number(chainIdForStorage)} state={gen8State} symbol={tokenData.ticker} onDone={() => gen8.refresh()} />
+                </div>
+              ) : null}
             </div>
             {walletMatchesCampaign ? null : (
               <p className="mt-2 text-xs text-amber-300">
@@ -6686,7 +6699,7 @@ const toSeconds = (ts: number): number => {
           >
             <Gen8TradePanel key={tradeTab} chainId={Number(chainIdForStorage)} state={gen8State} symbol={tokenData.ticker} initialSide={tradeTab} onTraded={() => { gen8.refresh(); void unifiedMarket.refresh().catch(() => undefined); }} />
             <Gen8CoinStatus chainId={Number(chainIdForStorage)} state={gen8State} explorerBase={getExplorerBase(chainIdForStorage)} nativeUsd={nativeUsd ?? null} />
-            <Gen8CreatorPanel chainId={Number(chainIdForStorage)} state={gen8State} onDone={() => gen8.refresh()} />
+            <Gen8CreatorPanel chainId={Number(chainIdForStorage)} state={gen8State} symbol={tokenData.ticker} onDone={() => gen8.refresh()} />
           </div>
         </div>
       ) : solanaGraduatedImportTrade && mobileTradeOpen && !isXlUp ? (

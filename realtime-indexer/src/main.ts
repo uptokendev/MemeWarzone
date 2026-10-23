@@ -13,6 +13,7 @@ import { startDogeosOraclePushWorker } from "./evm/dogeosOraclePushWorker.js";
 import { startEvmCreatorChoiceWorker } from "./evm/evmCreatorChoiceWorker.js";
 import { startPayoutWatchdogWorker } from "./evm/payoutWatchdogWorker.js";
 import { startEvmGen8Workers } from "./evm/evmGen8Worker.js";
+import { startRhTestnetMockFeedRefresh } from "./evm/rhTestnetMockFeed.js";
 import { startSolanaFeeEscrowWorker } from "./solanaFeeEscrowWorker.js";
 import { startSolanaIndexerLoop } from "./solanaIndexer.js";
 import { startSolanaLpHarvestLoop } from "./solanaLpHarvestLoop.js";
@@ -37,6 +38,8 @@ startEvmCreatorChoiceWorker();
 void startPayoutWatchdogWorker().catch((error) => console.error("[payout-watchdog] start failed", error));
 // EVM generation 8 (Uniswap V4 hook pools): off unless EVM_GEN8_LAUNCHER_<id> and EVM_GEN8_HOOK_<id> are set.
 startEvmGen8Workers();
+// Robinhood testnet 46630 only. Off unless RH46630_MOCK_FEED_PRIVATE_KEY is the testnet deployer.
+startRhTestnetMockFeedRefresh();
 // Off unless IMPORT_FEE_WORKER_ENABLED; dry run unless IMPORT_FEE_PAYOUT_SEND.
 startImportCreatorFeeWorker();
 // EVM side (56 / 4663 / 97 / 46630): off unless IMPORT_FEE_EVM_WORKER_ENABLED; dry run unless IMPORT_FEE_PAYOUT_SEND.

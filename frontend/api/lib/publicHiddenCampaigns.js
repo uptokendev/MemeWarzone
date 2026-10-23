@@ -10,7 +10,7 @@ import { publicHiddenWhere } from "./publicHiddenSql.js";
 
 // The SQL lives in publicHiddenSql.js (no database import) so injected-db read
 // models share this exact definition.
-export { notPublicHiddenCampaignSql, publicHiddenWhere } from "./publicHiddenSql.js";
+export { futureGen8OpenExists, futureScheduledLaunchExists, notPublicHiddenCampaignSql, publicHiddenWhere, publicLaunchAtSql, tradingNotOpenSql } from "./publicHiddenSql.js";
 
 // Same key the feed uses: Solana base58 keeps its case, EVM is case-insensitive.
 export function publicCampaignKey(chainId, campaignAddress) {

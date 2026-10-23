@@ -210,7 +210,11 @@ function chainScopedEnv(prefix, chainId) {
 }
 
 function rpcForChain(chainId) {
-  return chainScopedEnv("BSC_RPC_HTTP", chainId);
+  const id = Number(chainId);
+  const scoped = String(process.env[`BSC_RPC_HTTP_${id}`] || "").split(",").map((item) => item.trim()).find(Boolean) || "";
+  if (scoped) return scoped;
+  if (id === 56) return String(process.env.BSC_RPC_HTTP || "").split(",").map((item) => item.trim()).find(Boolean) || "";
+  return "";
 }
 
 export function monthIdFromDate(date) {

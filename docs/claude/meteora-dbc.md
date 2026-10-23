@@ -138,3 +138,22 @@ graduates at 85 SOL = ~411 SOL MC, 0 migration fee).
   (ladder, quote, authorize 70% cap, finalize), browser submit + trade builder, indexer, fee accrual and the
   graduation keeper end to end. Both ALL CHECKS PASS (2026-10-08). Launch tx with first buy: 915 B / 18 accounts / 2 signers.
 - `prove-stock-quote-local.mjs` still asks for the removed $15K target; update it before its next run.
+
+## Holder payouts: hold-through rule (founder, 2026-10-21)
+
+- Holders / split coins, weeks from 2026-10-26 on (`usesHoldThrough` in `realtime-indexer/src/dbc/dbcCreatorChoice.ts`):
+  four secret checks per week, one in each quarter, from the committed week secret (label `holders-snapshot:<i>`).
+  A wallet counts only if it held >= 0.01% of the mint supply at every check taken for the coin, with its lowest
+  balance. Below-minimum and missing wallets are not counted, so their share goes to the eligible holders. The
+  0.005 SOL payout minimum (`holderLeaves`) still rolls dust over.
+- Checks land in `dbc_holder_checks` / `dbc_holder_check_runs` (migration `20261021_000001`); the Monday run settles
+  them into `dbc_holder_snapshots` (`settleHoldingChecks`), so the round, airdrop leaves and deposit are unchanged.
+- A check is read at the first pass after its moment (late if the indexer was down) but only while it is the latest
+  one due; once the next check is due it is skipped. An empty read is not recorded (retried next pass). A coin
+  created after a check's moment skips that check. Weeks before 2026-10-26 keep the single snapshot.
+- Deploy order: migration on the DB and the indexer deployed BEFORE the week starts. Old code running past the old
+  single-snapshot moment writes dbc_holder_snapshot_runs and the settle step then keeps that old snapshot.
+- The new tables have RLS + revoke from anon/authenticated. The older dbc_holder_snapshots / dbc_holder_rounds /
+  dbc_buyback_weeks (migration 000008) have neither; check grants on staging and production.
+- Copy: `HOLDER_RULE` in `frontend/api/lib/dbc/dbcFeeChoice.mjs` (coin page), public rule in `/api/dbc/creator-choice`.
+- EVM gen-6/7/8 still use one snapshot and no minimum; gen-8 holder payouts are not built yet (2026-10-21).

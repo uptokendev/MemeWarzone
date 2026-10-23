@@ -116,6 +116,9 @@ test("the one-time allowance is only the gen-8 sell, and the older sell files ar
   const hits = filesNamed(path.join(root, "frontend"), "frontend", "gen8SellSetup").sort();
   assert.deepEqual(hits, [
     "frontend/api/gen8Swap.js",
+    // The swap widget's Robinhood import sell (2026-10-22): the same one-time allowance, built by the API, so the
+    // swap carries no user-signed permit and its build fingerprint holds. The app's import sell keeps its permit.
+    "frontend/api/importSwap.js",
     "frontend/shared/evmGen8Swap.mjs",
     "frontend/shared/evmGen8Swap.test.mjs",
     "frontend/src/lib/evmGen8Client.mjs",

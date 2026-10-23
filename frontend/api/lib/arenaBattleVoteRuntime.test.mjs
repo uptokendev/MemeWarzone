@@ -116,7 +116,7 @@ test("vote listing and score read only this battle's regulation actions", async 
   assert.equal(payload.roundNumber, 1);
   assert.equal(payload.matchId, "arena-vote-1");
   assert.equal(payload.freeVotePoints, 1);
-  assert.equal(payload.boostPointsPerUsd, 2);
+  assert.equal(payload.boostPointsPerUsd, 1);
   assert.equal(payload.durationHours, 6);
   assert.equal(payload.regulationEndsAt, "2026-09-21T16:00:00Z");
   assert.deepEqual(payload.summary, { tokenA, tokenB, leftVotes: 2, rightVotes: 1, totalVotes: 3, leftPoints: 2, rightPoints: 1 });

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Keypair, PublicKey } from "@solana/web3.js";
-import { createPartner, normalizePayoutWallet, parsePartnerCreate, parsePartnerUpdate, updatePartner } from "./importFeePartnersAdmin.js";
+import { createPartner, listPartners, normalizePayoutWallet, parsePartnerCreate, parsePartnerUpdate, updatePartner } from "./importFeePartnersAdmin.js";
 
 const SOL = Keypair.generate().publicKey.toBase58();
 const PDA = PublicKey.findProgramAddressSync([Buffer.from("x")], new PublicKey("11111111111111111111111111111111"))[0].toBase58();
@@ -71,4 +71,33 @@ test("create and update write the audit row inside the same transaction", async 
 test("a duplicate partner is a 409, an unknown one a 404", async () => {
   await assert.rejects(createPartner(fakeDb({}), { id: "crypticpump", chainId: 101, name: "C", payoutWallet: SOL }, actor), (e) => e.status === 409);
   await assert.rejects(updatePartner(fakeDb(null), { id: "nobody", chainId: 101, body: { active: false } }, actor), (e) => e.status === 404);
+});
+
+test("listPartners: import paid excludes the gen-8 part once the migration is applied; gen-8 figures apart; old schema unchanged", async () => {
+  const base = { id: "crypticpump", chain_id: 4663, name: "CrypticPump", fee_account: null, payout_wallet: "0x" + "44".repeat(20), creator_bps: 5000, partner_bps: 2500, active: true, created_at: null, updated_at: null, swaps: 3, last_swap_at: null, last_paid_at: null };
+  const listDb = (ready, row) => {
+    const calls = [];
+    return {
+      calls,
+      async query(sql) {
+        const s = sql.replace(/\s+/g, " ").trim();
+        calls.push(s);
+        if (s.startsWith("select to_regclass('public.gen8_partner_fees')")) return { rows: [{ ready }] };
+        return { rows: [row] };
+      },
+    };
+  };
+  // Without the migration: the SQL never names gen8_raw / gen8_partner_fees, the figures are as before.
+  const old = listDb(false, { ...base, earned_raw: "1000", paid_raw: "600", sending_raw: "100" });
+  const [p0] = await listPartners(old);
+  assert.ok(!old.calls[1].includes("gen8"), "old query unchanged");
+  assert.equal(p0.owedRaw, "300");
+  assert.equal(p0.gen8EarnedRaw, undefined);
+  // With it: import paid is sum(amount_raw - gen8_raw); the gen-8 ledger has its own earned / paid / owed.
+  const now = listDb(true, { ...base, earned_raw: "1000", paid_raw: "600", sending_raw: "0", gen8_earned_raw: "500", gen8_swaps: 2, gen8_paid_raw: "200", gen8_sending_raw: "100" });
+  const [p1] = await listPartners(now);
+  assert.match(now.calls[1], /sum\(amount_raw - gen8_raw\) filter \(where status = 'landed'\) as paid/);
+  assert.match(now.calls[1], /from public\.gen8_partner_fees where chain_id = p\.chain_id and partner_id = p\.id/);
+  assert.deepEqual([p1.earnedRaw, p1.paidRaw, p1.owedRaw], ["1000", "600", "400"]);
+  assert.deepEqual([p1.gen8Swaps, p1.gen8EarnedRaw, p1.gen8PaidRaw, p1.gen8SendingRaw, p1.gen8OwedRaw], [2, "500", "200", "100", "200"]);
 });

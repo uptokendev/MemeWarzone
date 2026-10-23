@@ -4,6 +4,8 @@
 //      6281971 added in exactly the expected place and nothing else;
 //   2. 20261015_000010_dogeos_barkswap.sql: the Bark conversion bookkeeping tables, the side-pool venue 'algebra' and
 //      the attribution replay's accrual index. Pinned against the indexer source so the two cannot drift.
+//   3. 20261023_000010_dogeos_drafts_graduation_target.sql: the draft graduation check as 20261019 (staging-live-gen8)
+//      has it plus 6281971, so applying 20261010 never takes 97 / 46630 out of the $150 clause.
 //
 //   node --test db/migrations/dogeosBarkswapMigration.test.mjs
 import { test } from "node:test";
@@ -16,6 +18,7 @@ const MIGRATIONS_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(MIGRATIONS_DIR, "..", "..");
 const LAUNCH_FILE = "20261010_000020_dogeos_chain_launch_path.sql";
 const BARK_FILE = "20261015_000010_dogeos_barkswap.sql";
+const TARGET_FILE = "20261023_000010_dogeos_drafts_graduation_target.sql";
 const APPLY_SCRIPT = join(REPO_ROOT, "database", "staging_apply_dogeos_barkswap.sh");
 const OLD_APPLY_SCRIPT = join(REPO_ROOT, "database", "staging_apply_dogeos_launch_path.sh");
 const INDEXER_EVM = join(REPO_ROOT, "realtime-indexer", "src", "evm");
@@ -254,6 +257,45 @@ test("20261010 touches no other constraint, table or data", () => {
   assert.equal(statements.length, 4, "exactly a drop + add per constraint");
   for (const s of statements) assert.match(s, /^alter table [\w.]+ (drop constraint if exists|add constraint) \w+/i);
   assert.doesNotMatch(launchBody, /\b(insert|update|delete|truncate|drop\s+table|drop\s+column|create)\b/i);
+});
+
+// ================================================================== 20261023 (draft graduation check on top of 20261019)
+
+const TARGET_CHK = "campaign_drafts_graduation_target_check";
+const targetSql = readFileSync(join(MIGRATIONS_DIR, TARGET_FILE), "utf8");
+const targetBody = stripComments(targetSql);
+
+test("20261023 graduation check: equals its latest prior definition (20261019) plus 6281971 in the $150 clause only", () => {
+  const prior = latestPriorDefinition(TARGET_CHK, TARGET_FILE);
+  assert.equal(prior.file, "20261019_000001_campaign_drafts_gen8_test_target.sql", "latest prior definition moved; re-check this migration");
+  assert.equal(
+    checkExpression(targetSql, TARGET_CHK),
+    replaceOnce(prior.expr, "graduation_target_wei <> 150000000000000000000::numeric or chain_id in (97, 46630, 101, 102)", "graduation_target_wei <> 150000000000000000000::numeric or chain_id in (97, 46630, 101, 102, 6281971)"),
+  );
+});
+
+test("20261023 graduation check: the bundle's last definition keeps every chain of every earlier definition", () => {
+  // Every definition before 20261023, including 20261010 (applied earlier in the same bundle) and 20261019.
+  const expr = checkExpression(targetSql, TARGET_CHK);
+  const finalLists = chainIdLists(expr);
+  for (const f of readdirSync(MIGRATIONS_DIR).filter((x) => x.endsWith(".sql") && x < TARGET_FILE).sort()) {
+    const earlier = checkExpression(readFileSync(join(MIGRATIONS_DIR, f), "utf8"), TARGET_CHK);
+    if (!earlier) continue;
+    const lists = chainIdLists(earlier);
+    if (lists.length !== finalLists.length) continue; // the pre-Solana shapes had a different clause layout
+    lists.forEach((ids, i) => ids.forEach((id) => assert.ok(finalLists[i].includes(id), `${f}: list ${i} chain ${id} lost`)));
+  }
+});
+
+test("20261023 own transaction, one drop + one add, no data change", () => {
+  const statements = targetBody.split(";").map((x) => normalize(x)).filter(Boolean);
+  assert.equal(statements[0].toLowerCase(), "begin");
+  assert.equal(statements.at(-1).toLowerCase(), "commit");
+  const body = statements.filter((x) => !/^(begin|commit)$/i.test(x));
+  assert.equal(body.length, 2);
+  assert.match(body[0], new RegExp(`^alter table public\\.campaign_drafts drop constraint if exists ${TARGET_CHK}$`, "i"));
+  assert.match(body[1], new RegExp(`^alter table public\\.campaign_drafts add constraint ${TARGET_CHK} check`, "i"));
+  assert.doesNotMatch(targetBody, /\b(insert|update|delete|truncate|drop\s+table|drop\s+column|create)\b/i);
 });
 
 // ================================================================== 20261015 (Barkswap rows)
@@ -536,7 +578,7 @@ test("apply script: staging-only (refuses production), dryrun|apply, one transac
   assert.match(sh, /ON_ERROR_STOP on/);
   assert.match(sh, /lock_timeout = '5s'/);
   const files = [...sh.matchAll(/^\s*(db\/migrations\/\S+\.sql)\s*$/gm)].map((m) => m[1]);
-  assert.deepEqual(files, [`db/migrations/${LAUNCH_FILE}`, `db/migrations/${BARK_FILE}`]);
+  assert.deepEqual(files, [`db/migrations/${LAUNCH_FILE}`, `db/migrations/${BARK_FILE}`, `db/migrations/${TARGET_FILE}`]);
   // begin/commit of the files are stripped so the bundle is exactly one transaction.
   assert.ok(sh.includes(`sed -E '/^[[:space:]]*([Bb][Ee][Gg][Ii][Nn]|[Cc][Oo][Mm][Mm][Ii][Tt])[[:space:]]*;[[:space:]]*$/d'`), "begin/commit strip (portable sed) missing");
   assert.match(sh, /echo "begin;"/);

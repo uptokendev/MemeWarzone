@@ -187,7 +187,7 @@
    ]
   },
   {
-   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "sql": "with prev as ( select c, mcap_c from public.token_candles wh#77ee1474f2d01d44",
    "params": [
     97,
     "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
@@ -202,11 +202,13 @@
     0,
     21,
     15,
-    0.008190352
+    0.008190352,
+    6.087955e-12,
+    0.006087955
    ]
   },
   {
-   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "sql": "with prev as ( select c, mcap_c from public.token_candles wh#77ee1474f2d01d44",
    "params": [
     97,
     "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
@@ -221,7 +223,9 @@
     0,
     21,
     15,
-    0.008190352
+    0.008190352,
+    6.087955e-12,
+    0.006087955
    ]
   },
   {
@@ -309,7 +313,7 @@
    ]
   },
   {
-   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "sql": "with prev as ( select c, mcap_c from public.token_candles wh#77ee1474f2d01d44",
    "params": [
     97,
     "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
@@ -324,11 +328,13 @@
     0,
     22,
     2,
-    0.013328933
+    0.013328933,
+    6.087955e-12,
+    0.006087955
    ]
   },
   {
-   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "sql": "with prev as ( select c, mcap_c from public.token_candles wh#77ee1474f2d01d44",
    "params": [
     97,
     "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
@@ -343,7 +349,9 @@
     0,
     22,
     2,
-    0.013328933
+    0.013328933,
+    6.087955e-12,
+    0.006087955
    ]
   },
   {
@@ -431,7 +439,7 @@
    ]
   },
   {
-   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "sql": "with prev as ( select c, mcap_c from public.token_candles wh#77ee1474f2d01d44",
    "params": [
     97,
     "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
@@ -446,11 +454,13 @@
     0,
     23,
     0,
-    0.013368182
+    0.013368182,
+    6.087955e-12,
+    0.006087955
    ]
   },
   {
-   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "sql": "with prev as ( select c, mcap_c from public.token_candles wh#77ee1474f2d01d44",
    "params": [
     97,
     "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
@@ -465,7 +475,9 @@
     0,
     23,
     0,
-    0.013368182
+    0.013368182,
+    6.087955e-12,
+    0.006087955
    ]
   },
   {
@@ -553,7 +565,7 @@
    ]
   },
   {
-   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "sql": "with prev as ( select c, mcap_c from public.token_candles wh#77ee1474f2d01d44",
    "params": [
     97,
     "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
@@ -568,11 +580,13 @@
     0,
     25,
     0,
-    0.01336425
+    0.01336425,
+    6.087955e-12,
+    0.006087955
    ]
   },
   {
-   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "sql": "with prev as ( select c, mcap_c from public.token_candles wh#77ee1474f2d01d44",
    "params": [
     97,
     "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
@@ -587,7 +601,9 @@
     0,
     25,
     0,
-    0.01336425
+    0.01336425,
+    6.087955e-12,
+    0.006087955
    ]
   },
   {
@@ -675,7 +691,7 @@
    ]
   },
   {
-   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "sql": "with prev as ( select c, mcap_c from public.token_candles wh#77ee1474f2d01d44",
    "params": [
     97,
     "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
@@ -690,11 +706,13 @@
     0,
     26,
     2,
-    0.013065726
+    0.013065726,
+    6.087955e-12,
+    0.006087955
    ]
   },
   {
-   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "sql": "with prev as ( select c, mcap_c from public.token_candles wh#77ee1474f2d01d44",
    "params": [
     97,
     "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
@@ -709,7 +727,9 @@
     0,
     26,
     2,
-    0.013065726
+    0.013065726,
+    6.087955e-12,
+    0.006087955
    ]
   },
   {
@@ -797,7 +817,7 @@
    ]
   },
   {
-   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "sql": "with prev as ( select c, mcap_c from public.token_candles wh#77ee1474f2d01d44",
    "params": [
     97,
     "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
@@ -812,11 +832,13 @@
     0,
     27,
     2,
-    2.378287013
+    2.378287013,
+    6.087955e-12,
+    0.006087955
    ]
   },
   {
-   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "sql": "with prev as ( select c, mcap_c from public.token_candles wh#77ee1474f2d01d44",
    "params": [
     97,
     "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
@@ -831,7 +853,9 @@
     0,
     27,
     2,
-    2.378287013
+    2.378287013,
+    6.087955e-12,
+    0.006087955
    ]
   },
   {
@@ -980,7 +1004,7 @@
    ]
   },
   {
-   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "sql": "with prev as ( select c, mcap_c from public.token_candles wh#77ee1474f2d01d44",
    "params": [
     97,
     "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
@@ -995,11 +1019,13 @@
     0.00198019801980198,
     28,
     2,
-    2.473194234
+    2.473194234,
+    6.087955e-12,
+    0.006087955
    ]
   },
   {
-   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "sql": "with prev as ( select c, mcap_c from public.token_candles wh#77ee1474f2d01d44",
    "params": [
     97,
     "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
@@ -1014,7 +1040,9 @@
     0.00198019801980198,
     28,
     2,
-    2.473194234
+    2.473194234,
+    6.087955e-12,
+    0.006087955
    ]
   },
   {
@@ -1153,7 +1181,7 @@
    ]
   },
   {
-   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "sql": "with prev as ( select c, mcap_c from public.token_candles wh#77ee1474f2d01d44",
    "params": [
     97,
     "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
@@ -1168,11 +1196,13 @@
     0.000246722392443104,
     29,
     0,
-    2.461268026
+    2.461268026,
+    6.087955e-12,
+    0.006087955
    ]
   },
   {
-   "sql": "insert into public.token_candles( chain_id, campaign_address#8b8ce7eb3d21afde",
+   "sql": "with prev as ( select c, mcap_c from public.token_candles wh#77ee1474f2d01d44",
    "params": [
     97,
     "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
@@ -1187,7 +1217,9 @@
     0.000246722392443104,
     29,
     0,
-    2.461268026
+    2.461268026,
+    6.087955e-12,
+    0.006087955
    ]
   },
   {
@@ -1436,7 +1468,7 @@
     97,
     "2026-10-12T00:00:00.000Z",
     "2026-10-19T00:00:00.000Z",
-    "open"
+    "processing"
    ]
   },
   {
@@ -1509,7 +1541,7 @@
     97,
     "2026-10-12T00:00:00.000Z",
     "2026-10-19T00:00:00.000Z",
-    "open"
+    "processing"
    ]
   },
   {
@@ -1582,7 +1614,7 @@
     97,
     "2026-10-12T00:00:00.000Z",
     "2026-10-19T00:00:00.000Z",
-    "open"
+    "processing"
    ]
   },
   {
@@ -1655,7 +1687,7 @@
     97,
     "2026-10-12T00:00:00.000Z",
     "2026-10-19T00:00:00.000Z",
-    "open"
+    "processing"
    ]
   },
   {
@@ -1728,7 +1760,7 @@
     97,
     "2026-10-12T00:00:00.000Z",
     "2026-10-19T00:00:00.000Z",
-    "open"
+    "processing"
    ]
   },
   {
@@ -1801,7 +1833,7 @@
     97,
     "2026-10-12T00:00:00.000Z",
     "2026-10-19T00:00:00.000Z",
-    "open"
+    "processing"
    ]
   },
   {
@@ -1882,7 +1914,7 @@
     97,
     "2026-10-12T00:00:00.000Z",
     "2026-10-19T00:00:00.000Z",
-    "open"
+    "processing"
    ]
   },
   {
@@ -2138,30 +2170,6 @@
    ]
   },
   {
-   "name": "publishCandle",
-   "args": [
-    97,
-    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
-    {
-     "tf": "1m",
-     "bucketSec": 1791990000,
-     "close": 8.190352e-12
-    }
-   ]
-  },
-  {
-   "name": "publishCandle",
-   "args": [
-    97,
-    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
-    {
-     "tf": "1h",
-     "bucketSec": 1791990000,
-     "close": 8.190352e-12
-    }
-   ]
-  },
-  {
    "name": "publishStats",
    "args": [
     97,
@@ -2263,30 +2271,6 @@
      "priceBnb": "1.0448381373842235e-11",
      "ts": "<now>",
      "blockNumber": 22
-    }
-   ]
-  },
-  {
-   "name": "publishCandle",
-   "args": [
-    97,
-    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
-    {
-     "tf": "1m",
-     "bucketSec": 1791990000,
-     "close": 1.3328933e-11
-    }
-   ]
-  },
-  {
-   "name": "publishCandle",
-   "args": [
-    97,
-    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
-    {
-     "tf": "1h",
-     "bucketSec": 1791990000,
-     "close": 1.3328933e-11
     }
    ]
   },
@@ -2396,30 +2380,6 @@
    ]
   },
   {
-   "name": "publishCandle",
-   "args": [
-    97,
-    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
-    {
-     "tf": "1m",
-     "bucketSec": 1791990000,
-     "close": 1.3368182e-11
-    }
-   ]
-  },
-  {
-   "name": "publishCandle",
-   "args": [
-    97,
-    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
-    {
-     "tf": "1h",
-     "bucketSec": 1791990000,
-     "close": 1.3368182e-11
-    }
-   ]
-  },
-  {
    "name": "publishStats",
    "args": [
     97,
@@ -2521,30 +2481,6 @@
      "priceBnb": "1.336621644253e-11",
      "ts": "<now>",
      "blockNumber": 25
-    }
-   ]
-  },
-  {
-   "name": "publishCandle",
-   "args": [
-    97,
-    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
-    {
-     "tf": "1m",
-     "bucketSec": 1791990000,
-     "close": 1.336425e-11
-    }
-   ]
-  },
-  {
-   "name": "publishCandle",
-   "args": [
-    97,
-    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
-    {
-     "tf": "1h",
-     "bucketSec": 1791990000,
-     "close": 1.336425e-11
     }
    ]
   },
@@ -2654,30 +2590,6 @@
    ]
   },
   {
-   "name": "publishCandle",
-   "args": [
-    97,
-    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
-    {
-     "tf": "1m",
-     "bucketSec": 1791990000,
-     "close": 1.3065726e-11
-    }
-   ]
-  },
-  {
-   "name": "publishCandle",
-   "args": [
-    97,
-    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
-    {
-     "tf": "1h",
-     "bucketSec": 1791990000,
-     "close": 1.3065726e-11
-    }
-   ]
-  },
-  {
    "name": "publishStats",
    "args": [
     97,
@@ -2779,30 +2691,6 @@
      "priceBnb": "1.5859398876900262e-10",
      "ts": "<now>",
      "blockNumber": 27
-    }
-   ]
-  },
-  {
-   "name": "publishCandle",
-   "args": [
-    97,
-    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
-    {
-     "tf": "1m",
-     "bucketSec": 1791990000,
-     "close": 2.378287013e-9
-    }
-   ]
-  },
-  {
-   "name": "publishCandle",
-   "args": [
-    97,
-    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
-    {
-     "tf": "1h",
-     "bucketSec": 1791990000,
-     "close": 2.378287013e-9
     }
    ]
   },
@@ -3016,46 +2904,6 @@
    ]
   },
   {
-   "name": "publishTokenEvent",
-   "args": [
-    97,
-    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
-    "market_candle_upsert",
-    {
-     "pairAddress": "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
-     "resolution": "1m",
-     "tf": "1m",
-     "bucket_start": "2026-10-14T15:00:00.000Z",
-     "open": "2.473194234e-9",
-     "high": "2.473194234e-9",
-     "low": "2.473194234e-9",
-     "close": "2.473194234e-9",
-     "volume_bnb": "0.00198019801980198",
-     "trades_count": 1
-    }
-   ]
-  },
-  {
-   "name": "publishTokenEvent",
-   "args": [
-    97,
-    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
-    "market_candle_upsert",
-    {
-     "pairAddress": "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
-     "resolution": "1h",
-     "tf": "1h",
-     "bucket_start": "2026-10-14T15:00:00.000Z",
-     "open": "2.473194234e-9",
-     "high": "2.473194234e-9",
-     "low": "2.473194234e-9",
-     "close": "2.473194234e-9",
-     "volume_bnb": "0.00198019801980198",
-     "trades_count": 1
-    }
-   ]
-  },
-  {
    "name": "queueActivity",
    "args": [
     97,
@@ -3169,46 +3017,6 @@
      "logIndex": 0,
      "blockNumber": 29,
      "blockTime": "2026-10-14T15:00:58.000Z"
-    }
-   ]
-  },
-  {
-   "name": "publishTokenEvent",
-   "args": [
-    97,
-    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
-    "market_candle_upsert",
-    {
-     "pairAddress": "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
-     "resolution": "1m",
-     "tf": "1m",
-     "bucket_start": "2026-10-14T15:00:00.000Z",
-     "open": "2.461268026e-9",
-     "high": "2.461268026e-9",
-     "low": "2.461268026e-9",
-     "close": "2.461268026e-9",
-     "volume_bnb": "0.000246722392443104",
-     "trades_count": 1
-    }
-   ]
-  },
-  {
-   "name": "publishTokenEvent",
-   "args": [
-    97,
-    "0x83b8ff068d111c8a2756304e3cacb0fc36b1bcc2",
-    "market_candle_upsert",
-    {
-     "pairAddress": "0x1d0b7dec89f2cb4919c5c27d1f69982bb9eb68ec",
-     "resolution": "1h",
-     "tf": "1h",
-     "bucket_start": "2026-10-14T15:00:00.000Z",
-     "open": "2.461268026e-9",
-     "high": "2.461268026e-9",
-     "low": "2.461268026e-9",
-     "close": "2.461268026e-9",
-     "volume_bnb": "0.000246722392443104",
-     "trades_count": 1
     }
    ]
   },

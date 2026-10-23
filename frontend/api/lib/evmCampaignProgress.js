@@ -1,9 +1,9 @@
 import { ethers } from "ethers";
-import { DOGEOS_TESTNET_CHAIN_ID } from "./chainNative.js";
-import { DOGEOS_TESTNET_PUBLIC_RPC, dogeosConfiguredRpcUrls } from "./getServerReadProvider.js";
 import { GEN8_VENUE_BARKSWAP, gen8Progress, gen8VenueFor } from "../../shared/evmGen8.mjs";
 import { barkProgress } from "../../shared/evmGen8Bark.mjs";
 import { gen8ConfigFor, gen8V4ConfigFor } from "./evmGen8Config.js";
+import { DOGEOS_TESTNET_CHAIN_ID } from "./chainNative.js";
+import { getRpcUrl } from "./getServerReadProvider.js";
 
 /**
  * BNB / Robinhood / DogeOS bonding progress for the campaign list, exactly as Token Details computes it
@@ -21,24 +21,19 @@ const CAMPAIGN_ABI = [
   "function graduationTarget() view returns (uint256)",
 ];
 
-// Exported for tests (dogeosApiIdentity.test.mjs); the module itself only uses it internally.
+// Exported for tests (dogeosApiIdentity.test.mjs); the module itself only uses it internally. For 6281971 getRpcUrl
+// reads the DogeOS env, then its public RPC, never a BSC or Robinhood env.
 export function rpcUrl(chainId) {
-  // DogeOS: its own env, then its public RPC. Never a BSC or Robinhood env.
-  if (chainId === DOGEOS_TESTNET_CHAIN_ID) return dogeosConfiguredRpcUrls()[0] || DOGEOS_TESTNET_PUBLIC_RPC;
-  const perChain = String(process.env[`ROBINHOOD_RPC_HTTP_${chainId}`] || process.env[`BSC_RPC_HTTP_${chainId}`] || process.env[`VITE_PUBLIC_RPC_${chainId}`] || "").trim();
-  if (perChain) return perChain.split(",")[0].trim();
-  if (chainId === 4663) return String(process.env.ROBINHOOD_MAINNET_RPC_URL || "https://rpc.mainnet.chain.robinhood.com").trim();
-  if (chainId === 46630) return String(process.env.ROBINHOOD_TESTNET_RPC_URL || "https://rpc.testnet.chain.robinhood.com").trim();
-  if (chainId === 56) return String(process.env.BSC_RPC_HTTP || "https://bsc-dataseed.binance.org").trim();
-  if (chainId === 97) return String(process.env.BSC_TESTNET_RPC_HTTP || "https://data-seed-prebsc-1-s1.binance.org:8545").trim();
-  return "";
+  return getRpcUrl(chainId);
 }
 
 const providers = new Map();
 function providerFor(chainId) {
+  const url = rpcUrl(chainId);
+  if (!url) return null;
   if (!providers.has(chainId)) {
     const network = ethers.Network.from(chainId);
-    providers.set(chainId, new ethers.JsonRpcProvider(rpcUrl(chainId), network, { staticNetwork: network }));
+    providers.set(chainId, new ethers.JsonRpcProvider(url, network, { staticNetwork: network }));
   }
   return providers.get(chainId);
 }
@@ -47,6 +42,7 @@ const pctOf = (num, den) => (den > 0n ? Number((num * 1_000_000n) / den) / 10_00
 
 async function progressFor(chainId, address) {
   const provider = providerFor(chainId);
+  if (!provider) return null;
   const campaign = new ethers.Contract(address, CAMPAIGN_ABI, provider);
   const robinhood = chainId === 4663 || chainId === 46630;
   // DogeOS gen-7 graduationTarget is USD like Robinhood's: never read it as a native target.
@@ -95,8 +91,9 @@ export async function gen8ItemProgress(item, { readLens = null, env = process.en
   if (!cfg?.lens) return null;
   const abi = bark ? BARK_LENS_PROGRESS_ABI : LENS_PROGRESS_ABI;
   const read = readLens || (async (chainId, lens, key) => {
-    if (!rpcUrl(Number(chainId))) return null;
-    const c = new ethers.Contract(lens, abi, providerFor(Number(chainId)));
+    const provider = providerFor(Number(chainId));
+    if (!provider) return null;
+    const c = new ethers.Contract(lens, abi, provider);
     return c.progress(key);
   });
   try {

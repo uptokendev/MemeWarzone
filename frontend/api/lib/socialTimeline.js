@@ -2,6 +2,8 @@ import { pool } from "../../server/db.js";
 import { isSolanaAddress } from "../../server/http.js";
 import { mergeTimelineItems } from "./socialTimelineMerge.js";
 import { notCoinPostSql } from "./coinPostLink.js";
+import { publicLaunchAtSql, tradingNotOpenSql } from "./publicHiddenSql.js";
+import { gen8Tables } from "./evmGen8Schema.js";
 
 export { mergeTimelineItems };
 
@@ -121,31 +123,39 @@ export async function loadCoinDeployedEvents(wallets, { limit = 50 } = {}) {
   const list = (wallets || []).map((w) => String(w || "").trim()).filter(Boolean);
   if (!list.length) return [];
   const lowers = list.map((w) => w.toLowerCase());
+  const gen8OpenAt = Boolean((await gen8Tables(pool)).phase);
+  const atSql = publicLaunchAtSql("c", { gen8OpenAt });
   const [campaigns, drafts] = await Promise.all([
     pool.query(
       `select c.chain_id, c.campaign_address, c.token_address, c.creator_address,
-              c.name, c.symbol, c.logo_uri, c.created_at_chain, c.created_at
+              c.name, c.symbol, c.logo_uri, ${atSql} as created_at
          from public.campaigns c
         where c.campaign_address is not null
+          and not (${tradingNotOpenSql("c", { gen8OpenAt })})
           and (
             c.creator_address = any($1::text[])
             or lower(c.creator_address) = any($2::text[])
           )
-        order by coalesce(c.created_at_chain, c.created_at) desc
+        order by ${atSql} desc
         limit $3`,
       [list, lowers, limit],
     ),
     pool.query(
       `select d.id, d.chain_id, d.creator_wallet, d.name, d.ticker, d.logo_url,
-              d.campaign_address, d.token_address, d.deployed_at
+              d.campaign_address, d.token_address,
+              case
+                when d.scheduled_launch_at is not null and d.scheduled_launch_at > d.deployed_at then d.scheduled_launch_at
+                else d.deployed_at
+              end as deployed_at
          from public.campaign_drafts d
         where d.deployed_at is not null
           and d.visibility = 'public'
+          and (d.scheduled_launch_at is null or d.scheduled_launch_at <= now())
           and (
             d.creator_wallet = any($1::text[])
             or lower(d.creator_wallet) = any($2::text[])
           )
-        order by d.deployed_at desc
+        order by deployed_at desc
         limit $3`,
       [list, lowers, limit],
     ),

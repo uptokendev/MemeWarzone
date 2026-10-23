@@ -27,7 +27,7 @@ function tokenIdentityEqual(left?: string | null, right?: string | null) {
 
 /**
  * Free Vote controls for a standalone Vote Battle. Same rules as the Vote
- * Tournament round controls: one free vote per wallet, boosts count 2 pts per
+ * Tournament round controls: one free vote per wallet, boosts count 1 pt per
  * unit, ties go to Final Salvo.
  */
 /** Free Vote state and action for one battle; shared by the MORE panel and the battle card. */
@@ -152,7 +152,7 @@ export function BattleVoteControls({
     <section aria-label="Vote Battle regulation" data-vote-battle-controls="true" className="space-y-3 border-t border-white/10 pt-3">
       <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] uppercase tracking-[0.16em] text-white/50">
         <span>{model.durationLabel ? `${model.durationLabel.toUpperCase()} VOTE BATTLE` : "VOTE BATTLE"}</span>
-        <span>FREE VOTE = 1 PT · BOOST = 2 PTS</span>
+        <span>FREE VOTE = 1 PT · BOOST = 1 PT</span>
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
         {sides.map((side) => {
@@ -190,7 +190,7 @@ export function BattleVoteControls({
       ) : model.walletVote ? (
         <p className="text-xs text-white/48">This wallet already used its Free Vote for this battle.</p>
       ) : (
-        <p className="text-xs text-white/48">One Free Vote per wallet and battle. Boosts add 2 pts per unit to the same score.</p>
+        <p className="text-xs text-white/48">One Free Vote per wallet and battle. Boosts add 1 pt each to the same score, max 2 per wallet, none in the last 20% of the battle.</p>
       )}
     </section>
   );

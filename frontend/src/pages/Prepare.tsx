@@ -9,6 +9,7 @@ import {
   timestampSeconds,
   type CampaignDraftLifecycle,
 } from "@/lib/scheduledLaunchApi";
+import { tradingPageClosedUntil } from "../../shared/scheduledLaunchVisibility.mjs";
 
 export default function Prepare() {
   const { slug = "memewarzone-mwz-demo" } = useParams();
@@ -31,6 +32,13 @@ export default function Prepare() {
   }, [slug]);
 
   const storedScheduledLaunchAt = timestampSeconds(draft?.scheduledLaunchAt);
+  const poolOpenAt = timestampSeconds((draft as CampaignDraftLifecycle & { gen8OpenAt?: string | null } | null)?.gen8OpenAt);
+  const closedUntil = tradingPageClosedUntil({
+    status: draft?.status,
+    scheduledLaunchAt: storedScheduledLaunchAt,
+    gen8OpenAt: poolOpenAt,
+    nowSec: Math.floor(Date.now() / 1000),
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -45,8 +53,8 @@ export default function Prepare() {
   }, [draft?.campaignAddress, draft?.chainId, storedScheduledLaunchAt]);
 
   const dbcWaiting = String((draft as { launchType?: string } | null)?.launchType || "") === "dbc" && storedScheduledLaunchAt && !draft?.campaignAddress;
-  const isScheduledLifecycle = Boolean((draft?.campaignAddress && storedScheduledLaunchAt) || dbcWaiting);
-  const launchAt = isScheduledLifecycle ? onChainLaunchAt || storedScheduledLaunchAt : null;
+  const isScheduledLifecycle = Boolean(closedUntil || dbcWaiting);
+  const launchAt = isScheduledLifecycle ? onChainLaunchAt || closedUntil || storedScheduledLaunchAt : null;
 
   return (
     <div data-scheduled-lifecycle={isScheduledLifecycle ? "true" : "false"} className="relative">

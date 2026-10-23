@@ -28,6 +28,10 @@ test("a create request is gen-8 only where gen-8 is configured and the request n
   assert.equal(isGen8CreateRequest({ chainId: 97, generation: 8 }, baseEnv), true);
   assert.equal(isGen8CreateRequest({ chainId: 97, factoryAddress: CREATOR }, baseEnv), false, "a gen-7 factory stays on the gen-7 path");
   assert.equal(isGen8CreateRequest({ chainId: 56, factoryAddress: LAUNCHER }, baseEnv), false, "other chain");
+  const launcherOnly = { EVM_GEN8_LAUNCHER_97: LAUNCHER };
+  assert.equal(isGen8CreateRequest({ chainId: 97, generation: 8 }, launcherOnly), true, "generation 8 stays on gen-8 when the hook is missing");
+  assert.equal(isGen8CreateRequest({ chainId: 97, factoryAddress: LAUNCHER }, launcherOnly), true, "the launcher address stays on gen-8 when the hook is missing");
+  assert.equal(isGen8CreateRequest({ chainId: 97, factoryAddress: CREATOR }, launcherOnly), false, "a different factory stays on gen-7");
 });
 
 test("request parsing: targets, fee choice, first buy, metadata hash", () => {
@@ -44,6 +48,7 @@ test("request parsing: targets, fee choice, first buy, metadata hash", () => {
   err(() => parseGen8CreateRequest({ campaignRequest: request({ graduationTarget: (15_000n * 10n ** 18n).toString() }) }, 97, baseEnv), "GEN8_TARGET_UNSUPPORTED");
   err(() => parseGen8CreateRequest({ campaignRequest: request({ graduationTarget: GEN8_TARGET_TEST_USD.toString() }) }, 97, baseEnv), "GEN8_TARGET_UNSUPPORTED");
   err(() => parseGen8CreateRequest({ campaignRequest: request({ graduationTarget: GEN8_TARGET_TEST_USD.toString() }) }, 56, { ...baseEnv, ENABLE_TEST_GRADUATION_THRESHOLD: "1" }), "GEN8_TARGET_UNSUPPORTED");
+  err(() => parseGen8CreateRequest({ campaignRequest: request({ graduationTarget: GEN8_TARGET_TEST_USD.toString() }) }, 4663, { ...baseEnv, ENABLE_TEST_GRADUATION_THRESHOLD: "1" }), "GEN8_TARGET_UNSUPPORTED");
   assert.equal(parseGen8CreateRequest({ campaignRequest: request({ graduationTarget: GEN8_TARGET_TEST_USD.toString() }) }, 97, { ...baseEnv, ENABLE_TEST_GRADUATION_THRESHOLD: "1" }).fields.targetUsd, GEN8_TARGET_TEST_USD);
   err(() => parseGen8CreateRequest({ campaignRequest: request({ feeChoice: "split" }) }, 97, baseEnv), "GEN8_FEE_CHOICE_INVALID");
   err(() => parseGen8CreateRequest({ campaignRequest: request({ feeChoice: "burn" }) }, 97, baseEnv), "GEN8_FEE_CHOICE_INVALID");
@@ -126,6 +131,10 @@ test("refusals before any signature: not configured, no signer, quote-bound, pre
   });
   const body = { chainId: 97, walletAddress: CREATOR, factoryAddress: LAUNCHER, campaignRequest: request() };
   assert.equal((await gen8CreateAuthorization(body, deps({ env: {} }))).body.code, "GEN8_NOT_CONFIGURED");
+  const partial = await gen8CreateAuthorization(body, deps({ env: { EVM_GEN8_LAUNCHER_97: LAUNCHER } }));
+  assert.equal(partial.body.code, "GEN8_NOT_CONFIGURED");
+  assert.match(partial.body.error, /EVM_GEN8_HOOK_97/);
+  assert.doesNotMatch(partial.body.error, /FACTORY_ADDRESS/);
   assert.equal((await gen8CreateAuthorization(body, deps({ signer: null }))).status, 503);
   const quote = await gen8CreateAuthorization({ ...body, stockToken: CREATOR }, deps());
   assert.deepEqual([quote.status, quote.body.code], [400, "GEN8_NATIVE_ONLY"]);

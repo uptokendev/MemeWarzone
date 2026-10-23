@@ -14,7 +14,7 @@ When a coin graduates:
 1. the curve is complete and curve trading ends
 2. a 2% graduation fee goes to MemeWarzone's fee routing
 3. the liquidity moves into the coin's DEX pool and is locked for good
-4. the creator's 2% reserve (20M tokens) is released
+4. the creator's 2% reserve (20M tokens) is released: on Solana right away, on BNB Chain and Robinhood Chain no earlier than 1 hour after graduation and only while the price is at or above the graduation price
 5. the coin card switches from LIVE to DEX
 6. the Buy/Sell panel now trades in the pool, and the button names the DEX
 
@@ -24,9 +24,9 @@ The coin keeps its coin page, posts, holders and history.
 
 | Chain | DEX |
 | --- | --- |
-| BNB Chain | Topaz |
+| BNB Chain | Uniswap V4 |
 | Solana | Meteora |
-| Robinhood Chain | a Uniswap V3 pool |
+| Robinhood Chain | Uniswap V4 |
 
 The token a coin pairs with in that pool was chosen at launch. On Solana and Robinhood Chain it can be something other than SOL or ETH, such as USDC or a stock token. Graduation locks the pool's liquidity for good.
 

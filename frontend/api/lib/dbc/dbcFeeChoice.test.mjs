@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { feeChoiceLine, parseFeeChoice } from "./dbcFeeChoice.mjs";
+import { HOLDER_RULE, feeChoiceLine, parseFeeChoice } from "./dbcFeeChoice.mjs";
 
 test("keep is creator mode; holders split buyback are platform", () => {
   assert.deepEqual(parseFeeChoice("keep"), { ok: true, feeChoice: "keep", creatorSharePct: null, creatorFeeMode: "creator" });
@@ -22,7 +22,7 @@ test("fee choice line for the creator panel", () => {
 test("fee choice line with what step 5b has paid", () => {
   assert.equal(
     feeChoiceLine({ feeChoice: "holders", totals: { holdersLamports: "840000000" } }),
-    "Holders: 0.84 SOL paid to holders so far, next payout Monday.",
+    `Holders: 0.84 SOL paid to holders so far, next payout Monday. ${HOLDER_RULE}`,
   );
   assert.equal(
     feeChoiceLine({ feeChoice: "buyback", totals: { buybackLamports: "1200000000", tokensBurned: "3400000000000" } }),
@@ -30,7 +30,7 @@ test("fee choice line with what step 5b has paid", () => {
   );
   assert.equal(
     feeChoiceLine({ feeChoice: "split", creatorSharePct: 60, totals: { creatorLamports: "5000000", holdersLamports: "3000000" } }),
-    "Split: 60% to the creator, 40% to holders. Paid so far: 0.005 SOL to the creator, 0.003 SOL to holders.",
+    `Split: 60% to the creator, 40% to holders. Paid so far: 0.005 SOL to the creator, 0.003 SOL to holders. ${HOLDER_RULE}`,
   );
 });
 
@@ -42,6 +42,6 @@ test("a coin paired with NVDAx shows creator and buyback amounts in NVDAx, holde
   );
   assert.equal(
     feeChoiceLine({ feeChoice: "split", creatorSharePct: 60, quote, totals: { creatorLamports: "12311040", holdersLamports: "41036800" } }),
-    "Split: 60% to the creator, 40% to holders. Paid so far: 0.1231 NVDAx to the creator, 0.041 SOL to holders.",
+    `Split: 60% to the creator, 40% to holders. Paid so far: 0.1231 NVDAx to the creator, 0.041 SOL to holders. ${HOLDER_RULE}`,
   );
 });

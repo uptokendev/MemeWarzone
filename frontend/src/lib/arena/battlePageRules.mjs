@@ -15,11 +15,12 @@ export function battleRules(battle = {}) {
   const openWar = ranked === "open_war";
   const lines = [];
   if (vote) {
-    lines.push("One free vote per wallet (1 point). Boosts are $1 and add 2 points each, no limit.");
+    lines.push("One free vote per wallet (1 point). Boosts are $1 and add 1 point each.");
     lines.push("Ranked: the winner gets 3 league points, the loser 1.");
   } else {
     lines.push("Scored on market cap change, holder change and trading volume during the fight, so coin size does not decide it.");
     lines.push(openWar ? "Open War: league points count half (win 1.5, loss 0.5)." : "Ranked: the winner gets 3 league points, the loser 1.");
   }
+  lines.push("Each wallet can buy 2 Boosts per battle. Boosts close when 80% of the battle time has passed.");
   return lines;
 }
