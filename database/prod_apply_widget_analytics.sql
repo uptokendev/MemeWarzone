@@ -14,17 +14,15 @@
 -- counts nothing and the fee scanner marks nothing (both skip quietly). Widget swaps are marked from the moment both
 -- the SQL and the API are live (the scanner looks back 7 days on every run).
 --
--- How (two parts; CREATE INDEX CONCURRENTLY cannot run inside a transaction, and the SQL editor runs a pasted script
--- as one):
---   Part 1: select from BEGIN; down to COMMIT; and Run. It creates the tables and columns and adds the CHECK as
---           NOT VALID (short lock, no table scan).
---   Part 2: run each statement after COMMIT on its own (select it, Run): VALIDATE CONSTRAINT (scans the table with a
---           light lock that does not block reads or writes), then the three CREATE INDEX CONCURRENTLY (they build
---           without blocking writes). Each is idempotent (IF NOT EXISTS / validating twice is a no-op). If a CONCURRENTLY
---           build is interrupted it leaves an INVALID index: drop that index by name and run the statement again.
---   Then run the read-only check at the very bottom on its own.
--- With psql the whole file runs as is: psql -v ON_ERROR_STOP=1 -f database/prod_apply_widget_analytics.sql
+-- How: three blocks, each starting with a ==== line below. In the Supabase SQL editor paste ONE block at a time
+-- (from its ==== line down to the next ==== line) and Run it. Every block is idempotent: running it twice is harmless.
+--   PART 1: tables, columns, the CHECK (added NOT VALID: short lock, no table scan).
+--   PART 2: validates the CHECK and builds three indexes (plain CREATE INDEX: the editor runs every paste inside a
+--           transaction, so CONCURRENTLY is not possible there; these tables are small, the lock lasts well under a second).
+--   CHECK:  read only, shows the result.
+-- With psql the whole file also runs in one go: psql -v ON_ERROR_STOP=1 -f database/prod_apply_widget_analytics.sql
 
+-- ======================== PART 1: paste from here down to the next ==== line, then Run ========================
 BEGIN;
 
 -- Prerequisites: the import fee ledger with its partner columns, and the gen-8 accruals (indexed below).
@@ -109,20 +107,25 @@ COMMENT ON COLUMN public.finance_import_swap_fees.widget_host IS 'The embedding 
 
 COMMIT;
 
--- After COMMIT, one statement each (see the header). Idempotent.
+-- ======================== PART 2: paste from here down to the next ==== line, then Run ========================
+BEGIN;
+
 ALTER TABLE public.finance_import_swap_fees VALIDATE CONSTRAINT finance_import_swap_fees_widget_check;
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS finance_import_swap_fees_widget_idx
+CREATE INDEX IF NOT EXISTS finance_import_swap_fees_widget_idx
   ON public.finance_import_swap_fees (chain_id, occurred_at) WHERE swap_source = 'widget';
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS finance_import_swap_fees_widget_build_idx
+CREATE INDEX IF NOT EXISTS finance_import_swap_fees_widget_build_idx
   ON public.finance_import_swap_fees (widget_build_id) WHERE widget_build_id IS NOT NULL;
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS evm_gen8_fee_accruals_widget_idx
+CREATE INDEX IF NOT EXISTS evm_gen8_fee_accruals_widget_idx
   ON public.evm_gen8_fee_accruals (chain_id, hook_address, block_time)
   WHERE kind = 'trade' AND lower(coalesce(referrer, '')) = '0x000000000000000000000000000000006d777a77';
 
--- Check (read only, run on its own): expect widget_swap_builds and widget_usage_daily; the four columns; the CHECK
+COMMIT;
+
+-- ======================== CHECK: paste from here to the end, then Run (read only) ========================
+-- Expect: widget_swap_builds and widget_usage_daily; the four columns; the CHECK
 -- validated (convalidated = true); three valid indexes; 0 marked rows on the first run.
 select table_name from information_schema.tables
  where table_schema = 'public' and table_name in ('widget_usage_daily', 'widget_swap_builds')

@@ -30,14 +30,15 @@ const accrualsStart = gen8Sql.indexOf("create table if not exists public.evm_gen
 await db.query(gen8Sql.slice(accrualsStart, gen8Sql.indexOf("\n);", accrualsStart) + 3));
 await db.query(migration("20261022_000010_gen8_partner_fees.sql"));
 
-/** The widget migration as psql runs it: the transaction, then each statement after COMMIT on its own. */
+/** The widget migration as the Supabase SQL editor runs it: part 1 (one transaction), then part 2 (one transaction). */
 async function applyWidgetMigration(pool) {
   const sql = migration("20261023_000020_widget_analytics.sql");
+  assert.ok(!/CREATE INDEX CONCURRENTLY/.test(sql.replace(/^\s*--.*$/gm, "")), "no CONCURRENTLY: the SQL editor wraps every run in a transaction");
   const end = sql.indexOf("\nCOMMIT;\n") + "\nCOMMIT;\n".length;
   await pool.query(sql.slice(0, end));
-  const after = sql.slice(end).split(/;\s*\n/).map((s) => s.replace(/^\s*--.*$/gm, "").trim()).filter(Boolean);
-  assert.equal(after.length, 4, "VALIDATE + three CREATE INDEX CONCURRENTLY");
-  for (const statement of after) await pool.query(statement);
+  const part2 = sql.slice(end);
+  assert.match(part2, /BEGIN;[\s\S]*VALIDATE CONSTRAINT[\s\S]*CREATE INDEX IF NOT EXISTS[\s\S]*COMMIT;/, "part 2 is its own transaction");
+  await pool.query(part2);
 }
 
 // A second database with the same schema but WITHOUT the widget SQL: tracking and the scanner must keep working.

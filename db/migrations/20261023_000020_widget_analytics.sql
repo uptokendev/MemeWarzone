@@ -21,8 +21,8 @@
 --
 -- Locks: the CHECK on finance_import_swap_fees is added NOT VALID inside the transaction and validated after it
 -- (VALIDATE takes a lighter lock). Indexes on the existing large tables (finance_import_swap_fees,
--- evm_gen8_fee_accruals) are built with CREATE INDEX CONCURRENTLY after COMMIT, one statement each: run with psql -f
--- (autocommit after COMMIT), or in an SQL editor one statement at a time (CONCURRENTLY cannot run in a transaction).
+-- evm_gen8_fee_accruals) are built in a second transaction after COMMIT, with plain CREATE INDEX (the Supabase SQL editor
+-- wraps every run in a transaction, so CONCURRENTLY is not possible there; these tables are small).
 --
 -- RLS on, no policies: API only (same as the other import fee tables); anon and authenticated revoked.
 -- Idempotent: safe to run twice. Nothing is dropped or rewritten.
@@ -111,15 +111,19 @@ COMMENT ON COLUMN public.finance_import_swap_fees.widget_host IS 'The embedding 
 
 COMMIT;
 
--- After COMMIT, one statement each (see the header). Idempotent.
+-- Part 2 (its own transaction; the Supabase SQL editor wraps every run in one, so no CONCURRENTLY). Idempotent.
+BEGIN;
+
 ALTER TABLE public.finance_import_swap_fees VALIDATE CONSTRAINT finance_import_swap_fees_widget_check;
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS finance_import_swap_fees_widget_idx
+CREATE INDEX IF NOT EXISTS finance_import_swap_fees_widget_idx
   ON public.finance_import_swap_fees (chain_id, occurred_at) WHERE swap_source = 'widget';
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS finance_import_swap_fees_widget_build_idx
+CREATE INDEX IF NOT EXISTS finance_import_swap_fees_widget_build_idx
   ON public.finance_import_swap_fees (widget_build_id) WHERE widget_build_id IS NOT NULL;
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS evm_gen8_fee_accruals_widget_idx
+CREATE INDEX IF NOT EXISTS evm_gen8_fee_accruals_widget_idx
   ON public.evm_gen8_fee_accruals (chain_id, hook_address, block_time)
   WHERE kind = 'trade' AND lower(coalesce(referrer, '')) = '0x000000000000000000000000000000006d777a77';
+
+COMMIT;
