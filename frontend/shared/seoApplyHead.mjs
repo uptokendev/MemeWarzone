@@ -1,5 +1,6 @@
 // Applies computed head values to a document. Pure apart from the document it is given.
 
+import { fitTitle } from "./seoTitle.mjs";
 import { DEFAULT_DESCRIPTION } from "./seoRoutes.mjs";
 
 const BRAND = "MemeWarzone";
@@ -32,7 +33,7 @@ export function resolveHead(head, overrides = {}) {
  */
 export function applyHead(doc, head) {
   const title = String(head?.title ?? "").trim();
-  doc.title = !title || title === BRAND ? BRAND : `${title} · ${BRAND}`;
+  doc.title = fitTitle(title || BRAND);
 
   // An empty description resets to the generic one, so a page never inherits the previous page's text.
   const description = String(head?.description ?? "").trim() || DEFAULT_DESCRIPTION;
