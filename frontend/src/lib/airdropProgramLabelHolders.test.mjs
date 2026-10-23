@@ -4,7 +4,7 @@ import test from "node:test";
 import { airdropProgramKind, airdropProgramLabel, airdropRankNoun, isHolderPayoutProgram } from "./airdropProgramLabel.mjs";
 
 test("gen-7 holder batches are holder payouts, not draws", () => {
-  for (const program of ["airdrop_holders", "airdrop_holders_gen7", "dbc_holders"]) {
+  for (const program of ["airdrop_holders", "airdrop_holders_gen7", "airdrop_holders_gen8", "dbc_holders"]) {
     assert.equal(isHolderPayoutProgram(program), true, program);
     assert.equal(airdropProgramLabel(program), "Holder payout");
     assert.equal(airdropProgramKind(program), "Holder payout");

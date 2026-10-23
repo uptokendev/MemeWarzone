@@ -27,7 +27,8 @@ import { evmGen7FeesStack } from "./lib/evmGen7Fees.js";
  *
  * GET /api/evm/creator-choice?chainId=           the buyback / snapshot week commitments (secret after the week)
  * GET /api/evm/holder-batch?chainId=&weekId=     a published holder leaf file (also &batchId=); &vault= picks the
- *                                                 creator vault (gen-6 and gen-7 each publish one per week); without
+ *                                                 creator vault (gen-6, gen-7 and the gen-8 MwzCreatorChoiceVault each
+ *                                                 publish one per week; gen-8's is the v2 hold-through file); without
  *                                                 it the gen-6 vault's file comes first
  */
 

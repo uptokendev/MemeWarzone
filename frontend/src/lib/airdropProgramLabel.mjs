@@ -1,7 +1,8 @@
 // E18: holder payouts (EVM 'airdrop_holders', Solana DBC 'dbc_holders' / code 2) travel through the
 // airdrop claim tables but are a share of a coin's fees, not a draw win. Label them as such.
 // "airdrop_holders_gen7": holder batches of gen-7's own CreatorRewardsVaultV2 (one program per vault, 2026-10-08).
-const HOLDER_PROGRAMS = new Set(["airdrop_holders", "airdrop_holders_gen7", "dbc_holders"]);
+// "airdrop_holders_gen8": holder batches of the gen-8 MwzCreatorChoiceVault (hold-through rule, 2026-10-22).
+const HOLDER_PROGRAMS = new Set(["airdrop_holders", "airdrop_holders_gen7", "airdrop_holders_gen8", "dbc_holders"]);
 
 export function isHolderPayoutProgram(program) {
   return HOLDER_PROGRAMS.has(String(program ?? ""));

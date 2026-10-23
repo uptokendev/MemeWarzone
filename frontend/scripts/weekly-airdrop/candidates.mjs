@@ -99,7 +99,7 @@ export function isWalletExcluded(exclusions, wallet) {
 // starts the 14-day cooldown. EVM gen-5 holder batches carry program 'airdrop_holders'; Solana DBC holder
 // leaves carry program 'dbc_holders' / programCode 2. Trader (code 0) and creator (code 1) wins -- and any
 // legacy row without a program -- keep counting exactly as before.
-export const HOLDER_PAYOUT_PROGRAMS = Object.freeze(["airdrop_holders", "airdrop_holders_gen7", "dbc_holders"]);
+export const HOLDER_PAYOUT_PROGRAMS = Object.freeze(["airdrop_holders", "airdrop_holders_gen7", "airdrop_holders_gen8", "dbc_holders"]);
 export const HOLDER_PAYOUT_PROGRAM_CODE = 2;
 
 /** JS mirror of the cooldown SQL predicate below: does this reward_ledger airdrop row start the cooldown? */
