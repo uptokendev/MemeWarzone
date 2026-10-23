@@ -512,3 +512,16 @@ Proven on forks of 56 and 4663 with the real Safe (owners via approveHash + Mult
 `payout_watchdog_state` (migration `20261008_000050`, founder runs it); when it is active the holder-batch and airdrop runway
 alerts fire only when the watchdog falls behind, and a stale heartbeat is a critical "watchdog down". Audit:
 `docs/evm-launch/audit/PAYOUT_ROLES_MODULE.md`; founder steps: `docs/runbooks/payout-watchdog.md`.
+
+Gen-8 (2026-10-22, branch `feat/evm-gen8-watchdog`, not deployed): the Roles module is NOT on 56 / 4663 yet (no code at
+`0xEeeE…0c70`). The watchdog now also approves the gen-8 `MwzCreatorChoiceVault` (`0xaf11…CAd3`) holder batch with the 4-arg
+`approveHolderBatch` (`0xc62732bb`) after `payoutWatchdogGen8.ts verifyGen8HolderProposal` (shared hold-through rule, leaf
+file `Gen8LeafFileV2` from `evm_holder_batches`), and keeps the gen-8 distributor (`0x3E0A…335A`) runway. Module for the
+launch is gen-8 only (`PAYOUT_ROLES_GEN8_VAULT_<id>`, gen-6/7 and airdrop inputs `none`; indexer
+`PAYOUT_WATCHDOG_LANES_<id>=gen8`). Public BSC RPCs for forks: publicnode refuses state older than ~1 min ("archive"), dataseed
+refuses getLogs; the gen-8 fork spec forks from dataseed and only scans blocks after the fork block. Roles 2.1 answers a
+non-member with `NotAuthorized`, not `NoMembership`. Review fixes (2026-10-22): only known contracts are skipped (no code check, both sides);
+the creator skipped is the vault's creator at each check block (watchdog replays CreatorTransferred); soft exclusions come
+from the file per check, bounded by PAYOUT_WATCHDOG_MAX_EXCLUDED_BPS and PAYOUT_WATCHDOG_MAX_UNLISTED_EXCLUDED_BPS (200);
+check blocks within PAYOUT_WATCHDOG_GEN8_CHECK_TOLERANCE_MIN (30) of the moment; the watchdog runs as its own service
+(INDEXER_ROLE=payout-watchdog), sends nothing next to an operator key, and alerts on approvals it did not make.

@@ -26,6 +26,14 @@
  *   PAYOUT_ROLES_GEN7_VAULT_<id>          default: deployments/<chain>/mainnet.gen7.json fees.vault (absent = skip)
  *   PAYOUT_ROLES_AIRDROP_DISTRIBUTOR_<id> default: deployments/<chain>/mainnet.reward-distributor.json address ("none" = skip)
  *   PAYOUT_ROLES_GEN7_AIRDROP_DISTRIBUTOR_<id> default: the gen-7 record's airdrop distributor (absent = skip)
+ *   PAYOUT_ROLES_GEN8_VAULT_<id>          the gen-8 MwzCreatorChoiceVault (unset / "none" = skip). Scoped with the 4-arg
+ *                                         approveHolderBatch only (selector 0xc62732bb); its holder distributor is read
+ *                                         from holderDistributor() and scoped with authorizeBatch like the others
+ *   PAYOUT_ROLES_GEN8_HOLDER_CAP_<id>     ether units; default the gen-8 vault's maxHolderBatchPerWeek()
+ *   PAYOUT_ROLES_GEN8_CLAIM_DEADLINE_MAX_<id>  unix seconds, the static Roles bound on claimDeadline; default 2^64 - 1
+ *                                         (the vault itself binds the deadline stored at propose, 7 to 365 days)
+ * Gen-8 only (the 2026-10-22 launch): PAYOUT_ROLES_GEN6_VAULT_<id>=none PAYOUT_ROLES_AIRDROP_DISTRIBUTOR_<id>=none
+ *   PAYOUT_ROLES_GEN8_VAULT_<id>=0xaf11784a69964A576716a5e4b514341F4437CAd3 (and on the indexer PAYOUT_WATCHDOG_LANES_<id>=gen8).
  *   PAYOUT_ROLES_HOLDER_CAP_<id>          ether units; default each vault's limits().holderBatchPerWeek
  *   PAYOUT_ROLES_AIRDROP_CAP_<id>         ether units; default the main pot's current authorization max on chain
  *   PAYOUT_ROLES_GEN7_AIRDROP_CAP_<id>    ether units; default the main pot's cap
@@ -50,6 +58,7 @@ import { mainAirdropCap } from "./lib/gen7AirdropPot";
 import { assertZodiacCode, MODULE_PROXY_FACTORY, ROLES_MASTERCOPY, rolesAbi, zodiacVendor } from "./lib/zodiacRoles";
 import {
   buildPayoutRolesPolicy,
+  type PolicyGen8Vault,
   disableModuleCall,
   KNOWN_FORBIDDEN_WATCHDOGS,
   PAYOUT_WATCHDOG_ROLE,
@@ -63,6 +72,7 @@ import {
 const ROOT = path.resolve(__dirname, "..");
 const DEPLOYMENTS = path.join(ROOT, "deployments");
 export const SAFE = "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7";
+const DAY = 86_400;
 const esm = (rel: string): Promise<any> => Function("s", "return import(s)")(pathToFileURL(path.join(ROOT, rel)).href);
 
 type Chain = { chainId: number; profile: "mainnet" | "testnet" | "local"; dir: string; native: string };
@@ -89,6 +99,15 @@ const DISTRIBUTOR_ABI = [
   "function batches(bytes32) view returns (bytes32 merkleRoot, uint256 totalFunded, uint256 totalClaimed, uint64 claimDeadline, bool paused, bool exists)",
 ];
 const COMMUNITY_ABI = ["function admin() view returns (address)", "function airdropOperator() view returns (address)"];
+/** Gen-8 MwzCreatorChoiceVault (build/evm-gen8 contracts/gen8/MwzCreatorChoiceVault.sol). */
+const GEN8_VAULT_ABI = [
+  "function admin() view returns (address)",
+  "function operator() view returns (address)",
+  "function holderDistributor() view returns (address)",
+  "function maxHolderBatchPerWeek() view returns (uint256)",
+  "function holderBatchDelay() view returns (uint256)",
+];
+const UINT64_MAX = (1n << 64n) - 1n;
 const SAFE_ABI = [
   "function getOwners() view returns (address[])",
   "function getThreshold() view returns (uint256)",
@@ -185,6 +204,7 @@ export type ResolvedInputs = {
   safe: string;
   watchdog: string;
   vaults: PolicyVault[];
+  gen8Vaults: PolicyGen8Vault[];
   distributors: PolicyDistributor[];
   forbidden: Array<{ address: string; label: string }>;
   communityVaults: Record<string, string>;
@@ -235,6 +255,31 @@ export async function resolveInputs(chain: Chain, signerAddress: string, env: No
     distributors.push({ label: `${v.label} holder`, kind: "holders", address: hd, capWei: cap, idsPerWeek: 1, scheme: `keccak256("mwz-weekly-airdrop:${id}:<week>:${v.program}")` });
   }
 
+  // Gen-8: the choice vault (4-arg approve only) and its own holder distributor.
+  const gen8Vaults: PolicyGen8Vault[] = [];
+  const g8 = envTarget(env, `PAYOUT_ROLES_GEN8_VAULT_${id}`) ?? null;
+  if (g8) {
+    await requireCode("gen-8 vault", g8);
+    const c = view(g8, GEN8_VAULT_ABI);
+    if (!same(await c.admin(), safe)) throw new Error(`REFUSED: gen-8 vault ${g8} admin is ${await c.admin()}, not the Safe ${safe}`);
+    const cap = envEther(env, `PAYOUT_ROLES_GEN8_HOLDER_CAP_${id}`) ?? BigInt(await c.maxHolderBatchPerWeek());
+    if (cap <= 0n) throw new Error(`gen-8 vault ${g8}: maxHolderBatchPerWeek is 0; set it first (setCaps) or PAYOUT_ROLES_GEN8_HOLDER_CAP_${id}`);
+    const deadlineRaw = String(env[`PAYOUT_ROLES_GEN8_CLAIM_DEADLINE_MAX_${id}`] ?? "").trim();
+    if (deadlineRaw && !/^\d+$/.test(deadlineRaw)) throw new Error(`PAYOUT_ROLES_GEN8_CLAIM_DEADLINE_MAX_${id} must be unix seconds`);
+    const claimDeadlineMax = deadlineRaw ? BigInt(deadlineRaw) : UINT64_MAX;
+    const latestTs = BigInt((await ethers.provider.getBlock("latest"))!.timestamp);
+    if (claimDeadlineMax < latestTs + 400n * BigInt(DAY)) throw new Error(`PAYOUT_ROLES_GEN8_CLAIM_DEADLINE_MAX_${id} (${claimDeadlineMax}) would refuse a 365-day deadline proposed today`);
+    const operator = ethers.getAddress(await c.operator());
+    if (operator !== ethers.ZeroAddress) forbidden.push({ address: operator, label: "gen-8 vault operator" });
+    gen8Vaults.push({ label: "gen-8", address: g8, maxTotalWei: cap, claimDeadlineMax });
+    const hd = ethers.getAddress(await c.holderDistributor());
+    if (hd === ethers.ZeroAddress) throw new Error(`REFUSED: gen-8 vault ${g8} has no holder distributor pinned yet`);
+    const d = view(hd, DISTRIBUTOR_ABI);
+    if (!same(await d.owner(), safe)) throw new Error(`REFUSED: gen-8 holder distributor ${hd} owner is not the Safe`);
+    if (!same(await d.batchOperator(), g8)) throw new Error(`REFUSED: gen-8 holder distributor ${hd} batchOperator is not its vault`);
+    distributors.push({ label: "gen-8 holder", kind: "holders", address: hd, capWei: cap, idsPerWeek: 1, program: "airdrop_holders_gen8", scheme: `keccak256("mwz-weekly-airdrop:${id}:<week>:airdrop_holders_gen8")` });
+  }
+
   const communityVaults: Record<string, string> = {};
   const mainCapEnv = envEther(env, `PAYOUT_ROLES_AIRDROP_CAP_${id}`);
   const gen7CapEnv = envEther(env, `PAYOUT_ROLES_GEN7_AIRDROP_CAP_${id}`);
@@ -267,10 +312,9 @@ export async function resolveInputs(chain: Chain, signerAddress: string, env: No
       : `keccak256("mwz-weekly-airdrop:${id}:<epoch>:<airdrop_trader|airdrop_creator>:gen7")`;
     distributors.push({ label: a.label, kind: "airdrop", address: a.address, capWei: cap, idsPerWeek: 2, scheme });
   }
-  return { safe, watchdog, vaults, distributors, forbidden: [...KNOWN_FORBIDDEN_WATCHDOGS, ...forbidden], communityVaults };
+  return { safe, watchdog, vaults, gen8Vaults, distributors, forbidden: [...KNOWN_FORBIDDEN_WATCHDOGS, ...forbidden], communityVaults };
 }
 
-const DAY = 86_400;
 
 /**
  * The Safe's own authorizeBatch calls that fill each distributor's runway to `weeks` weeks at setup (only ids that
@@ -286,7 +330,7 @@ export async function runwayCalls(chainId: number, inputs: ResolvedInputs, weeks
   for (const d of inputs.distributors) {
     let calls: any[];
     if (d.kind === "holders") {
-      const program = d.label.startsWith("gen-7") ? "airdrop_holders_gen7" : "airdrop_holders";
+      const program = d.program ?? (d.label.startsWith("gen-7") ? "airdrop_holders_gen7" : "airdrop_holders");
       calls = holderPreauthCalls({ chainId, distributor: d.address, cap: d.capWei, program, weeks, now });
     } else {
       const pot = d.label.startsWith("gen-7") ? "gen7" : "main";
@@ -370,6 +414,7 @@ export async function main(opts: { signer?: any; env?: NodeJS.ProcessEnv; nowSec
     roles: plan.proxy,
     watchdog: inputs.watchdog,
     vaults: inputs.vaults,
+    gen8Vaults: inputs.gen8Vaults,
     distributors: inputs.distributors,
     allowance: { maxWeeks: Number(env.PAYOUT_ROLES_ALLOWANCE_MAX_WEEKS || 2), initialWeeks: Number(env.PAYOUT_ROLES_ALLOWANCE_INITIAL_WEEKS || 2) },
     forbidden: inputs.forbidden,
@@ -412,7 +457,7 @@ export async function main(opts: { signer?: any; env?: NodeJS.ProcessEnv; nowSec
     batchFile,
     chain.chainId,
     "MWZ payout watchdog: Roles module",
-    `Roles proxy ${plan.proxy} (Zodiac Roles v2.1.0, owner = avatar = target = Safe). Role ${PAYOUT_WATCHDOG_ROLE} -> ${inputs.watchdog}: approveHolderBatch on ${inputs.vaults.map((v) => `${v.label} ${v.address} (total <= ${fmt(v.maxTotalWei)})`).join(", ") || "no vault"}; authorizeBatch on ${inputs.distributors.map((d) => `${d.label} ${d.address} (<= ${fmt(d.capWei)} per id)`).join(", ")}; value 0, call only, nothing else. ${runway.length} runway authorizations by the Safe. Last: Safe.enableModule.`,
+    `Roles proxy ${plan.proxy} (Zodiac Roles v2.1.0, owner = avatar = target = Safe). Role ${PAYOUT_WATCHDOG_ROLE} -> ${inputs.watchdog}: approveHolderBatch on ${inputs.vaults.map((v) => `${v.label} ${v.address} (total <= ${fmt(v.maxTotalWei)})`).join(", ") || "no gen-6/7 vault"}; approveHolderBatch(bytes32,bytes32,uint256,uint64) on ${inputs.gen8Vaults.map((v) => `${v.label} ${v.address} (total <= ${fmt(v.maxTotalWei)}, claimDeadline <= ${v.claimDeadlineMax})`).join(", ") || "no gen-8 vault"}; authorizeBatch on ${inputs.distributors.map((d) => `${d.label} ${d.address} (<= ${fmt(d.capWei)} per id)`).join(", ")}; value 0, call only, nothing else. ${runway.length} runway authorizations by the Safe. Last: Safe.enableModule.`,
     calls,
   );
   const record = {
@@ -435,6 +480,7 @@ export async function main(opts: { signer?: any; env?: NodeJS.ProcessEnv; nowSec
     roleKey: policy.roleKey,
     watchdog: inputs.watchdog,
     vaults: inputs.vaults,
+    gen8Vaults: inputs.gen8Vaults,
     distributors: inputs.distributors,
     communityVaults: inputs.communityVaults,
     allowances: policy.allowances,
@@ -453,6 +499,8 @@ export async function main(opts: { signer?: any; env?: NodeJS.ProcessEnv; nowSec
     `PAYOUT_WATCHDOG_ROLES_${chain.chainId}=${plan.proxy}`,
     `PAYOUT_WATCHDOG_SAFE_${chain.chainId}=${inputs.safe}`,
     `PAYOUT_WATCHDOG_PK_${chain.chainId}=<the watchdog key for ${inputs.watchdog}>`,
+    ...(inputs.gen8Vaults.length ? [`EVM_GEN8_CHOICE_VAULT_${chain.chainId}=${inputs.gen8Vaults[0].address}@<its deploy block>   (already set for the gen-8 indexer: keep it, add the block)`] : []),
+    ...(inputs.gen8Vaults.length && !inputs.vaults.length && !inputs.distributors.some((d) => d.kind === "airdrop") ? [`PAYOUT_WATCHDOG_LANES_${chain.chainId}=gen8   (this module is scoped for gen-8 only)`] : []),
     ...inputs.distributors.filter((d) => d.kind === "airdrop").map((d) => `${d.label.startsWith("gen-7") ? `PAYOUT_WATCHDOG_GEN7_AIRDROP_DISTRIBUTOR_${chain.chainId}` : `PAYOUT_WATCHDOG_AIRDROP_DISTRIBUTOR_${chain.chainId}`}=${d.address}`),
     ...inputs.distributors.filter((d) => d.kind === "airdrop").map((d) => `${d.label.startsWith("gen-7") ? `PAYOUT_WATCHDOG_GEN7_AIRDROP_CAP_WEI_${chain.chainId}` : `PAYOUT_WATCHDOG_AIRDROP_CAP_WEI_${chain.chainId}`}=${d.capWei}`),
     "PAYOUT_WATCHDOG_SEND=true   (only after a dry-run day)",

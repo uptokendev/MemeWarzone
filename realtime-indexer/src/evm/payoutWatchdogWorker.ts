@@ -8,15 +8,30 @@
  *      through the module. Different: never approved, critical alert (the Safe signers verify and decide by hand).
  *   3. Authorizations: each listed distributor (holder gen-6 / gen-7, airdrop main / gen-7) keeps PAYOUT_WATCHDOG_WEEKS
  *      (12) weeks of its deterministic batch ids authorized at its cap; Roles' own allowance bounds how much per week.
+ *   2b. Gen-8 holder batches, when EVM_GEN8_CHOICE_VAULT_<id> is set ("0xaddr@startBlock"): every HolderBatchProposed
+ *      on the gen-8 MwzCreatorChoiceVault not yet approved, vetoed or executed is recomputed from chain data with the
+ *      shared hold-through rule (payoutWatchdogGen8.ts verifyGen8HolderProposal, leaf file Gen8LeafFileV2). Equal: the
+ *      4-argument approveHolderBatch(batchId, root, total, claimDeadline) (selector 0xc62732bb) through the module.
+ *      Different: never approved, critical alert. The 3-arg selector is never sent to a gen-8 vault.
+ *   3b. The gen-8 holder distributor (the vault's holderDistributor()) keeps PAYOUT_WATCHDOG_WEEKS weeks of
+ *      holderBatchId(chain, week, "airdrop_holders_gen8") authorized at its cap, exactly as the gen-6 / gen-7 ones.
  *   4. Gen-8 choice vault, when EVM_GEN8_CHOICE_VAULT_<id> is set: balance against totalLiabilities, hook.treasuryRouter
- *      against the splitter, and foreign claimRouter senders. Alerts use gen8_* kinds. This step sends nothing and
- *      does not call the 3-arg approveHolderBatch. The Safe Roles file for selector 0xc62732bb is not applied here.
+ *      against the splitter, and foreign claimRouter senders. Alerts use gen8_* kinds. This step sends nothing.
  *   5. Heartbeat: public.payout_watchdog_state (the Finance alerts and the airdrop runner read it; a stale heartbeat is
  *      their "watchdog down" alert), alerts in public.reward_alerts (reward_type 'payout_watchdog').
  *
  * Dry run unless PAYOUT_WATCHDOG_SEND=true: every decision is logged and alerted, nothing is signed.
  *
  *   PAYOUT_WATCHDOG_ENABLED_<chainId>=true               56, 4663 (97, 46630 for testnets with a Safe)
+ *   INDEXER_ROLE=payout-watchdog                         run as its own service (main.ts); with any operator key in the env
+ *                                                        (EVM_GEN8_OPERATOR_KEY*, EVM_CREATOR_CHOICE_OPERATOR_PRIVATE_KEY*)
+ *                                                        nothing is sent (critical alert); approvals on the gen-8 vault not made
+ *                                                        by this key through the module are alerted
+ *   PAYOUT_WATCHDOG_GEN8_CHECK_TOLERANCE_MIN (30), PAYOUT_WATCHDOG_MAX_UNLISTED_EXCLUDED_BPS (200)   gen-8 bounds
+ *   PAYOUT_WATCHDOG_LANES_<chainId>                      optional: "gen8" (a module scoped for gen-8 only), or any of
+ *                                                        gen6,gen7,airdrop,gen8; unset = every configured lane
+ *   EVM_GEN8_CHOICE_VAULT_<chainId>="0xaddr@block"        the gen-8 vault (with its deploy block); EVM_GEN8_LAUNCHER / HOOK /
+ *                                                        RESERVE_LOCK / ESCROW / POOL_MANAGER give its census exclusions
  *   PAYOUT_WATCHDOG_SEND=true                            real sends
  *   PAYOUT_WATCHDOG_PK_<chainId>                         the watchdog's OWN key (refused: any other key in the env, the
  *                                                        operators, the deployer, the route authority, the Safe, its owners)
@@ -35,6 +50,10 @@
  */
 import { ethers } from "ethers";
 import type { LeafFile } from "./evmCreatorChoice.js";
+import { evmGen8Config } from "./evmGen8Config.js";
+import { gen8HolderExclusions } from "./evmGen8Holders.js";
+import type { Gen8LeafFileV2 } from "./evmGen8HoldThrough.js";
+import { gen8ApproveCalldata, verifyGen8HolderProposal, type Gen8VerifyConfig, type Gen8VerifyResult } from "./payoutWatchdogGen8.js";
 import { riskExcludedWallets, type Queryable } from "./evmCreatorChoicePass.js";
 import {
   airdropAuthTargets,
@@ -56,7 +75,7 @@ export type PendingBatch = { vault: string; program: string; batchId: string; bl
 export type WatchdogMemory = {
   cursors: Record<string, number>;
   pending: Record<string, PendingBatch>;
-  verdicts: Record<string, { kind: string; reasons: string[]; at: number; txHash: string; root?: string; total?: string }>;
+  verdicts: Record<string, { kind: string; reasons: string[]; at: number; txHash: string; root?: string; total?: string; claimDeadline?: string }>;
 };
 
 export function emptyMemory(): WatchdogMemory {
@@ -153,6 +172,31 @@ export async function leafFileFor(db: Queryable | null, chainId: number, vault: 
   return (rows[0]?.leaf_file as LeafFile) ?? null;
 }
 
+/** The operator's published gen-8 leaf file (Gen8LeafFileV2): a hint, verified in full before anything is approved. */
+export async function gen8LeafFileFor(db: Queryable | null, chainId: number, vault: string, batchId: string): Promise<Gen8LeafFileV2 | null> {
+  const { rows } = await safeQuery(
+    db,
+    `select leaf_file from public.evm_holder_batches where chain_id = $1 and lower(vault_address) = $2 and lower(batch_id) = $3 and leaf_file is not null limit 1`,
+    [chainId, vault.toLowerCase(), batchId.toLowerCase()],
+  );
+  return (rows[0]?.leaf_file as Gen8LeafFileV2) ?? null;
+}
+
+/**
+ * The chain's gen-8 census exclusions, derived here and not read from the operator's tables: PoolManager, hook,
+ * launcher, reserve lock, escrow, choice vault and the Pancake Infinity vault from the gen-8 config (EVM_GEN8_*), and
+ * every coin-holding side pool (v2, v3, v3_pancake, solidly) in public.evm_gen8_side_pools. Throws without a gen-8
+ * config: the batch is then "missing" (retried, never approved).
+ */
+export async function gen8CensusExclusionsFor(db: Queryable | null, chainId: number, env: NodeJS.ProcessEnv = process.env): Promise<Set<string>> {
+  const { config, reason } = evmGen8Config(chainId, env);
+  if (!config) throw new Error(`gen-8 config for chain ${chainId} is incomplete (${reason}): the census exclusions cannot be derived`);
+  const out = new Set(gen8HolderExclusions(config).map((x) => x.wallet.toLowerCase()));
+  const { rows } = await safeQuery(db, `select pool_key from public.evm_gen8_side_pools where chain_id = $1 and venue in ('v2', 'v3', 'v3_pancake', 'solidly')`, [chainId]);
+  for (const r of rows) if (/^0x[0-9a-fA-F]{40}$/.test(String(r.pool_key))) out.add(String(r.pool_key).toLowerCase());
+  return out;
+}
+
 const GEN8_BALANCE_KINDS = ["gen8_vault_short", "gen8_vault_excess"] as const;
 
 /** Reads the gen-8 vault and alerts. Does not encode approveHolderBatch and does not send. */
@@ -222,6 +266,10 @@ export type TickDeps = {
   leafFile?: (vault: string, batchId: string) => Promise<LeafFile | null>;
   /** Chain read for the gen-8 vault. Absent: the lane is reported and not guessed. */
   readGen8Vault?: (lane: Gen8WatchdogVault) => Promise<Gen8VaultWatchFacts>;
+  /** Gen-8 leaf file source (default: public.evm_holder_batches). */
+  gen8LeafFile?: (vault: string, batchId: string) => Promise<Gen8LeafFileV2 | null>;
+  /** Gen-8 census exclusions (default: gen8CensusExclusionsFor with process.env). */
+  gen8CensusExclusions?: () => Promise<Iterable<string>>;
   log?: (line: string, extra?: unknown) => void;
 };
 
@@ -238,11 +286,18 @@ export async function onChainRefusals(chain: WatchdogChain, cfg: WatchdogConfig)
     const op = await chain.communityAirdropOperator(a.address);
     if (op && op !== ethers.ZeroAddress) out.push({ address: op.toLowerCase(), label: `${a.label} airdrop operator` });
   }
+  for (const g of cfg.gen8Vaults ?? []) {
+    const op = await chain.vaultOperator(g.vault);
+    if (op !== ethers.ZeroAddress) out.push({ address: op.toLowerCase(), label: "gen-8 vault operator" });
+  }
   return out;
 }
 
 export async function runWatchdogTick(deps: TickDeps): Promise<TickReport> {
-  const { db, cfg, chain, sender, memory } = deps;
+  const { db, chain, sender, memory } = deps;
+  // H0: an operator key in this process's env: nothing is sent (dry run), whatever PAYOUT_WATCHDOG_SEND says.
+  const colocated = deps.cfg.colocatedOperatorKeys ?? [];
+  const cfg = colocated.length && deps.cfg.send ? { ...deps.cfg, send: false } : deps.cfg;
   const log = deps.log ?? ((line: string, extra?: unknown) => console.log(`[payout-watchdog] ${line}`, extra ?? ""));
   const report: TickReport = { chainId: cfg.chainId, send: cfg.send, moduleEnabled: false, roleOk: false, wiringOk: false, actions: [], coverage: [], alerts: [] };
   const alert = async (a: Parameters<typeof raiseAlert>[1]) => {
@@ -251,6 +306,11 @@ export async function runWatchdogTick(deps: TickDeps): Promise<TickReport> {
     await raiseAlert(db, a);
   };
   const id = cfg.chainId;
+  if (colocated.length) {
+    await alert({ severity: "critical", kind: "payout_watchdog_key_colocated", chainId: id, title: `Payout watchdog on chain ${id}: an operator key is in the watchdog's environment; it sends nothing`, message: `${colocated.join(", ")} set next to PAYOUT_WATCHDOG_PK_${id}. The watchdog must run as its own service (INDEXER_ROLE=payout-watchdog) without any operator key. Dry run until then; the Safe signers approve by hand.` });
+  } else {
+    await resolveAlerts(db, "payout_watchdog_key_colocated", id);
+  }
   await watchGen8Vaults(deps, alert);
   if (!cfg.roles) {
     await alert({ severity: "critical", kind: "payout_watchdog_config", chainId: id, title: `Payout watchdog on chain ${id}: no Roles module configured`, message: `Set PAYOUT_WATCHDOG_ROLES_${id} (deployments/<chain>/mainnet.payout-roles.json). Until then holder approvals and authorizations need the Safe signers.` });
@@ -262,12 +322,16 @@ export async function runWatchdogTick(deps: TickDeps): Promise<TickReport> {
   const wiring = await chain.rolesWiring(cfg.roles);
   report.wiringOk = [wiring.owner, wiring.avatar, wiring.target].every((a) => a.toLowerCase() === cfg.safe.toLowerCase());
   report.moduleEnabled = await chain.isModuleEnabled(cfg.safe, cfg.roles);
-  const probeTarget = cfg.vaults[0]?.vault ?? cfg.airdrops.find((a) => a.address)?.address ?? null;
+  const probeTarget = cfg.vaults[0]?.vault ?? cfg.airdrops.find((a) => a.address)?.address ?? cfg.gen8Vaults?.[0]?.vault ?? null;
   let probe: string | null = "no target to probe";
   if (probeTarget) {
+    // Gen-8 only (PAYOUT_WATCHDOG_LANES_<id>=gen8): the 4-arg approve of an unknown batch, claimDeadline 1 (inside the
+    // Roles bounds); the vault answers BadBatch, which shouldRevert = false turns into a plain false.
     const data = cfg.vaults[0]
       ? WATCHDOG_VAULT_IFACE.encodeFunctionData("approveHolderBatch", [ethers.ZeroHash, ethers.ZeroHash, 0n])
-      : DISTRIBUTOR_IFACE.encodeFunctionData("authorizeBatch", [ethers.id("payout-watchdog-probe"), 1n, 0n, 1n]);
+      : cfg.airdrops.find((a) => a.address)
+        ? DISTRIBUTOR_IFACE.encodeFunctionData("authorizeBatch", [ethers.id("payout-watchdog-probe"), 1n, 0n, 1n])
+        : gen8ApproveCalldata(ethers.ZeroHash, ethers.ZeroHash, 0n, 1n);
     probe = await chain.simulate(cfg.roles, sender.address, probeTarget, data, false);
   }
   const verdict = probeVerdict(probe);
@@ -389,6 +453,129 @@ export async function runWatchdogTick(deps: TickDeps): Promise<TickReport> {
     }
   }
 
+  // 2b. Gen-8 holder batches (4-arg approveHolderBatch, hold-through rule).
+  // H0: every approval on the gen-8 vault must be this watchdog's own call through the module; a Safe-signed approval is
+  // a warning (the signers may approve by hand), anything else (another module member, another path) is critical.
+  const auditGen8Approval = async (e: { batchId: string; txHash: string }, vault: string) => {
+    try {
+      const tx = await chain.gen8!.txInfo(e.txHash);
+      const viaUs = tx.from.toLowerCase() === sender.address.toLowerCase() && String(tx.to).toLowerCase() === String(cfg.roles).toLowerCase();
+      if (viaUs) return;
+      const bySafe = String(tx.to).toLowerCase() === cfg.safe.toLowerCase();
+      await alert({
+        severity: bySafe ? "warning" : "critical", kind: "payout_watchdog_gen8_external_approval", chainId: id, subject: e.batchId,
+        title: `Payout watchdog on chain ${id}: gen-8 holder batch ${e.batchId.slice(0, 10)}… was approved ${bySafe ? "by a Safe transaction" : "by something other than the watchdog or the Safe"}`,
+        message: `Transaction ${e.txHash} from ${tx.from} to ${tx.to} approved it on ${vault}, not the watchdog ${sender.address} through ${cfg.roles}. ${bySafe ? "Expected only when the signers approved by hand." : "Check the module's members and the Safe now; veto within 24 h if unknown."}`,
+        extra: { vault, batchId: e.batchId, txHash: e.txHash, from: tx.from, to: tx.to },
+      });
+    } catch (error) {
+      await alert({ severity: "warning", kind: "payout_watchdog_gen8_external_approval", chainId: id, subject: e.batchId, title: `Payout watchdog on chain ${id}: could not read who approved gen-8 batch ${e.batchId.slice(0, 10)}…`, message: error instanceof Error ? error.message.slice(0, 300) : String(error) });
+    }
+  };
+  for (const lane of cfg.gen8Vaults ?? []) {
+    const vault = lane.vault;
+    const subject = vault.toLowerCase();
+    if (!chain.gen8) {
+      await alert({ severity: "warning", kind: "payout_watchdog_config", chainId: id, subject, title: `Payout watchdog on chain ${id}: no gen-8 chain reader`, message: "This tick has no gen-8 chain reader: gen-8 holder batches are left to the Safe signers." });
+      continue;
+    }
+    if (!lane.startBlock) {
+      await alert({ severity: "warning", kind: "payout_watchdog_config", chainId: id, subject, title: `Payout watchdog on chain ${id}: the gen-8 vault has no start block`, message: `Set EVM_GEN8_CHOICE_VAULT_${id} as "0xaddr@deployBlock". Gen-8 holder batches are left to the Safe signers until then.` });
+      continue;
+    }
+    const cursor = memory.cursors[subject] ?? Math.max(lane.startBlock, latest.number - cfg.lookbackBlocks);
+    const events = await chain.gen8.scan(vault, cursor, latest.number);
+    for (const e of events) {
+      if (e.name === "HolderBatchProposed") {
+        memory.pending[e.batchId] ??= {
+          vault: subject, program: lane.program, batchId: e.batchId, blockNumber: e.blockNumber, txHash: e.txHash,
+          args: { root: String(e.args.root), total: String(e.args.total), executableAt: String(e.args.executableAt), claimDeadline: String(e.args.claimDeadline) },
+          firstSeenAt: nowSec,
+        };
+      } else {
+        if (e.name === "HolderBatchApproved") await auditGen8Approval(e, vault);
+        delete memory.pending[e.batchId];
+        delete memory.verdicts[e.batchId];
+      }
+    }
+    memory.cursors[subject] = latest.number + 1;
+
+    for (const pend of Object.values(memory.pending).filter((p) => p.vault === subject)) {
+      if (budget <= 0) break;
+      const cached = memory.verdicts[pend.batchId];
+      if (cached && cached.kind === "mismatch" && cached.txHash === pend.txHash) {
+        report.actions.push({ kind: "approve", target: vault, subject: pend.batchId, decision: "mismatch", reason: cached.reasons[0] });
+        continue;
+      }
+      let result: Gen8VerifyResult;
+      try {
+        if (cached?.kind === "ok" && cached.txHash === pend.txHash && cached.root && cached.total && cached.claimDeadline) {
+          // A batch already found equal (dry run, or a send that failed) is not recomputed every tick.
+          result = { ok: true, weekId: "", root: cached.root, total: BigInt(cached.total), claimDeadline: BigInt(cached.claimDeadline), leaves: 0, pools: 0, checks: {}, unlisted: [] };
+        } else {
+          const proposal = await chain.proposal({ chainId: id, vault, program: lane.program, event: { name: "HolderBatchProposed", batchId: pend.batchId, blockNumber: pend.blockNumber, txHash: pend.txHash, args: pend.args } });
+          const file = deps.gen8LeafFile ? await deps.gen8LeafFile(vault, pend.batchId) : await gen8LeafFileFor(db, id, vault, pend.batchId);
+          risk ??= deps.riskExcluded ? await deps.riskExcluded() : db ? await riskExcludedWallets(db) : new Set<string>();
+          const gcfg: Gen8VerifyConfig = {
+            minPayoutWei: cfg.minPayoutWei, claimWindowDays: cfg.claimWindowDays, excluded: cfg.excluded, riskExcluded: risk, masterSecret: cfg.masterSecret,
+            maxExcludedBps: cfg.maxExcludedBps, maxUnlistedExcludedBps: cfg.maxUnlistedExcludedBps, checkToleranceSec: cfg.gen8CheckToleranceSec,
+          };
+          const censusExclusions = deps.gen8CensusExclusions ?? (() => gen8CensusExclusionsFor(db, id));
+          result = await verifyGen8HolderProposal(proposal, file, chain.gen8.verifyDeps({ vault, startBlock: lane.startBlock, censusExclusions }), gcfg);
+        }
+      } catch (error) {
+        result = { ok: false as const, kind: "missing" as const, reasons: [`verification could not read the chain: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`] };
+      }
+      if (!result.ok) {
+        memory.verdicts[pend.batchId] = { kind: result.kind, reasons: result.reasons, at: nowSec, txHash: pend.txHash };
+        report.actions.push({ kind: "approve", target: vault, subject: pend.batchId, decision: result.kind, reason: result.reasons[0] });
+        if (result.kind === "mismatch") {
+          await alert({ severity: "critical", kind: "payout_watchdog_mismatch", chainId: id, subject: pend.batchId, title: `Payout watchdog on chain ${id}: gen-8 holder batch ${pend.batchId.slice(0, 10)}… does NOT match the chain; not approved`, message: `${result.reasons.join("; ")}. The watchdog will not approve it. Safe signers: verify with scripts/evm-gen8-holder-batch-verify.mjs and veto or approve by hand.`, extra: { vault, batchId: pend.batchId, txHash: pend.txHash } });
+        } else if (nowSec - pend.firstSeenAt > 2 * 3600) {
+          await alert({ severity: "warning", kind: "payout_watchdog_missing_data", chainId: id, subject: pend.batchId, title: `Payout watchdog on chain ${id}: gen-8 holder batch ${pend.batchId.slice(0, 10)}… cannot be checked yet`, message: `${result.reasons.join("; ")}. It is retried every tick; until it is checked the Safe signers can approve it by hand.`, extra: { vault, batchId: pend.batchId } });
+        }
+        continue;
+      }
+      memory.verdicts[pend.batchId] = { kind: "ok", reasons: [], at: nowSec, txHash: pend.txHash, root: result.root, total: result.total.toString(), claimDeadline: result.claimDeadline.toString() };
+      if (result.unlisted.length) {
+        // M1: within the bound, so not blocking; every wallet the operator's lists removed that today's lists do not name.
+        await alert({
+          severity: "warning", kind: "payout_watchdog_gen8_unlisted_exclusion", chainId: id, subject: pend.batchId,
+          title: `Payout watchdog on chain ${id}: gen-8 batch ${pend.batchId.slice(0, 10)}… left out ${new Set(result.unlisted.map((u) => u.wallet)).size} wallet(s) that are on no current exclusion list`,
+          message: result.unlisted.slice(0, 20).map((u) => `${u.wallet} (pool ${u.poolId.slice(0, 10)}…, check ${u.index}, ${u.amount} tokens)`).join("; ") + `. Within PAYOUT_WATCHDOG_MAX_UNLISTED_EXCLUDED_BPS, so the batch is approved; check that each was on the configured or risk list at that check.`,
+          extra: { batchId: pend.batchId, wallets: [...new Set(result.unlisted.map((u) => u.wallet))] },
+        });
+      }
+      await resolveAlerts(db, "payout_watchdog_missing_data", id, pend.batchId);
+      const data = gen8ApproveCalldata(pend.batchId, result.root, result.total, result.claimDeadline);
+      const sim = await chain.simulate(cfg.roles, sender.address, vault, data, true);
+      if (sim) {
+        if (sim === "ModuleTransactionFailed") {
+          // Roles allowed it; the vault refused (vetoed / executed meanwhile): nothing to approve.
+          delete memory.pending[pend.batchId];
+          report.actions.push({ kind: "approve", target: vault, subject: pend.batchId, decision: "skip", reason: "the vault refuses (vetoed or executed)" });
+        } else {
+          report.actions.push({ kind: "approve", target: vault, subject: pend.batchId, decision: "refused", reason: sim });
+          await alert({ severity: "critical", kind: "payout_watchdog_refused", chainId: id, subject: `approve:${pend.batchId}`, title: `Payout watchdog on chain ${id}: the Roles module refused approveHolderBatch on the gen-8 vault`, message: `${sim}. The batch matched the chain but the module's scope does not allow it (gen-8 not scoped, cap or deadline bound?). Safe signers approve by hand.` });
+        }
+        continue;
+      }
+      if (!cfg.send) {
+        report.actions.push({ kind: "approve", target: vault, subject: pend.batchId, decision: "dry-run", reason: `matches the chain: ${result.leaves} leaves, ${result.total} wei, root ${result.root}` });
+        continue;
+      }
+      budget -= 1;
+      const sent = await exec(vault, data);
+      if ("hash" in sent) {
+        delete memory.pending[pend.batchId];
+        delete memory.verdicts[pend.batchId];
+        report.actions.push({ kind: "approve", target: vault, subject: pend.batchId, decision: "sent", txHash: sent.hash, reason: `${result.total} wei to ${result.leaves} holders` });
+      } else {
+        report.actions.push({ kind: "approve", target: vault, subject: pend.batchId, decision: "failed", reason: sent.error });
+      }
+    }
+  }
+
   // 3. Authorizations.
   const lanes: Array<{ label: string; address: string; targets: AuthTarget[] }> = [];
   for (const v of cfg.vaults) {
@@ -405,6 +592,14 @@ export async function runWatchdogTick(deps: TickDeps): Promise<TickReport> {
       continue;
     }
     lanes.push({ label: a.label, address: a.address, targets: airdropAuthTargets({ chainId: id, pot: a.pot ?? "main", capWei: a.capWei, nowSec, weeks: cfg.weeks }) });
+  }
+  for (const g of cfg.gen8Vaults ?? []) {
+    if (!chain.gen8) continue;
+    const dist = await chain.gen8.holderDistributor(g.vault);
+    if (dist === ethers.ZeroAddress) continue;
+    const cap = g.holderCapWei ?? (await chain.gen8.holderCap(g.vault));
+    if (cap <= 0n) continue;
+    lanes.push({ label: "gen-8 holder", address: dist, targets: holderAuthTargets({ chainId: id, program: g.program, capWei: cap, nowSec, weeks: cfg.weeks }) });
   }
   for (const lane of lanes) {
     const states = await chain.authStates(lane.address, lane.targets.map((t) => t.batchId));
@@ -468,7 +663,13 @@ export async function startPayoutWatchdogWorker() {
   const { keeperRpc } = await import("./evmGraduationKeeperWorker.js");
   const { createEthersWatchdogChain, createEthersWatchdogSender } = await import("./payoutWatchdogChain.js");
   for (const chainId of chains) {
-    const cfg = watchdogConfig(chainId);
+    let cfg: ReturnType<typeof watchdogConfig>;
+    try {
+      cfg = watchdogConfig(chainId);
+    } catch (error) {
+      console.error("[payout-watchdog] configuration refused; the watchdog does not start on this chain", { chainId, error: error instanceof Error ? error.message : String(error) });
+      continue;
+    }
     let wallet: ethers.Wallet | null = null;
     try {
       wallet = watchdogWallet(chainId);

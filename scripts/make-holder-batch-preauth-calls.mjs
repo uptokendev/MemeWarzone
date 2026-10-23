@@ -18,7 +18,7 @@
  *   authorizeBatch(holderBatchId(chain, W, program), cap, end, end + 6 days)
  *
  *   node scripts/make-holder-batch-preauth-calls.mjs --chain 56 --distributor 0x.. --cap 2 \
- *     [--program airdrop_holders | airdrop_holders_gen7] [--weeks 12] [--from 2026-10-12] > /tmp/holders-56.json
+ *     [--program airdrop_holders | airdrop_holders_gen7 | airdrop_holders_gen8] [--weeks 12] [--from 2026-10-12] > /tmp/holders-56.json
  *   npx ts-node scripts/make-safe-batch.ts deployments/bnb/mainnet.holders-preauth.safe-batch.json 56 \
  *     "MWZ holders: pre-authorize 12 weeks" "..." /tmp/holders-56.json
  *
@@ -32,7 +32,7 @@ import { getAddress, keccak256, parseEther, toUtf8Bytes } from "ethers";
 
 const DAY = 86_400;
 const CHAINS = [56, 97, 4663, 46630];
-const PROGRAMS = ["airdrop_holders", "airdrop_holders_gen7"];
+const PROGRAMS = ["airdrop_holders", "airdrop_holders_gen7", "airdrop_holders_gen8"];
 
 export function holderBatchId(chainId, weekId, program = "airdrop_holders") {
   return keccak256(toUtf8Bytes(`mwz-weekly-airdrop:${chainId}:${weekId}:${program}`));

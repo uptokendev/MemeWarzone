@@ -8,7 +8,7 @@
 // a silently wrong map. Testnets have no pinned record here: their destinations
 // are resolved from the live router getters and labelled as such.
 
-import { id as keccakId } from "ethers";
+import { getAddress, id as keccakId } from "ethers";
 import { evmGen7Lockers } from "./evmGen7Lockers.js";
 import { evmGen7FeesStack } from "./evmGen7Fees.js";
 
@@ -278,6 +278,22 @@ function gen7StackEntries(chainId, env, reused, recordFile) {
 }
 
 /**
+ * The gen-8 holder lane (MwzCreatorChoiceVault, program "airdrop_holders_gen8"): the holder-batch alerts watch it
+ * once both EVM_GEN8_CHOICE_VAULT_<chainId> (the indexer's variable) and EVM_GEN8_HOLDER_DISTRIBUTOR_<chainId> are set
+ * on the API. Unset (or not an address): no lane, the registry is exactly as before.
+ */
+function gen8HolderLane(chainId, env) {
+  const read = (name) => {
+    const raw = String(env?.[`${name}_${chainId}`] || "").split("@")[0].trim();
+    return /^0x[0-9a-fA-F]{40}$/.test(raw) && !/^0x0{40}$/i.test(raw) ? raw : null;
+  };
+  const vault = read("EVM_GEN8_CHOICE_VAULT");
+  const distributor = read("EVM_GEN8_HOLDER_DISTRIBUTOR");
+  if (!vault || !distributor) return [];
+  return [{ label: "gen-8", vault: getAddress(vault), distributor: getAddress(distributor), program: "airdrop_holders_gen8" }];
+}
+
+/**
  * CO-IMP rev. 2 (docs/evm-launch/CO-IMPORT-SWAP-FEE.md): the import fee is 1% to the chain's ImportFeeVault only when
  * IMPORT_FEE_VAULT_<id> is set and IMPORT_SWAP_FEE_RECEIVER_<id> equals it (the same coupling as importSwap.js /
  * robinhoodImportSwap.mjs). Returns the vault, or "" when the switch is off (the entries below stay as they were).
@@ -523,7 +539,7 @@ function mainnetRegistry(chainId, env = process.env) {
       ...(g7.router ? { gen7: { router: g7.router, airdrop: g7.ids.communityId, squad: g7.ids.communityId, creator: g7.ids.creatorId } } : {}),
     },
     // Creator vaults whose weekly holder batches need the Safe (financeFeeRouting.js holderBatchAlerts).
-    holderLanes: [{ label: "gen-6", vault: a.creatorV2, distributor: a.holderDistributor, program: "airdrop_holders" }, ...(g7.holderLane ? [g7.holderLane] : [])],
+    holderLanes: [{ label: "gen-6", vault: a.creatorV2, distributor: a.holderDistributor, program: "airdrop_holders" }, ...(g7.holderLane ? [g7.holderLane] : []), ...gen8HolderLane(chainId, env)],
     // Read live by financeFeeRouting.js (lpForwarderAlerts): router pointer,
     // pending switch and the wrapped balance decide the LP alert.
     lpForwarder: { router: a.routerV4, vault: a.protocol, forwarder: forwarder.address, wrapped: a.wrapped, deployTx: forwarder.deployTx, record: forwarder.record },
@@ -563,7 +579,7 @@ function testnetRegistry(chainId, env) {
       weekly: "weekly_league", monthly: "monthly_league", recruiter: "recruiter_vault", airdrop: "community_vault", squad: "community_vault", protocol: "protocol_vault", creator: "creator_vault_v2",
       ...(g7.router ? { gen7: { router: g7.router, airdrop: g7.ids.communityId, squad: g7.ids.communityId, creator: g7.ids.creatorId } } : {}),
     },
-    holderLanes: g7.holderLane ? [g7.holderLane] : [],
+    holderLanes: [...(g7.holderLane ? [g7.holderLane] : []), ...gen8HolderLane(chainId, env)],
     alerts: [{ level: "info", message: "Testnet: destinations are read from the gen-6 router's getters at request time. The live API reads the production database, which holds no testnet routing events." }, ...gen7.alerts, ...g7.alerts],
   };
 }

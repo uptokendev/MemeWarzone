@@ -229,3 +229,113 @@ Turning it back on: re-run the script (it reuses the proxy) and sign the batch.
 - `realtime-indexer` `test:payout-watchdog` (14): schedules equal the existing generators', plan, verification
   (match, census lag, 10 tamperings, exclusion bound, missing file), the tick (send, dry run, mismatch + one alert, module /
   role / refusal / allowance alerts, missing data), key refusal, config.
+
+## Gen-8 (founder 2026-10-22: automate the gen-8 holder approval before launch)
+
+No contract changes. The gen-8 `MwzCreatorChoiceVault` (`0xaf11784a69964A576716a5e4b514341F4437CAd3` on 56 and 4663, admin =
+the Safe, operator `0x20652bdb…`, holderBatchDelay 24 h) approves a holder batch only through
+`approveHolderBatch(bytes32 batchId, bytes32 root, uint256 total, uint64 claimDeadline)` (`onlyAdmin`; reverts `BadBatch`
+unless status is proposed and root, total and claimDeadline equal the stored ones). Its holder distributor is
+`0x3E0A03A723C691f20e4021A575bF7742D605335A` (RewardDistributor, owner = Safe, batchOperator = the vault). The module for the
+launch is gen-8 only (`PAYOUT_ROLES_GEN6_VAULT_<id>=none`, airdrop distributors `none`, `PAYOUT_ROLES_GEN8_VAULT_<id>` set);
+the indexer runs it with `PAYOUT_WATCHDOG_LANES_<id>=gen8`.
+
+### Permission table, gen-8 only (exact, measured on both forks)
+
+Role key `0x7061796f75742d7761746368646f670000000000000000000000000000000000`. Both targets are `scopeTarget` (function-level
+clearance); both functions `ExecutionOptions.None` (value > 0: `SendNotAllowed`; delegatecall: `DelegateCallNotAllowed`).
+
+| Chain | Target | Function | Roles condition (on chain) |
+|---|---|---|---|
+| 56 | gen-8 MwzCreatorChoiceVault `0xaf11784a69964A576716a5e4b514341F4437CAd3` | `approveHolderBatch(bytes32,bytes32,uint256,uint64)` (`0xc62732bb`) | `total <= 32 BNB` (vault `maxHolderBatchPerWeek`, LessThan 32e18 + 1); `claimDeadline > 0` AND `claimDeadline <= 2^64 - 1` (And of GreaterThan 0, LessThan 2^64); batchId, root free (the vault binds them) |
+| 56 | gen-8 holder RewardDistributor `0x3E0A03A723C691f20e4021A575bF7742D605335A` | `authorizeBatch(bytes32,uint256,uint64,uint64)` (`0xa2885b55`) | `maxAmount <= 32 BNB` AND `maxAmount` within allowance `keccak("mwz-payout-watchdog:authorizeBatch:56:0x3e0a03a723c691f20e4021a575bf7742d605335a")`: refill 32 BNB / week, max 64, start 64 |
+| 4663 | the same vault address | `approveHolderBatch(bytes32,bytes32,uint256,uint64)` | `total <= 9.3 ETH`; claimDeadline as above |
+| 4663 | the same distributor address | `authorizeBatch` | `maxAmount <= 9.3 ETH` AND allowance (key with chain 4663): refill 9.3 / week, max 18.6, start 18.6 |
+
+Not scoped, so refused: the 3-arg `approveHolderBatch(bytes32,bytes32,uint256)` on the gen-8 vault (`FunctionNotAllowed`),
+every other vault function (`setOperator`, `setCaps`, `vetoHolderBatch`, `rescueExcessNative`, `setHolderDistributorOnce`,
+`creditUnclaimedHolders`, `executeHolderBatch`, `proposeHolderBatch`, ...), every other distributor function (`revokeBatch`,
+`setBatchOperator`, `recoverUnclaimed`, `rescueExcessNative`, `transferOwnership`, ...), every other address including the
+Safe, the module itself and the gen-6 / gen-7 vaults (`TargetAddressNotAllowed`). The static deadline bound adds nothing the
+vault does not already enforce (7 to 365 days after the proposal, and exactly the proposed value); it only keeps the
+parameter typed. `PAYOUT_ROLES_GEN8_CLAIM_DEADLINE_MAX_<id>` can lower it (the script refuses a bound that would reject a
+365-day deadline proposed today).
+
+The Safe batch (19 calls, 1.31 M gas on both forks): `scopeTarget` + `scopeFunction` (vault), `scopeTarget` + `setAllowance` +
+`scopeFunction` (distributor), `assignRoles`, `enableModule`, then 12 Safe `authorizeBatch` calls for the coming weeks'
+`holderBatchId(chain, week, "airdrop_holders_gen8")` at the cap, publish window = the week's end + 6 days.
+
+### What the watchdog checks before the gen-8 approval
+
+`realtime-indexer/src/evm/payoutWatchdogGen8.ts verifyGen8HolderProposal`, with the shared rule module
+`evmGen8HoldThrough.ts` (the operator uses the same one). The published leaf file (`Gen8LeafFileV2` in
+`public.evm_holder_batches`) gives three kinds of hints only, all bounded: the check blocks, each pool's pot, and the
+wallets the operator's configured / risk lists removed at each check.
+
+1. The proposing transaction went to the vault and is `proposeHolderBatch(bytes32,bytes32,uint64,bytes32[],uint256[])` with
+   the event's id, root and deadline; ids unique; the amounts add up to the event's total.
+2. The id is `holderBatchId(chain, previousWeek(proposal time), "airdrop_holders_gen8")`; `claimDeadline - executableAt` is the
+   configured claim window (`EVM_HOLDER_CLAIM_WINDOW_DAYS`, at most 2 days less).
+3. The file passes `checkGen8LeafFileShape` and names this vault, chain, week, batch, root, total, deadline and the vault's
+   `holderDistributor()`; its pools equal the calldata ids and amounts in order.
+4. Per pool: registered on the vault (`CoinRegistered` in the launch transaction) as holders or split, `cfg(id).token` equal
+   to the registered token and to the file's; `launchedAt` equals the launch block's time; the file's checks are exactly
+   `gen8RequiredChecks(moments, launchedAt)` from the chain's week secret (`EVM_BUYBACK_SEED_SECRET`); each check block is
+   after the launch, before the proposal, has the stated time, lies in `gen8CheckWindow` AND at most
+   `PAYOUT_WATCHDOG_GEN8_CHECK_TOLERANCE_MIN` (30) after the check's moment (a compromised operator cannot pick a
+   favourable block later in the quarter; the honest operator takes the first census cursor past the moment, a few
+   minutes behind it: money head safe on Robinhood, finalized on BNB, census and pass every 60 s, at most one 2,000-block
+   census step; later than 30 minutes, e.g. an indexer outage, is refused and left to the Safe signers); the pot is positive and at most
+   the pool's `holderBalance` at the end of the block before the proposal; ONE Transfer replay of the token from the launch
+   block gives every balance and the supply at each check block (the replayed supply at the current block must equal
+   `totalSupply()` there); the holders at each check are `gen8EligibleAt` with `gen8HardSkip` (0xdEaD, zero, token, vault,
+   vault operator, the coin's creator in the vault AT THAT CHECK BLOCK, replayed from `CoinRegistered` and every
+   `CreatorTransferred` of the id, the census exclusions from the gen-8 config + `evm_gen8_side_pools`) and the file's
+   `softExcluded` list for that check, and their count equals the file's. No code check (founder 2026-10-22: "only skip
+   known contracts"; any other address with a balance is paid, contract or not). The soft list is bounded: it may remove at
+   most `PAYOUT_WATCHDOG_MAX_EXCLUDED_BPS` of the check's eligible supply, and the wallets on it that are on neither of
+   the watchdog's current lists (`EVM_HOLDER_EXCLUDED_WALLETS`, the risk table) at most
+   `PAYOUT_WATCHDOG_MAX_UNLISTED_EXCLUDED_BPS` (200); above either: needs a person; each unlisted wallet is reported in a
+   warning alert;
+   `gen8HolderShares(pot, checks)` equals every leaf part of the pool.
+5. Across pools: `holderLeaves` with the minimum payout, every leaf, the per-pool amounts (= calldata), the total and the merkle
+   root (= the event's) are rebuilt and compared. Any difference: not approved, critical alert. Missing data (no file, no seed,
+   an RPC failure): retried, never approved.
+
+No archive node is needed: balances come from logs; the holder balance before the proposal is the current
+`holderBalance(id)` minus every change logged since (`Pulled.toHolders`, `HolderUnclaimedCredited`, proposals and vetoes
+through `batchContents`), the only four places the vault changes it.
+
+### Key separation (H0)
+
+The watchdog runs as its own service (`INDEXER_ROLE=payout-watchdog`, `realtime-indexer/src/main.ts`): only the watchdog
+loop, DB and RPC. With any operator key in its environment (`EVM_GEN8_OPERATOR_KEY[_<id>]`,
+`EVM_CREATOR_CHOICE_OPERATOR_PRIVATE_KEY[_<id>]`) it sends nothing (dry run) and raises a critical alert; the default
+indexer process does not start it when an operator key is present. Every `HolderBatchApproved` on the gen-8 vault is
+checked: an approval not sent by the watchdog's own key to the Roles module raises an alert (warning when the transaction
+went to the Safe, critical otherwise), so an approval through another path is seen within one tick, inside the 24 h veto
+window.
+
+### Gen-8 worst cases
+
+- **Watchdog key alone.** Approval binds only a root the operator proposed (the vault refuses any other root, total or
+  deadline). Authorizations move nothing; griefing is bounded by the allowance (2 ids of the gen-8 distributor at a time, then
+  1 per week), as for gen-6/7.
+- **Watchdog key + gen-8 operator key.** A self-paying root could be proposed and approved; it executes after the 24 h veto
+  window, at most `maxHolderBatchPerWeek` per week (32 BNB / 9.3 ETH) and never more than the pools' real `holderBalance`.
+  The operator key is shared with gen-6 (`0x20652bdb…`), so this is the same exposure class as the gen-6/7 line above.
+- **No path** to the Safe's funds, the vault's creator / buyback balances, its caps or operator, or any other contract.
+
+### Proven (2026-10-22)
+
+- `test/PayoutRolesModuleGen8.fork.spec.ts` on **56** and **4663**: the deploy script (gen-8 only) on the real Safe; the real
+  owners execute the batch; through the role the 4-arg approve reaches the real vault (an unknown id answers `BadBatch`),
+  `authorizeBatch` within the cap succeeds on the real distributor, above the cap `ParameterGreaterThanAllowed`, past the
+  allowance `AllowanceExceeded`; every other function / target / value / delegatecall refused; a non-member `NotAuthorized`;
+  the real watchdog tick (gen-8 lane only) is healthy through the gen-8 probe, its dry run sends nothing, live it keeps 13
+  weeks covered; the disable batch ends it (`GS104`).
+- `realtime-indexer/src/tests/payoutWatchdogGen8.integration.test.ts` (local anvil, real gen-8 contracts, real Roles bytecode,
+  throwaway Postgres): a shared-rule leaf file from chain balances at 4 check blocks; a tampered stored file is refused
+  (critical alert, not approved) by the watchdog and by `scripts/evm-gen8-holder-batch-verify.mjs`; the valid one is
+  approved through Roles after a dry run, executed after 24 h, and claimed.
+- `realtime-indexer/src/evm/payoutWatchdogGen8.test.ts` (15): the happy path and each refusal path.

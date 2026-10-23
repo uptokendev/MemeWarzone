@@ -87,7 +87,10 @@ export function watchdogWallet(chainId: number, env: NodeJS.ProcessEnv = process
 }
 
 export type WatchdogVaultLane = OperatedVault & { startBlock: number; holderCapWei: bigint | null };
-/** Not a member of `vaults`. The 3-arg approve probe must not target this vault. */
+/**
+ * Not a member of `vaults`: the gen-8 MwzCreatorChoiceVault is approved with the 4-argument approveHolderBatch
+ * (selector 0xc62732bb) after verifyGen8HolderProposal, never with the 3-arg selector.
+ */
 export type Gen8WatchdogVault = {
   label: "gen-8";
   vault: string;
@@ -95,7 +98,62 @@ export type Gen8WatchdogVault = {
   startBlock: number;
   hook: string | null;
   expectedRouter: string | null;
+  /** Per-id authorization cap on the gen-8 holder distributor (PAYOUT_WATCHDOG_HOLDER_CAP_WEI[_<id>]); default the vault's maxHolderBatchPerWeek. */
+  holderCapWei?: bigint | null;
 };
+
+/** Lanes a chain's watchdog runs (PAYOUT_WATCHDOG_LANES_<id>). Unset: every configured lane. */
+export const WATCHDOG_LANES = ["gen6", "gen7", "airdrop", "gen8"] as const;
+export type WatchdogLane = (typeof WATCHDOG_LANES)[number];
+
+/**
+ * PAYOUT_WATCHDOG_LANES_<id> ("gen8", "gen6,gen7,airdrop", ...): restricts the watchdog to those lanes, so a Roles
+ * module scoped for gen-8 only is not probed or used on a gen-6 / gen-7 vault the operator still runs. Unset: all.
+ * "gen8" covers the gen-8 approvals, the gen-8 distributor runway and the gen-8 vault balance / router watch.
+ * Any unknown name throws (a typo must not silently switch a lane off).
+ */
+export function watchdogLanes(chainId: number, env: NodeJS.ProcessEnv = process.env): Set<WatchdogLane> {
+  const raw = String(env[`PAYOUT_WATCHDOG_LANES_${chainId}`] ?? "").trim();
+  if (!raw) return new Set(WATCHDOG_LANES);
+  const out = new Set<WatchdogLane>();
+  for (const item of raw.split(/[\s,;]+/).map((x) => x.trim().toLowerCase()).filter(Boolean)) {
+    if (!(WATCHDOG_LANES as readonly string[]).includes(item)) throw new Error(`PAYOUT_WATCHDOG_LANES_${chainId}: unknown lane ${item} (${WATCHDOG_LANES.join(", ")})`);
+    out.add(item as WatchdogLane);
+  }
+  return out;
+}
+/**
+ * H0: the watchdog key must never share a process with an operator key. Names of the operator key variables set in
+ * `env` (EVM_GEN8_OPERATOR_KEY[_<id>], EVM_CREATOR_CHOICE_OPERATOR_PRIVATE_KEY[_<id>]); any one of them: the watchdog
+ * does not send (dry run, critical alert), and the default indexer process does not start it.
+ */
+export function operatorKeysInEnv(env: NodeJS.ProcessEnv = process.env): string[] {
+  return Object.entries(env)
+    .filter(([name, value]) => /^(EVM_GEN8_OPERATOR_KEY|EVM_CREATOR_CHOICE_OPERATOR_PRIVATE_KEY)(_\d+)?$/.test(name) && String(value ?? "").trim() !== "")
+    .map(([name]) => name)
+    .sort();
+}
+
+/**
+ * INDEXER_ROLE (comma list of "indexer", "payout-watchdog"): which loops this process runs.
+ *   unset             the indexer as before, plus the payout watchdog unless an operator key is in this env (H0);
+ *   payout-watchdog   only the payout watchdog (its own Coolify service: DB + RPC, no API, no other worker);
+ *   indexer           only the indexer, never the watchdog;
+ *   indexer,payout-watchdog   both (the watchdog still refuses to send next to an operator key).
+ */
+export function indexerRoles(env: NodeJS.ProcessEnv = process.env): { indexer: boolean; watchdog: boolean; reason: string } {
+  const raw = String(env.INDEXER_ROLE ?? "").trim().toLowerCase();
+  if (!raw) {
+    const keys = operatorKeysInEnv(env);
+    return keys.length
+      ? { indexer: true, watchdog: false, reason: `INDEXER_ROLE unset and ${keys.join(", ")} set: the payout watchdog runs as its own service (INDEXER_ROLE=payout-watchdog)` }
+      : { indexer: true, watchdog: true, reason: "INDEXER_ROLE unset: indexer and payout watchdog" };
+  }
+  const roles = new Set(raw.split(/[\s,;]+/).filter(Boolean));
+  for (const r of roles) if (r !== "indexer" && r !== "payout-watchdog") throw new Error(`INDEXER_ROLE: unknown role ${r} (indexer, payout-watchdog)`);
+  return { indexer: roles.has("indexer"), watchdog: roles.has("payout-watchdog"), reason: `INDEXER_ROLE=${raw}` };
+}
+
 export type WatchdogDistributorLane = { label: string; kind: "holders" | "airdrop"; address: string | null; vault?: string; program?: string; pot?: string; capWei: bigint | null };
 
 export type WatchdogConfig = {
@@ -114,6 +172,12 @@ export type WatchdogConfig = {
   censusLagBlocks: number;
   snapshotToleranceSec: number;
   maxExcludedBps: number;
+  /** Gen-8: most of a check's eligible supply soft-excluded wallets not on today's lists may remove (bps, default 200). */
+  maxUnlistedExcludedBps?: number;
+  /** Gen-8: a check block's time must be within this many seconds after its moment (default 1800). */
+  gen8CheckToleranceSec?: number;
+  /** H0: operator key variables found in this process's env; any one: nothing is sent. */
+  colocatedOperatorKeys?: string[];
   maxTxPerTick: number;
   minPayoutWei: bigint;
   claimWindowDays: number;
@@ -138,6 +202,7 @@ function gen8VaultLanes(chainId: number, env: NodeJS.ProcessEnv): Gen8WatchdogVa
     startBlock: Number.isInteger(block) && block > 0 ? block : 0,
     hook,
     expectedRouter,
+    holderCapWei: uintEnv(perChain(env, "PAYOUT_WATCHDOG_HOLDER_CAP_WEI", chainId), null),
   }];
 }
 
@@ -166,14 +231,16 @@ export function watchdogConfig(chainId: number, env: NodeJS.ProcessEnv = process
   if (mainAirdrop) airdrops.push({ label: "main airdrop", kind: "airdrop", address: mainAirdrop, pot: "main", capWei: mainCap });
   if (gen7Airdrop) airdrops.push({ label: "gen-7 airdrop", kind: "airdrop", address: gen7Airdrop, pot: "gen7", capWei: gen7Cap });
   const safeRaw = addressEnv(String(env[`PAYOUT_WATCHDOG_SAFE_${chainId}`] || ""));
+  const lanes = watchdogLanes(chainId, env);
+  const laneOf = (label: string): WatchdogLane => (label === "gen-7" ? "gen7" : "gen6");
   return {
     chainId,
     send: truthy(env.PAYOUT_WATCHDOG_SEND),
     roles: addressEnv(String(env[`PAYOUT_WATCHDOG_ROLES_${chainId}`] || "")),
     safe: safeRaw ?? TREASURY_SAFE,
-    vaults: vaultLanes(chainId, env),
-    gen8Vaults: gen8VaultLanes(chainId, env),
-    airdrops,
+    vaults: vaultLanes(chainId, env).filter((v) => lanes.has(laneOf(v.label))),
+    gen8Vaults: lanes.has("gen8") ? gen8VaultLanes(chainId, env) : [],
+    airdrops: lanes.has("airdrop") ? airdrops : [],
     weeks: intEnv(env.PAYOUT_WATCHDOG_WEEKS, 12, 1, 26),
     intervalMs: intEnv(env.PAYOUT_WATCHDOG_INTERVAL_MS, 60_000, 10_000, 3_600_000),
     lookbackBlocks: intEnv(env[`PAYOUT_WATCHDOG_LOOKBACK_BLOCKS_${chainId}`] ?? env.PAYOUT_WATCHDOG_LOOKBACK_BLOCKS, 200_000, 1_000, 50_000_000),
@@ -181,6 +248,9 @@ export function watchdogConfig(chainId: number, env: NodeJS.ProcessEnv = process
     censusLagBlocks: intEnv(env[`PAYOUT_WATCHDOG_CENSUS_LAG_BLOCKS_${chainId}`] ?? env.PAYOUT_WATCHDOG_CENSUS_LAG_BLOCKS, 600, 0, 100_000),
     snapshotToleranceSec: intEnv(env.PAYOUT_WATCHDOG_SNAPSHOT_TOLERANCE_HOURS, 12, 1, 168) * 3600,
     maxExcludedBps: intEnv(env.PAYOUT_WATCHDOG_MAX_EXCLUDED_BPS, 2_000, 0, 10_000),
+    maxUnlistedExcludedBps: intEnv(env.PAYOUT_WATCHDOG_MAX_UNLISTED_EXCLUDED_BPS, 200, 0, 10_000),
+    gen8CheckToleranceSec: intEnv(env.PAYOUT_WATCHDOG_GEN8_CHECK_TOLERANCE_MIN, 30, 1, 24 * 60) * 60,
+    colocatedOperatorKeys: operatorKeysInEnv(env),
     maxTxPerTick: intEnv(env.PAYOUT_WATCHDOG_MAX_TX_PER_TICK, 6, 1, 50),
     minPayoutWei: choice.minPayoutWei,
     claimWindowDays: choice.claimWindowDays,

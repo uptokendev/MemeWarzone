@@ -381,6 +381,7 @@ const PROGRAM_LABELS = Object.freeze({
   airdrop_creator: "Creator draw",
   airdrop_holders: "Holder payout",
   airdrop_holders_gen7: "Holder payout",
+  airdrop_holders_gen8: "Holder payout",
   dbc_holders: "Holder payout (DBC)",
   squad_pool: "Squad pool",
 });
