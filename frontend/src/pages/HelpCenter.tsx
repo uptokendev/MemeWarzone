@@ -21,6 +21,7 @@ import {
   Rocket,
   Search,
   ShieldCheck,
+  Sparkles,
   Swords,
   Trophy,
   UserRound,
@@ -32,6 +33,7 @@ import {
 } from "lucide-react";
 
 import NotFound from "@/pages/NotFound";
+import { HELP_ASSISTANT_OPEN_EVENT, HelpAssistant, useHelpAssistantEnabled } from "@/components/help/HelpAssistant";
 import { BODY, EYEBROW } from "@/components/content/ContentBlocks";
 import { cp } from "@/components/token/coinPageStyles";
 import { useSeoOverride } from "@/hooks/useDocumentTitle";
@@ -132,6 +134,7 @@ function ArticleRow({ a, showTopic }: { a: Article; showTopic?: boolean }) {
 }
 
 function StillNeedHelp() {
+  const assistant = useHelpAssistantEnabled();
   return (
     <section className={cn(cp.card, "p-5 md:p-6")}>
       <div className="flex items-center gap-2.5">
@@ -142,6 +145,12 @@ function StillNeedHelp() {
         Ask the community and the team on Discord, or email us. We never ask for your seed phrase or private key.
       </p>
       <div className="mt-4 flex flex-wrap gap-2">
+        {assistant ? (
+          <button type="button" onClick={() => window.dispatchEvent(new Event(HELP_ASSISTANT_OPEN_EVENT))} className={cp.btn}>
+            <Sparkles className="h-4 w-4" aria-hidden="true" />
+            Ask the assistant
+          </button>
+        ) : null}
         <a href={DISCORD_URL} target="_blank" rel="noopener noreferrer" className={cp.btn}>
           <MessageCircle className="h-4 w-4" aria-hidden="true" />
           Discord
@@ -477,13 +486,20 @@ function ArticlePage({ article }: { article: Article }) {
 
 /* ------------------------------------------------------------------ router */
 
-const HelpCenter = () => {
+function HelpRoute() {
   const { slug } = useParams();
   if (!slug) return <HelpIndex />;
   const head = helpHead(slug);
   if (!head) return <NotFound />;
   if (head.kind === "topic") return <TopicPage topic={head.topic} />;
   return <ArticlePage article={head.article} />;
-};
+}
+
+const HelpCenter = () => (
+  <>
+    <HelpRoute />
+    <HelpAssistant />
+  </>
+);
 
 export default HelpCenter;
