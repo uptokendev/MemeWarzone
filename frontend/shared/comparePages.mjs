@@ -99,7 +99,7 @@ export const COMPARE_PAGES = [
           { feature: "Battles", mwz: "Metrics battles of 24 hours to 7 days and vote battles of 1 to 48 hours, with buy-ins and a war pool for the winner.", other: "None in its public docs." },
           { feature: "Tournaments", mwz: "Brackets with free votes, Boosts and Final Salvo tie-breakers.", other: "None in its public docs." },
           { feature: "Leagues", mwz: "Weekly and monthly leagues in six categories, plus the Major War League for graduated coins.", other: "None in its public docs." },
-          { feature: "Social", mwz: "One profile per wallet across chains, posts and follows, coin Stories and live streams.", other: "Coin comments and livestreams." },
+          { feature: "Social", mwz: "One profile per wallet across chains, posts and follows, and coin Stories.", other: "Coin comments and livestreams." },
         ],
       },
       {

@@ -377,3 +377,27 @@ test("About contract addresses are checksummed and link to the right explorer", 
     assert.equal(host, group.chain === "BNB Chain" ? "bscscan.com" : group.chain === "Solana" ? "solscan.io" : "robinhoodchain.blockscout.com");
   }
 });
+
+test("Help Center: index, topic and article render for crawlers; unknown slug is 410", async () => {
+  const { HELP_ARTICLES, HELP_TOPICS } = await import("../shared/helpContent.mjs");
+  const { run, calls } = setup();
+  const idx = await run("/__render/faq");
+  assert.equal(idx.statusCode, 200);
+  assert.match(idx.body, /<title>Help Center · MemeWarzone<\/title>/);
+  assert.match(idx.body, /rel="canonical" href="https:\/\/app\.memewar\.zone\/faq"/);
+  for (const t of HELP_TOPICS) assert.ok(idx.body.includes(`href="/faq/${t.id}"`), t.id);
+  const topic = await run(`/__render/faq/${HELP_TOPICS[0].id}`);
+  assert.equal(topic.statusCode, 200);
+  assert.ok(topic.body.includes(`<h1>${HELP_TOPICS[0].label}</h1>`));
+  if (HELP_ARTICLES.length) {
+    const a = HELP_ARTICLES[0];
+    const art = await run(`/__render/faq/${a.slug}`);
+    assert.equal(art.statusCode, 200);
+    assert.match(art.body, /"@type":"FAQPage"/);
+    assert.match(art.body, new RegExp(`rel="canonical" href="https://app\\.memewar\\.zone/faq/${a.slug}"`));
+    assert.equal(art.headers["x-robots-tag"], undefined);
+  }
+  const miss = await run("/__render/faq/this-answer-does-not-exist");
+  assert.equal(miss.statusCode, 410);
+  assert.equal(calls.length, 0);
+});
