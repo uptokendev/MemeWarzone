@@ -4,6 +4,7 @@
 
 import { ABOUT_DESCRIPTION, ABOUT_PATH, ABOUT_TITLE } from "./aboutContent.mjs";
 import { COMPARE_PAGES } from "./comparePages.mjs";
+import { HELP_DESCRIPTION, HELP_ITEM_DESCRIPTION, HELP_PATH, HELP_TITLE } from "./helpMeta.mjs";
 
 export const APP_ORIGIN = "https://app.memewar.zone";
 
@@ -115,6 +116,8 @@ export const ROUTE_RULES = [
   },
   { pattern: ABOUT_PATH, kind: "index", title: ABOUT_TITLE, description: ABOUT_DESCRIPTION },
   ...COMPARE_PAGES.map((c) => ({ pattern: c.path, kind: "index", title: c.title, description: c.description })),
+  { pattern: HELP_PATH, kind: "index", title: HELP_TITLE, description: HELP_DESCRIPTION },
+  { pattern: `${HELP_PATH}/:slug`, kind: "index", title: HELP_TITLE, description: HELP_ITEM_DESCRIPTION },
 
   // Noindex: more specific than the per-entity rules below, so they come first.
   { pattern: "/token/:id/edit", kind: "noindex", title: "Edit coin" },
