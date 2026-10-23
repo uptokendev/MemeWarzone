@@ -4,11 +4,12 @@
  *   GET                         partners with earnings + the last changes      finance.view
  *   POST                        add { id, chainId, name, payoutWallet, creatorBps?, partnerBps? }   finance.manage
  *   POST /:id/:chainId          change { name?, payoutWallet?, creatorBps?, partnerBps?, active? }  finance.manage
+ *   DELETE /:id/:chainId        remove a partner with no history (409 PARTNER_HAS_HISTORY otherwise)  finance.manage
  */
 import { pool } from "../../server/db.js";
 import { json, readJson } from "../../server/http.js";
 import { requireDashboardPermission } from "../dashboard/_access.js";
-import { PartnerAdminError, createPartner, listPartnerAudit, listPartners, updatePartner } from "../lib/importFeePartnersAdmin.js";
+import { PartnerAdminError, createPartner, listPartnerAudit, listPartners, removePartner, updatePartner } from "../lib/importFeePartnersAdmin.js";
 
 function actorOf(principal) {
   return { id: principal?.authUserId || null, email: principal?.email || "unknown" };
@@ -26,12 +27,16 @@ export default async function importFeePartnersAdmin(req, res) {
       ]);
       return json(res, 200, { ok: true, partners, changes: changes || [], auditReady: changes !== null, updatedAt: new Date().toISOString() });
     }
-    if (req.method !== "POST") return json(res, 405, { ok: false, error: "Method not allowed" });
+    if (req.method !== "POST" && req.method !== "DELETE") return json(res, 405, { ok: false, error: "Method not allowed" });
     const principal = await requireDashboardPermission(req, res, "finance.manage");
     if (!principal) return;
     if (!principal.email) return json(res, 401, { ok: false, error: "Your dashboard sign-in has no email.", code: "PARTNER_ACTOR_REQUIRED" });
-    const body = (await readJson(req)) || {};
     const id = String(req.params?.id || "").trim();
+    if (req.method === "DELETE") {
+      if (!id) return json(res, 405, { ok: false, error: "Method not allowed" });
+      return json(res, 200, { ok: true, removed: await removePartner(pool, { id, chainId: req.params?.chainId }, actorOf(principal)) });
+    }
+    const body = (await readJson(req)) || {};
     if (!id) return json(res, 201, { ok: true, partner: await createPartner(pool, body, actorOf(principal)) });
     return json(res, 200, { ok: true, partner: await updatePartner(pool, { id, chainId: req.params?.chainId, body }, actorOf(principal)) });
   } catch (error) {
