@@ -20,6 +20,7 @@ import { refreshFinanceSnapshots } from "../lib/financeSnapshotJobs.js";
 import { buildGen8Finance } from "../lib/financeGen8.js";
 import { configuredGen8ChainIds } from "../lib/evmGen8Config.js";
 import { getRpcUrls, getServerReadProvider } from "../lib/getServerReadProvider.js";
+import { WidgetQueryError, buildWidgetFinance, widgetWindow } from "../lib/widgetAnalytics.js";
 
 // Finance shows mainnets only (founder decision 2026-10-04): nothing is earned
 // on a testnet. chainId=all reads all three and adds a cross-chain total.
@@ -969,6 +970,35 @@ export async function financeGen8(req, res, { build = buildGen8Finance, db = poo
   }
 }
 
+// GET /api/admin/finance/widget?from&to: swap widget swaps and their money (imports marked by the fee scanner, gen-8 by
+// the widget tag), per chain, partner and website, with each partner's earned / paid / owed (api/lib/widgetAnalytics.js).
+// Bearer only with finance.view, like fee routing. USD from the finance price service.
+export async function financeWidget(req, res, { build = buildWidgetFinance, db = pool, prices = null } = {}) {
+  const method = String(req.method || "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD") {
+    res.setHeader("Allow", "GET");
+    return res.status(405).json({ ok: false, error: "Widget finance is read-only (GET)." });
+  }
+  if (!req.dashboardPrincipal || !dashboardPrincipalCan(req.dashboardPrincipal, "finance.view")) {
+    return res.status(401).json({ ok: false, error: "Dashboard sign-in with finance.view is required.", code: "FINANCE_VIEW_REQUIRED" });
+  }
+  let window;
+  try {
+    window = widgetWindow(req.query || {});
+  } catch (error) {
+    if (error instanceof WidgetQueryError) return res.status(400).json({ ok: false, error: error.message });
+    throw error;
+  }
+  try {
+    const payload = await build({ db, ...window, prices: prices || defaultPriceService() });
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).json(payload);
+  } catch (error) {
+    console.error("[api/admin/finance/widget]", error);
+    return res.status(500).json({ ok: false, error: "Widget finance read failed." });
+  }
+}
+
 // GET /api/admin/finance/summary: the plain summary page in one read. Bearer
 // only, like fee routing (it carries the fee-routing balances): the dashboard
 // gate in railwayProxy.js resolves finance.view for a GET. Cached 60 s.
@@ -1108,6 +1138,8 @@ async function financeAdminRoutes(req, res) {
   if (routePath === "/api/admin/finance/summary") return financeSummary(req, res);
   // EVM generation 8 (read-only, bearer + finance.view): api/lib/financeGen8.js.
   if (routePath === "/api/admin/finance/gen8") return financeGen8(req, res);
+  // Swap widget (read-only, bearer + finance.view): api/lib/widgetAnalytics.js.
+  if (routePath === "/api/admin/finance/widget") return financeWidget(req, res);
   // Accounting (costs, close, tax reserve, exports, distributions): dashboard sign-in only, see financeAccounting.js.
   if (isFinanceAccountingPath(routePath)) return financeAccounting(req, res);
 

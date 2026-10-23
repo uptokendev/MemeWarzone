@@ -2,6 +2,15 @@
 
 // ---------------------------------------------------------------- amounts (no floats for money)
 
+/**
+ * `&partner=<id>` for the widget's GET requests when the host set a partner (usage counts per partner, 2026-10-23),
+ * else ''. The API checks the id against its partner list; an unknown one is counted as no partner.
+ */
+export function partnerQuery(partner: string | undefined | null): string {
+  const id = String(partner ?? "").trim();
+  return id ? `&partner=${encodeURIComponent(id)}` : "";
+}
+
 export function toRaw(text: string, decimals: number): bigint | null {
   const value = String(text || "").trim().replace(",", ".");
   if (!/^\d*\.?\d*$/.test(value) || value === "" || value === ".") return null;

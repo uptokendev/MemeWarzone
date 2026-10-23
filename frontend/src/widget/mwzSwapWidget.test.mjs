@@ -90,3 +90,53 @@ test("Solana box: price impact and minimum rows, Unlisted coin, onSwap carries c
   assert.match(src, /"Unlisted coin"/);
   assert.equal((src.match(/onSwap\?\.\(\{ signature, side: this\.side, mint: [a-zA-Z.]+, chainId: 101, token: [a-zA-Z.]+ \}\)/g) || []).length, 2);
 });
+
+test("usage per partner: the widget sends partner on token lookups and quotes; the bonding shim adds it to trade-authorize only", async () => {
+  const shim = await build({ absWorkingDir: dir, entryPoints: [path.join(dir, "shims/apiBase.ts")], bundle: true, write: false, format: "esm", platform: "node" });
+  const file = path.join(dir, `.shim-partner-${process.pid}.mjs`);
+  fs.writeFileSync(file, shim.outputFiles[0].text);
+  let mod;
+  try { mod = await import(file); } finally { fs.rmSync(file, { force: true }); }
+  const calls = [];
+  globalThis.fetch = async (url) => { calls.push(url); return new Response("{}"); };
+  mod.setWidgetApiBase("https://api.example");
+  // Two boxes, two partners: each trade sends its own partner, read when the call starts; nothing sticks afterwards.
+  const a = mod.withWidgetPartner("crypticpump", () => mod.apiFetch("/api/solana/trade-authorize", { method: "POST" }));
+  const b = mod.withWidgetPartner("other-site", () => mod.apiFetch("/api/solana/trade-authorize", { method: "POST" }));
+  await Promise.all([a, b]);
+  await mod.withWidgetPartner("crypticpump", () => mod.apiFetch("/api/solana/campaign-account?address=abc"));
+  await mod.apiFetch("/api/solana/trade-authorize", { method: "POST" });
+  await mod.withWidgetPartner(null, () => mod.apiFetch("/api/solana/trade-authorize", { method: "POST" }));
+  assert.deepEqual(calls, [
+    "https://api.example/api/widget/solana/trade-authorize?partner=crypticpump",
+    "https://api.example/api/widget/solana/trade-authorize?partner=other-site",
+    "https://api.example/api/widget/solana/campaign-account?address=abc",
+    "https://api.example/api/widget/solana/trade-authorize",
+    "https://api.example/api/widget/solana/trade-authorize",
+  ]);
+
+  const shared = await build({ absWorkingDir: dir, entryPoints: [path.join(dir, "widgetShared.ts")], bundle: true, write: false, format: "esm", platform: "node" });
+  const sharedFile = path.join(dir, `.shared-${process.pid}.mjs`);
+  fs.writeFileSync(sharedFile, shared.outputFiles[0].text);
+  let sharedMod;
+  try { sharedMod = await import(sharedFile); } finally { fs.rmSync(sharedFile, { force: true }); }
+  assert.equal(sharedMod.partnerQuery("crypticpump"), "&partner=crypticpump");
+  assert.equal(sharedMod.partnerQuery(" a b "), "&partner=a%20b");
+  assert.equal(sharedMod.partnerQuery(undefined), "");
+
+  const sol = fs.readFileSync(path.join(dir, "mwzSwapWidget.ts"), "utf8");
+  const evm = fs.readFileSync(path.join(dir, "gen8Widget.ts"), "utf8");
+  assert.match(sol, /\/api\/widget\/swap\/token\?mint=\$\{encodeURIComponent\(mint\)\}\$\{partnerQuery\(this\.options\.partner\)\}/);
+  assert.match(evm, /\/api\/widget\/swap\/evm\/token\?chainId=\$\{chainId\}&token=\$\{token\}\$\{partnerQuery\(this\.options\.partner\)\}/);
+  assert.match(evm, /\/api\/widget\/swap\/gen8\/token\?chainId=\$\{chainId\}&token=\$\{token\}\$\{partnerQuery\(this\.options\.partner\)\}/);
+  // Every quote and build body carries the partner when the host set one.
+  for (const [name, src, expected] of [["solana", sol, 2], ["evm", evm, 4]]) {
+    assert.equal((src.match(/\.\.\.\(this\.options\.partner \? \{ partner: this\.options\.partner \} : \{\}\)/g) || []).length, expected, name);
+  }
+  // The bonding module's API base is set once when it loads (as before); the partner goes with each trade call.
+  assert.equal((sol.match(/loadBonding\(this\.api\)/g) || []).length, 2);
+  assert.match(sol, /api\.setWidgetApiBase\(apiBase\); resolve\(api\);/);
+  assert.match(sol, /trader: this\.account, partner: this\.options\.partner \?\? null \}\)/);
+  const bondingSrc = fs.readFileSync(path.join(dir, "bonding.ts"), "utf8");
+  assert.match(bondingSrc, /await withWidgetPartner\(input\.partner, \(\) => requestSolanaTradeAuthorization\(\{/);
+});
