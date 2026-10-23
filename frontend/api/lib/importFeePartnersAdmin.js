@@ -6,7 +6,12 @@
  *
  * Rules: id and chain never change (they key the ledger). A switched-off partner earns nothing on swaps that land
  * afterwards but is still paid what it earned. A payout wallet change sends everything still owed to the new
- * wallet. Every create / update writes import_fee_partner_audit in the same transaction.
+ * wallet. Every create / update / delete writes import_fee_partner_audit in the same transaction.
+ *
+ * Remove (founder, 2026-10-23): a row can only be deleted while it has no history at all on its chain (no swap fee rows,
+ * no payouts, no gen-8 partner fees, no swap fingerprints); otherwise the only option is switching it off, so payouts and
+ * accounting stay complete. The history check runs in the delete's transaction after locking the partner row. The audit
+ * `delete` action needs database/prod_apply_import_fee_partner_audit_delete.sql; without it the delete answers 503.
  */
 import { PublicKey } from "@solana/web3.js";
 
@@ -126,7 +131,10 @@ export async function listPartners(db) {
   const { rows } = await db.query(
     `select p.id, p.chain_id, p.name, p.fee_account, p.payout_wallet, p.creator_bps, p.partner_bps, p.active, p.created_at, p.updated_at,
             coalesce(f.earned, 0)::text as earned_raw, coalesce(f.swaps, 0)::int as swaps, f.last_swap_at,
-            coalesce(t.paid, 0)::text as paid_raw, coalesce(t.sending, 0)::text as sending_raw, t.last_paid_at${gen8 ? `,
+            coalesce(t.paid, 0)::text as paid_raw, coalesce(t.sending, 0)::text as sending_raw, t.last_paid_at,
+            (select count(*) from public.import_fee_transfers x where x.chain_id = p.chain_id and x.partner_id = p.id)::int as h_transfers,
+            (select count(*) from public.import_swap_fingerprints x where x.chain_id = p.chain_id and x.partner_id = p.id)::int as h_fingerprints${gen8 ? `,
+            (select count(*) from public.gen8_partner_fees x where x.chain_id = p.chain_id and x.partner_id = p.id)::int as h_gen8,
             coalesce(g.earned, 0)::text as gen8_earned_raw, coalesce(g.swaps, 0)::int as gen8_swaps,
             coalesce(t.gen8_paid, 0)::text as gen8_paid_raw, coalesce(t.gen8_sending, 0)::text as gen8_sending_raw` : ""}
        from public.import_fee_partners p
@@ -165,6 +173,8 @@ export async function listPartners(db) {
       sendingRaw: sending.toString(),
       owedRaw: owedOf(earned, paid, sending),
       lastPaidAt: row.last_paid_at ? new Date(row.last_paid_at).toISOString() : null,
+      // Only a row with no history on its chain can be removed (swaps counted from the fee ledger, the rest from their tables).
+      removable: Number(row.swaps || 0) + Number(row.h_transfers || 0) + Number(row.h_fingerprints || 0) + Number(row.h_gen8 || 0) === 0,
     };
     if (!gen8) return out;
     const gEarned = BigInt(row.gen8_earned_raw || "0");
@@ -257,5 +267,47 @@ export async function updatePartner(db, { id, chainId, body }, actor) {
     const after = publicRow(rows[0]);
     await audit(client, actor, "update", after, before, after);
     return after;
+  });
+}
+
+/** "3 swaps, 1 payout": what blocks a removal, plain words. */
+function historyText(h) {
+  const part = (n, one, many) => (n > 0 ? `${n} ${n === 1 ? one : many}` : null);
+  return [part(h.swaps, "swap", "swaps"), part(h.transfers, "payout", "payouts"), part(h.gen8, "gen-8 fee", "gen-8 fees"), part(h.fingerprints, "widget swap record", "widget swap records")]
+    .filter(Boolean)
+    .join(", ");
+}
+
+/**
+ * Delete a partner row that has no history. Locks the row, counts the history in the same transaction, refuses with 409
+ * PARTNER_HAS_HISTORY, otherwise deletes and writes the audit row (action 'delete', after = null). If the audit table
+ * still has the old action CHECK (23514) nothing is deleted and the answer is 503.
+ */
+export async function removePartner(db, { id, chainId }, actor) {
+  const key = { id: String(id || "").trim().toLowerCase(), chainId: Number(chainId) };
+  if (!ID_RE.test(key.id) || !PARTNER_CHAINS.includes(key.chainId)) fail("Unknown partner.", "PARTNER_NOT_FOUND", 404);
+  return inTransaction(db, async (client) => {
+    const current = (await client.query(`select ${ROW} from public.import_fee_partners where id = $1 and chain_id = $2 for update`, [key.id, key.chainId])).rows[0];
+    if (!current) fail("Unknown partner.", "PARTNER_NOT_FOUND", 404);
+    const count = async (table) => Number((await client.query(`select count(*)::int as n from public.${table} where partner_id = $1 and chain_id = $2`, [key.id, key.chainId])).rows[0]?.n || 0);
+    const hasGen8 = (await client.query(`select to_regclass('public.gen8_partner_fees') is not null as ok`)).rows[0]?.ok === true;
+    const history = {
+      swaps: await count("finance_import_swap_fees"),
+      transfers: await count("import_fee_transfers"),
+      gen8: hasGen8 ? await count("gen8_partner_fees") : 0,
+      fingerprints: await count("import_swap_fingerprints"),
+    };
+    if (history.swaps + history.transfers + history.gen8 + history.fingerprints > 0) {
+      fail(`${current.name} has ${historyText(history)} and cannot be removed. Switch it off instead.`, "PARTNER_HAS_HISTORY", 409);
+    }
+    await client.query(`delete from public.import_fee_partners where id = $1 and chain_id = $2`, [key.id, key.chainId]);
+    const before = publicRow(current);
+    try {
+      await audit(client, actor, "delete", before, before, null);
+    } catch (error) {
+      if (error?.code === "23514") fail("Apply database/prod_apply_import_fee_partner_audit_delete.sql first", "PARTNER_AUDIT_DELETE_MISSING", 503);
+      throw error;
+    }
+    return before;
   });
 }
