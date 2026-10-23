@@ -140,6 +140,11 @@ came through its widget, out of MemeWarzone's 0.50%. **Nothing during bonding.**
   quotes, builds, approvals, bonding trades and landed swaps per day, the funnel, and the split by chain, partner and
   website.
 - Widget swaps are marked by the fee scanner (`finance_import_swap_fees.swap_source = 'widget'`, `widget_host`) only from
-  the moment `database/prod_apply_widget_analytics.sql` is applied and the API that records widget builds is live.
-  Swaps from before that are still in the partner figures but not in the widget figures. Nothing in the partner split,
-  the payouts or the fingerprints changes.
+  the moment `database/prod_apply_widget_analytics.sql` is applied and the API that records widget builds is live; each
+  scan looks back 7 days, so a build written a little after its swap was scanned is still matched. Swaps from before
+  that are still in the partner figures but not in the widget figures. Nothing in the partner split, the payouts or the
+  fingerprints changes.
+- Both Command Center views count the same landed swaps: the partner is the partner that is paid (the fee row's
+  `partner_id`; for gen-8 the `gen8_partner_fees` ledger), our own wallets and test coins are left out, and gen-8 is
+  read for the configured hook only. Usage counts (loads, quotes, builds) are indicative; money comes only from swaps
+  matched on chain.

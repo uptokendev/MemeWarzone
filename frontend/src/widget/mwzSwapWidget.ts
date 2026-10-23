@@ -26,8 +26,8 @@ export { fromRaw, toRaw };
 /** The bonding part (mwz-swap-bonding.js) sits next to this script and loads only for bonding coins. */
 type BondingApi = {
   quoteBonding: (input: { kind: BondingKind; campaignAddress: string; side: Side; amountIn: bigint }) => Promise<BondingQuote>;
-  tradeBonding: (input: { kind: BondingKind; campaignAddress: string; creator: string | null; side: Side; amountIn: bigint; trader: string }) => Promise<string>;
-  setWidgetApiBase: (base: string, partner?: string) => void;
+  tradeBonding: (input: { kind: BondingKind; campaignAddress: string; creator: string | null; side: Side; amountIn: bigint; trader: string; partner?: string | null }) => Promise<string>;
+  setWidgetApiBase: (base: string) => void;
   setWidgetSolanaProvider: (provider: never) => void;
 };
 const SCRIPT_DIR = (() => {
@@ -39,12 +39,12 @@ const SCRIPT_DIR = (() => {
   }
 })();
 let bondingPromise: Promise<BondingApi> | null = null;
-function loadBonding(apiBase: string, partner?: string): Promise<BondingApi> {
+function loadBonding(apiBase: string): Promise<BondingApi> {
   if (!bondingPromise) {
     bondingPromise = new Promise<BondingApi>((resolve, reject) => {
       const ready = () => {
         const api = (globalThis as any).__MemeWarzoneSwapBonding as BondingApi | undefined;
-        if (api) resolve(api); else reject(new Error("Could not load the trading module."));
+        if (api) { api.setWidgetApiBase(apiBase); resolve(api); } else reject(new Error("Could not load the trading module."));
       };
       if ((globalThis as any).__MemeWarzoneSwapBonding) return ready();
       const script = document.createElement("script");
@@ -55,11 +55,7 @@ function loadBonding(apiBase: string, partner?: string): Promise<BondingApi> {
       document.head.appendChild(script);
     });
   }
-  // The API base and the partner (usage counts per partner) for this box's trade, set on every call.
-  return bondingPromise.then((api) => {
-    api.setWidgetApiBase(apiBase, partner);
-    return api;
-  });
+  return bondingPromise;
 }
 
 type Side = "buy" | "sell";
@@ -361,7 +357,7 @@ class SwapWidget {
     const token = this.token;
     if (!token || token.kind === "import" || !token.campaignAddress || !token.tradable) return null;
     try {
-      const bonding = await loadBonding(this.api, this.options.partner);
+      const bonding = await loadBonding(this.api);
       const q = await bonding.quoteBonding({ kind: token.kind, campaignAddress: token.campaignAddress, side: this.side, amountIn: raw });
       if (seq !== this.quoteSeq) return null;
       const quote: Quote = {
@@ -457,10 +453,10 @@ class SwapWidget {
     this.busy = true;
     this.paintButton();
     try {
-      const bonding = await loadBonding(this.api, this.options.partner);
+      const bonding = await loadBonding(this.api);
       bonding.setWidgetSolanaProvider(wallet as never);
       this.say("Confirm the trade in your wallet...");
-      const signature = await bonding.tradeBonding({ kind: token.kind, campaignAddress: token.campaignAddress, creator: token.creator ?? null, side: this.side, amountIn: raw, trader: this.account });
+      const signature = await bonding.tradeBonding({ kind: token.kind, campaignAddress: token.campaignAddress, creator: token.creator ?? null, side: this.side, amountIn: raw, trader: this.account, partner: this.options.partner ?? null });
       this.say(`Trade confirmed (${signature.slice(0, 8)}...).`, "ok");
       (this.el.amount as HTMLInputElement).value = "";
       this.quote = null;

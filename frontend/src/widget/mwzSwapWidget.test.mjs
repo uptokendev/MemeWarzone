@@ -99,14 +99,19 @@ test("usage per partner: the widget sends partner on token lookups and quotes; t
   try { mod = await import(file); } finally { fs.rmSync(file, { force: true }); }
   const calls = [];
   globalThis.fetch = async (url) => { calls.push(url); return new Response("{}"); };
-  mod.setWidgetApiBase("https://api.example", "crypticpump");
-  await mod.apiFetch("/api/solana/trade-authorize", { method: "POST" });
-  await mod.apiFetch("/api/solana/campaign-account?address=abc");
   mod.setWidgetApiBase("https://api.example");
+  // Two boxes, two partners: each trade sends its own partner, read when the call starts; nothing sticks afterwards.
+  const a = mod.withWidgetPartner("crypticpump", () => mod.apiFetch("/api/solana/trade-authorize", { method: "POST" }));
+  const b = mod.withWidgetPartner("other-site", () => mod.apiFetch("/api/solana/trade-authorize", { method: "POST" }));
+  await Promise.all([a, b]);
+  await mod.withWidgetPartner("crypticpump", () => mod.apiFetch("/api/solana/campaign-account?address=abc"));
   await mod.apiFetch("/api/solana/trade-authorize", { method: "POST" });
+  await mod.withWidgetPartner(null, () => mod.apiFetch("/api/solana/trade-authorize", { method: "POST" }));
   assert.deepEqual(calls, [
     "https://api.example/api/widget/solana/trade-authorize?partner=crypticpump",
+    "https://api.example/api/widget/solana/trade-authorize?partner=other-site",
     "https://api.example/api/widget/solana/campaign-account?address=abc",
+    "https://api.example/api/widget/solana/trade-authorize",
     "https://api.example/api/widget/solana/trade-authorize",
   ]);
 
@@ -128,5 +133,10 @@ test("usage per partner: the widget sends partner on token lookups and quotes; t
   for (const [name, src, expected] of [["solana", sol, 2], ["evm", evm, 4]]) {
     assert.equal((src.match(/\.\.\.\(this\.options\.partner \? \{ partner: this\.options\.partner \} : \{\}\)/g) || []).length, expected, name);
   }
-  assert.equal((sol.match(/loadBonding\(this\.api, this\.options\.partner\)/g) || []).length, 2);
+  // The bonding module's API base is set once when it loads (as before); the partner goes with each trade call.
+  assert.equal((sol.match(/loadBonding\(this\.api\)/g) || []).length, 2);
+  assert.match(sol, /api\.setWidgetApiBase\(apiBase\); resolve\(api\);/);
+  assert.match(sol, /trader: this\.account, partner: this\.options\.partner \?\? null \}\)/);
+  const bondingSrc = fs.readFileSync(path.join(dir, "bonding.ts"), "utf8");
+  assert.match(bondingSrc, /await withWidgetPartner\(input\.partner, \(\) => requestSolanaTradeAuthorization\(\{/);
 });

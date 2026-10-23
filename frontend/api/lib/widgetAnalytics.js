@@ -4,22 +4,24 @@
  *   buildWidgetUsage    GET /api/admin/widget/usage: daily counts per event (widget_usage_daily), the funnel
  *                       load -> quote -> build -> landed, by chain, by partner, top websites.
  *   buildWidgetFinance  GET /api/admin/finance/widget: landed widget swaps and their money per chain, partner and
- *                       website, for imports (finance_import_swap_fees rows marked swap_source = 'widget') and for
- *                       generation 8 coins (evm_gen8_fee_accruals with the widget referrer), plus each partner's
- *                       earned / paid / sending / owed from the existing partner ledger (importFeePartnersAdmin).
+ *                       website, for imports and for generation 8 coins, plus each partner's earned / paid / sending /
+ *                       owed from the existing partner ledger (importFeePartnersAdmin).
  *
- * Landed swaps:
- *   imports  the fee scanner marks a fee row when its fingerprint and landed wallet match a widget build
- *            (widgetSwapLedger.js). Volume = fee_raw x 10000 / the build's fee bps (floor), the native leg the fee was
- *            taken from; the build's quoted native amount when the rate is unknown.
- *   gen-8    every trade accrual whose hookData referrer is GEN8_REFERRER_WIDGET (only the API builds that hookData for
- *            the widget; a forged tag only shows up here, never in money: the partner share is the gen8_partner_fees
- *            ledger, which needs the recorded fingerprint). Website and partner of a gen-8 swap are known only where
- *            the ledger names its fingerprint (graduated partner swaps).
+ * Landed widget swaps come from ONE query (widgetSwapRows), so usage and finance count the same swaps:
+ *   imports  fee rows the fee scanner marked swap_source = 'widget' (landed fingerprint + wallet = a widget build),
+ *            not by our own wallets (internal_wallet, as the revenue lanes). Partner = the fee row's partner_id (the
+ *            partner that is paid), website = widget_host. Volume = fee_raw x 10000 / the build's fee bps (floor), the
+ *            native leg the fee was taken from; the build's quoted native amount when the rate is unknown.
+ *   gen-8    trade accruals of the configured hook(s) (as financeGen8.js) whose hookData referrer is
+ *            GEN8_REFERRER_WIDGET, test coins (hidden campaigns) left out as in the gen-8 revenue lane. Partner = the
+ *            gen8_partner_fees ledger (graduated partner swaps); website = the widget build with that ledger row's
+ *            fingerprint and the trader's wallet, so it is known only for those swaps.
  * Money is summed in BigInt from numeric strings; USD comes from the finance price service (financePrices.js,
  * Binance 1h close at each event hour) and is null when no price could be read, never a guess.
+ * Usage counts are indicative (any page can send any Origin or partner id); money is only from swaps matched on chain.
  */
 import { GEN8_REFERRER_WIDGET } from "../../shared/evmGen8Swap.mjs";
+import { gen8ConfigFor } from "./evmGen8Config.js";
 import { publicHiddenWhere } from "./publicHiddenSql.js";
 import { listPartners as defaultListPartners } from "./importFeePartnersAdmin.js";
 import { WIDGET_EVENTS, WIDGET_TRACK_CHAINS, widgetPartnerId } from "./widgetTracking.js";
@@ -34,6 +36,11 @@ export const WIDGET_FINANCE_CHAINS = Object.freeze([
 const CHAIN_INFO = new Map(WIDGET_FINANCE_CHAINS.map((c) => [c.chainId, c]));
 const FUNNEL_LABELS = { load: "Widget loads", quote: "Quotes", build: "Swaps built", landed: "Swaps landed" };
 const TOP_HOSTS = 25;
+const GEN8_CHAINS = [56, 97, 4663, 46630];
+// The widget tag, inlined as a literal so the partial index evm_gen8_fee_accruals_widget_idx applies. A constant of
+// ours (shared/evmGen8Swap.mjs), checked to be a plain address below.
+const WIDGET_REFERRER = GEN8_REFERRER_WIDGET.toLowerCase();
+if (!/^0x[0-9a-f]{40}$/.test(WIDGET_REFERRER)) throw new Error("GEN8_REFERRER_WIDGET is not an address");
 
 export class WidgetQueryError extends Error {
   constructor(message) {
@@ -86,6 +93,16 @@ export function usagePartnerFilter(value) {
   return id;
 }
 
+/** The configured gen-8 hooks per chain (gen8ConfigFor, as financeGen8.js): [{ chainId, hook }] lower-cased. */
+export function widgetGen8Hooks(env = process.env) {
+  const out = [];
+  for (const chainId of GEN8_CHAINS) {
+    const cfg = gen8ConfigFor(chainId, env);
+    if (cfg?.hook) out.push({ chainId, hook: String(cfg.hook).toLowerCase() });
+  }
+  return out;
+}
+
 async function widgetTables(db) {
   const { rows } = await db.query(
     `select to_regclass('public.widget_usage_daily') is not null as usage,
@@ -100,38 +117,51 @@ async function widgetTables(db) {
   return { usage: r.usage === true, builds: r.builds === true, feeMarks: r.fee_marks === true, gen8: r.gen8 === true, gen8Partner: r.gen8_partner === true, partners: r.partners === true };
 }
 
-const zeroCounts = () => ({ load: 0, quote: 0, build: 0, approval: 0, bonding_trade: 0, landed: 0 });
 const big = (v) => (v == null || v === "" ? 0n : BigInt(String(v).split(".")[0]));
 
-/** The landed widget swaps per (day, chain, partner, website): imports from the marked fee rows, gen-8 by referrer. */
-async function landedRows(db, tables, from, to) {
+/**
+ * The landed widget swaps of the window, grouped per (kind, chain, partner, website, phase, hour), with their money.
+ * The single source for usage "landed" and for finance (see the header). chainIds limits the chains; hooks the gen-8
+ * hooks ([{ chainId, hook }]).
+ */
+export async function widgetSwapRows(db, tables, { from, to, chainIds, hooks }) {
   const out = [];
-  if (tables.feeMarks) {
-    const join = tables.builds ? "left join public.widget_swap_builds b on b.id = f.widget_build_id" : "";
-    const partner = tables.builds ? "coalesce(b.partner_id, f.partner_id, '')" : "coalesce(f.partner_id, '')";
+  if (tables.feeMarks && tables.builds) {
     const { rows } = await db.query(
-      `select (f.occurred_at at time zone 'utc')::date::text as day, f.chain_id, ${partner} as partner_id, coalesce(f.widget_host, '') as host, count(*)::int as n
-         from public.finance_import_swap_fees f ${join}
-        where f.swap_source = 'widget' and f.occurred_at >= $1::date and f.occurred_at < ($2::date + 1)
+      `select f.chain_id, coalesce(f.partner_id, '') as partner_id, coalesce(f.widget_host, '') as host, date_trunc('hour', f.occurred_at) as hour,
+              count(*)::int as swaps, sum(f.fee_raw)::text as fee, sum(f.creator_raw)::text as creator, sum(f.partner_raw)::text as partner,
+              sum(case when b.fee_bps > 0 then div(f.fee_raw * 10000, b.fee_bps) else coalesce(b.native_raw, 0) end)::text as volume
+         from public.finance_import_swap_fees f
+         left join public.widget_swap_builds b on b.id = f.widget_build_id
+        where f.swap_source = 'widget' and f.chain_id = any($3::int[]) and not f.internal_wallet
+          and f.occurred_at >= $1::date and f.occurred_at < ($2::date + 1)
         group by 1, 2, 3, 4`,
-      [from, to],
+      [from, to, chainIds],
     );
-    out.push(...rows);
+    for (const r of rows) out.push({ kind: "import", phase: null, ...r });
   }
-  if (tables.gen8) {
+  const gen8Hooks = (hooks || []).filter((h) => chainIds.includes(Number(h.chainId)));
+  if (tables.gen8 && gen8Hooks.length) {
     const pJoin = tables.gen8Partner ? "left join public.gen8_partner_fees p on p.chain_id = a.chain_id and p.tx_hash = a.tx_hash and p.log_index = a.log_index" : "";
     const bJoin = tables.gen8Partner && tables.builds ? "left join public.widget_swap_builds b on b.chain_id = a.chain_id and b.fingerprint = p.fingerprint and b.wallet = lower(a.trader)" : "";
-    const partner = bJoin ? "coalesce(b.partner_id, p.partner_id, '')" : pJoin ? "coalesce(p.partner_id, '')" : "''";
-    const host = bJoin ? "coalesce(b.host, '')" : "''";
     const { rows } = await db.query(
-      `select (a.block_time at time zone 'utc')::date::text as day, a.chain_id, ${partner} as partner_id, ${host} as host, count(*)::int as n
+      `select a.chain_id, ${pJoin ? "coalesce(p.partner_id, '')" : "''"} as partner_id, ${bJoin ? "coalesce(b.host, '')" : "''"} as host, a.phase,
+              date_trunc('hour', a.block_time) as hour, count(*)::int as swaps,
+              sum(a.curve_amount)::text as volume, sum(a.fee)::text as fee, sum(a.creator_share)::text as creator, sum(a.protocol)::text as protocol,
+              ${pJoin ? "sum(coalesce(p.partner_raw, 0))::text" : "'0'"} as partner
          from public.evm_gen8_fee_accruals a ${pJoin} ${bJoin}
-        where a.kind = 'trade' and lower(coalesce(a.referrer, '')) = $3
+        where (a.chain_id, a.hook_address) in (select * from unnest($3::int[], $4::text[]))
+          and a.kind = 'trade' and lower(coalesce(a.referrer, '')) = '${WIDGET_REFERRER}'
           and a.block_time >= $1::date and a.block_time < ($2::date + 1)
-        group by 1, 2, 3, 4`,
-      [from, to, GEN8_REFERRER_WIDGET.toLowerCase()],
+          and not exists (
+            select 1 from public.campaigns hc
+             where hc.chain_id = a.chain_id and hc.campaign_address is not null
+               and lower(hc.campaign_address) = lower(a.token_address) and ${publicHiddenWhere("hc")}
+          )
+        group by 1, 2, 3, 4, 5`,
+      [from, to, gen8Hooks.map((h) => Number(h.chainId)), gen8Hooks.map((h) => String(h.hook).toLowerCase())],
     );
-    out.push(...rows);
+    for (const r of rows) out.push({ kind: "gen8", ...r });
   }
   return out;
 }
@@ -141,6 +171,8 @@ async function partnerNames(db, tables) {
   const { rows } = await db.query(`select id, min(name) as name from public.import_fee_partners group by id`);
   return new Map(rows.map((r) => [String(r.id), String(r.name)]));
 }
+
+const zeroCounts = () => ({ load: 0, quote: 0, build: 0, approval: 0, bonding_trade: 0, landed: 0 });
 
 function bump(map, key, seed, event, n) {
   if (!map.has(key)) map.set(key, { ...seed, ...zeroCounts() });
@@ -152,18 +184,25 @@ function rankHosts(map) {
   return [...map.values()].sort((a, b) => score(b) - score(a) || a.host.localeCompare(b.host)).slice(0, TOP_HOSTS);
 }
 
+function hourMsOf(value) {
+  const ms = value instanceof Date ? value.getTime() : Date.parse(String(value));
+  return Number.isFinite(ms) ? ms : null;
+}
+
+const USAGE_NOTES = [
+  "Counts are daily per website (the hostname the browser sent as Origin or Referer). No cookies, IP addresses or visitor ids are stored.",
+  "Usage counts are indicative: any page can send any Origin or partner id. Money figures come only from swaps matched on chain.",
+  "Token lookups are cached by browsers for up to 60 seconds (15 for generation 8 coins), so repeat views within that time are not counted as loads. Counts are written every 15 seconds.",
+  "Landed swaps are the ones on the Finance > Widget page: imported and graduated coins once the fee scanner matched the landed fee to the widget build (every 5 minutes, looking back 7 days), partner = the partner paid; generation 8 coins by the widget tag in the hook fee. Our own wallets and test coins are left out. Solana DBC bonding trades do not pass the API and are not counted.",
+];
+
 /** The usage read model (see the header). Never reads IPs or wallets: there are none in the usage table. */
-export async function buildWidgetUsage({ db, from, to, chainId = null, partner = null }) {
+export async function buildWidgetUsage({ db, from, to, chainId = null, partner = null, hooks = widgetGen8Hooks() }) {
   const days = daysBetween(from, to);
   const base = { ok: true, from, to, chainId, partner, events: [...WIDGET_EVENTS] };
-  const notes = [
-    "Counts are daily per website (the hostname the browser sent as Origin or Referer). No cookies, IP addresses or visitor ids are stored.",
-    "Token lookups are cached by browsers for up to 60 seconds (15 for generation 8 coins), so repeat views within that time are not counted as loads.",
-    "Landed swaps: imported and graduated coins once the fee scanner has matched the landed fee to the widget build (every 5 minutes); generation 8 coins by the widget tag in the hook fee. Solana DBC bonding trades do not pass the API and are not counted.",
-  ];
   const tables = db ? await widgetTables(db) : { usage: false };
   if (!tables.usage) {
-    return { ...base, schemaMissing: true, totals: zeroCounts(), series: days.map((day) => ({ day, ...zeroCounts() })), funnel: funnelOf(zeroCounts()), byChain: [], byPartner: [], topHosts: [], notes };
+    return { ...base, schemaMissing: true, totals: zeroCounts(), series: days.map((day) => ({ day, ...zeroCounts() })), funnel: funnelOf(zeroCounts()), byChain: [], byPartner: [], topHosts: [], notes: USAGE_NOTES };
   }
   const params = [from, to];
   let filter = "";
@@ -181,7 +220,7 @@ export async function buildWidgetUsage({ db, from, to, chainId = null, partner =
     db.query(`select chain_id, event, sum(count)::text as n from public.widget_usage_daily ${where} group by 1, 2`, params),
     db.query(`select partner_id, event, sum(count)::text as n from public.widget_usage_daily ${where} group by 1, 2`, params),
     db.query(`select host, event, sum(count)::text as n from public.widget_usage_daily ${where} group by 1, 2`, params),
-    landedRows(db, tables, from, to),
+    widgetSwapRows(db, tables, { from, to, chainIds: [...WIDGET_TRACK_CHAINS], hooks }),
     partnerNames(db, tables),
   ]);
   const byDay = new Map(days.map((day) => [day, { day, ...zeroCounts() }]));
@@ -202,9 +241,11 @@ export async function buildWidgetUsage({ db, from, to, chainId = null, partner =
     const rowPartner = String(r.partner_id || "");
     if (chainId != null && rowChain !== chainId) continue;
     if (partner != null && rowPartner !== partner) continue;
-    const n = Number(r.n || 0);
+    const n = Number(r.swaps || 0);
+    const hour = hourMsOf(r.hour);
+    const day = hour == null ? null : new Date(hour).toISOString().slice(0, 10);
     totals.landed += n;
-    if (byDay.has(r.day)) byDay.get(r.day).landed += n;
+    if (day && byDay.has(day)) byDay.get(day).landed += n;
     bump(byChain, rowChain, { chainId: rowChain }, "landed", n);
     bump(byPartner, rowPartner, { partnerId: rowPartner }, "landed", n);
     bump(byHost, String(r.host || ""), { host: String(r.host || "") }, "landed", n);
@@ -220,7 +261,7 @@ export async function buildWidgetUsage({ db, from, to, chainId = null, partner =
       .map((row) => ({ ...row, name: row.partnerId ? names.get(row.partnerId) ?? null : null }))
       .sort((a, b) => (a.partnerId === "" ? 1 : b.partnerId === "" ? -1 : a.partnerId.localeCompare(b.partnerId))),
     topHosts: rankHosts(byHost),
-    notes,
+    notes: USAGE_NOTES,
   };
 }
 
@@ -278,11 +319,6 @@ async function groupRow(group, figures, prices) {
   return { ...group.seed, asset: info.asset, decimals: info.decimals, swaps: group.swaps, ...raw, usd: await usdOf(group, figures, info.asset, info.decimals, prices) };
 }
 
-function hourMsOf(value) {
-  const ms = value instanceof Date ? value.getTime() : Date.parse(String(value));
-  return Number.isFinite(ms) ? ms : null;
-}
-
 /** Totals of priced rows: a figure is null when any row with a non-zero amount has no USD (no partial sums). */
 function usdTotals(rows, figures) {
   const out = {};
@@ -301,49 +337,46 @@ function usdTotals(rows, figures) {
 }
 
 /** The finance read model (see the header). prices: createPriceService() (financePrices.js) or null for native only. */
-export async function buildWidgetFinance({ db, from, to, prices = null, listPartners = defaultListPartners }) {
+export async function buildWidgetFinance({ db, from, to, prices = null, listPartners = defaultListPartners, hooks = widgetGen8Hooks() }) {
   const chainIds = WIDGET_FINANCE_CHAINS.map((c) => c.chainId);
   const notes = [
     "Imports: landed swaps whose fee row matches a widget build by fingerprint and wallet. Volume is the native side the fee was taken from (fee / fee rate). Swaps by our own wallets are left out, as in the revenue lanes.",
     "Partner earned, paid, sending and owed are all-time ledger figures (the same as the Partners page); the swap figures are for the chosen days.",
-    "Generation 8: trades with the widget tag in the hook fee. MemeWarzone share is the protocol slice of the hook fee; the partner share (graduated coins only) is paid from MemeWarzone's import share in the ImportFeeVault. Test coins are left out.",
+    "Generation 8: trades of the configured hook with the widget tag in the hook fee. MemeWarzone share is the protocol slice of the hook fee; the partner share (graduated coins only) is paid from MemeWarzone's import share in the ImportFeeVault. Test coins are left out.",
     "USD at the Binance 1h close of each swap's hour; empty when no price could be read.",
   ];
   const empty = { ok: true, from, to, notes, imports: { byChain: [], byPartner: [], byHost: [] }, gen8: { available: false, byChain: [], byPartner: [], byHost: [] }, totals: { swaps: 0, usd: { volume: null, fee: null, creator: null, partner: null, net: null, priceBasis: null } } };
   const tables = db ? await widgetTables(db) : { feeMarks: false, gen8: false };
   if (!tables.feeMarks || !tables.builds) return { ...empty, schemaMissing: true };
 
-  // ---- imports
-  const imp = await db.query(
-    `select f.chain_id, coalesce(f.partner_id, '') as partner_id, coalesce(f.widget_host, '') as host, date_trunc('hour', f.occurred_at) as hour,
-            count(*)::int as swaps, sum(f.fee_raw)::text as fee, sum(f.creator_raw)::text as creator, sum(f.partner_raw)::text as partner,
-            sum(case when b.fee_bps > 0 then div(f.fee_raw * 10000, b.fee_bps) else coalesce(b.native_raw, 0) end)::text as volume
-       from public.finance_import_swap_fees f
-       left join public.widget_swap_builds b on b.id = f.widget_build_id
-      where f.swap_source = 'widget' and f.chain_id = any($3::int[]) and not f.internal_wallet
-        and f.occurred_at >= $1::date and f.occurred_at < ($2::date + 1)
-      group by 1, 2, 3, 4`,
-    [from, to, chainIds],
-  );
+  const swapRows = await widgetSwapRows(db, tables, { from, to, chainIds, hooks });
   const iChain = new Map();
   const iPartner = new Map();
   const iHost = new Map();
-  for (const r of imp.rows) {
+  const gChain = new Map();
+  const gPartner = new Map();
+  const gHost = new Map();
+  for (const r of swapRows) {
     const chainId = Number(r.chain_id);
-    const fee = big(r.fee);
-    const creator = big(r.creator);
-    const partner = big(r.partner);
-    const values = { volume: big(r.volume), fee, creator, partner, net: fee - creator - partner };
     const hour = hourMsOf(r.hour);
     const pid = String(r.partner_id || "");
     const host = String(r.host || "");
+    const gen8 = r.kind === "gen8";
+    const figures = gen8 ? GEN8_FIGURES : IMPORT_FIGURES;
+    const fee = big(r.fee);
+    const creator = big(r.creator);
+    const partner = big(r.partner);
+    const values = gen8
+      ? { volume: big(r.volume), fee, creator, protocol: big(r.protocol), partner, net: big(r.protocol) - partner }
+      : { volume: big(r.volume), fee, creator, partner, net: fee - creator - partner };
+    const maps = gen8 ? [gChain, gPartner, gHost] : [iChain, iPartner, iHost];
     for (const [map, key, seed] of [
-      [iChain, `${chainId}`, { chainId }],
-      [iPartner, `${chainId}:${pid}`, { chainId, partnerId: pid }],
-      [iHost, `${chainId}:${host}`, { chainId, host }],
+      [maps[0], `${chainId}`, { chainId }],
+      [maps[1], `${chainId}:${pid}`, { chainId, partnerId: pid }],
+      [maps[2], `${chainId}:${host}`, { chainId, host }],
     ]) {
-      if (!map.has(key)) map.set(key, newGroup(seed, IMPORT_FIGURES));
-      addTo(map.get(key), IMPORT_FIGURES, hour, values, Number(r.swaps || 0));
+      if (!map.has(key)) map.set(key, newGroup(seed, figures));
+      addTo(map.get(key), figures, hour, values, Number(r.swaps || 0), gen8 ? r.phase : null);
     }
   }
 
@@ -358,58 +391,14 @@ export async function buildWidgetFinance({ db, from, to, prices = null, listPart
   for (const p of ledgerByKey.values()) {
     const key = `${p.chainId}:${p.id}`;
     if (!iPartner.has(key)) iPartner.set(key, newGroup({ chainId: Number(p.chainId), partnerId: p.id }, IMPORT_FIGURES));
-  }
-
-  // ---- gen-8
-  const gChain = new Map();
-  const gPartner = new Map();
-  const gHost = new Map();
-  if (tables.gen8) {
-    const pJoin = tables.gen8Partner ? "left join public.gen8_partner_fees p on p.chain_id = a.chain_id and p.tx_hash = a.tx_hash and p.log_index = a.log_index" : "";
-    const bJoin = tables.gen8Partner ? "left join public.widget_swap_builds b on b.chain_id = a.chain_id and b.fingerprint = p.fingerprint and b.wallet = lower(a.trader)" : "";
-    const g = await db.query(
-      `select a.chain_id, ${pJoin ? "coalesce(p.partner_id, '')" : "''"} as partner_id, ${bJoin ? "coalesce(b.host, '')" : "''"} as host, a.phase,
-              date_trunc('hour', a.block_time) as hour, count(*)::int as swaps,
-              sum(a.curve_amount)::text as volume, sum(a.fee)::text as fee, sum(a.creator_share)::text as creator, sum(a.protocol)::text as protocol,
-              ${pJoin ? "sum(coalesce(p.partner_raw, 0))::text" : "'0'"} as partner
-         from public.evm_gen8_fee_accruals a ${pJoin} ${bJoin}
-        where a.chain_id = any($3::int[]) and a.kind = 'trade' and lower(coalesce(a.referrer, '')) = $4
-          and a.block_time >= $1::date and a.block_time < ($2::date + 1)
-          and not exists (
-            select 1 from public.campaigns hc
-             where hc.chain_id = a.chain_id and hc.campaign_address is not null
-               and lower(hc.campaign_address) = lower(a.token_address) and ${publicHiddenWhere("hc")}
-          )
-        group by 1, 2, 3, 4, 5`,
-      [from, to, chainIds.filter((id) => id !== 101), GEN8_REFERRER_WIDGET.toLowerCase()],
-    );
-    for (const r of g.rows) {
-      const chainId = Number(r.chain_id);
-      const protocol = big(r.protocol);
-      const partner = big(r.partner);
-      const values = { volume: big(r.volume), fee: big(r.fee), creator: big(r.creator), protocol, partner, net: protocol - partner };
-      const hour = hourMsOf(r.hour);
-      const pid = String(r.partner_id || "");
-      const host = String(r.host || "");
-      for (const [map, key, seed] of [
-        [gChain, `${chainId}`, { chainId }],
-        [gPartner, `${chainId}:${pid}`, { chainId, partnerId: pid }],
-        [gHost, `${chainId}:${host}`, { chainId, host }],
-      ]) {
-        if (!map.has(key)) map.set(key, newGroup(seed, GEN8_FIGURES));
-        addTo(map.get(key), GEN8_FIGURES, hour, values, Number(r.swaps || 0), r.phase);
-      }
-    }
-    for (const p of ledgerByKey.values()) {
-      if (p.gen8EarnedRaw === undefined || Number(p.chainId) === 101) continue;
-      const key = `${p.chainId}:${p.id}`;
-      if (!gPartner.has(key)) gPartner.set(key, newGroup({ chainId: Number(p.chainId), partnerId: p.id }, GEN8_FIGURES));
+    if (tables.gen8 && p.gen8EarnedRaw !== undefined && Number(p.chainId) !== 101 && !gPartner.has(key)) {
+      gPartner.set(key, newGroup({ chainId: Number(p.chainId), partnerId: p.id }, GEN8_FIGURES));
     }
   }
 
   const sortRows = (rows, by) => rows.sort((a, b) => a.chainId - b.chainId || String(a[by] ?? "").localeCompare(String(b[by] ?? "")));
   const rowsOf = async (map, figures) => Promise.all([...map.values()].map((g) => groupRow(g, figures, prices)));
-  const gen8Extra = (row, group) => ({ ...row, bondingSwaps: group.bondingSwaps, postSwaps: group.postSwaps });
+  const gen8Rows = async (map) => Promise.all([...map.values()].map(async (g) => ({ ...(await groupRow(g, GEN8_FIGURES, prices)), bondingSwaps: g.bondingSwaps, postSwaps: g.postSwaps })));
 
   const importsByChain = sortRows(await rowsOf(iChain, IMPORT_FIGURES), "chainId");
   const importsByPartner = sortRows(
@@ -420,8 +409,8 @@ export async function buildWidgetFinance({ db, from, to, prices = null, listPart
     "partnerId",
   );
   const importsByHost = sortRows(await rowsOf(iHost, IMPORT_FIGURES), "host");
-  const gen8ByChain = sortRows(await Promise.all([...gChain.values()].map(async (g) => gen8Extra(await groupRow(g, GEN8_FIGURES, prices), g))), "chainId");
-  const gen8ByHost = sortRows(await Promise.all([...gHost.values()].map(async (g) => gen8Extra(await groupRow(g, GEN8_FIGURES, prices), g))), "host");
+  const gen8ByChain = sortRows(await gen8Rows(gChain), "chainId");
+  const gen8ByHost = sortRows(await gen8Rows(gHost), "host");
   const gen8ByPartner = sortRows(
     (await rowsOf(gPartner, GEN8_FIGURES)).map((row) => {
       const p = row.partnerId ? ledgerByKey.get(`${row.chainId}:${row.partnerId}`) : null;
@@ -444,7 +433,7 @@ export async function buildWidgetFinance({ db, from, to, prices = null, listPart
     schemaMissing: false,
     notes,
     imports: { byChain: importsByChain, byPartner: importsByPartner, byHost: importsByHost },
-    gen8: { available: tables.gen8, byChain: gen8ByChain, byPartner: gen8ByPartner, byHost: gen8ByHost },
+    gen8: { available: tables.gen8 && hooks.length > 0, byChain: gen8ByChain, byPartner: gen8ByPartner, byHost: gen8ByHost },
     totals: {
       swaps: importsByChain.reduce((s, r) => s + r.swaps, 0) + gen8ByChain.reduce((s, r) => s + r.swaps, 0),
       usd: {

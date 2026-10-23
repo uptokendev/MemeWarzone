@@ -1,24 +1,33 @@
 -- Swap widget usage and revenue tracking (2026-10-23). PRODUCTION, Supabase SQL editor (project ellkfgoxnzykxqybajtn).
--- Same statements as db/migrations/20261023_000020_widget_analytics.sql, with a prerequisite check first.
+-- Same statements as db/migrations/20261023_000020_widget_analytics.sql (the part from BEGIN to the end is identical).
 --
 -- What it does: creates widget_usage_daily (daily counts per chain, partner, embedding website and event; no IPs, no
 -- wallets, no visitor ids) and widget_swap_builds (every swap the API built for the widget, with the same fingerprint
--- the partner attribution records and the wallet it was built for), and adds three nullable columns to
--- finance_import_swap_fees: swap_source ('widget' or null), widget_host, widget_build_id. Every existing row keeps its
--- values (the new columns are null); no amount column, partner row, payout or fingerprint changes. RLS on, no
--- policies, anon and authenticated revoked, like the other import fee tables. Nothing is dropped. Idempotent: safe to
--- run twice.
+-- the partner attribution records and the wallet it was built for, only to match the landed swap; unmatched builds
+-- are deleted by the API after 30 days), and adds four nullable columns to finance_import_swap_fees: landed_fingerprint,
+-- swap_source ('widget' or null), widget_host, widget_build_id. Every existing row keeps its values (the new columns
+-- are null, no default, so no row is rewritten); no amount column, partner row, payout or fingerprint changes. RLS on,
+-- no policies, anon and authenticated revoked, like the other import fee tables. Nothing is dropped. Idempotent: safe
+-- to run twice.
 --
 -- Order: the API that carries api/lib/widgetTracking.js can be deployed before or after this; without these tables it
--- counts nothing and the fee scanner marks nothing (both skip quietly). Widget swaps are only marked from the moment
--- both the SQL and the API are live: builds made before that have no ledger row.
+-- counts nothing and the fee scanner marks nothing (both skip quietly). Widget swaps are marked from the moment both
+-- the SQL and the API are live (the scanner looks back 7 days on every run).
 --
--- How: paste the whole file, Run. Then run the check at the bottom on its own; it must list 2 tables, 3 columns and
--- 0 marked rows on the first run.
+-- How (two parts; CREATE INDEX CONCURRENTLY cannot run inside a transaction, and the SQL editor runs a pasted script
+-- as one):
+--   Part 1: select from BEGIN; down to COMMIT; and Run. It creates the tables and columns and adds the CHECK as
+--           NOT VALID (short lock, no table scan).
+--   Part 2: run each statement after COMMIT on its own (select it, Run): VALIDATE CONSTRAINT (scans the table with a
+--           light lock that does not block reads or writes), then the three CREATE INDEX CONCURRENTLY (they build
+--           without blocking writes). Each is idempotent (IF NOT EXISTS / validating twice is a no-op). If a CONCURRENTLY
+--           build is interrupted it leaves an INVALID index: drop that index by name and run the statement again.
+--   Then run the read-only check at the very bottom on its own.
+-- With psql the whole file runs as is: psql -v ON_ERROR_STOP=1 -f database/prod_apply_widget_analytics.sql
 
 BEGIN;
 
--- Prerequisites: the import fee ledger with its partner columns.
+-- Prerequisites: the import fee ledger with its partner columns, and the gen-8 accruals (indexed below).
 DO $$
 BEGIN
   IF to_regclass('public.finance_import_swap_fees') IS NULL THEN
@@ -31,6 +40,9 @@ BEGIN
      OR NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'finance_import_swap_fees' AND column_name = 'partner_raw') THEN
     RAISE EXCEPTION 'import fee partner tables are missing: apply db/migrations/20261009_000010_import_fee_partners.sql first';
   END IF;
+  IF to_regclass('public.evm_gen8_fee_accruals') IS NULL THEN
+    RAISE EXCEPTION 'evm_gen8_fee_accruals is missing: apply db/migrations/20261011_000010_evm_gen8_indexer.sql first';
+  END IF;
 END $$;
 
 CREATE TABLE IF NOT EXISTS public.widget_usage_daily (
@@ -42,7 +54,7 @@ CREATE TABLE IF NOT EXISTS public.widget_usage_daily (
   count       bigint NOT NULL DEFAULT 0 CHECK (count >= 0),
   PRIMARY KEY (day, chain_id, partner_id, host, event)
 );
--- The 500-site cap counts the distinct hosts of one (day, chain).
+-- The 500-site cap reads the named hosts of one (day, chain).
 CREATE INDEX IF NOT EXISTS widget_usage_daily_day_host_idx ON public.widget_usage_daily (day, chain_id, host);
 
 CREATE TABLE IF NOT EXISTS public.widget_swap_builds (
@@ -62,6 +74,7 @@ CREATE TABLE IF NOT EXISTS public.widget_swap_builds (
 );
 CREATE INDEX IF NOT EXISTS widget_swap_builds_created_idx ON public.widget_swap_builds (created_at);
 
+ALTER TABLE public.finance_import_swap_fees ADD COLUMN IF NOT EXISTS landed_fingerprint text NULL;
 ALTER TABLE public.finance_import_swap_fees ADD COLUMN IF NOT EXISTS swap_source text NULL;
 ALTER TABLE public.finance_import_swap_fees ADD COLUMN IF NOT EXISTS widget_host text NULL;
 ALTER TABLE public.finance_import_swap_fees ADD COLUMN IF NOT EXISTS widget_build_id bigint NULL;
@@ -70,11 +83,11 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'finance_import_swap_fees_widget_check') THEN
     ALTER TABLE public.finance_import_swap_fees
       ADD CONSTRAINT finance_import_swap_fees_widget_check
-      CHECK ((swap_source IS NULL OR swap_source = 'widget') AND (widget_host IS NULL OR char_length(widget_host) <= 120));
+      CHECK ((swap_source IS NULL OR swap_source = 'widget')
+         AND (widget_host IS NULL OR char_length(widget_host) <= 120)
+         AND (landed_fingerprint IS NULL OR char_length(landed_fingerprint) BETWEEN 16 AND 128)) NOT VALID;
   END IF;
 END $$;
-CREATE INDEX IF NOT EXISTS finance_import_swap_fees_widget_idx
-  ON public.finance_import_swap_fees (chain_id, occurred_at) WHERE swap_source = 'widget';
 
 ALTER TABLE public.widget_usage_daily ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.widget_swap_builds ENABLE ROW LEVEL SECURITY;
@@ -89,18 +102,37 @@ BEGIN
 END $$;
 
 COMMENT ON TABLE public.widget_usage_daily IS 'Swap widget requests per UTC day, chain, partner, embedding website (hostname only) and event. No IPs, wallets or visitor ids. API only.';
-COMMENT ON TABLE public.widget_swap_builds IS 'Every swap the API built for the swap widget: fingerprint (same as import_swap_fingerprints), wallet, partner, website. Matched by the fee scanner. API only.';
+COMMENT ON TABLE public.widget_swap_builds IS 'Every swap the API built for the swap widget: fingerprint (same as import_swap_fingerprints), wallet (only to match the landed swap), partner, website. Unmatched rows are deleted after 30 days. API only.';
+COMMENT ON COLUMN public.finance_import_swap_fees.landed_fingerprint IS 'Fingerprint of the landed transaction (importSwapFingerprint.js), kept only when the row wallet is the landed wallet. Matches widget builds.';
 COMMENT ON COLUMN public.finance_import_swap_fees.swap_source IS 'widget when the landed swap matches a widget build (fingerprint + landed wallet); null otherwise.';
 COMMENT ON COLUMN public.finance_import_swap_fees.widget_host IS 'The embedding website of the matching widget build.';
 
 COMMIT;
 
--- Check (read only): expect widget_swap_builds and widget_usage_daily, then swap_source / widget_build_id / widget_host,
--- then 0 marked rows (nothing is marked until the scanner sees a widget swap land).
+-- After COMMIT, one statement each (see the header). Idempotent.
+ALTER TABLE public.finance_import_swap_fees VALIDATE CONSTRAINT finance_import_swap_fees_widget_check;
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS finance_import_swap_fees_widget_idx
+  ON public.finance_import_swap_fees (chain_id, occurred_at) WHERE swap_source = 'widget';
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS finance_import_swap_fees_widget_build_idx
+  ON public.finance_import_swap_fees (widget_build_id) WHERE widget_build_id IS NOT NULL;
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS evm_gen8_fee_accruals_widget_idx
+  ON public.evm_gen8_fee_accruals (chain_id, hook_address, block_time)
+  WHERE kind = 'trade' AND lower(coalesce(referrer, '')) = '0x000000000000000000000000000000006d777a77';
+
+-- Check (read only, run on its own): expect widget_swap_builds and widget_usage_daily; the four columns; the CHECK
+-- validated (convalidated = true); three valid indexes; 0 marked rows on the first run.
 select table_name from information_schema.tables
  where table_schema = 'public' and table_name in ('widget_usage_daily', 'widget_swap_builds')
  order by table_name;
 select column_name, data_type, is_nullable from information_schema.columns
- where table_schema = 'public' and table_name = 'finance_import_swap_fees' and column_name in ('swap_source', 'widget_host', 'widget_build_id')
+ where table_schema = 'public' and table_name = 'finance_import_swap_fees'
+   and column_name in ('landed_fingerprint', 'swap_source', 'widget_host', 'widget_build_id')
  order by column_name;
+select conname, convalidated from pg_constraint where conname = 'finance_import_swap_fees_widget_check';
+select c.relname as index_name, i.indisvalid as valid from pg_index i join pg_class c on c.oid = i.indexrelid
+ where c.relname in ('finance_import_swap_fees_widget_idx', 'finance_import_swap_fees_widget_build_idx', 'evm_gen8_fee_accruals_widget_idx')
+ order by c.relname;
 select count(*) as widget_marked_fee_rows from public.finance_import_swap_fees where swap_source is not null;

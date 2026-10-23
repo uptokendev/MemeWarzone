@@ -6,10 +6,23 @@
 let base = "https://api.memewar.zone";
 let partner = "";
 
-/** partner: the host's partner id, sent as ?partner= on the trade authorization so usage is counted per partner. */
-export function setWidgetApiBase(value: string, partnerId?: string) {
+export function setWidgetApiBase(value: string) {
   base = String(value || base).replace(/\/+$/, "");
+}
+
+/**
+ * Runs fn with `partnerId` as the ?partner= of the trade authorization it sends (usage counted per partner). apiFetch
+ * reads it synchronously when fn calls it, before fn's first await, and it is reset right after, so two boxes on one
+ * page never send each other's partner.
+ */
+export function withWidgetPartner<T>(partnerId: string | null | undefined, fn: () => T): T {
+  const previous = partner;
   partner = String(partnerId ?? "").trim();
+  try {
+    return fn();
+  } finally {
+    partner = previous;
+  }
 }
 
 const ROUTES: Record<string, string> = {
@@ -21,8 +34,7 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
   const [pathname, query] = String(path).split("?");
   const mapped = ROUTES[pathname];
   if (!mapped) throw new Error(`The swap widget does not call ${pathname}.`);
-  const params = new URLSearchParams(query || "");
-  if (partner && pathname === "/api/solana/trade-authorize") params.set("partner", partner);
-  const search = params.toString();
+  const tagged = partner && pathname === "/api/solana/trade-authorize" ? `partner=${encodeURIComponent(partner)}` : "";
+  const search = [query, tagged].filter(Boolean).join("&");
   return fetch(`${base}${mapped}${search ? `?${search}` : ""}`, { ...init, credentials: "omit" });
 }
