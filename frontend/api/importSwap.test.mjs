@@ -69,7 +69,6 @@ test("Kyber BNB venues: every allowed pool family passes, each with the fee term
   const venues = {
     pancakeV2: route("pancake"),
     pancakeV3: route("pancake-v3"),
-    pancakeInfinity: route("pancake-infinity-cl", "pancake-infinity-bin"),
     topazV2: route("topazdex-v2"),
     topazV3: route("topazdex-v3"),
     uniswapV2: route("uniswap"),
@@ -102,7 +101,9 @@ test("Kyber BNB venues: RFQ / PMM / order-book / lending / wrapper sources and l
   const base = { tokenIn: "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE", tokenOut: token, extraFee: { feeAmount: "50", chargeFeeBy: "currency_in", isInBps: true, feeReceiver: VAULT } };
   const refused = ["bebop", "hashflow-v3", "native-v1", "native-v2", "native-v3", "pmm-1", "dexalot", "kyberswap-limit-order-v2", "1010-prop", "metric-propamm",
     "axima-v2", "obric", "tessera", "elfomofi", "swaap-v2", "woofi-v3", "dodo-dpp", "hanji", "euler-swap-v2", "uniswap-v4-euler", "fluid-dex-t1", "aave-v3",
-    "erc4626", "wbeth", "lista-stake", "curve-stable-ng", "ellipsis", "wombat", "synapse", "ktx", "pancake-stable", "", "PANCAKE", "pancake-v3-fake", "topaz"];
+    "erc4626", "wbeth", "lista-stake", "curve-stable-ng", "ellipsis", "wombat", "synapse", "ktx", "pancake-stable", "", "PANCAKE", "pancake-v3-fake", "topaz",
+    // PancakeSwap Infinity: Kyber routes through it revert on chain (2026-10-23).
+    "pancake-infinity-cl", "pancake-infinity-bin", "pancake-infinity-cl-fairflow", "pancake-infinity-cl-dynamic", "pancake-infinity-cl-tax", "pancake-infinity-bin-brevis"];
   for (const exchange of refused) {
     assert.ok(!KYBER_BSC_POOL_SOURCES.includes(exchange), `${exchange} not listed`);
     assert.throws(() => assertBscRouteTerms({ ...base, route: [[{ exchange }]] }, { token, side: "buy" }), /on-chain DEX pools/, exchange || "(empty)");

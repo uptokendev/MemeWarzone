@@ -89,10 +89,10 @@ const KYBER_BASE = "https://aggregator-api.kyberswap.com/bsc/api/v1";
  * checks every hop against this list by exact id.
  */
 export const KYBER_BSC_POOL_SOURCES = Object.freeze([
-  // PancakeSwap
-  "pancake", "pancake-v3", "pancake-legacy", "pancake-infinity-cl", "pancake-infinity-bin",
-  "pancake-infinity-cl-alpha", "pancake-infinity-cl-brevis", "pancake-infinity-cl-dynamic", "pancake-infinity-cl-fairflow",
-  "pancake-infinity-cl-geniusmeme", "pancake-infinity-cl-lo", "pancake-infinity-cl-tax", "pancake-infinity-bin-brevis",
+  // PancakeSwap. Not PancakeSwap Infinity (pancake-infinity-*): Kyber's routes through Infinity pools revert on chain
+  // with "Return amount is not enough" (2026-10-23: 8 of 8 builds through an Infinity hop reverted, with and without our
+  // fee, at 1% and 3% slippage; the same buys through V2 / V3 / other pools landed). A coin only on Infinity gets no route.
+  "pancake", "pancake-v3", "pancake-legacy",
   // Topaz (V2 Solidly + V3)
   "topazdex-v2", "topazdex-v3",
   // Uniswap on BNB
