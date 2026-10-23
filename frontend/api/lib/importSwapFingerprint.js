@@ -72,3 +72,40 @@ export async function partnersForFingerprints(db, chainId, fingerprints) {
     throw error;
   }
 }
+
+/** The key partnersForSwaps answers under: the fingerprint and the landed wallet (EVM lowercased, Solana as is). */
+export function partnerSwapKey(chainId, fingerprint, wallet) {
+  const evm = Number(chainId) !== 101 && Number(chainId) !== 102;
+  const w = String(wallet ?? "").trim();
+  return `${String(fingerprint)}|${evm ? w.toLowerCase() : w}`;
+}
+
+/**
+ * Partner attribution of landed swaps: partnerSwapKey(chainId, fingerprint, wallet) -> partner id, only where the
+ * wallet the build was recorded for is the wallet that landed the swap (EVM: tx.from, case-insensitive; Solana: the
+ * fee payer, exact). A stored NULL wallet never matches. Two wallets that land the same build bytes (same coin,
+ * amount and deadline) cannot credit each other's swaps to a partner: the row (first writer wins, on conflict do
+ * nothing) names one wallet, and only that wallet's swap matches.
+ * swaps: [{ fingerprint, wallet }]
+ */
+export async function partnersForSwaps(db, chainId, swaps) {
+  const wanted = (swaps || []).filter((swap) => swap?.fingerprint && String(swap?.wallet ?? "").trim());
+  const list = [...new Set(wanted.map((swap) => String(swap.fingerprint)))];
+  if (!db || !list.length) return new Map();
+  let rows;
+  try {
+    ({ rows } = await db.query(`select fingerprint, partner_id, wallet from public.import_swap_fingerprints where chain_id = $1 and fingerprint = any($2::text[])`, [chainId, list]));
+  } catch (error) {
+    if (error?.code === "42P01") return new Map();
+    throw error;
+  }
+  const out = new Map();
+  for (const row of rows) {
+    if (row.wallet == null || !String(row.wallet).trim()) continue;
+    out.set(partnerSwapKey(chainId, row.fingerprint, row.wallet), String(row.partner_id));
+  }
+  // Only the asked-for (fingerprint, landed wallet) pairs.
+  const asked = new Set(wanted.map((swap) => partnerSwapKey(chainId, swap.fingerprint, swap.wallet)));
+  for (const key of [...out.keys()]) if (!asked.has(key)) out.delete(key);
+  return out;
+}

@@ -1,4 +1,4 @@
-# Swap-widget partners (Solana live, EVM after gen-7)
+# Swap-widget partners (Solana live; Robinhood built by the API; BNB waits on its vault)
 
 Founder 2026-10-09: a website that embeds the swap widget (first: CrypticPump) gets part of the 1% import
 fee. Default split per partner: **0.50% creator / 0.25% partner / 0.25% MemeWarzone** (`import_fee_partners`
@@ -26,8 +26,19 @@ creator_bps 5000, partner_bps 2500, of the fee).
   `scripts/create-import-partner-fee-account.mjs`) uses that account instead of fingerprints; the worker gathers
   it into the collector account (kind `consolidate`).
 - Partners check their swaps through the list we give them (each with its explorer link).
-- Robinhood: the API must build the swap to fingerprint it (today the browser builds Robinhood import swaps);
-  that comes with the widget's BNB / Robinhood support.
+- Robinhood (2026-10-22): the widget's Robinhood import swaps are built by the API (`api/importSwap.js`
+  `robinhoodBuildCore`, the app's own encoders from `src/lib/robinhoodImportSwap.mjs`), so they carry a recorded
+  fingerprint. A widget sell spends a standing Permit2 allowance (the build answers `needsAllowance` with the two
+  one-time approvals first) instead of a signed permit inside the calldata, which would change the data after the
+  fingerprint is recorded. The app keeps building its own Robinhood swaps in the browser (no partner there).
+  Fork proof: `api/importSwap.robinhood.fork.test.mjs` (fee to the ImportFeeVault, Deposit from the Universal
+  Router, landed fingerprint = recorded).
+- BNB: the widget's BNB imports are Kyber builds by the API (fingerprint recorded as before). A sell without an
+  allowance first gets `needsAllowance` with approve(Kyber router, exact amount). Until the BNB ImportFeeVault is
+  deployed and switched on, the fee is 0.5% to the ProtocolRevenueVault with no creator or partner share; the
+  fingerprints are already recorded, the partner payout starts with the vault. Builds that fall back to the Topaz
+  fee router are browser-built and cannot carry a fingerprint, so the widget does not build them: a coin with no
+  Kyber route shows a link to its MemeWarzone page.
 
 ## Auto-import
 
@@ -46,9 +57,14 @@ turns it off.
           ('crypticpump', 56,  'CrypticPump', '<their BNB wallet>',    5000, 2500),
           ('crypticpump', 4663,'CrypticPump', '<their Robinhood wallet>', 5000, 2500);
    ```
-3. Their snippet: `MemeWarzoneSwap.mount("#mwz-swap", { mint: "<mint>", partner: "crypticpump" })`.
+3. Their snippet: `MemeWarzoneSwap.mount("#mwz-swap", { mint: "<mint>", partner: "crypticpump" })` on Solana,
+   `MemeWarzoneSwap.mount("#mwz-swap", { chainId: 4663, token: "0x...", partner: "crypticpump" })` on Robinhood
+   Chain (56 for BNB Chain).
 
 ## BNB / Robinhood
 
 No contract change and no extra vault: the fee goes to the chain's ImportFeeVault as for every import swap; the
-fingerprint names the partner. The EVM worker (gen-7) pays the partner share from that vault with `payout(to, amount)`.
+fingerprint names the partner (`financeImportSwapFees.js` scanEvmImportSwapFees matches `import_swap_fingerprints`).
+The indexer (`realtime-indexer/src/importCreatorFeesEvm.ts`) pays the partner share from that vault. Robinhood has
+its vault live; BNB waits for its ImportFeeVault (see above). The API refuses a Robinhood widget build when the
+Robinhood split is not configured (`IMPORT_FEE_VAULT_4663` = `IMPORT_SWAP_FEE_RECEIVER_4663`): never a fee-free swap.

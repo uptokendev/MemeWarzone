@@ -1,16 +1,18 @@
 /**
  * API for the embeddable swap widget (frontend/src/widget, served as app.memewar.zone/widget/mwz-swap.js).
- * Any website can mount the widget for a Solana coin; its swaps run through the same quote/build as
- * the app (api/importSwap.js), so the 1% fee (half to the coin's creator) is enforced here, not in
- * the widget. A host that edits the widget script can only skip our route, never our fee on it.
+ * Any website can mount the widget for a coin on Solana, BNB Chain or Robinhood Chain; its swaps run
+ * through the same quote/build as the app (api/importSwap.js), so the import fee (1%, half to the coin's
+ * creator, where the chain's split is on) is enforced here, not in the widget. A host that edits the widget script can only skip our route, never our fee on it.
  *
  * Routes under /api/widget/swap/ answer every origin, without cookies or credentials (the widget
  * never sends any), and are rate limited per IP. The rest of the API keeps its origin allow-list.
  *   GET  token?mint=          what the coin is (import, or our launchpad / DBC bonding coin), name,
  *                             symbol, image, decimals from chain, fee (imports)
  *   GET  balances?wallet&mint SOL and token balance (so the widget needs no RPC of its own)
- *   POST quote                = /api/imports/swap/quote, Solana only
- *   POST build                = /api/imports/swap/build, Solana only
+ *   POST quote                = /api/imports/swap/quote (101, 56, 4663; EVM via api/widgetSwapEvm.js)
+ *   POST build                = /api/imports/swap/build (101); 56 / 4663: api/widgetSwapEvm.js, which
+ *                               answers needsAllowance for a sell without an allowance
+ * EVM coins: GET evm/token, evm/balances, evm/status (api/widgetSwapEvm.js); gen-8 coins: gen8/* (api/gen8Swap.js).
  *   GET  status?signature=    confirmation of the wallet-sent swap
  * Bonding coins (launchpad, DBC) trade with the app's own transaction code inside the widget; the
  * widget reaches /api/widget/solana/{campaign-account,trade-authorize}, which are the app's handlers.
@@ -19,6 +21,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { pool } from "../server/db.js";
 import { badMethod, json, readJson } from "../server/http.js";
 import { importSwapBuild, importSwapFeeBps, importSwapQuote } from "./importSwap.js";
+import { WIDGET_IMPORT_CHAINS, evmWidgetBuild, evmWidgetQuote } from "./widgetSwapEvm.js";
 
 const TOKEN_PROGRAMS = ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"];
 const WINDOW_MS = 60_000;
@@ -43,9 +46,14 @@ function isSolanaAddress(value) {
   }
 }
 
-function clientIp(req) {
-  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
-  return (forwarded || req.ip || req.socket?.remoteAddress || "unknown").replace(/^::ffff:/, "");
+/**
+ * The client's IP for the rate limit: the LAST x-forwarded-for entry, the one our own proxy (Coolify, no Cloudflare in
+ * front) appended. Earlier entries are whatever the client sent and are never trusted. Else req.ip / the socket.
+ */
+export function clientIp(req) {
+  const parts = String(req?.headers?.["x-forwarded-for"] || "").split(",");
+  const forwarded = parts[parts.length - 1].trim();
+  return (forwarded || req?.ip || req?.socket?.remoteAddress || "unknown").replace(/^::ffff:/, "");
 }
 
 /** Fixed one-minute window per IP. In memory: one API process; a restart forgives. */
@@ -222,20 +230,27 @@ export async function widgetBalances(req, res) {
   }
 }
 
-/** The widget only swaps Solana coins; the shared handlers do the rest (fee terms included). */
-function solanaOnly(handler) {
+/**
+ * Solana (101) goes to the shared import handlers as before; BNB Chain (56) and Robinhood Chain (4663) go to the EVM
+ * widget handlers (api/widgetSwapEvm.js: fee check, allowance step, then the same import quote / build). Other chains
+ * are refused. The handlers do the rest (fee terms included).
+ */
+function byChain(solanaHandler, evmHandler) {
   return async (req, res) => {
     if (req.method !== "POST") return badMethod(res);
     const body = await readJson(req).catch(() => null);
-    if (!body || Number(body.chainId) !== 101) return json(res, 400, { ok: false, error: "The widget swaps Solana coins (chainId 101)" });
+    const chainId = Number(body?.chainId);
+    if (!body || (chainId !== 101 && !WIDGET_IMPORT_CHAINS.includes(chainId))) {
+      return json(res, 400, { ok: false, error: "The widget swaps coins on Solana (chainId 101), BNB Chain (56) and Robinhood Chain (4663)" });
+    }
     // readJson consumed the stream; hand the parsed body to the shared handler.
     req.body = body;
-    return handler(req, res);
+    return chainId === 101 ? solanaHandler(req, res) : evmHandler(req, res);
   };
 }
 
-export const widgetQuote = solanaOnly(importSwapQuote);
-export const widgetBuild = solanaOnly(importSwapBuild);
+export const widgetQuote = byChain(importSwapQuote, evmWidgetQuote);
+export const widgetBuild = byChain(importSwapBuild, evmWidgetBuild);
 
 export async function widgetStatus(req, res) {
   if (req.method !== "GET") return badMethod(res);

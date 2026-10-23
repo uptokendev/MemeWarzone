@@ -58,3 +58,19 @@ id = "generic-api-key"
   condition = "AND"
   regexes = [ '''(?i)0xe7dec18b0b29c8e02fb90a5dce413b3bc66e8251''' ]
   paths = [ '''^frontend/api/lib/arenaImportScanDexProbes\.test\.mjs$''' ]
+
+  # CAKE's public BNB Chain token contract, the stand-in coin of the widget's BNB import fork proof
+  # (const TOKEN = ... "0x..."). It is not a credential. Scoped to the exact address and the one test.
+  [[rules.allowlists]]
+  description = "Known false positive: CAKE public BNB token address in the widget BNB fork test"
+  condition = "AND"
+  regexes = [ '''(?i)0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82''' ]
+  paths = [ '''^frontend/api/importSwap\.bsc\.fork\.test\.mjs$''' ]
+
+  # $PFEAGLE's public Robinhood token contract, the fixture of the widget EVM route tests
+  # (const TOKEN = "0x..."). It is not a credential. Scoped to the exact address and the one test.
+  [[rules.allowlists]]
+  description = "Known false positive: PFEAGLE public Robinhood token address in the widget EVM tests"
+  condition = "AND"
+  regexes = [ '''(?i)0x1a95c10e4839033686225eaad3ac348f0d8edc4f''' ]
+  paths = [ '''^frontend/api/widgetSwapEvm\.test\.mjs$''' ]

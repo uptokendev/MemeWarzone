@@ -1,10 +1,12 @@
 /**
- * MemeWarzone swap widget: a Solana swap box any website can embed for a coin.
+ * MemeWarzone swap widget: a swap box any website can embed for a coin on Solana, BNB Chain or Robinhood Chain.
  *
  *   <script src="https://app.memewar.zone/widget/mwz-swap.js"></script>
  *   <div id="mwz-swap"></div>
  *   <script>MemeWarzoneSwap.mount("#mwz-swap", { mint: "<token mint>" });</script>
+ *   <script>MemeWarzoneSwap.mount("#mwz-swap", { chainId: 56, token: "0x..." });</script>
  *
+ * This file is the Solana box; { chainId: 56 | 4663, token } mounts the EVM box (gen8Widget.ts).
  * Swaps go through our API (api/importSwapWidget.js -> api/importSwap.js): Jupiter routing, 1% fee,
  * half of it to the coin's creator (paid by MemeWarzone once they claim the coin on memewar.zone).
  * The API enforces the fee; this script checks the built transaction before the wallet signs it
@@ -17,7 +19,7 @@ import { VersionedTransaction } from "@solana/web3.js";
 import { assertJupiterSwapForWallet } from "../lib/jupiterSwapGuard";
 import type { BondingKind, BondingQuote } from "./bonding";
 import { STYLE, fromRaw, toRaw } from "./widgetShared";
-import { Gen8SwapWidget, type Gen8MountOptions } from "./gen8Widget";
+import { Gen8SwapWidget, formatPriceImpact, type Gen8MountOptions } from "./gen8Widget";
 
 export { fromRaw, toRaw };
 
@@ -76,7 +78,8 @@ export type MountOptions = {
   wallet?: WidgetWallet;
   /** Swap-widget partner id (for example "crypticpump"): imported-coin fees go to that partner's fee account and split creator / partner / MemeWarzone. */
   partner?: string;
-  onSwap?: (event: { signature: string; side: Side; mint: string }) => void;
+  /** chainId 101 and token are the same coin as mint, so one handler can serve the Solana and the EVM box. */
+  onSwap?: (event: { signature: string; side: Side; mint: string; chainId: 101; token: string }) => void;
 };
 
 type TokenInfo = {
@@ -176,6 +179,8 @@ class SwapWidget {
         <div class="field"><input data-k="amount" inputmode="decimal" autocomplete="off" placeholder="0" aria-label="Amount" /><span class="unit" data-k="unit"></span></div>
         <div class="row"><span data-k="balance"></span><button type="button" class="max" data-k="max" hidden>MAX</button></div>
         <div class="row"><span>You receive ~</span><b data-k="out">-</b></div>
+        <div class="row" data-k="impactRow" hidden><span>Price impact</span><b data-k="impact">-</b></div>
+        <div class="row" data-k="minRow" hidden><span>At least</span><b data-k="min">-</b></div>
         <div class="row"><span data-k="feeLabel">Fee</span><b data-k="fee">-</b></div>
         <div class="row" data-k="creatorRow" hidden><span>Of which to the coin's creator</span><b data-k="creator">-</b></div>
         <button type="button" class="go" data-k="go">CONNECT WALLET</button>
@@ -246,6 +251,11 @@ class SwapWidget {
     const q = this.quote;
     const outDecimals = this.side === "buy" ? (this.token?.decimals ?? 6) : SOL_DECIMALS;
     this.el.out.textContent = q ? `${fromRaw(q.amountOut, outDecimals)} ${this.side === "buy" ? this.symbol() : "SOL"}` : "-";
+    // Jupiter quotes carry the price impact (percent) and the minimum out; bonding quotes do not: rows only when there.
+    this.el.impactRow.hidden = q?.priceImpactPct == null;
+    this.el.impact.textContent = q?.priceImpactPct == null ? "-" : formatPriceImpact(Math.round(Number(q.priceImpactPct) * 100));
+    this.el.minRow.hidden = !q?.minAmountOut;
+    this.el.min.textContent = q?.minAmountOut ? `${fromRaw(q.minAmountOut, outDecimals)} ${this.side === "buy" ? this.symbol() : "SOL"}` : "-";
     const feeBps = q?.feeBps ?? this.token?.feeBps ?? null;
     this.el.feeLabel.textContent = feeBps ? `Fee ${Number((feeBps / 100).toFixed(2))}%` : "Fee";
     this.el.fee.textContent = q?.feeNativeRaw ? `${fromRaw(q.feeNativeRaw, SOL_DECIMALS)} SOL` : feeBps ? "-" : this.token && this.token.kind !== "import" ? "as on MemeWarzone" : "-";
@@ -266,8 +276,14 @@ class SwapWidget {
       const token = await this.call<TokenInfo>(`/api/widget/swap/token?mint=${encodeURIComponent(mint)}`);
       // An API from before bonding support answers without kind / tradable: those coins are imports.
       this.token = { ...token, kind: token.kind || "import", tradable: token.tradable !== false };
-      this.el.title.textContent = this.token.symbol ? `Swap ${this.token.symbol}` : "Swap";
-      this.el.sub.textContent = this.token.name || `${mint.slice(0, 4)}...${mint.slice(-4)}`;
+      const short = `${mint.slice(0, 4)}...${mint.slice(-4)}`;
+      if (!this.token.name && !this.token.symbol) {
+        this.el.title.textContent = `Swap ${short}`;
+        this.el.sub.textContent = "Unlisted coin";
+      } else {
+        this.el.title.textContent = this.token.symbol ? `Swap ${this.token.symbol}` : "Swap";
+        this.el.sub.textContent = this.token.name || short;
+      }
       if (this.token.imageUrl) { (this.el.logo as HTMLImageElement).src = this.token.imageUrl; this.el.logo.hidden = false; }
       (this.el.link as HTMLAnchorElement).href = this.token.pageUrl;
       this.el.via.textContent = this.token.kind === "import" ? ", routed by Jupiter" : ", on its bonding curve";
@@ -414,7 +430,7 @@ class SwapWidget {
       (this.el.amount as HTMLInputElement).value = "";
       this.quote = null;
       this.paintQuote();
-      this.options.onSwap?.({ signature, side: this.side, mint: this.token.mint });
+      this.options.onSwap?.({ signature, side: this.side, mint: this.token.mint, chainId: 101, token: this.token.mint });
       void this.loadBalances();
     } catch (error) {
       this.say(error instanceof Error ? error.message : "Swap failed.", "err");
@@ -445,7 +461,7 @@ class SwapWidget {
       (this.el.amount as HTMLInputElement).value = "";
       this.quote = null;
       this.paintQuote();
-      this.options.onSwap?.({ signature, side: this.side, mint: token.mint });
+      this.options.onSwap?.({ signature, side: this.side, mint: token.mint, chainId: 101, token: token.mint });
       void this.loadBalances();
     } catch (error) {
       this.say(error instanceof Error ? error.message : "Trade failed.", "err");
@@ -468,15 +484,26 @@ class SwapWidget {
 }
 
 /**
- * Solana: { mint }. MemeWarzone generation 8 coins on BNB Chain / Robinhood Chain: { chainId, token } (an EVM
- * wallet: the page's window.ethereum, or `evmProvider`); their swaps are built by our API (gen8Widget.ts).
+ * Which box a mount gets:
+ *   { mint } or { chainId: 101, token }    the Solana box (token is the mint)
+ *   { chainId: 56 | 4663 | 97 | 46630, token }   the EVM box (an EVM wallet: the page's window.ethereum, or
+ *                                          `evmProvider`); gen-8, imported and graduated coins, all built by our API
+ * Anything else gets the Solana box, which says what is missing.
  */
-export function mount(target: string | HTMLElement, options: MountOptions | Gen8MountOptions) {
+export function mountTarget(options: Partial<MountOptions> & Partial<Gen8MountOptions>): { box: "solana"; options: MountOptions } | { box: "evm"; options: Gen8MountOptions } {
+  if (options.mint) return { box: "solana", options: options as MountOptions };
+  const chainId = Number(options.chainId);
+  if (options.token && chainId === 101) return { box: "solana", options: { ...(options as MountOptions), mint: String(options.token) } };
+  if (options.token && options.chainId) return { box: "evm", options: options as Gen8MountOptions };
+  return { box: "solana", options: options as MountOptions };
+}
+
+export function mount(target: string | HTMLElement, options: MountOptions | Gen8MountOptions | (Partial<MountOptions> & Partial<Gen8MountOptions>)) {
   const host = typeof target === "string" ? document.querySelector<HTMLElement>(target) : target;
   if (!host) throw new Error(`MemeWarzoneSwap: no element matches ${String(target)}`);
-  const evm = options as Gen8MountOptions;
-  if (evm.token && evm.chainId && !(options as MountOptions).mint) return { widget: new Gen8SwapWidget(host, evm) };
-  const widget = new SwapWidget(host, options as MountOptions);
+  const picked = mountTarget(options as Partial<MountOptions> & Partial<Gen8MountOptions>);
+  if (picked.box === "evm") return { widget: new Gen8SwapWidget(host, picked.options) };
+  const widget = new SwapWidget(host, picked.options);
   return { widget };
 }
 
