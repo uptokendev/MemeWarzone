@@ -734,11 +734,12 @@ test("finance: D9 partner link, a widget swap after graduation matched by the bu
   await row(txC, 1, widget, "bonding", milli(1000), milli(5)); // bonding: no partner share (D9 is post-graduation)
   await row("0x" + "d4".repeat(32), 1, null, "post", milli(1000), milli(5)); // the app or any router: never looked up
   const txs = {
-    [txA]: { to: "0x00000000000000000000000000000000000000aa", data: "0x1234", value: 0n },
-    [txB]: { to: "0x00000000000000000000000000000000000000aa", data: "0x5678", value: 0n },
+    [txA]: { from: "0x6634567890123456789012345678901234567890", to: "0x00000000000000000000000000000000000000aa", data: "0x1234", value: 0n },
+    [txB]: { from: "0x6634567890123456789012345678901234567890", to: "0x00000000000000000000000000000000000000aa", data: "0x5678", value: 0n },
   };
   const fpA = evmFingerprint(txs[txA].to, txs[txA].data, txs[txA].value);
-  await db.query(`insert into public.import_swap_fingerprints (fingerprint, chain_id, partner_id) values ($1, $2, 'crypticpump')`, [fpA, CHAIN]);
+  // The build is recorded with its wallet; the swap counts only when that wallet is the landed transaction's sender.
+  await db.query(`insert into public.import_swap_fingerprints (fingerprint, chain_id, partner_id, wallet) values ($1, $2, 'crypticpump', $3)`, [fpA, CHAIN, txs[txA].from]);
   const lookedUp = [];
   const provider = { getTransaction: async (h) => { lookedUp.push(h); return txs[h] || null; } };
   const out = await gen8PartnerAttribution({ db, chainId: CHAIN, hook: HOOK, provider });
