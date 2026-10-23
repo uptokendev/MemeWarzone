@@ -165,6 +165,8 @@ export function createSeoEntities({ db, loadBattle, appOrigin = APP_ORIGIN, apiO
       found: true,
       robots: INDEX,
       title,
+      // Shorter wordings for long names, so the title fits in 60 characters with the brand (shared/seoTitle.mjs).
+      titles: [title, `${label} price and chart`, label],
       description,
       canonical,
       image,

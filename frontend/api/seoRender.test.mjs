@@ -42,7 +42,8 @@ test("fixed route 200 with title and canonical", async () => {
   const { run } = setup();
   const res = await run("/__render/coins");
   assert.equal(res.statusCode, 200);
-  assert.match(res.body, /<title>Memecoins on BNB Chain, Solana and Robinhood Chain · MemeWarzone<\/title>/);
+  // 64 characters with the brand, so the brand drops (shared/seoTitle.mjs).
+  assert.match(res.body, /<title>Memecoins on BNB Chain, Solana and Robinhood Chain<\/title>/);
   assert.match(res.body, /rel="canonical" href="https:\/\/app\.memewar\.zone\/coins"/);
   assert.equal(res.headers["content-type"], "text/html; charset=utf-8");
   assert.equal(res.headers["cache-control"], "no-cache");
@@ -414,4 +415,16 @@ test("content pages link their own share card; other fixed pages keep the defaul
   }
   const coins = await run("/__render/coins");
   assert.doesNotMatch(coins.body, /api\/og\/page\.jpg/);
+});
+
+test("titles fit in 60 characters; long coin names use a shorter wording with the brand", async () => {
+  const { run } = setup({ data: { coin: found({ title: "Derpy Dave ($DERPYDAVE) price, chart and battles", titles: ["Derpy Dave ($DERPYDAVE) price, chart and battles", "Derpy Dave ($DERPYDAVE) price and chart", "Derpy Dave ($DERPYDAVE)"] }) } });
+  const res = await run(`/__render/token/${EVM}`);
+  assert.match(res.body, /<title>Derpy Dave \(\$DERPYDAVE\) price and chart · MemeWarzone<\/title>/);
+  assert.match(res.body, /<meta property="og:title" content="Derpy Dave \(\$DERPYDAVE\) price and chart · MemeWarzone"/);
+  for (const p of ["/about", "/faq", "/coins", "/memewarzone-vs-pumpfun", "/faq/battle-boosts"]) {
+    const r = await run(`/__render${p}`);
+    const t = r.body.match(/<title>([^<]*)<\/title>/)[1].replace(/&amp;/g, "&").replace(/&#39;/g, "'");
+    assert.ok(t.length <= 60, `${p}: ${t} (${t.length})`);
+  }
 });
