@@ -101,7 +101,8 @@ test("retrieval finds articles for long natural questions and falls back to popu
 
 test("sources: cited numbers, else the top three", () => {
   const arts = [{ slug: "a", q: "A" }, { slug: "b", q: "B" }, { slug: "c", q: "C" }, { slug: "d", q: "D" }];
-  assert.deepEqual(sourcesFor("see [2] and [4] and [9]", arts).map((s) => s.slug), ["b", "d"]);
+  assert.deepEqual(sourcesFor("see [4] and [2] and [9]", arts).map((s) => [s.n, s.slug]), [[2, "b"], [4, "d"]]);
+  assert.deepEqual(sourcesFor("no citations", arts).map((s) => s.n), [null, null, null]);
   assert.deepEqual(sourcesFor("no citations", arts).map((s) => s.slug), ["a", "b", "c"]);
 });
 

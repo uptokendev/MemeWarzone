@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 
 export const HELP_ASSISTANT_OPEN_EVENT = "mwz:help-assistant-open";
 
-type Source = { slug: string; q: string; url: string };
+type Source = { n?: number | null; slug: string; q: string; url: string };
 type Message = { role: "user" | "assistant"; content: string; sources?: Source[]; error?: boolean };
 
 const HISTORY_TURNS = 6;
@@ -151,12 +151,13 @@ export function HelpAssistant() {
                   ))}
                   {m.sources?.length ? (
                     <ul className="m-0 mt-2.5 list-none space-y-1 border-t border-mw-border p-0 pt-2.5">
-                      {m.sources.map((s, n) => (
+                      {m.sources.map((s) => (
                         <li key={s.slug}>
                           <Link to={s.url} className="flex gap-1.5 text-[13px] leading-5 text-mw-accent-soft hover:underline">
                             <HelpCircle className="mt-[2px] h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                             <span className="min-w-0">
-                              [{n + 1}] {s.q}
+                              {s.n ? `[${s.n}] ` : ""}
+                              {s.q}
                             </span>
                           </Link>
                         </li>

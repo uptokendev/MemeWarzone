@@ -88,10 +88,12 @@ export function buildMessages({ question, history, articles }) {
 
 /** Cited article numbers in the answer, mapped to articles; the top 3 when the answer cites none. */
 export function sourcesFor(answer, articles) {
-  const nums = new Set([...String(answer).matchAll(/\[(\d{1,2})\]/g)].map((m) => Number(m[1])));
-  const cited = [...nums].map((n) => articles[n - 1]).filter(Boolean);
-  const list = cited.length ? cited : articles.slice(0, 3);
-  return list.map((a) => ({ slug: a.slug, q: a.q, url: `${HELP_PATH}/${a.slug}` }));
+  const nums = [...new Set([...String(answer).matchAll(/\[(\d{1,2})\]/g)].map((m) => Number(m[1])))]
+    .filter((n) => articles[n - 1])
+    .sort((x, y) => x - y);
+  // `n` is the number the answer uses for the article, so the list under the answer matches its [n] marks.
+  const list = nums.length ? nums.map((n) => ({ a: articles[n - 1], n })) : articles.slice(0, 3).map((a) => ({ a, n: null }));
+  return list.map(({ a, n }) => ({ n, slug: a.slug, q: a.q, url: `${HELP_PATH}/${a.slug}` }));
 }
 
 export function createRateLimiter({ perMinute = PER_MINUTE, perDay = PER_DAY, dailyCap = DEFAULT_DAILY_CAP, now = () => Date.now() } = {}) {
