@@ -5,6 +5,8 @@ import { CoinPriceLine, CoinSparkline, useCoinMiniMarket } from "@/components/fe
 import { PostImage, PostImageGrid } from "@/components/feed/PostImage";
 import { MentionField } from "@/components/feed/MentionField";
 import { LinkPreviewCard } from "@/components/feed/LinkPreviewCard";
+import { useQuery } from "@tanstack/react-query";
+import { apiFetch } from "@/lib/apiBase";
 import { linkLabel, openPostLink, splitLinks } from "../../../shared/postLinks.mjs";
 import { OperativeMark } from "@/components/ui-v2/OperativeMark";
 import { Link, useNavigate } from "react-router-dom";
@@ -141,13 +143,40 @@ function compactCount(n?: number | null) {
 const MENTION_RE = /(^|[^A-Za-z0-9_@])@([A-Za-z0-9_]{3,20})(?![A-Za-z0-9_])/g;
 
 /** @username in a post opens that profile (founder, 2026-10-02). The body sits inside the post link, so this is a button, not a nested link. */
-function mentionParts(text: string, keyBase: string, navigate: (path: string) => void): React.ReactNode[] {
+/**
+ * Which @handles in a text belong to a real profile (GET /api/profile/handle?handles=). Founder 2026-10-23: a mention
+ * links to the profile only when it exists; until the answer is in, mentions are plain text.
+ */
+function useExistingHandles(text: string): Set<string> {
+  const handles = Array.from(new Set(Array.from(text.matchAll(MENTION_RE), (m) => m[2].toLowerCase()))).sort().slice(0, 100);
+  const { data } = useQuery<Set<string>>({
+    queryKey: ["existing-handles", handles.join(",")],
+    enabled: handles.length > 0,
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
+    retry: false,
+    queryFn: async () => {
+      const res = await apiFetch(`/api/profile/handle?handles=${encodeURIComponent(handles.join(","))}`);
+      const json = res.ok ? await res.json().catch(() => null) : null;
+      return new Set(Object.keys(json?.handles || {}));
+    },
+  });
+  return data || new Set();
+}
+
+function mentionParts(text: string, keyBase: string, navigate: (path: string) => void, existing: Set<string>): React.ReactNode[] {
   const parts: React.ReactNode[] = [];
   let last = 0;
   for (const m of text.matchAll(MENTION_RE)) {
     const start = (m.index ?? 0) + m[1].length;
     if (start > last) parts.push(text.slice(last, start));
     const handle = m[2];
+    if (!existing.has(handle.toLowerCase())) {
+      // No profile with this username: plain text, no link.
+      parts.push(`@${handle}`);
+      last = start + handle.length + 1;
+      continue;
+    }
     parts.push(
       <span
         key={`${keyBase}-${start}-${handle}`}
@@ -182,10 +211,11 @@ function mentionParts(text: string, keyBase: string, navigate: (path: string) =>
  */
 export function MentionText({ text }: { text: string }) {
   const navigate = useNavigate();
+  const existing = useExistingHandles(text);
   const parts: React.ReactNode[] = [];
   splitLinks(text).forEach((part: { kind: string; text: string; href?: string }, i: number) => {
     if (part.kind !== "link" || !part.href) {
-      parts.push(...mentionParts(part.text, `t${i}`, navigate));
+      parts.push(...mentionParts(part.text, `t${i}`, navigate, existing));
       return;
     }
     const href = part.href;
