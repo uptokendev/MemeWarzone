@@ -10,6 +10,7 @@ import {
   ABOUT_TITLE, aboutJsonLd,
 } from "../shared/aboutContent.mjs";
 import { COMPARE_PAGES, compareJsonLd } from "../shared/comparePages.mjs";
+import { pageCardUrl } from "./lib/pageCard.mjs";
 import {
   HELP_PATH, HELP_TITLE, HELP_DESCRIPTION, HELP_TOPICS, helpArticlesForTopic, helpHead, helpJsonLd, helpPopular, helpRelated,
 } from "../shared/helpContent.mjs";
@@ -306,7 +307,14 @@ export function createSeoRenderer({
       description: head.description || DEFAULT_DESCRIPTION,
       canonical: head.canonical,
       robots: head.robots,
-      og: { title, description: head.description || DEFAULT_DESCRIPTION, url: head.canonical || undefined, type: "website" },
+      // Content pages (About, comparisons, Help Center) get their own share card; other fixed pages keep the default.
+      og: {
+        title,
+        description: head.description || DEFAULT_DESCRIPTION,
+        url: head.canonical || undefined,
+        type: "website",
+        ...(page && head.canonical ? { image: pageCardUrl(path) || undefined, imageAlt: page.head?.title || head.title } : {}),
+      },
       jsonLd: page ? page.jsonLd : undefined,
       summaryHtml: page ? page.html : h1(head.title || BRAND) + (head.description ? p(head.description) : ""),
     }), head.robots);

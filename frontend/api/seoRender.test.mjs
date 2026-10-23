@@ -401,3 +401,17 @@ test("Help Center: index, topic and article render for crawlers; unknown slug is
   assert.equal(miss.statusCode, 410);
   assert.equal(calls.length, 0);
 });
+
+test("content pages link their own share card; other fixed pages keep the default image", async () => {
+  const { run } = setup();
+  for (const p of ["/about", "/memewarzone-vs-pumpfun", "/faq", "/faq/battles", "/faq/battle-boosts"]) {
+    const res = await run(`/__render${p}`);
+    assert.equal(res.statusCode, 200, p);
+    const m = res.body.match(/<meta property="og:image" content="([^"]+)"/);
+    assert.ok(m, p);
+    assert.match(m[1].replace(/&amp;/g, "&"), new RegExp(`^https://api\\.memewar\\.zone/api/og/page\\.jpg\\?path=${encodeURIComponent(p).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}&v=[0-9a-f]{10}$`), p);
+    assert.match(res.body, /<meta name="twitter:image" content="https:\/\/api\.memewar\.zone\/api\/og\/page\.jpg/);
+  }
+  const coins = await run("/__render/coins");
+  assert.doesNotMatch(coins.body, /api\/og\/page\.jpg/);
+});
