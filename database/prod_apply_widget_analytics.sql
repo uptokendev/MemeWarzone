@@ -125,17 +125,24 @@ CREATE INDEX IF NOT EXISTS evm_gen8_fee_accruals_widget_idx
 COMMIT;
 
 -- ======================== CHECK: paste from here to the end, then Run (read only) ========================
--- Expect: widget_swap_builds and widget_usage_daily; the four columns; the CHECK
--- validated (convalidated = true); three valid indexes; 0 marked rows on the first run.
-select table_name from information_schema.tables
+-- One query (the Supabase editor only shows the last result of a multi-statement run). Expect 11 rows: check true,
+-- four columns, three indexes true, 0 marked rows on the first run, two tables.
+select 'table' as kind, table_name as name, 'exists' as value
+  from information_schema.tables
  where table_schema = 'public' and table_name in ('widget_usage_daily', 'widget_swap_builds')
- order by table_name;
-select column_name, data_type, is_nullable from information_schema.columns
+union all
+select 'column', column_name, data_type
+  from information_schema.columns
  where table_schema = 'public' and table_name = 'finance_import_swap_fees'
    and column_name in ('landed_fingerprint', 'swap_source', 'widget_host', 'widget_build_id')
- order by column_name;
-select conname, convalidated from pg_constraint where conname = 'finance_import_swap_fees_widget_check';
-select c.relname as index_name, i.indisvalid as valid from pg_index i join pg_class c on c.oid = i.indexrelid
+union all
+select 'check', conname, convalidated::text
+  from pg_constraint where conname = 'finance_import_swap_fees_widget_check'
+union all
+select 'index', c.relname, i.indisvalid::text
+  from pg_index i join pg_class c on c.oid = i.indexrelid
  where c.relname in ('finance_import_swap_fees_widget_idx', 'finance_import_swap_fees_widget_build_idx', 'evm_gen8_fee_accruals_widget_idx')
- order by c.relname;
-select count(*) as widget_marked_fee_rows from public.finance_import_swap_fees where swap_source is not null;
+union all
+select 'marked rows', 'widget_marked_fee_rows', count(*)::text
+  from public.finance_import_swap_fees where swap_source is not null
+order by 1, 2;
