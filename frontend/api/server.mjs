@@ -219,6 +219,7 @@ import analyticsAdmin from "./analytics/admin.js";
 import prepareOg from "./prepare-og.js";
 import { sitemapChild, sitemapIndex } from "./sitemap.js";
 import seoRender from "./seoRender.js";
+import { createLinkPreview } from "./linkPreview.js";
 import { createPageCardRenderer } from "./lib/pageCard.mjs";
 import { createHelpAssistant } from "./helpAssistant.js";
 import story, { handleSharePage as storySharePage } from "./story.js";
@@ -471,6 +472,8 @@ router.all("/chat/send", wrap(chatSend));
 router.all("/diagnostics", wrap(diagnostics));
 router.all("/epochPools", wrap(epochPools));
 router.all("/featured", wrap(featured));
+// Link preview cards for links in feed posts (api/linkPreview.js; public addresses only).
+router.get("/link-preview", wrap(createLinkPreview()));
 // Share cards for About, comparison and Help Center pages (api/lib/pageCard.mjs).
 router.get("/og/page.jpg", wrap(createPageCardRenderer()));
 // Help Center assistant (api/helpAssistant.js): off unless ANTHROPIC_API_KEY is set.

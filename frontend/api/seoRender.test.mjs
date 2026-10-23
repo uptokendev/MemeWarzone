@@ -63,7 +63,7 @@ test("entity 200 injects title, canonical, json-ld, summary", async () => {
   assert.match(res.body, /<title>Doge · MemeWarzone<\/title>/);
   assert.match(res.body, /rel="canonical" href="https:\/\/app\.memewar\.zone\/token\/x"/);
   assert.match(res.body, /application\/ld\+json/);
-  assert.match(res.body, /<div id="root"><h1>Doge<\/h1><p>line one<\/p>/);
+  assert.match(res.body, /<div id="root"><div data-ssr-summary="" style="[^"]+"><h1>Doge<\/h1><p>line one<\/p>/);
   assert.match(res.body, /<a href="\/coins">All<\/a>/);
 });
 
