@@ -10,7 +10,7 @@ It works on Solana, BNB Chain and Robinhood Chain:
 - **Coins launched on MemeWarzone.** On Solana while they are on their bonding curve, and generation 8 coins on BNB Chain and Robinhood Chain before and after graduation. Trades pay the same fees as on MemeWarzone and you get the same creator share.
 - **Graduated MemeWarzone coins and imported coins.** Every swap pays a 1% fee. **Half of it, 0.5% of every swap, goes to the coin's creator.** The other half is MemeWarzone's.
 
-On BNB Chain, imported coins pay 0.5% to MemeWarzone with no creator share until the BNB fee vault is switched on. The box always shows the fee and the creator's part before anyone confirms.
+The box always shows the fee and the creator's part before anyone confirms.
 
 ## What you need
 

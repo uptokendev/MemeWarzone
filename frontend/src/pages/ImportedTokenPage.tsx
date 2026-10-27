@@ -11,7 +11,7 @@ import { CoinLinkSwap, CoinPostsPanel, CoinTags } from "@/components/token/CoinP
 import { ChallengeCoinModal } from "@/components/arena/ChallengeCoinModal";
 import { ImportedTradePanel } from "@/components/arena/ImportedTradePanel";
 import { ImportedTradesTable } from "@/components/arena/ImportedTradesTable";
-import { SwapWidgetEmbedLink } from "@/components/imports/SwapWidgetEmbedDialog";
+import { SwapWidgetEmbedLink, swapWidgetChainSupported } from "@/components/imports/SwapWidgetEmbedDialog";
 import { ImportPositionCard } from "@/components/imports/ImportPositionCard";
 import { ImportCreatorEarnings } from "@/components/imports/ImportCreatorEarnings";
 import { TokenShareCardModal } from "@/components/token/TokenShareCardModal";
@@ -692,7 +692,7 @@ export default function ImportedTokenPage({
           <section aria-label="Trade" className={`hidden xl:block ${cp.card} p-4`} data-imported-trade-panel="true">
             <div className="mb-3.5 flex items-center justify-between gap-2">
               <div className={cp.title}>Trade</div>
-              {isSolanaChainId(item.chainId) && !tradingBlocked ? <SwapWidgetEmbedLink mint={item.tokenAddress} symbol={item.symbol} /> : null}
+              {swapWidgetChainSupported(item.chainId) && !tradingBlocked ? <SwapWidgetEmbedLink chainId={Number(item.chainId)} token={item.tokenAddress} symbol={item.symbol} /> : null}
             </div>
             {isXlUp ? tradePanel : null}
           </section>
