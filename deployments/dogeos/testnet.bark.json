@@ -8,7 +8,9 @@
   "deployer": "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8",
   "admin": "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8",
   "owner": "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8",
-  "routeAuthority": "0x4fcD24d620f8eCd298bF4d43CB1cA2F4D23876FF",
+  "routeAuthority": "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0",
+  "routeAuthorityAtDeploy": "0x4fcD24d620f8eCd298bF4d43CB1cA2F4D23876FF",
+  "routeAuthorityNote": "The launcher's createSigner. Deployed with the DogeOS route-authority key 0x4fcD...76FF (spec B9); on 2026-10-27 (founder go, option A1) set to the TEST API's shared route authority 0x2501...Bde0 so the TEST API signs DogeOS creates without a code change. Mainnet decides its own signer.",
   "operator": "0xca8cc5e31CB5cf4D90aD4585C881c34909C83d1A",
   "airdropOperator": "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8",
   "barkswap": {
@@ -286,11 +288,25 @@
       "status": "mined"
     }
   ],
+  "afterDeploy": [
+    {
+      "label": "MwzBarkLauncher.setCreatePaused(false) (t29 activation, founder go)",
+      "from": "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8",
+      "hash": "0x7cf8e3e365eb4d96e8141873c7fd918fc8f50ce691d01f9f83de3caf922f5f67",
+      "status": "mined"
+    },
+    {
+      "label": "MwzBarkLauncher.setCreateSigner(0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0) (founder go 2026-10-27, option A1)",
+      "from": "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8",
+      "hash": "0x4ef6f5f912822a86b84c77a98c53f8e64469098d7bc9cdc1cde2a94661171acf",
+      "block": 8947892,
+      "gasUsed": "32034",
+      "status": "mined"
+    }
+  ],
   "next": [
-    "verify on L2Scan: npm run verify:dogeos-testnet (reused contracts) and npm run verify:dogeos-bark-testnet (Bark contracts)",
     "route authority key on the TEST API (the launcher's createSigner)",
-    "authorize the airdrop weeks: node scripts/make-airdrop-setup-calls.mjs --chain 6281971 --skip-wiring ...",
-    "setCreatePaused(false) only with the founder's go (scripts/activate-dogeos-testnet.ts)"
+    "authorize the airdrop weeks: node scripts/make-airdrop-setup-calls.mjs --chain 6281971 --skip-wiring ..."
   ],
   "deployInputs": {
     "mode": "chikyu",
