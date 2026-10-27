@@ -348,3 +348,24 @@ oracle here is the router there. Chain-pair every address.
   authorization). Robinhood mainnet the same way with its own script.
 
 
+
+## Gen-8 creator-choice operator (2026-10-22, branch feat/evm-gen8-choice-operator)
+
+The worker that moves the gen-8 MwzCreatorChoiceVault money (0xaf11784a…cAd3 on 56 and 4663, operator
+0x20652bdb…E773, holder distributor 0x3E0A03A7…335A). Code: `realtime-indexer/src/evm/evmGen8Choice{Worker,Pass,Checks,Chain}.ts`,
+started from `evmGen8Worker.ts`; env names are in the `evmGen8ChoiceWorker.ts` header. Off unless
+`EVM_GEN8_CHOICE_ENABLED_<id>=true`; dry run unless `EVM_GEN8_CHOICE_SEND=true`; signs with `EVM_GEN8_OPERATOR_KEY_<id>`
+(the fee-routing key; one in-process lock per key, `evmGen8OperatorLock.ts`, now also around the fee-routing sends).
+
+- Checks: the shared hold-through rule (`evmGen8HoldThrough.ts`), read from the census (`token_holder_balances` +
+  `token_holder_sync.last_block` in one statement), stored in `evm_gen8_holder_check_runs` / `evm_gen8_holder_checks`
+  (one CTE per check). Hard skip uses the vault's `cfg(id).creator`; the contract filter reads code at the check block.
+- Monday: pulls, then the `Gen8LeafFileV2` stored in `evm_holder_batches` (vault = gen-8 vault), Claim Center rows
+  (`airdrop_holders_gen8`), `proposeHolderBatch`; `executeHolderBatch` after the Safe approval (4 args), the distributor
+  authorization and the 24 h window. Proven on anvil (`npm run test:evm-gen8-choice-integration`); the payout
+  watchdog's `verifyGen8HolderProposal` (feat/evm-gen8-watchdog) approves the stored file unchanged
+  (`GEN8_WATCHDOG_VERIFIER=<path>` turns that cross-check on).
+- Jobs: `evm_gen8_choice_jobs` (signed bytes recorded before broadcast, one in flight per chain).
+- Before it runs on 56 / 4663: apply `db/migrations/20261022_000001_evm_gen8_choice.sql` (and 20260930_300001 /
+  20261008_000040 if missing) on staging, then production; set `EVM_GEN8_HOLDER_DISTRIBUTOR_<id>` on the API for the
+  finance holder-lane alerts. **open**: the founder's go for `EVM_GEN8_CHOICE_SEND=true`.

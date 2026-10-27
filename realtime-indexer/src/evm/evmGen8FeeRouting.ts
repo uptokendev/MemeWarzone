@@ -48,6 +48,7 @@ import {
 } from "./evmGen8Fees.js";
 import type { Gen8Event } from "./evmGen8Decode.js";
 import type { Queryable } from "./evmGen8Store.js";
+import { withOperatorLock } from "./evmGen8OperatorLock.js";
 
 export const GEN8_ROUTING_ALERT_TYPE = "gen8_splitter";
 
@@ -330,26 +331,41 @@ export function ethersRouteChain(cfg: Gen8AnyChainConfig, provider: ethers.JsonR
         },
       };
     },
+    // The operator key is shared with the gen-8 creator-choice operator: each send holds the key's lock until its
+    // receipt (evmGen8OperatorLock.ts), so the two never sign the same nonce. Nothing else changes here.
     async sendClaim() {
       if (!signer) throw new Error("gen8 routing: no operator key");
-      const tx = await (hook.connect(signer) as any).claimRouter();
-      const rc = await tx.wait();
-      if (!rc || Number(rc.status) !== 1) throw new Error(`claimRouter reverted: ${tx.hash}`);
-      return { hash: String(tx.hash), blockNumber: Number(rc.blockNumber) };
+      return withOperatorLock(await signer.getAddress(), async () => {
+        const tx = await (hook.connect(signer) as any).claimRouter();
+        // Bounded wait (a dropped transaction never holds the shared key lock): on timeout the pass fails, the lock is
+        // released and the next pass reads the state again, as after any failed pass.
+        const rc = await provider.waitForTransaction(String(tx.hash), 1, 120_000).catch(() => null);
+        if (!rc) throw new Error(`claimRouter has no receipt after 120 s: ${tx.hash}`);
+        if (Number(rc.status) !== 1) throw new Error(`claimRouter reverted: ${tx.hash}`);
+        return { hash: String(tx.hash), blockNumber: Number(rc.blockNumber) };
+      });
     },
     async sendPayParked() {
       if (!signer) throw new Error("gen8 routing: no operator key");
-      const tx = await (hook.connect(signer) as any).payParkedRouter(splitterAddr);
-      const rc = await tx.wait();
-      if (!rc || Number(rc.status) !== 1) throw new Error(`payParkedRouter reverted: ${tx.hash}`);
-      return { hash: String(tx.hash), blockNumber: Number(rc.blockNumber) };
+      return withOperatorLock(await signer.getAddress(), async () => {
+        const tx = await (hook.connect(signer) as any).payParkedRouter(splitterAddr);
+        const rc = await provider.waitForTransaction(String(tx.hash), 1, 120_000).catch(() => null);
+        if (!rc) throw new Error(`payParkedRouter has no receipt after 120 s: ${tx.hash}`);
+        if (Number(rc.status) !== 1) throw new Error(`payParkedRouter reverted: ${tx.hash}`);
+        return { hash: String(tx.hash), blockNumber: Number(rc.blockNumber) };
+      });
     },
     async sendRoute(a) {
       if (!signer) throw new Error("gen8 routing: no operator key");
-      const c = splitterRead.connect(signer) as any;
-      await c.route.staticCall(a.runId, a.expectedPaid, a.recruiter, a.squad, a.airdrop, a.root);
-      const tx = await c.route(a.runId, a.expectedPaid, a.recruiter, a.squad, a.airdrop, a.root);
-      return String(tx.hash);
+      return withOperatorLock(await signer.getAddress(), async () => {
+        const c = splitterRead.connect(signer) as any;
+        await c.route.staticCall(a.runId, a.expectedPaid, a.recruiter, a.squad, a.airdrop, a.root);
+        const tx = await c.route(a.runId, a.expectedPaid, a.recruiter, a.squad, a.airdrop, a.root);
+        // Held until mined (or 120 s) so the other user of the key reads the next nonce; the outcome is still read by
+        // the next pass exactly as before (a revert or timeout here is not an error of this call).
+        await provider.waitForTransaction(String(tx.hash), 1, 120_000).catch(() => null);
+        return String(tx.hash);
+      });
     },
     async waitReceipt(hash) {
       const r = await provider.waitForTransaction(hash, 1, 120_000);

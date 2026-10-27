@@ -18,6 +18,7 @@
  *   EVM_GEN8_HOLDERS_POLL_MS      holder census interval (60000; floor 60000)  EVM_GEN8_SIDE_POLL_MS   side-pool watcher (60000; floor 60000)
  *   EVM_GEN8_SIDE_POOLS=0         turns the side-pool watcher off
  *   EVM_GEN8_FEE_ROUTING_ENABLED / _SEND / EVM_GEN8_OPERATOR_KEY_<id>: evmGen8FeeRouting.ts
+ *   EVM_GEN8_CHOICE_ENABLED_<id> / EVM_GEN8_CHOICE_SEND and the creator-choice operator env: evmGen8ChoiceWorker.ts
  *   GEN8_PARTNER_FEES_ENABLED / _BATCH / _POLL_MS: widget partner ledger of graduated swaps, gen8PartnerFees.ts (off by default)
  */
 import { ethers } from "ethers";
@@ -28,6 +29,7 @@ import { configuredGen8BarkChains, configuredGen8Chains, gen8HolderPollMs, gen8S
 import { startEvmGen8Indexer } from "./evmGen8Pool.js";
 import { startEvmGen8BarkIndexer } from "./evmGen8Bark.js";
 import { startEvmGen8FeeRoutingWorker } from "./evmGen8FeeRouting.js";
+import { startEvmGen8ChoiceWorker } from "./evmGen8ChoiceWorker.js";
 import { runGen8HolderCensusOnce } from "./evmGen8Holders.js";
 import { GEN8_SIDE_ALERT_TYPE, runGen8SidePoolWatcherOnce } from "./evmGen8SidePools.js";
 import { startDogeosBarkKeepers } from "./dogeosBarkKeepers.js";
@@ -76,6 +78,7 @@ export function startEvmGen8Workers(env: NodeJS.ProcessEnv = process.env) {
   if (chains.length) {
     startEvmGen8Indexer({ db: pool, providerFor: (id) => gen8Provider(id, env), env });
     startEvmGen8FeeRoutingWorker({ db: pool, providerFor: (id) => gen8Provider(id, env), env });
+    startEvmGen8ChoiceWorker({ db: pool, providerFor: (id) => gen8Provider(id, env), env });
   }
   if (barkChains.length) {
     startEvmGen8BarkIndexer({ db: pool, providerFor: (id) => gen8Provider(id, env), env });

@@ -6,8 +6,10 @@
  *   CreatorRewardsVaultV2.approveHolderBatch(batchId, root, total)            on each listed vault (gen-6, gen-7)
  *     total <= the vault's weekly holder cap                                  (Roles: LessThan cap + 1)
  *   MwzCreatorChoiceVault.approveHolderBatch(batchId, root, total, claimDeadline)
- *                                                                              on each listed gen-8 vault only (selector 0xc62732bb)
+ *                                                                              on each listed gen-8 vault only (selector 0xc62732bb;
+ *                                                                              the 3-arg selector is never scoped on it)
  *     total <= that vault's cap; claimDeadline > 0 and <= a static bound      (the vault still binds the stored deadline)
+ *   RewardDistributor.authorizeBatch on each listed gen-8 holder distributor  as for the gen-6 / gen-7 holder distributors
  *   RewardDistributor.authorizeBatch(batchId, maxAmount, publishAfter, publishDeadline)
  *                                                                             on each listed distributor (holder gen-6 /
  *                                                                             gen-7, airdrop main / gen-7)
@@ -96,6 +98,8 @@ export type PolicyDistributor = {
   idsPerWeek: number;
   /** The deterministic id scheme the watchdog follows on this distributor (documentation; not enforceable on chain). */
   scheme: string;
+  /** Holder distributors: the batch-id program ("airdrop_holders", "airdrop_holders_gen7", "airdrop_holders_gen8"). */
+  program?: string;
 };
 export type AllowancePlan = { maxWeeks: number; initialWeeks: number; periodSeconds?: number };
 export type PayoutRolesPolicyInput = {
@@ -241,7 +245,10 @@ function permissionRows(input: PayoutRolesPolicyInput, allowances: AllowanceRow[
         "batchId, root, total and claimDeadline must equal the proposed batch exactly (vault: BadBatch)",
         "the 3-arg approveHolderBatch selector is not allowed on this vault",
       ],
-      watchdogOnly: ["the watchdog does not send this call; the Safe signs the proposal"],
+      watchdogOnly: [
+        "root, total, claim deadline and per-pool amounts recomputed from chain data with the shared hold-through rule (realtime-indexer payoutWatchdogGen8.ts verifyGen8HolderProposal: 4 secret checks, lowest balance, 0.01% at every check, census exclusions, merkle) before approving",
+        "the batch id is holderBatchId(chain, last week, airdrop_holders_gen8) and the claim deadline is the configured window after executableAt",
+      ],
     });
   }
   for (const d of input.distributors) {
@@ -282,7 +289,7 @@ export function buildPayoutRolesPolicy(input: PayoutRolesPolicyInput): {
   const roles = ethers.getAddress(input.roles);
   const watchdog = ethers.getAddress(input.watchdog);
   if (!Number.isInteger(input.chainId) || input.chainId <= 0) throw new Error("chainId required");
-  if (!input.vaults.length && !input.distributors.length) throw new Error("no targets");
+  if (!input.vaults.length && !(input.gen8Vaults ?? []).length && !input.distributors.length) throw new Error("no targets");
   assertWatchdogAllowed(watchdog, [
     ...KNOWN_FORBIDDEN_WATCHDOGS,
     ...(input.forbidden ?? []),

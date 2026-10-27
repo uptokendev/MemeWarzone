@@ -273,3 +273,25 @@ test("holder leaf file read: &vault= picks the creator vault; without it the gen
   await holderBatch({ method: "GET", url: "/api/evm/holder-batch?chainId=56&weekId=2026-09-28&vault=nope" }, res);
   assert.equal(res.statusCode, 400);
 });
+
+test("holder leaf file read: the gen-8 vault's v2 file by &vault= or by its batch id", async () => {
+  const V8 = "0xaf11784a69964a576716a5e4b514341f4437cad3";
+  const file = { kind: "mwz-evm-gen8-holder-batch", version: 2, rule: "hold-through-v1", program: "airdrop_holders_gen8", vault: V8 };
+  const seen = [];
+  const db = {
+    async query(sql, params) {
+      seen.push({ sql, params });
+      return { rows: [{ week_id: "2026-10-26", batch_id: "0x" + "ab".repeat(32), status: "proposed", leaf_file: file, executable_at: null, last_reason: null }] };
+    },
+  };
+  const { holderBatch } = createEvmCreatorChoiceReadHandlers({ db, env: { EVM_CREATOR_VAULT_V2_56: `${VAULT}@1` } });
+  let res = makeRes();
+  await holderBatch({ method: "GET", url: `/api/evm/holder-batch?chainId=56&weekId=2026-10-26&vault=${V8}` }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(seen[0].params[3], V8);
+  assert.deepEqual(res.body.leafFile, file);
+  res = makeRes();
+  await holderBatch({ method: "GET", url: `/api/evm/holder-batch?chainId=56&batchId=0x${"ab".repeat(32)}&vault=${V8}` }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(seen[1].params[2], "0x" + "ab".repeat(32));
+});

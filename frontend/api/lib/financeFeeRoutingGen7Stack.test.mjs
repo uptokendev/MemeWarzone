@@ -148,3 +148,14 @@ test("buildFeeRouting: gen-7 wiring is read live; a wrong binding is a warning",
   assert.ok(out.alerts.some((a) => a.level === "warning" && /Holder RewardDistributor \(gen-7\)\.batchOperator/.test(a.message)));
   assert.equal(out.wiring.find((w) => w.id === "g7vault_router").status, "match");
 });
+
+test("gen-8 holder lane: only with EVM_GEN8_CHOICE_VAULT_<id> and EVM_GEN8_HOLDER_DISTRIBUTOR_<id>; program airdrop_holders_gen8", () => {
+  const V8 = "0xaf11784a69964a576716a5e4b514341f4437cad3";
+  const D8 = "0x3e0a03a723c691f20e4021a575bf7742d605335a";
+  assert.equal(evmFeeRoutingRegistry(56, { EVM_GEN8_CHOICE_VAULT_56: V8 }).holderLanes.length, 1, "vault alone: no lane");
+  const r = evmFeeRoutingRegistry(56, { ...ENV, EVM_GEN8_CHOICE_VAULT_56: V8, EVM_GEN8_HOLDER_DISTRIBUTOR_56: `${D8}@1` });
+  assert.deepEqual(r.holderLanes.map((l) => l.program), ["airdrop_holders", "airdrop_holders_gen7", "airdrop_holders_gen8"]);
+  assert.deepEqual(r.holderLanes[2], { label: "gen-8", vault: getAddress(V8), distributor: getAddress(D8), program: "airdrop_holders_gen8" });
+  const t = evmFeeRoutingRegistry(97, { EVM_GEN8_CHOICE_VAULT_97: V8, EVM_GEN8_HOLDER_DISTRIBUTOR_97: D8 });
+  assert.deepEqual(t.holderLanes.map((l) => l.label), ["gen-8"]);
+});

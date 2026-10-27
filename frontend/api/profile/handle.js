@@ -11,6 +11,7 @@ import { HANDLE_CHANGE_COOLDOWN_DAYS, handleProblem, missingHandlesTable, wallet
  *   GET  ?check=name[&wallet=W] -> { supported, available, reason }   reason: format | reserved | taken | cooldown
  *   GET  ?q=prefix        -> { supported, items: [{ handle, wallet, displayName, avatarUrl }] }  (@ autocomplete)
  *   GET  ?handle=name     -> { supported, handle, wallet }  (profile links by username)
+ *   GET  ?handles=a,b,c   -> { supported, handles: { lowercased: Handle } }  (up to 100; which @mentions have a profile)
  *   POST { chainId, address, handle, nonce, signature } -> { ok, handle, changedAt }
  * Saving is signed like the profile (auth nonce + wallet signature). One username per wallet across
  * chains, unique case-insensitive, changeable once per 30 days.
@@ -110,6 +111,19 @@ async function handleGet(req, res) {
         items: rows.map((r) => ({ handle: r.handle, wallet: r.wallet_key, displayName: r.display_name || null, avatarUrl: r.avatar_url || null })),
       });
     }
+    if (q.handles != null) {
+      // Feed posts link an @mention only when that username exists (founder, 2026-10-23).
+      const wanted = [...new Set(String(q.handles || "").split(",").map((h) => h.trim().replace(/^@/, "").toLowerCase()).filter((h) => /^[a-z0-9_]{1,20}$/.test(h)))].slice(0, 100);
+      if (!wanted.length) return json(res, 200, { supported: true, handles: {} });
+      const { rows } = await pool.query(
+        `select handle from public.user_handles where lower(handle) = any($1::text[])`,
+        [wanted],
+      );
+      const handles = {};
+      for (const r of rows) handles[String(r.handle).toLowerCase()] = r.handle;
+      res.setHeader("Cache-Control", "public, max-age=60");
+      return json(res, 200, { supported: true, handles });
+    }
     if (q.handle != null) {
       const handle = String(q.handle || "").trim().replace(/^@/, "");
       if (!/^[A-Za-z0-9_]{1,20}$/.test(handle)) return json(res, 404, { supported: true, error: "Username not found" });
@@ -120,7 +134,7 @@ async function handleGet(req, res) {
       if (!rows[0]) return json(res, 404, { supported: true, error: "Username not found" });
       return json(res, 200, { supported: true, handle: rows[0].handle, wallet: rows[0].wallet_key });
     }
-    return json(res, 400, { error: "Pass wallet, check, q or handle" });
+    return json(res, 400, { error: "Pass wallet, wallets, check, q, handle or handles" });
   } catch (e) {
     if (missingHandlesTable(e)) return json(res, 200, { supported: false, handle: null, items: [], available: false, reason: "unsupported" });
     throw e;

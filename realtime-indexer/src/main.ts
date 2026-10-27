@@ -1,54 +1,31 @@
 import "./rpcUsagePreload.js";
-import { startCanonicalCandleMaterializerLoop } from "./canonicalCandleMaterializer.js";
-import { startCanonicalCandleRealtimeLoop } from "./canonicalCandleRealtime.js";
-import { startSupportedFactoryDiscoveryLoop } from "./factoryDiscovery.js";
-import { startDbcIndexerLoop } from "./dbcIndexer.js";
-import { startMeteoraSwapIndexerLoop } from "./meteoraSwapIndexer.js";
-import { startSolanaMarketStatsLoop } from "./solanaMarketStats.js";
-import { startDbcFeeRoutingWorker } from "./dbcFeeRoutingWorker.js";
-import { startDbcCreatorChoiceWorker } from "./dbcCreatorChoiceWorker.js";
-import { startDbcGraduationWorker } from "./dbcGraduationWorker.js";
-import { startEvmGraduationKeeperWorker } from "./evm/evmGraduationKeeperWorker.js";
-import { startDogeosOraclePushWorker } from "./evm/dogeosOraclePushWorker.js";
-import { startEvmCreatorChoiceWorker } from "./evm/evmCreatorChoiceWorker.js";
-import { startPayoutWatchdogWorker } from "./evm/payoutWatchdogWorker.js";
-import { startEvmGen8Workers } from "./evm/evmGen8Worker.js";
-import { startRhTestnetMockFeedRefresh } from "./evm/rhTestnetMockFeed.js";
-import { startSolanaFeeEscrowWorker } from "./solanaFeeEscrowWorker.js";
-import { startSolanaIndexerLoop } from "./solanaIndexer.js";
-import { startSolanaLpHarvestLoop } from "./solanaLpHarvestLoop.js";
-import { startProtocolForwarderKeeper } from "./protocolForwarderKeeper.js";
-import { startImportCreatorFeeWorker } from "./importCreatorFeeWorker.js";
-import { startImportCreatorFeeEvmWorker } from "./importCreatorFeeEvmWorker.js";
-import { startRpcUsageLog } from "./rpcUsage.js";
+import { indexerRoles } from "./evm/payoutWatchdogConfig.js";
 
-// One [rpc-usage] line per RPC_USAGE_LOG_MINUTES (default 15) with the requests per chain and method.
-startRpcUsageLog();
-startSupportedFactoryDiscoveryLoop();
-startSolanaIndexerLoop();
-startSolanaFeeEscrowWorker();
-startSolanaLpHarvestLoop();
-startDbcFeeRoutingWorker();
-startDbcCreatorChoiceWorker();
-startDbcGraduationWorker();
-startEvmGraduationKeeperWorker();
-// DogeOS 6281971 DOGE/USD oracle push: off unless DOGEOS_ORACLE_PUSH_ENABLED; signs only with the updater key.
-startDogeosOraclePushWorker();
-startEvmCreatorChoiceWorker();
-void startPayoutWatchdogWorker().catch((error) => console.error("[payout-watchdog] start failed", error));
-// EVM generation 8 (Uniswap V4 hook pools): off unless EVM_GEN8_LAUNCHER_<id> and EVM_GEN8_HOOK_<id> are set.
-startEvmGen8Workers();
-// Robinhood testnet 46630 only. Off unless RH46630_MOCK_FEED_PRIVATE_KEY is the testnet deployer.
-startRhTestnetMockFeedRefresh();
-// Off unless IMPORT_FEE_WORKER_ENABLED; dry run unless IMPORT_FEE_PAYOUT_SEND.
-startImportCreatorFeeWorker();
-// EVM side (56 / 4663 / 97 / 46630): off unless IMPORT_FEE_EVM_WORKER_ENABLED; dry run unless IMPORT_FEE_PAYOUT_SEND.
-void startImportCreatorFeeEvmWorker().catch((error) => console.error("[import-fees-evm] start failed", error));
-// Off unless PROTOCOL_FORWARDER_KEEPER=dry|send; never blocks startup (own timers, errors stay in its status).
-void startProtocolForwarderKeeper().catch((error) => console.error("[forwarder-keeper] start failed", error));
-startMeteoraSwapIndexerLoop();
-startDbcIndexerLoop();
-if (String(process.env.ENABLE_SOLANA_MARKET_STATS || "1") === "1") startSolanaMarketStatsLoop();
-startCanonicalCandleMaterializerLoop();
-startCanonicalCandleRealtimeLoop();
-await import("./server.js");
+/**
+ * INDEXER_ROLE (payoutWatchdogConfig.ts indexerRoles):
+ *   unset            the indexer (indexerMain.ts) and the payout watchdog, the watchdog only when no operator key
+ *                    (EVM_GEN8_OPERATOR_KEY[_<id>], EVM_CREATOR_CHOICE_OPERATOR_PRIVATE_KEY[_<id>]) is in this env;
+ *   payout-watchdog  only the payout watchdog (its own Coolify service, no operator key, no API);
+ *   indexer          only the indexer.
+ */
+const roles = indexerRoles(process.env);
+console.log("[main] roles", roles);
+if (roles.watchdog) {
+  const { startPayoutWatchdogWorker } = await import("./evm/payoutWatchdogWorker.js");
+  void startPayoutWatchdogWorker().catch((error) => console.error("[payout-watchdog] start failed", error));
+}
+if (roles.indexer) {
+  await import("./indexerMain.js");
+} else if (roles.watchdog) {
+  // A watchdog-only service: a minimal health endpoint on PORT (when set) for the container's health check.
+  const port = Number(process.env.PORT || 0);
+  if (port > 0) {
+    const http = await import("node:http");
+    http
+      .createServer((_req, res) => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, role: "payout-watchdog" }));
+      })
+      .listen(port);
+  }
+}

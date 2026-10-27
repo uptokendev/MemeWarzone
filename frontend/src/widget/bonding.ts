@@ -9,6 +9,7 @@ import { resolveSolanaCampaignCurve } from "@/lib/solanaCampaignRead";
 import { submitDbcBondingTrade } from "@/lib/dbcTradeSubmit";
 import { loadDbcPool, loadReferralTokenAccount, quoteDbcExactIn } from "@/lib/dbcTrade.mjs";
 import { getSolanaReadConnection } from "@/lib/solanaReadConnection";
+import { withWidgetPartner } from "./shims/apiBase";
 
 export type BondingKind = "launchpad" | "dbc";
 export type BondingQuote = { amountOut: bigint; amountInUsed: bigint; feeBps: number | null; note: string | null };
@@ -62,7 +63,7 @@ export async function quoteBonding(input: { kind: BondingKind; campaignAddress: 
 }
 
 /** Runs the trade exactly as the token page does; returns the confirmed signature. */
-export async function tradeBonding(input: { kind: BondingKind; campaignAddress: string; creator: string | null; side: "buy" | "sell"; amountIn: bigint; trader: string }): Promise<string> {
+export async function tradeBonding(input: { kind: BondingKind; campaignAddress: string; creator: string | null; side: "buy" | "sell"; amountIn: bigint; trader: string; partner?: string | null }): Promise<string> {
   if (input.kind === "dbc") {
     // A creator's own buys are locked buys; those stay on MemeWarzone.
     if (input.side === "buy" && input.creator && input.trader === input.creator) throw new Error("Creator buys go through MemeWarzone (they are locked buys).");
@@ -75,7 +76,8 @@ export async function tradeBonding(input: { kind: BondingKind; campaignAddress: 
   }
   const quote = launchpadQuote(curve, input.side, input.amountIn);
   const minOut = applySlippageMinOut(quote.amountOut, BONDING_SLIPPAGE_PCT);
-  const auth = await requestSolanaTradeAuthorization({
+  // Same call, same arguments; the partner only rides along as ?partner= on the authorization request (usage counts).
+  const auth = await withWidgetPartner(input.partner, () => requestSolanaTradeAuthorization({
     side: input.side,
     campaignAddress: curve.campaignAddress,
     mintAddress: curve.mint,
@@ -86,7 +88,7 @@ export async function tradeBonding(input: { kind: BondingKind; campaignAddress: 
     solVault: curve.solVault || null,
     campaignId: curve.campaignIdHex || null,
     chainId: 101,
-  });
+  }));
   const result = await submitSolanaTradeV1(auth, { traderAddress: input.trader });
   return result.signature;
 }

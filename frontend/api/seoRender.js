@@ -4,6 +4,7 @@
 import { createAppShell } from "./lib/appShell.mjs";
 import { injectSeo, esc, h1, h2, p, ul, link } from "./lib/seoInject.mjs";
 import { createSeoEntities } from "./lib/seoEntities.js";
+import { fitTitle } from "../shared/seoTitle.mjs";
 import { DEFAULT_DESCRIPTION, headForPath, matchRoute } from "../shared/seoRoutes.mjs";
 import {
   ABOUT_CHAINS, ABOUT_DISAMBIGUATION, ABOUT_HERO_LINKS, ABOUT_HIGHLIGHTS, ABOUT_INTRO, ABOUT_NEXT_CHAIN, ABOUT_PATH, ABOUT_SECTIONS,
@@ -38,7 +39,8 @@ const ENTITY = {
   "/profile/:wallet": { kind: "profile", param: "wallet", ok: (v) => EVM_RE.test(v) || SOL_RE.test(v) },
 };
 
-const titleOf = (t) => (t && t !== BRAND ? `${t} · ${BRAND}` : BRAND);
+// Titles fit in 60 characters (shared/seoTitle.mjs): the brand when there is room, shorter wordings first.
+const titleOf = (t) => fitTitle(t);
 
 function createLru(cap) {
   const map = new Map();
@@ -286,7 +288,7 @@ export function createSeoRenderer({
       const hidden = data.private || /noindex/i.test(String(data.robots || ""));
       const robots = hidden ? NOINDEX : data.robots || "index,follow";
       const canonical = hidden ? null : data.canonical || null;
-      const title = titleOf(data.title);
+      const title = titleOf(data.titles?.length ? data.titles : data.title);
       return send(res, 200, injectSeo(html, {
         title,
         description: data.description,

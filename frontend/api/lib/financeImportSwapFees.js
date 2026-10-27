@@ -24,6 +24,7 @@ import { getRpcUrls } from "./getServerReadProvider.js";
 import { isOwnerWallet } from "../../shared/ownerWallets.mjs";
 import { solanaFeeAccount, JUPITER_PROGRAM, KYBER_ROUTER } from "../importSwap.js";
 import { evmFingerprint, partnerSwapKey, partnersForSwaps, solanaFingerprintFromLanded } from "./importSwapFingerprint.js";
+import { markWidgetFeeRows, storeLandedFingerprints } from "./widgetSwapLedger.js";
 
 const WSOL = "So11111111111111111111111111111111111111112";
 // keccak256("Deposit(address,uint256,uint256)"), NativeTreasuryVaultBase / ProtocolRevenueVault.
@@ -352,6 +353,9 @@ export async function ingestImportSwapFees({ db, chainId, env = process.env, fet
     : await scanEvmImportSwapFees({ source, rpc: call, fromBlock: fromBlock ?? (cursor == null ? null : Number(cursor)) });
   const nextCursor = source.kind === "solana" ? scan.cursor : String(scan.nextBlock);
   const inserted = dryRun ? 0 : await storeImportSwapFees(db, chainId, scan.rows, nextCursor);
+  // Swap widget (2026-10-23): keeps the landed fingerprint on the stored rows (wallet-bound, as for partners) so they
+  // can be matched to widget builds below. Best effort, after the store; amounts and partner logic are untouched.
+  if (!dryRun) await storeLandedFingerprints(db, chainId, scan.rows, (row) => (source.kind === "solana" ? row.wallet : row.sender));
   const feeRaw = scan.rows.reduce((sum, r) => sum + BigInt(r.feeRaw), 0n).toString();
   const summary = { chainId, dryRun, cursorBefore: cursor, cursorAfter: nextCursor, scanned: scan.scanned, found: scan.rows.length, inserted, feeRaw, asset: source.asset, complete: scan.complete, ...(scan.error ? { error: scan.error } : {}) };
   log?.(summary, scan.rows);
@@ -360,6 +364,10 @@ export async function ingestImportSwapFees({ db, chainId, env = process.env, fet
   for (const splitSource of splitSources) {
     split.push(await ingestSplitReceiver({ db, source: splitSource, env, fetchImpl, dryRun, fromScratch, rpc, log }));
   }
+  // Swap widget marks: every fee row of the last 7 days whose landed fingerprint and wallet match a widget build. Runs
+  // every scan, so a build flushed after its swap was scanned (or a failed earlier mark) is caught. Idempotent.
+  const widgetMarked = dryRun ? 0 : await markWidgetFeeRows(db, chainId);
+  if (widgetMarked) summary.widgetMarked = widgetMarked;
   // Coins that earned creator fees without a MemeWarzone page get one (importAutoImport.js); best effort.
   let autoImport = null;
   if (!dryRun && split.length) {
@@ -576,6 +584,8 @@ async function ingestSplitReceiver({ db, source, env, fetchImpl, dryRun, fromScr
   });
   const nextCursor = source.kind === "solana" ? scan.cursor : String(scan.nextBlock);
   const stored = dryRun ? { inserted: 0, accrued: 0 } : await storeSplitImportSwapFees(db, source, rows, nextCursor);
+  // Swap widget: landed fingerprints for the marking step (see ingestImportSwapFees), same landed-wallet rule as above.
+  if (!dryRun) await storeLandedFingerprints(db, source.chainId, rows, landedWallet);
   const summary = { chainId: source.chainId, receiver, split: true, ...(source.partner ? { partner: source.partner.id } : {}), dryRun, cursorBefore: cursor, cursorAfter: nextCursor, scanned: scan.scanned, found: rows.length, ...stored, complete: scan.complete, ...(scan.error ? { error: scan.error } : {}) };
   log?.(summary, rows);
   return summary;

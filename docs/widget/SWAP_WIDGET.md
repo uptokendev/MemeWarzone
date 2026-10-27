@@ -91,6 +91,42 @@ Generation 8 coins: the partner's 0.25% of a graduated swap comes from MemeWarzo
   from the API (`/api/widget/swap/*`, open to every origin, rate limited per IP).
 - The Solana bonding part is a second file, `mwz-swap-bonding.js`, loaded next to `mwz-swap.js` only for those coins.
 
+## What we count (usage and revenue)
+
+MemeWarzone counts how the widget is used and what it earns, so partners and the team see the same numbers in the
+Command Center. Counting never changes, slows or fails a quote or a swap: the API answers first, adds the request to
+counters in memory, and writes them to the database in one batch every 15 seconds. A counting error is only logged.
+
+- **Usage per day**: one counter per day, chain, partner, website and event. Events: `load` (the widget looked up a
+  coin), `quote`, `build` (the API handed out a swap transaction), `approval` (a sell needed an approval first) and
+  `bonding_trade` (a Solana launchpad bonding trade was authorized). Only requests the API answered successfully
+  count. Solana DBC bonding trades do not pass our API and are not counted.
+- **Website**: the hostname your visitors' browsers send with the request (`Origin`, else `Referer`), for example
+  `crypticpump.io`. Never the path, never a full URL. After 500 different websites on one chain in one day, new ones
+  count as `other`.
+- **Partner**: the `partner` option is sent with token lookups, quotes, builds and bonding trades. It counts for a
+  partner only while that partner is active on the chain; anything else counts as no partner.
+- **Usage counts are indicative.** Any page or script can call the widget API with any `Origin` or `partner`, so the
+  usage numbers can be inflated. Revenue and partner money are never taken from them: they come only from swaps that
+  landed on chain and match a build the API made.
+- **Swaps and revenue**: every swap the API builds for the widget is stored with the same fingerprint the partner split
+  uses and the wallet it was built for. When that wallet lands that exact swap, the fee ledger marks it as a widget
+  swap (the scanner runs every 5 minutes and looks back 7 days). Generation 8 swaps are recognised by the widget tag
+  the API puts in the swap.
+
+### What is stored, and for how long
+
+| Stored | What | Kept |
+|---|---|---|
+| Daily counters | day, chain, partner id, website hostname, event, count | as long as the analytics |
+| Widget builds | fingerprint of the swap, chain, wallet, coin, buy or sell, partner id, website, fee rate | 30 days if the swap never landed; kept once it matched a landed swap |
+| Fee ledger marks | "widget" and the website on the landed swap's fee row | with the fee row |
+
+No cookies, no IP addresses and no visitor ids are stored. The per-IP rate limit is kept in memory for one minute and
+never written anywhere. The wallet is stored only for a swap the wallet asked the widget to build, and only to match
+that swap when it lands (a landed swap is public on chain anyway). Builds that never landed are deleted after 30 days.
+Page views and quotes never store a wallet.
+
 ## API routes (for reference)
 
 | Route | |

@@ -268,6 +268,15 @@ async function dispatchAdminFinance(pathname, req, res) {
   return true;
 }
 
+// Swap widget usage (Command Center Analytics): read-only, bearer with finance.view; the handler checks again.
+async function dispatchAdminWidget(pathname, req, res) {
+  if (!/^\/api\/admin\/widget(?:\/|$)/.test(pathname)) return false;
+  if (!(await authorizeDashboardBearer(req, res, "finance.view"))) return true;
+  const widgetAdmin = (await import("../api/admin/widget.js")).default;
+  await widgetAdmin(req, res);
+  return true;
+}
+
 // Moderation lists (read-only): the handler checks community.view or
 // finance.view itself, so a principal with either one passes.
 async function dispatchAdminModeration(pathname, req, res) {
@@ -371,6 +380,7 @@ export function createRailwayProxyMiddleware(options = {}) {
     if (await dispatchDashboardLpFees(pathname, req, res)) return;
     if (await dispatchAdminAccess(pathname, req, res)) return;
     if (await dispatchAdminFinance(pathname, req, res)) return;
+    if (await dispatchAdminWidget(pathname, req, res)) return;
     if (await dispatchAdminModeration(pathname, req, res)) return;
     if (await dispatchAdminSponsorship(pathname, req, res)) return;
     if (await dispatchAdminArenaImports(pathname, req, res)) return;

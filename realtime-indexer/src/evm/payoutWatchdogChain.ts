@@ -9,6 +9,7 @@ import { GEN8_HOOK_IFACE, GEN8_TOPICS } from "./evmGen8Abi.js";
 import type { Gen8WatchdogVault } from "./payoutWatchdogConfig.js";
 import type { Gen8ForeignClaim, Gen8VaultWatchFacts } from "./evmGen8VaultWatch.js";
 import { foldTransfers } from "./evmCreatorChoiceChain.js";
+import { createEthersGen8WatchdogChain, type Gen8WatchdogChain } from "./payoutWatchdogGen8Chain.js";
 import {
   PAYOUT_WATCHDOG_ROLE_KEY,
   type AuthState,
@@ -61,6 +62,8 @@ export const WATCHDOG_VAULT_ABI = [
   "error OnlyAdmin()",
 ];
 export const WATCHDOG_VAULT_IFACE = new ethers.Interface(WATCHDOG_VAULT_ABI);
+/** Gen-8 MwzCreatorChoiceVault errors not in the gen-6 / gen-7 ABI (BadBatch / OnlyAdmin are shared). */
+const GEN8_ERRORS_IFACE = new ethers.Interface(["error BadClaimDeadline()", "error NotApproved()", "error TooSoon()", "error CapExceeded()"]);
 export const DISTRIBUTOR_ABI = [
   "function owner() view returns (address)",
   "function batchOperator() view returns (address)",
@@ -81,7 +84,7 @@ export function watchdogRevertName(error: unknown): string {
   const e = error as any;
   for (const data of [e?.data, e?.info?.error?.data, e?.error?.data, e?.error?.error?.data]) {
     if (typeof data === "string" && data.startsWith("0x") && data.length >= 10) {
-      for (const iface of [ROLES_IFACE, WATCHDOG_VAULT_IFACE, DISTRIBUTOR_IFACE]) {
+      for (const iface of [ROLES_IFACE, WATCHDOG_VAULT_IFACE, DISTRIBUTOR_IFACE, GEN8_ERRORS_IFACE]) {
         try {
           const p = iface.parseError(data);
           if (p) return p.name === "ConditionViolation" ? `ConditionViolation(${ROLES_STATUS[Number(p.args[0])] ?? p.args[0]})` : p.name;
@@ -120,6 +123,8 @@ export interface WatchdogChain {
   authStates(distributor: string, batchIds: string[]): Promise<Map<string, AuthState>>;
   /** eth_call of execTransactionWithRole from the watchdog; null = would succeed, else the revert name. */
   simulate(roles: string, from: string, to: string, data: string, shouldRevert?: boolean): Promise<string | null>;
+  /** Gen-8 choice vault reads (payoutWatchdogGen8Chain.ts). Absent: gen-8 batches are reported, never approved. */
+  gen8?: Gen8WatchdogChain;
 }
 
 export interface WatchdogSender {
@@ -380,6 +385,7 @@ export function createEthersWatchdogChain(provider: ethers.Provider, opts: { log
       }
       return out;
     },
+    gen8: createEthersGen8WatchdogChain(provider, opts),
     async simulate(roles, from, to, data, shouldRevert = true) {
       try {
         await provider.call({ from, to: roles, data: execCalldata(to, data, shouldRevert) });

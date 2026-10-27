@@ -109,7 +109,8 @@ export function mineHookSalt(deployerAddr: string, initCode: string, flags = HOO
 
 export type Gen8Local = Awaited<ReturnType<typeof deployGen8Local>>;
 
-export async function deployGen8Local(provider: ethers.JsonRpcProvider, opts: { display?: boolean } = {}) {
+/** `vaultAdmin`: the choice vault's admin (default the `safe` wallet), e.g. a module avatar for the payout watchdog test. */
+export async function deployGen8Local(provider: ethers.JsonRpcProvider, opts: { display?: boolean; vaultAdmin?: string } = {}) {
   const ws = wallets(provider, 12);
   await fund(provider, ws.map((w) => w.address));
   const [deployer, safe, apiSigner, creator, buyer, linked2, operator, other, og] = ws;
@@ -138,7 +139,7 @@ export async function deployGen8Local(provider: ethers.JsonRpcProvider, opts: { 
   const hook = new ethers.Contract(hookAddr, hookArt.abi, deployer);
   if (displayFactory) await (await (displayFactory as any).setHook(hookAddr)).wait();
   const splitter = await deploy(deployer!, "MwzFeeSplitter", [hookAddr, safe!.address, await weekly.getAddress(), await monthly.getAddress(), await recruiter.getAddress(), await community.getAddress(), await protocol.getAddress(), operator!.address]);
-  const vault = await deploy(deployer!, "MwzCreatorChoiceVault", [safe!.address, hookAddr, launcherAddr, 24 * 3600]);
+  const vault = await deploy(deployer!, "MwzCreatorChoiceVault", [opts.vaultAdmin ?? safe!.address, hookAddr, launcherAddr, 24 * 3600]);
   const reserveLock = await deploy(deployer!, "MwzReserveLock", [hookAddr, launcherAddr, await vault.getAddress()]);
   // F6: the BNB production oracle band ($10 to $100,000), as test/gen8/fixtures/gen8.ts on build/evm-gen8.
   const launcher = await deploy(deployer!, "MwzV4Launcher", [await pm.getAddress(), hookAddr, await oracle.getAddress(), await reserveLock.getAddress(), await vault.getAddress(), safe!.address, apiSigner!.address, 10n * WAD, 100_000n * WAD]);
@@ -156,10 +157,10 @@ export async function deployGen8Local(provider: ethers.JsonRpcProvider, opts: { 
 let saltCounter = 1n;
 
 /** `openAt` (B): unix seconds when trading opens; 0 (default) = the launch block time. */
-export async function launchCoin(env: Gen8Local, creator: ethers.Wallet, o: { firstBuyValue?: bigint; feeChoice?: number; name?: string; symbol?: string; openAt?: bigint } = {}) {
+export async function launchCoin(env: Gen8Local, creator: ethers.Wallet, o: { firstBuyValue?: bigint; feeChoice?: number; feeCreatorPct?: number; name?: string; symbol?: string; openAt?: bigint } = {}) {
   const req = {
     name: o.name ?? "Gen Eight", symbol: o.symbol ?? "GEN8", logoURI: "ipfs://logo", xAccount: "@gen8", website: "https://memewar.zone", extraLink: "",
-    metadataHash: ethers.id("metadata"), targetUsd: TEST_TARGET, feeChoice: o.feeChoice ?? 1, feeCreatorPct: 0, firstBuyValue: o.firstBuyValue ?? 0n, minFirstBuyOut: 0n, salt: saltCounter++,
+    metadataHash: ethers.id("metadata"), targetUsd: TEST_TARGET, feeChoice: o.feeChoice ?? 1, feeCreatorPct: o.feeCreatorPct ?? 0, firstBuyValue: o.firstBuyValue ?? 0n, minFirstBuyOut: 0n, salt: saltCounter++,
     openAt: o.openAt ?? 0n,
   };
   const latest = await env.provider.getBlock("latest");

@@ -1,8 +1,20 @@
 // Links in feed post text: finding them, trimming trailing punctuation, and telling MemeWarzone's own links
 // (opened inside the app) from outside links (opened in a new tab). Pure apart from window in the last helpers.
 
-/** http(s) URLs and bare www. links. Stops at whitespace and at characters that never end a URL in text. */
-const URL_RE = /\b(?:https?:\/\/|www\.)[^\s<>"'`]+/gi;
+/**
+ * http(s) URLs, www. links and plain domains with a known ending ("memewar.zone/faq", "x.com/memewarzone"), since
+ * most people type links without https:// (founder, 2026-10-23). Plain domains need a listed top-level domain so
+ * "e.g." or "1.5" never turn into links. No lookbehind: older iPhones (Safari before 16.4) cannot parse it, so the
+ * character before a plain domain is checked in code instead.
+ */
+// Endings that are also short English words (so, to, it, in, be, us, es) are left out: "ok.so" stays text.
+const TLDS = "com|net|org|io|co|app|dev|zone|xyz|fun|gg|ai|me|tv|sh|info|news|wtf|lol|club|live|pro|finance|money|exchange|trade|meme|world|site|online|tech|art|link|page|social|games|bet|cash|army|vip|biz|ly|fm|uk|de|nl|eu|ca|fr|ch|au|jp|kr|br";
+const URL_RE = new RegExp(
+  `(?:https?:\\/\\/|www\\.)[^\\s<>"'\`]+|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+(?:${TLDS})(?::\\d{2,5})?(?:[/?#][^\\s<>"'\`]*)?(?![a-z0-9-])`,
+  "gi",
+);
+/** A plain domain right after one of these is part of something else: an email, a @handle, a path, a $ticker. */
+const NOT_BEFORE_PLAIN = /[@\w.\-/$#]/;
 const TRAILING = /[.,;:!?)\]}'"»]+$/;
 
 const APP_HOSTS = new Set(["app.memewar.zone"]);
@@ -18,9 +30,11 @@ export function splitLinks(text) {
   for (const m of s.matchAll(URL_RE)) {
     const start = m.index ?? 0;
     let raw = m[0];
+    const plain = !/^(?:https?:\/\/|www\.)/i.test(raw);
+    if (plain && start > 0 && NOT_BEFORE_PLAIN.test(s[start - 1])) continue;
     // Trim trailing punctuation, but keep a closing bracket the link opened itself (Wikipedia-style URLs).
     while (TRAILING.test(raw)) {
-      const end = raw.at(-1);
+      const end = raw[raw.length - 1];
       if (end === ")" && (raw.match(/\(/g) || []).length >= (raw.match(/\)/g) || []).length) break;
       raw = raw.slice(0, -1);
     }

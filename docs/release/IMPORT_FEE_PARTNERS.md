@@ -125,3 +125,26 @@ came through its widget, out of MemeWarzone's 0.50%. **Nothing during bonding.**
 5. Send: `GEN8_PARTNER_PAYOUT_SEND=true` on the indexer. Existing env stays: `IMPORT_FEE_EVM_WORKER_ENABLED`,
    `IMPORT_FEE_PAYOUT_SEND`, `IMPORT_FEE_VAULT_<chainId>`, `IMPORT_FEE_PAYOUT_OPERATOR_PK_<chainId>`,
    `IMPORT_PARTNER_MIN_PAYOUT_WEI_<chainId>`.
+
+## Where partners' figures show in the Command Center (2026-10-23)
+
+- **Controls > Partners** (`/controls/partners`): each partner row per chain with earned, paid, sending and owed, and
+  the gen-8 figures apart. Unchanged.
+- **Finance > Widget** (`/finance/widget`, finance.view; API `GET /api/admin/finance/widget?from&to`): landed widget
+  swaps for the chosen days per chain, per partner and per website: swaps, volume, fee, creator share, partner share
+  and MemeWarzone net (fee minus creator minus partner), in native units and USD. The partner table also carries the
+  all-time earned / paid / sending / owed from the same ledger as the Partners page. Generation 8 widget swaps have
+  their own section: hook fee, creator share, MemeWarzone share (the protocol slice), partner share (graduated coins)
+  and net.
+- **Analytics > Swap widget** (`/analytics/widget`, needs finance.view; API `GET /api/admin/widget/usage`): loads,
+  quotes, builds, approvals, bonding trades and landed swaps per day, the funnel, and the split by chain, partner and
+  website.
+- Widget swaps are marked by the fee scanner (`finance_import_swap_fees.swap_source = 'widget'`, `widget_host`) only from
+  the moment `database/prod_apply_widget_analytics.sql` is applied and the API that records widget builds is live; each
+  scan looks back 7 days, so a build written a little after its swap was scanned is still matched. Swaps from before
+  that are still in the partner figures but not in the widget figures. Nothing in the partner split, the payouts or the
+  fingerprints changes.
+- Both Command Center views count the same landed swaps: the partner is the partner that is paid (the fee row's
+  `partner_id`; for gen-8 the `gen8_partner_fees` ledger), our own wallets and test coins are left out, and gen-8 is
+  read for the configured hook only. Usage counts (loads, quotes, builds) are indicative; money comes only from swaps
+  matched on chain.
