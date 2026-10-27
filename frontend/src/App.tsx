@@ -101,6 +101,9 @@ import { isEmbedPath } from "@/lib/embedChart";
 
 // Help Center content is large; load it only when /faq is opened.
 const HelpCenter = lazy(() => import("@/pages/HelpCenter"));
+// Unlisted investor page: its own chunk, rendered without the app shell (no wallets, sidebar or loading screen).
+const InvestorPitch = lazy(() => import("@/pages/investor-pitch/InvestorPitch"));
+const INVESTOR_PITCH_PATH = "/investorpitch";
 
 const queryClient = new QueryClient();
 
@@ -349,6 +352,14 @@ function AppRoot() {
 
   if (isEmbedPath(location.pathname)) {
     return <EmbedAppShell />;
+  }
+
+  if (location.pathname.replace(/\/+$/, "") === INVESTOR_PITCH_PATH) {
+    return (
+      <Suspense fallback={null}>
+        <InvestorPitch />
+      </Suspense>
+    );
   }
 
   return (

@@ -146,6 +146,7 @@ export const ROUTE_RULES = [
   { pattern: "/embed/**", kind: "noindex", title: "Embed" },
   { pattern: "/story/**", kind: "noindex", title: "Story" },
   { pattern: "/r/:code", kind: "noindex", title: "Referral" },
+  { pattern: "/investorpitch", kind: "noindex", title: "Revenue outlook" },
 
   // Index, per entity. Titles and descriptions are generic; the renderer passes real ones as overrides.
   {
