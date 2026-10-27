@@ -67,7 +67,7 @@ import { StoryEnterButton } from "@/components/story/StoryEnterButton";
 import { CoinTabs } from "@/components/token/CoinTabs";
 import { ChallengeCoinButton } from "@/components/arena/ChallengeCoinButton";
 import { cp } from "@/components/token/coinPageStyles";
-import { SwapWidgetEmbedLink } from "@/components/imports/SwapWidgetEmbedDialog";
+import { SwapWidgetEmbedLink, swapWidgetChainSupported } from "@/components/imports/SwapWidgetEmbedDialog";
 import { CoinLinkSwap, CoinPostsPanel, CoinTags } from "@/components/token/CoinPageSocial";
 import { TokenShareCardModal } from "@/components/token/TokenShareCardModal";
 import { useStory } from "@/lib/story/storyApi";
@@ -6149,6 +6149,12 @@ const toSeconds = (ts: number): number => {
           {gen8State ? (
             isXlUp ? (
               <section aria-label="Trade" className={`${cp.card} flex flex-col gap-4 p-4`} data-gen8-trade="true">
+                {swapWidgetChainSupported(chainIdForStorage) ? (
+                  <div className="flex items-center justify-between gap-2">
+                    <span className={cp.title}>Trade</span>
+                    <SwapWidgetEmbedLink chainId={Number(chainIdForStorage)} token={gen8State.token} symbol={tokenData.ticker} bonding />
+                  </div>
+                ) : null}
                 <Gen8TradePanel chainId={Number(chainIdForStorage)} state={gen8State} symbol={tokenData.ticker} onTraded={() => { gen8.refresh(); void unifiedMarket.refresh().catch(() => undefined); }} />
                 <Gen8CoinStatus chainId={Number(chainIdForStorage)} state={gen8State} explorerBase={getExplorerBase(chainIdForStorage)} nativeUsd={nativeUsd ?? null} />
                 <Gen8CreatorPanel chainId={Number(chainIdForStorage)} state={gen8State} symbol={tokenData.ticker} onDone={() => gen8.refresh()} />
@@ -6229,7 +6235,7 @@ const toSeconds = (ts: number): number => {
             <div className="mb-3.5 flex items-center justify-between gap-2">
               <span className={cp.title}>Trade</span>
               <div className="flex items-center gap-2">
-                {swapWidgetMint ? <SwapWidgetEmbedLink mint={swapWidgetMint} symbol={tokenData.ticker} bonding /> : null}
+                {swapWidgetMint ? <SwapWidgetEmbedLink chainId={SOLANA_CHAIN_ID} token={swapWidgetMint} symbol={tokenData.ticker} bonding /> : null}
                 <span className={`${cp.chip} font-mw-mono`}>{formatBnbFromWei(bnbBalanceWei)}</span>
               </div>
             </div>
