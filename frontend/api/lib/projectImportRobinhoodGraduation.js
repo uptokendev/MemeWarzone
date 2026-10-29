@@ -15,6 +15,13 @@ export const RH_POST_GRADUATION_HOOKS = Object.freeze({
   [getAddress("0xE5e702641Ea86F4ae6cC3cDaeD2B886f976Be044")]: "robinhood_launchpad_0x6319",
 });
 const RH_TOKEN_LAUNCHER = getAddress("0x0000FffFBE8efE702c8703aE3477FF5dE3d319C0");
+// The other side of a v3 pool must hold at least this much (raw units): 0.05 WETH or 150 USDG (Global Dollar, 6 dp),
+// read on mainnet 2026-10-29 (GOOD's pool 35.7 WETH, STASH's pool 828 USDG).
+export const RH_V3_QUOTE_MINIMUMS = Object.freeze({
+  [getAddress("0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73")]: 50_000_000_000_000_000n,
+  [getAddress("0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168")]: 150_000_000n,
+});
+const TRANSFER = id("Transfer(address,address,uint256)");
 const V3_POOL_CREATED = id("PoolCreated(address,address,uint24,int24,address)");
 const V4_INITIALIZE = id("Initialize(bytes32,address,address,uint24,int24,address,uint160,int24)");
 const V4_INIT_EVENT = new Interface(["event Initialize(bytes32 indexed id, address indexed currency0, address indexed currency1, uint24 fee, int24 tickSpacing, address hooks, uint160 sqrtPriceX96, int24 tick)"]);
@@ -27,6 +34,8 @@ const READS = new Interface([
   "function liquidity() view returns (uint128)",
   "function extsload(bytes32) view returns (bytes32)",
   "function getThreshold() view returns (uint256)",
+  "function token0() view returns (address)",
+  "function token1() view returns (address)",
 ]);
 // v4-core StateLibrary: pools mapping at slot 6, Pool.State.liquidity at offset 3.
 const V4_POOLS_SLOT = 6n;
@@ -47,11 +56,11 @@ async function read(provider, to, fn, args = []) {
 }
 
 // Indexed token positions: v3 PoolCreated(token0, token1, fee) -> topics 1-2; v4 Initialize(id, currency0, currency1) -> topics 2-3.
-async function logsForToken(provider, address, topic0, token, positions) {
+async function logsForToken(provider, address, topic0, token, positions, fromBlock = 0) {
   const latest = await provider.getBlockNumber();
   const topic = zeroPadValue(token, 32);
   const ranges = [];
-  for (let to = latest; to >= 0; to -= LOG_SPAN + 1) ranges.push([Math.max(0, to - LOG_SPAN), to]);
+  for (let to = latest; to >= fromBlock; to -= LOG_SPAN + 1) ranges.push([Math.max(fromBlock, to - LOG_SPAN), to]);
   const out = [];
   for (let i = 0; i < ranges.length; i += 4) {
     const batch = await Promise.all(ranges.slice(i, i + 4).flatMap(([fromBlock, toBlock]) => positions.map((position) => {
@@ -76,51 +85,82 @@ function v4LiquiditySlot(poolId) {
  */
 export async function robinhoodGraduationProof({ provider, token }) {
   const key = token.toLowerCase();
-  if (proofs.has(key)) return proofs.get(key);
+  const hit = proofs.get(key);
+  if (hit && (!hit.expiresAt || hit.expiresAt > Date.now())) return hit.proof;
+  const refuse = (proof) => remember(key, proof, REFUSAL_TTL_MS);
   try {
     const supply = await read(provider, token, "totalSupply");
-    if (!supply || supply <= 0n) return { proven: false, reason: "token_supply_unreadable" };
+    if (!supply || supply <= 0n) return refuse({ proven: false, reason: "token_supply_unreadable" });
     const share = (amount) => (amount ?? 0n) * 10_000n / supply;
-    // A launch contract (the token's deployer()/creator() contract: a bonding curve or auction) still holding supply.
+    const isContract = async (address) => { const code = await provider.getCode(address); return code !== "0x" && !/^0xef0100[0-9a-f]{40}$/i.test(code); };
+    // A launch contract still holding supply: the token's deployer()/creator() contract, or a contract that
+    // received the supply when it was minted (an unlisted launchpad's curve or auction). Safes, the
+    // launcher and the v4 PoolManager are not launch contracts.
+    const candidates = new Set();
     for (const method of ["deployer", "creator"]) {
       const launch = await read(provider, token, method);
-      if (!launch || launch === ZeroAddress || getAddress(launch) === RH_TOKEN_LAUNCHER) continue;
-      const code = await provider.getCode(launch);
-      if (code === "0x" || /^0xef0100[0-9a-f]{40}$/i.test(code)) continue;
-      if (await read(provider, launch, "getThreshold") !== null) continue; // a Safe, not a curve
-      if (share(await read(provider, token, "balanceOf", [launch])) >= LAUNCH_BLOCK_MIN_BPS) return { proven: false, reason: "launch_contract_holds_supply", launchContract: getAddress(launch) };
+      if (launch && launch !== ZeroAddress) candidates.add(getAddress(launch));
     }
-    // Uniswap v3: any pool of this token with liquidity that holds a real share of supply.
-    for (const log of await logsForToken(provider, RH_V3_FACTORY, V3_POOL_CREATED, token, [1, 2])) {
-      let pool;
-      try { pool = V3_CREATED_EVENT.parseLog(log).args.pool; } catch { continue; }
-      if ((await read(provider, pool, "liquidity") ?? 0n) > 0n && share(await read(provider, token, "balanceOf", [pool])) >= POOL_PROOF_MIN_BPS) {
-        return remember(key, { proven: true, method: "robinhood_uniswap_v3", pool: getAddress(pool) });
+    const mints = (await logsForToken(provider, token, TRANSFER, ZeroAddress, [1])).sort((a, b) => Number(a.blockNumber) - Number(b.blockNumber));
+    // No pool can exist before the token: search pool events from its first mint on (one range for recent coins).
+    const createdAt = mints.length ? Number(mints[0].blockNumber) : 0;
+    for (const log of mints.slice(0, 10)) {
+      const to = log.topics?.[2] ? getAddress(`0x${String(log.topics[2]).slice(26)}`) : null;
+      if (to && to !== ZeroAddress) candidates.add(to);
+    }
+    for (const launch of candidates) {
+      if (launch === RH_TOKEN_LAUNCHER || launch === getAddress(RH_V4_POOL_MANAGER) || !(await isContract(launch))) continue;
+      if (await read(provider, launch, "getThreshold") !== null) continue; // a Safe, not a curve
+      if (await read(provider, launch, "token0") !== null) continue; // a v2/v3 pool: market, checked below
+      if (share(await read(provider, token, "balanceOf", [launch])) >= LAUNCH_BLOCK_MIN_BPS) return refuse({ proven: false, reason: "launch_contract_holds_supply", launchContract: launch });
+    }
+    // Uniswap v4: list every pool of this token. Any pool with an unknown hook that has liquidity refuses
+    // (the hook may be a bonding curve, and a side pool must not outvote it).
+    const managerShare = share(await read(provider, token, "balanceOf", [RH_V4_POOL_MANAGER]));
+    const v4Pools = [];
+    if (managerShare > 0n) {
+      const events = (await logsForToken(provider, RH_V4_POOL_MANAGER, V4_INITIALIZE, token, [2, 3], createdAt))
+        .map((log) => { try { return V4_INIT_EVENT.parseLog(log).args; } catch { return null; } }).filter(Boolean);
+      // Liquidity of every pool, read in parallel batches of 8.
+      const liquidities = [];
+      for (let i = 0; i < events.length; i += 8) {
+        liquidities.push(...await Promise.all(events.slice(i, i + 8).map(async (event) => BigInt((await read(provider, RH_V4_POOL_MANAGER, "extsload", [v4LiquiditySlot(event.id)])) ?? "0x0") & ((1n << 128n) - 1n))));
+      }
+      for (const [i, event] of events.entries()) {
+        if (liquidities[i] === 0n) continue;
+        const hooks = getAddress(event.hooks);
+        const venue = hooks === ZeroAddress ? "uniswap_v4" : RH_POST_GRADUATION_HOOKS[hooks];
+        if (!venue) return refuse({ proven: false, reason: "unknown_hook_pool_has_liquidity", pool: event.id, hooks });
+        v4Pools.push({ pool: event.id, hooks, venue });
+      }
+    }
+    // Uniswap v3: a pool with liquidity, a real share of supply, and a funded WETH/USDG side.
+    for (const log of await logsForToken(provider, RH_V3_FACTORY, V3_POOL_CREATED, token, [1, 2], createdAt)) {
+      let event;
+      try { event = V3_CREATED_EVENT.parseLog(log).args; } catch { continue; }
+      const quote = getAddress(event.token0) === getAddress(token) ? getAddress(event.token1) : getAddress(event.token0);
+      const minimum = RH_V3_QUOTE_MINIMUMS[quote];
+      if (minimum === undefined) continue;
+      if ((await read(provider, event.pool, "liquidity") ?? 0n) > 0n
+        && share(await read(provider, token, "balanceOf", [event.pool])) >= POOL_PROOF_MIN_BPS
+        && (await read(provider, quote, "balanceOf", [event.pool]) ?? 0n) >= minimum) {
+        return remember(key, { proven: true, method: "robinhood_uniswap_v3", pool: getAddress(event.pool), quote });
       }
     }
     // Uniswap v4: a hook-less or known post-graduation pool with liquidity, and the PoolManager holding supply.
-    const managerShare = share(await read(provider, token, "balanceOf", [RH_V4_POOL_MANAGER]));
-    if (managerShare >= POOL_PROOF_MIN_BPS) {
-      for (const log of await logsForToken(provider, RH_V4_POOL_MANAGER, V4_INITIALIZE, token, [2, 3])) {
-        let event;
-        try { event = V4_INIT_EVENT.parseLog(log); } catch { continue; }
-        const hooks = getAddress(event.args.hooks);
-        const venue = hooks === ZeroAddress ? "uniswap_v4" : RH_POST_GRADUATION_HOOKS[hooks];
-        if (!venue) continue;
-        const liquidity = BigInt((await read(provider, RH_V4_POOL_MANAGER, "extsload", [v4LiquiditySlot(event.args.id)])) ?? "0x0") & ((1n << 128n) - 1n);
-        if (liquidity > 0n) return remember(key, { proven: true, method: "robinhood_uniswap_v4", pool: event.args.id, hooks, venue });
-      }
-    }
-    return { proven: false, reason: "no_verified_dex_pool" };
+    if (managerShare >= POOL_PROOF_MIN_BPS && v4Pools.length) return remember(key, { proven: true, method: "robinhood_uniswap_v4", ...v4Pools[0] });
+    return refuse({ proven: false, reason: "no_verified_dex_pool" });
   } catch (error) {
     if (error?.code === "PROJECT_IMPORT_RPC_UNAVAILABLE") throw error;
     throw rpcError("Robinhood market check is temporarily unavailable. Please retry.", error);
   }
 }
 
-function remember(key, proof) {
+// Passes are kept for the process; refusals for 5 minutes so repeated requests do not repeat ~44 getLogs.
+const REFUSAL_TTL_MS = 5 * 60 * 1000;
+function remember(key, proof, ttlMs = 0) {
   if (proofs.size >= 2000) proofs.delete(proofs.keys().next().value);
-  proofs.set(key, proof);
+  proofs.set(key, { proof, expiresAt: ttlMs ? Date.now() + ttlMs : 0 });
   return proof;
 }
 

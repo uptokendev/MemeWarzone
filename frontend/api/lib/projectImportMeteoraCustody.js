@@ -31,6 +31,29 @@ export const BONDING_POOL_PROGRAMS = Object.freeze({
 // A pool counts when it holds at least 0.1% of supply; a bonding vault blocks from 1% (left-over dust after migration does not).
 export const AMM_PROOF_MIN_BPS = 10n;
 export const BONDING_BLOCK_MIN_BPS = 100n;
+// Holders controlled by a program we do not know (a PDA, or an account owned by an unknown program) at 1%+ refuse:
+// an unlisted launchpad's bonding curve sits exactly there. Wallets (on-curve) and known lockers do not.
+export const UNKNOWN_PROGRAM_BLOCK_MIN_BPS = 100n;
+const SYSTEM_PROGRAM = "11111111111111111111111111111111";
+// Lockers and lending vaults hold supply without bonding it: neither proof nor refusal.
+export const NEUTRAL_PROGRAMS = Object.freeze({
+  strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m: "streamflow_lock",
+  LocpQgucEQHbqNABEYvBvwoxCPsSbG91A1QaQhQQqjn: "jupiter_lock",
+  "24Uqj9JCLxUeoC3hGfh5W3s9FM9uCHDS2SG3LYwBpyTi": "meteora_dynamic_vault",
+});
+// The other side of a pool must hold at least this much (raw units): 1 SOL, or 150 of a USD stablecoin.
+export const QUOTE_MINIMUMS = Object.freeze({
+  So11111111111111111111111111111111111111112: 1_000_000_000n,
+  EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v: 150_000_000n,
+  Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB: 150_000_000n,
+  USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB: 150_000_000n,
+});
+// Pools whose vaults sit under one program-wide authority: the vault is a PDA of (pool, mint).
+// Seeds checked on mainnet 2026-10-29 (SOAP's CPMM pool, HODL's DAMM v2 pool record both derived vaults).
+const AUTHORITY_POOL_PROGRAMS = Object.freeze({
+  GpMZbSM2GgvTKHJirzeGfMFoaZ8UR2X7F4v8vHTvxFbL: { program: "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C", vault: (pool, mint) => [Buffer.from("pool_vault"), pool.toBuffer(), mint.toBuffer()] },
+  HLnpSz9h2S4hiLQ43rnSD9XkcUThA7B8hQMKmDaiTLcC: { program: "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG", vault: (pool, mint) => [Buffer.from("token_vault"), mint.toBuffer(), pool.toBuffer()] },
+});
 const TOKEN_PROGRAMS = new Set(["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"]);
 
 function keyString(value) {
@@ -69,25 +92,92 @@ export async function readSolanaPoolHoldings({ connection, mint }) {
     // Owners that are not a known program-wide authority: read which program owns the owner account.
     const unknownOwners = [...new Set(tokenAccounts.map((entry) => entry.owner).filter((owner) => !AMM_VAULT_AUTHORITIES[owner] && !BONDING_VAULT_AUTHORITIES[owner]))];
     const ownerPrograms = new Map();
+    const ownerData = new Map();
     if (unknownOwners.length && typeof connection.getMultipleAccountsInfo === "function") {
       const infos = await connection.getMultipleAccountsInfo(unknownOwners.map((owner) => new PublicKey(owner)), "confirmed");
-      unknownOwners.forEach((owner, i) => ownerPrograms.set(owner, keyString(infos?.[i]?.owner)));
+      unknownOwners.forEach((owner, i) => { ownerPrograms.set(owner, keyString(infos?.[i]?.owner)); if (infos?.[i]?.data) ownerData.set(owner, Buffer.from(infos[i].data)); });
     }
     const holdings = tokenAccounts.map((entry) => {
       const program = ownerPrograms.get(entry.owner) || "";
       const amm = AMM_VAULT_AUTHORITIES[entry.owner] || AMM_POOL_PROGRAMS[program] || null;
       const bonding = BONDING_VAULT_AUTHORITIES[entry.owner] || BONDING_POOL_PROGRAMS[program] || null;
-      return { tokenAccount: entry.address, owner: entry.owner, ownerProgram: program || null, amount: entry.amount.toString(), kind: bonding || amm || null, role: bonding ? "bonding" : amm ? "amm" : null };
+      const neutral = NEUTRAL_PROGRAMS[program] || null;
+      let programControlled = false;
+      if (!amm && !bonding && !neutral) {
+        // A wallet is an on-curve key with no data or a System-owned account; anything else is a program's.
+        let onCurve = false;
+        try { onCurve = PublicKey.isOnCurve(new PublicKey(entry.owner).toBytes()); } catch {}
+        programControlled = !onCurve || Boolean(program && program !== SYSTEM_PROGRAM);
+      }
+      return { tokenAccount: entry.address, owner: entry.owner, ownerProgram: program || null, ownerData: ownerData.get(entry.owner) || null, amount: entry.amount.toString(), kind: bonding || amm || neutral || (programControlled ? "unknown_program" : null), role: bonding ? "bonding" : amm ? "amm" : neutral ? "neutral" : programControlled ? "unknown_program" : null };
     });
     const bps = (role) => (totalSupply > 0n ? holdings.filter((h) => h.role === role).reduce((sum, h) => sum + BigInt(h.amount), 0n) * 10_000n / totalSupply : 0n);
     const custody = holdings
       .filter((h) => (h.role === "amm" || METEORA_POOL_AUTHORITIES[h.owner]))
       .map((h) => ({ verified: true, kind: METEORA_POOL_AUTHORITIES[h.owner] || h.kind, chainId: 101, mint: mintAddress, tokenAccount: h.tokenAccount, owner: h.owner }));
-    return { custody, ammBps: bps("amm"), bondingBps: bps("bonding"), holdings };
+    return { custody, ammBps: bps("amm"), bondingBps: bps("bonding"), unknownProgramBps: bps("unknown_program"), holdings, totalSupply };
   } catch (error) {
     console.warn("[projectImportMeteoraCustody] Solana pool lookup failed", { mint: String(mint), error: String(error?.message || error) });
     return { error: "pool_lookup_unavailable" };
   }
+}
+
+async function tokenAccounts(connection, addresses) {
+  if (!addresses.length) return [];
+  const parsed = await connection.getMultipleParsedAccounts(addresses.map((a) => new PublicKey(a)), { commitment: "confirmed" });
+  return (parsed?.value || []).map((account, i) => {
+    const info = account?.data?.parsed?.info;
+    return account && TOKEN_PROGRAMS.has(keyString(account.owner)) && account?.data?.parsed?.type === "account" ? { address: addresses[i], mint: String(info.mint), owner: String(info.owner), amount: BigInt(String(info.tokenAmount?.amount ?? "0")) } : null;
+  }).filter(Boolean);
+}
+
+/**
+ * The exchange vaults among `holdings` that belong to a real pool for this mint with a real quote side:
+ * - per-pool vaults (PumpSwap, Orca, Raydium CLMM, Meteora DLMM): the vault's owner IS the pool account,
+ *   owned by that program, and its data records both this vault and this mint; the quote vault is
+ *   another token account of the pool that the pool data also records;
+ * - authority vaults (Raydium CPMM, Meteora DAMM v2): the pool comes from `poolPointers` (DexScreener
+ *   pair addresses, a pointer only); the pool must be owned by that program, record this mint, and the
+ *   held vault must be the PDA it derives for (pool, mint); the quote vault is derived the same way.
+ * A vault counts only with >= 0.1% of supply and a quote side over QUOTE_MINIMUMS. Raydium AMM v4 vaults
+ * are not verified here and never count on their own.
+ */
+export async function verifySolanaPools({ connection, mint, holdings, poolPointers = [] }) {
+  const mintKey = new PublicKey(mint);
+  const minBase = (holdings.totalSupply || 0n) * AMM_PROOF_MIN_BPS / 10_000n;
+  const verified = [];
+  const quoteOk = (account) => account && QUOTE_MINIMUMS[account.mint] !== undefined && account.amount >= QUOTE_MINIMUMS[account.mint];
+  for (const h of holdings.holdings.filter((x) => x.role === "amm" && AMM_POOL_PROGRAMS[x.ownerProgram || ""] && BigInt(x.amount) >= minBase && minBase > 0n)) {
+    const data = h.ownerData;
+    if (!data || data.indexOf(new PublicKey(h.tokenAccount).toBuffer()) < 0 || data.indexOf(mintKey.toBuffer()) < 0) continue;
+    const owned = await connection.getParsedTokenAccountsByOwner(new PublicKey(h.owner), { programId: new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA") }, "confirmed");
+    const quote = (owned?.value || []).map((a) => ({ address: keyString(a.pubkey), mint: String(a.account?.data?.parsed?.info?.mint || ""), amount: BigInt(String(a.account?.data?.parsed?.info?.tokenAmount?.amount ?? "0")) }))
+      .find((a) => a.mint !== mintKey.toBase58() && data.indexOf(new PublicKey(a.address).toBuffer()) >= 0 && quoteOk(a));
+    if (quote) verified.push({ kind: h.kind, pool: h.owner, vault: h.tokenAccount, quoteMint: quote.mint, quoteAmount: quote.amount.toString() });
+  }
+  const authorityVaults = holdings.holdings.filter((x) => x.role === "amm" && AUTHORITY_POOL_PROGRAMS[x.owner] && BigInt(x.amount) >= minBase && minBase > 0n);
+  if (authorityVaults.length && poolPointers.length) {
+    const pools = await connection.getMultipleAccountsInfo(poolPointers.map((p) => new PublicKey(p.pool)), "confirmed");
+    for (const [i, pointer] of poolPointers.entries()) {
+      const info = pools?.[i];
+      if (!info?.data) continue;
+      const data = Buffer.from(info.data);
+      const poolKey = new PublicKey(pointer.pool);
+      for (const h of authorityVaults) {
+        const spec = AUTHORITY_POOL_PROGRAMS[h.owner];
+        if (keyString(info.owner) !== spec.program || data.indexOf(mintKey.toBuffer()) < 0) continue;
+        const base = PublicKey.findProgramAddressSync(spec.vault(poolKey, mintKey), new PublicKey(spec.program))[0];
+        if (base.toBase58() !== h.tokenAccount || data.indexOf(base.toBuffer()) < 0) continue;
+        const quoteMint = String(pointer.quoteMint || "");
+        if (QUOTE_MINIMUMS[quoteMint] === undefined) continue;
+        const quoteVault = PublicKey.findProgramAddressSync(spec.vault(poolKey, new PublicKey(quoteMint)), new PublicKey(spec.program))[0];
+        if (data.indexOf(quoteVault.toBuffer()) < 0) continue;
+        const [quote] = await tokenAccounts(connection, [quoteVault.toBase58()]);
+        if (quote && quote.mint === quoteMint && quote.owner === h.owner && quoteOk(quote)) verified.push({ kind: h.kind, pool: pointer.pool, vault: h.tokenAccount, quoteMint, quoteAmount: quote.amount.toString() });
+      }
+    }
+  }
+  return verified;
 }
 
 /**
@@ -123,7 +213,7 @@ export async function readDbcPoolForMint({ connection, mint }) {
  * A DBC pool that has not migrated is still bonding. If the DBC lookup fails while a DBC vault holds
  * supply, the stage is unknown and the lookup throws PROJECT_IMPORT_RPC_UNAVAILABLE.
  */
-export async function readMeteoraImportEvidence({ connection, mint, dbcLookup = readDbcPoolForMint }) {
+export async function readMeteoraImportEvidence({ connection, mint, dbcLookup = readDbcPoolForMint, poolPointers = null }) {
   const holdings = await readSolanaPoolHoldings({ connection, mint });
   const custody = holdings.error ? [] : holdings.custody;
   let dbcPool = null;
@@ -137,17 +227,35 @@ export async function readMeteoraImportEvidence({ connection, mint, dbcLookup = 
   const market = dbcPool && !dbcPool.isMigrated
     ? { phase: "bonding", verified: true, platform: "meteora_dbc", reason: "external_bonding", poolAddress: dbcPool.pool }
     : { phase: "unknown", verified: false, reason: "launch_platform_unverified" };
-  return { custody, dbcPool, market, graduationProof: solanaGraduationProof({ holdings, dbcPool }) };
+  let verifiedPools = [];
+  if (!holdings.error && (holdings.holdings || []).some((h) => h.role === "amm")) {
+    try { verifiedPools = await verifySolanaPools({ connection, mint, holdings, poolPointers: poolPointers || await dexScreenerSolanaPools(mint) }); }
+    catch (error) { return { custody, dbcPool, market, graduationProof: { proven: false, reason: "pool_lookup_unavailable", retryable: true } }; }
+  }
+  return { custody, dbcPool, market, graduationProof: solanaGraduationProof({ holdings, dbcPool, verifiedPools }) };
 }
 
-/** Graduation proof for a non-Pump Solana token from its pool holdings and DBC state. */
-export function solanaGraduationProof({ holdings, dbcPool }) {
+/** DexScreener's pool addresses for a Solana mint: a pointer to pools whose identity is then checked on chain. */
+async function dexScreenerSolanaPools(mint, fetchImpl = fetch) {
+  try {
+    const response = await fetchImpl(`https://api.dexscreener.com/tokens/v1/solana/${encodeURIComponent(mint)}`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(7000) });
+    const pairs = response.ok ? await response.json() : [];
+    return (Array.isArray(pairs) ? pairs : []).filter((p) => p?.baseToken?.address === mint && p?.pairAddress).slice(0, 10).map((p) => ({ pool: String(p.pairAddress), quoteMint: String(p.quoteToken?.address || "") }));
+  } catch { return []; }
+}
+
+/** Graduation proof for a non-Pump Solana token from its pool holdings, verified pools and DBC state. */
+export function solanaGraduationProof({ holdings, dbcPool, verifiedPools = [] }) {
   if (dbcPool && !dbcPool.isMigrated) return { proven: false, reason: "meteora_dbc_bonding", pool: dbcPool.pool };
   if (!holdings || holdings.error) return { proven: false, reason: "pool_lookup_unavailable", retryable: true };
-  const bonding = holdings.holdings.filter((h) => h.role === "bonding" && BigInt(h.amount) > 0n);
-  if (holdings.bondingBps >= BONDING_BLOCK_MIN_BPS) return { proven: false, reason: "bonding_vault_holds_supply", kinds: [...new Set(bonding.map((h) => h.kind))], bondingBps: Number(holdings.bondingBps) };
+  if (!holdings.totalSupply) return { proven: false, reason: "supply_unreadable", retryable: true };
+  // Left-over base tokens in a migrated DBC pool's vault are not bonding supply.
+  const bonding = holdings.holdings.filter((h) => h.role === "bonding" && BigInt(h.amount) > 0n && !(dbcPool?.isMigrated && h.kind === "meteora_dbc_curve"));
+  const bondingBps = bonding.reduce((sum, h) => sum + BigInt(h.amount), 0n) * 10_000n / (holdings.totalSupply || 1n);
+  if (bondingBps >= BONDING_BLOCK_MIN_BPS) return { proven: false, reason: "bonding_vault_holds_supply", kinds: [...new Set(bonding.map((h) => h.kind))], bondingBps: Number(bondingBps) };
+  const unknownBps = holdings.holdings.filter((h) => h.role === "unknown_program").reduce((sum, h) => sum + BigInt(h.amount), 0n) * 10_000n / holdings.totalSupply;
+  if (unknownBps >= UNKNOWN_PROGRAM_BLOCK_MIN_BPS) return { proven: false, reason: "unknown_program_holds_supply", owners: holdings.holdings.filter((h) => h.role === "unknown_program").map((h) => h.owner).slice(0, 5), unknownBps: Number(unknownBps) };
   if (dbcPool?.isMigrated) return { proven: true, method: "meteora_dbc_migrated", pool: dbcPool.pool };
-  const pools = holdings.holdings.filter((h) => h.role === "amm");
-  if (holdings.ammBps >= AMM_PROOF_MIN_BPS) return { proven: true, method: "solana_amm_pool", kinds: [...new Set(pools.map((h) => h.kind))], ammBps: Number(holdings.ammBps) };
+  if (verifiedPools.length) return { proven: true, method: "solana_amm_pool", pools: verifiedPools.slice(0, 3) };
   return { proven: false, reason: "no_verified_dex_pool" };
 }

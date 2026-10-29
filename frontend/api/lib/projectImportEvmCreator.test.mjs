@@ -96,7 +96,8 @@ test('a live owner always wins, wallet or contract, without any launchpad lookup
 test('revert detection: only a node revert or empty answer means "no such method" (ethers maps rate limits to CALL_EXCEPTION too)', () => {
   assert.equal(isRevertError(revert()), true);
   assert.equal(isRevertError(rateLimited()), false);
-  assert.equal(isRevertError(Object.assign(new Error('could not decode result data'), { code: 'BAD_DATA' })), true);
+  assert.equal(isRevertError(Object.assign(new Error('could not decode result data'), { code: 'BAD_DATA', value: '0x' })), true);
+  assert.equal(isRevertError(Object.assign(new Error('missing response for request'), { code: 'BAD_DATA', value: [] })), false, 'a load balancer answering without a result is an RPC failure');
   assert.equal(isRevertError(Object.assign(new Error('missing revert data'), { code: 'CALL_EXCEPTION', info: { error: { code: -32000, message: 'header not found' } } })), false);
   assert.equal(isRevertError(new Error('socket hang up')), false);
 });

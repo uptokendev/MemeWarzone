@@ -1,13 +1,14 @@
-import { JsonRpcProvider, FetchRequest } from "ethers";
+import { Interface, JsonRpcProvider, FetchRequest } from "ethers";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { getTokenMetadata, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { resolveProjectOwnershipBnb } from "./projectOwnershipResolveBnb.js";
 import { resolveProjectOwnershipEvm } from "./projectOwnershipResolveEvm.js";
 import { resolveProjectOwnershipSolana } from "./projectOwnershipResolveSolana.js";
-import { assertSolanaImportMainnet, pumpBondingCurveAddress, pumpGraduationProof, resolveSolanaProjectAuthority } from "./projectSolanaProjectAuthority.js";
+import { PUMP_PROGRAM_ID, assertSolanaImportMainnet, pumpBondingCurveAddress, pumpGraduationProof, resolveSolanaProjectAuthority } from "./projectSolanaProjectAuthority.js";
 import { readPumpImportEvidence } from "./projectImportPumpEvidence.js";
 import { readMeteoraImportEvidence, readMeteoraPoolCustody } from "./projectImportMeteoraCustody.js";
 import { readBnbImportMarket } from "./projectImportBnbMarket.js";
+import { isRevertError } from "./projectImportEvmCreator.js";
 import { registerProjectImportResolver } from "./projectImportResolvers.js";
 
 const BNB_CHAIN_ID = 56;
@@ -67,14 +68,49 @@ export function setProjectImportReadClientsForTest({ bnb = null, solana = null, 
 }
 
 /**
- * BNB: the market check proves graduation when it verified a post-launch market: a graduated four.meme
- * coin (postgrad) or a PancakeSwap pool with reserves for a coin no known launchpad holds (dex_market).
+ * BNB: the market check proves graduation when it verified a post-launch market.
+ * - postgrad: four.meme's own registry says the coin graduated and a PancakeSwap pool is funded.
+ * - dex_market (no known launchpad holds the coin): only with the pool holding >= 0.1% of supply, its
+ *   WBNB/USDT/USDC side holding >= 0.5 BNB / 150 USD, and no launch contract (the token's owner(),
+ *   deployer() or creator() contract, not a Safe or a pool) still holding >= 1% (review 2026-10-29).
  * four.meme and flap.sh coins that still bond come back as bonding and are never proven.
  */
-export function bnbGraduationProof(marketEvidence) {
+export const BNB_DEX_QUOTE_MINIMUMS = Object.freeze({
+  "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c": 500_000_000_000_000_000n,
+  "0x55d398326f99059ff775485246999027b3197955": 150_000_000_000_000_000_000n,
+  "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d": 150_000_000_000_000_000_000n,
+});
+const BNB_LAUNCH_READS = new Interface(["function owner() view returns (address)", "function getOwner() view returns (address)", "function deployer() view returns (address)", "function creator() view returns (address)", "function balanceOf(address) view returns (uint256)", "function getThreshold() view returns (uint256)", "function token0() view returns (address)"]);
+async function bnbRead(provider, to, fn, args = []) {
+  try { return BNB_LAUNCH_READS.decodeFunctionResult(fn, await provider.call({ to, data: BNB_LAUNCH_READS.encodeFunctionData(fn, args) }))[0]; }
+  catch (error) {
+    if (isRevertError(error)) return null;
+    throw Object.assign(new Error("BNB market check is temporarily unavailable. Please retry."), { code: "PROJECT_IMPORT_RPC_UNAVAILABLE", cause: error });
+  }
+}
+export async function bnbGraduationProof(marketEvidence, { provider = null, token = null, totalSupply = null } = {}) {
   const market = marketEvidence?.market;
-  if (market?.verified === true && ["postgrad", "dex_market"].includes(market.phase)) return { proven: true, method: `bnb_${market.phase}`, platform: marketEvidence?.launchEvidence?.platform ?? null, venue: market.venue ?? null };
-  return { proven: false, reason: market?.phase === "bonding" ? `${market.platform || "launchpad"}_bonding` : market?.reason || "market_not_verified", retryable: market?.reason === "launch_registry_unavailable" };
+  if (market?.verified === true && market.phase === "postgrad") return { proven: true, method: "bnb_postgrad", platform: marketEvidence?.launchEvidence?.platform ?? null, venue: market.venue ?? null };
+  if (market?.verified === true && market.phase === "dex_market") {
+    const supply = BigInt(String(totalSupply ?? "0"));
+    const minimum = BNB_DEX_QUOTE_MINIMUMS[String(market.quoteMint || "").toLowerCase()];
+    if (supply <= 0n) return { proven: false, reason: "token_supply_unreadable" };
+    if (BigInt(String(market.baseReserve ?? "0")) * 10_000n / supply < 10n) return { proven: false, reason: "pool_holds_too_little_supply" };
+    if (minimum === undefined || BigInt(String(market.quoteReserve ?? "0")) < minimum) return { proven: false, reason: "pool_quote_side_too_thin" };
+    if (provider && token) {
+      for (const method of ["owner", "getOwner", "deployer", "creator"]) {
+        const launch = await bnbRead(provider, token, method);
+        if (!launch || /^0x0{40}$/i.test(launch)) continue;
+        const code = await provider.getCode(launch);
+        if (code === "0x" || /^0xef0100[0-9a-f]{40}$/i.test(code)) continue;
+        if (await bnbRead(provider, launch, "getThreshold") !== null || await bnbRead(provider, launch, "token0") !== null) continue;
+        const held = await bnbRead(provider, token, "balanceOf", [launch]);
+        if ((held ?? 0n) * 10_000n / supply >= 100n) return { proven: false, reason: "launch_contract_holds_supply", launchContract: launch };
+      }
+    }
+    return { proven: true, method: "bnb_dex_market", platform: marketEvidence?.launchEvidence?.platform ?? null, venue: market.venue ?? null };
+  }
+  return { proven: false, reason: market?.phase === "bonding" ? `${market.platform || "launchpad"}_bonding` : market?.reason || "market_not_verified", retryable: ["launch_registry_unavailable", "market_checks_unavailable", "bnb_market_rpc_unavailable"].includes(market?.reason) };
 }
 
 export async function resolveBnbProjectImport({ chainId, tokenAddress, signedWallet, registrationOnly = false, creationTx = null }) {
@@ -91,7 +127,7 @@ export async function resolveBnbProjectImport({ chainId, tokenAddress, signedWal
   const marketEvidence = await readBnbImportMarket({ provider, tokenAddress: raw.contractAddress });
   return {
     ...marketEvidence,
-    graduationProof: bnbGraduationProof(marketEvidence),
+    graduationProof: await bnbGraduationProof(marketEvidence, { provider, token: raw.contractAddress, totalSupply: raw.token?.totalSupply }),
     chainId: BNB_CHAIN_ID,
     tokenAddress: raw.contractAddress,
     name: raw.token?.name ?? null,
@@ -193,8 +229,8 @@ async function resolveSolanaRegistrationMarket(connection, raw) {
   } catch {
     throw Object.assign(new Error("Solana market-stage lookup is temporarily unavailable. Please retry."), { code: "PROJECT_IMPORT_RPC_UNAVAILABLE" });
   }
-  if (!account) {
-    // Not a Pump.fun token: Meteora pool vaults are market inventory, not a holder, and a DBC pool
+  if (!account || !account.owner?.equals?.(PUMP_PROGRAM_ID)) {
+    // Not a Pump.fun token (a lamport-funded, non-Pump account at the PDA does not count): Meteora pool vaults are market inventory, not a holder, and a DBC pool
     // that has not migrated is still bonding.
     const meteora = await readMeteoraImportEvidence({ connection, mint: raw.mint });
     return {

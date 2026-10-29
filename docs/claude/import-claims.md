@@ -74,17 +74,26 @@ Default-deny for NEW projects (`requireProvenGraduation` in `projectImports.js`:
 `/manual-claim` when it would create the project). Existing projects and claims on them are not affected.
 `resolveProjectToken` carries `graduationProof` { proven, method | reason, retryable }.
 - Solana Pump.fun: the curve's `complete` byte (offset 48, every layout incl. old 49-byte curves).
-- Solana other (`readSolanaPoolHoldings` + `solanaGraduationProof`): largest token accounts classified on chain.
-  Exchange vaults: authorities Raydium CPMM `GpMZbSM2…`, AMM v4 `5Q544fKr…`, Meteora DAMM v2 `HLnpSz…`; per-pool owners
-  of PumpSwap, Orca, Raydium CLMM, Meteora DLMM programs. Bonding vaults: DBC `FhVo3…`, LaunchLab `WLHv2UAZ…`
-  (LetsBonk), Pump curve. Proven: exchange vaults >= 0.1% of supply and bonding vaults < 1%, or DBC migrated.
-  Needs getTokenLargestAccounts (Helius; the public RPC refuses it).
-- BNB: market check verified `postgrad` (four.meme graduated) or `dex_market` (PancakeSwap pool, no known launchpad
-  holding it). four.meme / flap.sh bonding are never proven. Residual: an unknown launchpad's bonding coin with a side pool.
-- Robinhood (`projectImportRobinhoodGraduation.js`): token's deployer()/creator() contract (curve/auction, not a Safe or
-  the launcher) holding >= 1% blocks; then a Uniswap v3 pool (factory `0x1f7d7550…` PoolCreated, token in topic 1 or 2)
-  with liquidity and >= 0.1% of supply, or a v4 pool (PoolManager `0x8366a39C…` Initialize, token in topic 2 or 3) that is
-  hook-less or has the 0x6319 post-graduation hook `0xE5e70264…`, with liquidity (extsload slot keccak(id,6)+3) and the
-  PoolManager holding >= 0.1%. Unknown hooks never prove (a hook can be a curve). 10-23 s uncached on the public RPC.
+- Solana other (`readMeteoraImportEvidence` → `readSolanaPoolHoldings` + `verifySolanaPools` + `solanaGraduationProof`),
+  hardened after review 2026-10-29 (owner fields are free, so "held by an AMM authority" alone proved nothing):
+  refuse when bonding vaults (DBC unless migrated, LaunchLab `WLHv2UAZ…`) or any program-controlled holder we do not
+  know (off-curve PDA, or owned by an unknown program; Streamflow/Jupiter Lock/Meteora vault are neutral) hold >= 1%.
+  Proven only by a real pool: per-pool vaults (PumpSwap/Orca/CLMM/DLMM) whose owner pool account (owned by that
+  program) records the vault and the mint; authority vaults (CPMM seeds ["pool_vault", pool, mint], DAMM v2
+  ["token_vault", mint, pool], checked on SOAP/HODL) of a DexScreener-pointed pool that records both. Vault >= 0.1% of
+  supply and the quote vault >= 1 SOL / 150 USDC|USDT|USD1. Raydium AMM v4 vaults never prove on their own.
+  Pump branch only when the curve PDA is owned by Pump.fun (a lamport-funded PDA must not turn a token into "Pump").
+- BNB: `bnbGraduationProof` (async). `postgrad` (four.meme registry) is proven. `dex_market` needs pool base reserve
+  >= 0.1% of supply, WBNB >= 0.5 / USDT|USDC >= 150 on the quote side, and no owner()/deployer()/creator() contract
+  (not a Safe or pool) holding >= 1%.
+- Robinhood: refuse when a contract that is deployer()/creator() OR received minted supply (first 10 mints) still
+  holds >= 1% (not the launcher, PoolManager, a Safe or a pool), or when ANY v4 pool with an unknown hook has
+  liquidity. Proven by a v3 pool with liquidity, >= 0.1% of supply and >= 0.05 WETH / 150 USDG (`0x5fc5360D…`, 6 dp),
+  or a hook-less / known-hook v4 pool with liquidity while the PoolManager holds >= 0.1%. Pool events are searched
+  from the first mint on; v4 liquidity read in parallel: 3-8 s on the public RPC.
+- Refusals are cached 5 min (Robinhood); POST / and /manual-claim are limited to 20/min per IP; a resolver or market
+  outage answers "retry", never "not graduated". `isRevertError`: BAD_DATA counts only with value "0x".
+- Known limits: a launchpad we do not list, whose curve sits in a wallet-like address, plus a funded side pool, still
+  passes. Non-Pump Solana coins without a DexScreener pool pointer (e.g. NOISE's CPMM vault) cannot be proven.
 - Audit 2026-10-29 of the 22 visible imports (`frontend/scripts/audit-import-graduation.mjs`): 21 graduated;
   Glen `FcBb7avR…pump` (the retained "Everglen" page) is still bonding on Pump.fun (17.78 SOL in the curve). Left as is.

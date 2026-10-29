@@ -99,7 +99,9 @@ export function bloomContains(bloom, value) {
  * BNB and Robinhood nodes both answer a missing method that way (checked 2026-10-29).
  */
 export function isRevertError(error) {
-  if (String(error?.code || "") === "BAD_DATA") return true;
+  // An empty answer ("0x": no such method on a contract with a fallback, or an EOA). Other BAD_DATA,
+  // e.g. "missing response for request" from a load balancer, is an RPC failure (same rule as ethers).
+  if (String(error?.code || "") === "BAD_DATA") return error?.value === "0x";
   const inner = error?.info?.error || error?.error;
   const text = String(inner ? inner.message || "" : error?.message || "");
   if (/missing revert data/i.test(text)) return false;

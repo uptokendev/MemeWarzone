@@ -74,7 +74,9 @@ export async function resolveSolanaProjectAuthority({ connection, mint, mintAuth
   let account;
   try { account = await connection.getAccountInfo(curve, "confirmed"); }
   catch { throw rpcError("Solana project-wallet lookup is temporarily unavailable. Please retry."); }
-  if (account) {
+  // Only a curve account Pump.fun owns makes this a Pump token: anyone can fund the PDA address with
+  // lamports (a System-owned account), which must not turn a Raydium/Meteora token into "Pump, unreadable".
+  if (account && account.owner?.equals?.(PUMP_PROGRAM_ID)) {
     const projectAuthorityEvidence = await readPumpImportEvidence({ connection, mint, curveAccount: account, claimant, tokenProgram });
     const context = { projectAuthorityEvidence, market: projectAuthorityEvidence.market, custody: projectAuthorityEvidence.custody, graduationProof: pumpGraduationProof(projectAuthorityEvidence, account) };
     if (projectAuthorityEvidence.authorityError) return { ...unavailable(projectAuthorityEvidence.authorityError, curve.toBase58()), ...context };

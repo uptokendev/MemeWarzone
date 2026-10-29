@@ -20,6 +20,8 @@ import { robinhoodGraduationProof } from "./lib/projectImportRobinhoodGraduation
 
 // Each transfer-check start runs a full on-chain resolve: 10 per minute per IP.
 const allowTransferChallenge = widgetRateLimiter({ limit: 10 });
+// Creating an import or a manual claim runs the market and graduation checks: 20 per minute per IP.
+const allowImportCheck = widgetRateLimiter({ limit: 20 });
 import { resolveProjectToken } from "./lib/projectImportResolvers.js";
 import { scanProjectImportSecurity } from "./lib/projectImportRiskSecurity.js";
 import {
@@ -136,6 +138,8 @@ function requireResolvedOwner(resolved) {
  * refused. Projects that already exist (and claims on them) are not affected.
  */
 async function requireProvenGraduation(identity, resolved) {
+  // The resolver fell back after an RPC failure: that is "retry", never "not graduated".
+  if (resolved?.resolverError) throw Object.assign(new Error("We could not check this token's market right now. Please retry."), { code: "PROJECT_IMPORT_RPC_UNAVAILABLE" });
   const proof = identity.chainId === 4663
     ? await robinhoodGraduationProof({ provider: projectImportEvmProvider(4663), token: identity.tokenAddress })
     : resolved?.graduationProof || null;
@@ -476,6 +480,7 @@ export default async function projectImports(req, res) {
     }
 
     if (req.method === "POST" && path === "/") {
+      if (!allowImportCheck(clientIp(req))) return json(res, 429, { error: "Too many import checks; try again in a minute.", code: "RATE_LIMITED" });
       const body = await readJson(req);
       const identity = normalizeProjectIdentity(body.chainId, body.tokenAddress);
       const intentBody = { operation: "create" };
@@ -522,6 +527,7 @@ export default async function projectImports(req, res) {
     }
 
     if (req.method === "POST" && path === "/manual-claim") {
+      if (!allowImportCheck(clientIp(req))) return json(res, 429, { error: "Too many import checks; try again in a minute.", code: "RATE_LIMITED" });
       const body = await readJson(req);
       const identity = normalizeProjectIdentity(body.chainId, body.tokenAddress);
       let existing = await lookupProjectImport(pool, identity);
