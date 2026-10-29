@@ -1,4 +1,5 @@
-import { Interface, ZeroAddress, getAddress, isAddress } from "ethers";
+import { Interface, getAddress, isAddress } from "ethers";
+import { resolveEvmProjectAuthority } from "./projectImportEvmCreator.js";
 
 export const BNB_PROJECT_OWNERSHIP_CHAIN_ID = 56;
 export const AUTOMATIC_OWNERSHIP_UNAVAILABLE = "automatic ownership verification unavailable";
@@ -45,28 +46,9 @@ function unavailableOwnership(method = null) {
   };
 }
 
-async function resolveCurrentOwner(provider, contractAddress, signedConnectedWallet) {
-  const ownerRead = await optionalRead(provider, contractAddress, "owner");
-  let method = "owner";
-  let rawOwner = ownerRead.value;
-  if (!ownerRead.readable) {
-    const getOwnerRead = await optionalRead(provider, contractAddress, "getOwner");
-    if (!getOwnerRead.readable) return unavailableOwnership();
-    method = "getOwner";
-    rawOwner = getOwnerRead.value;
-  }
-  let currentOwner;
-  try { currentOwner = normalizeAddress(rawOwner, "current owner"); }
-  catch { return unavailableOwnership(method); }
-  if (currentOwner === getAddress(ZeroAddress)) return unavailableOwnership(method);
-  const verified = currentOwner === signedConnectedWallet;
-  return {
-    method,
-    currentOwner,
-    automaticOwnershipVerified: verified,
-    automaticOwnershipVerification: verified ? "verified" : "rejected",
-    message: verified ? "signed connected wallet matches current owner" : "signed connected wallet does not match current owner",
-  };
+// Owner, token deployer/creator wallet, then a verified launchpad creator: see projectImportEvmCreator.js.
+async function resolveCurrentOwner(provider, contractAddress, signedConnectedWallet, chainId) {
+  return resolveEvmProjectAuthority({ provider, chainId, token: contractAddress, signedWallet: signedConnectedWallet });
 }
 
 export async function resolveProjectOwnershipBnb({ provider, chainId, contractAddress, signedConnectedWallet, skipOwnership = false }) {
@@ -86,7 +68,7 @@ export async function resolveProjectOwnershipBnb({ provider, chainId, contractAd
   if (!symbolRead.readable || !decimalsRead.readable) return { ok: false, chainId: 56, contractAddress: tokenAddress, errorCode: "ERC20_READ_FAILED", error: "Required ERC20 symbol() or decimals() read is unavailable." };
   const decimals = Number(decimalsRead.value);
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 255) return { ok: false, chainId: 56, contractAddress: tokenAddress, errorCode: "ERC20_DECIMALS_INVALID", error: "ERC20 decimals() returned an invalid value." };
-  const ownership = skipOwnership ? unavailableOwnership() : await resolveCurrentOwner(provider, tokenAddress, signedWallet);
+  const ownership = skipOwnership ? unavailableOwnership() : await resolveCurrentOwner(provider, tokenAddress, signedWallet, BNB_PROJECT_OWNERSHIP_CHAIN_ID);
   return {
     ok: true,
     chainId: 56,

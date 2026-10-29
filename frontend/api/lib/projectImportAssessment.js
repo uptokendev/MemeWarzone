@@ -10,7 +10,11 @@ function sameAddress(a,b,chainId){return Number(chainId)===101?a===b:String(a).t
 // Wallets that created the token (Pump curve creator, Meteora DBC pool creator, Solana mint creator). Pump.fun and other
 // launchpads often create with a separate wallet, and a creator can hand a project on, so a
 // mismatch with one of these may still go to manual review. A live owner/mint authority may not.
-export const CREATOR_AUTHORITY_SOURCES = new Set(["pump_bonding_curve_creator", "meteora_dbc_creator", "mint_creator"]);
+export const CREATOR_AUTHORITY_SOURCES = new Set([
+  "pump_bonding_curve_creator", "meteora_dbc_creator", "mint_creator",
+  // EVM (2026-10-29): the token's own deployer()/creator() wallet and verified launchpad creators.
+  "evm_deployer", "evm_creator", "evm_fourmeme_creator", "evm_launchpad_creator",
+]);
 export function isCreatorAuthority(resolved) {
   return CREATOR_AUTHORITY_SOURCES.has(String(resolved?.authoritySource || ""));
 }

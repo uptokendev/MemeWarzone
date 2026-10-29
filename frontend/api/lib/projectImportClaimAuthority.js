@@ -42,6 +42,7 @@ export async function resolveProjectImportClaimAuthority({ chainId, tokenAddress
     currentAuthority: raw.ownership?.currentOwner ?? null,
     matchesConnected: Boolean(raw.ownership?.automaticOwnershipVerified),
     authoritySource: raw.ownership?.method ? `evm_${raw.ownership.method}` : null,
+    creationTx: raw.ownership?.evidence?.creationTx ?? null,
   };
 }
 

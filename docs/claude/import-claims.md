@@ -5,7 +5,21 @@ A claim sets `project_owner_wallet` on `arena_token_imports`; that wallet gets t
 
 ## Who counts as the owner (verified 2026-10-29)
 
-- EVM: live `owner()` -> `getOwner()` -> `deployer()` -> `creator()`; renounced owner falls back to deployer (founder 2026-10-09).
+- EVM (BNB 56, Robinhood 4663), `projectImportEvmCreator.js`, used by both resolvers and the claim dialog:
+  1. live `owner()`/`getOwner()` wins (wallet or contract), except four.meme TokenManager V2 `0x5c952063…`, which only
+     holds ownership while a coin bonds (graduated four.meme coins have a renounced owner);
+  2. the token's own `deployer()`/`creator()` when it is a wallet (founder 2026-10-09; that change sat uncommitted in
+     the main checkout until 2026-10-29). EIP-7702 EOAs (code `0xef0100` + address) count as wallets;
+  3. a known launchpad's creation record, verified on chain (founder 2026-10-29 "automate BNB and Robinhood"):
+     - four.meme: API `four.meme/meme-api/v1/private/token/get/v2` gives `userAddress` + `createDate` as a pointer;
+       proof = successful tx from that wallet to TokenManager V2 with a TokenManager `TokenCreate` naming this token and
+       creator == tx.from. Mainnet 2026-10-29: creation lands 2-30 s after createDate; scan window -10 s..+120 s,
+       max 240 blocks; 4-7 s uncached. BSC public RPCs refuse getLogs, hence the block scan.
+     - Robinhood launchpad router `0x6319141D…`: first mint tx sent to the router, router log topic0 `0x01937e4c…`,
+       topic1 = creator = tx.from, data word 0 = token.deployer(). First mint found with getLogs in 10M-block spans.
+  Not automated (X / manual review): Uniswap-style launcher `0x0000FffF…` (no creator event), Safe-deployed coins
+  (THC: Safe 3 owners threshold 1), BNB coins with a renounced owner outside four.meme. Blockscout is behind a
+  Cloudflare challenge, so explorer APIs are not used. A mismatch with a creator source may go to manual review.
 - Solana: Pump curve creator -> live on-curve mint authority -> **Meteora DBC pool creator** (`virtualPool.creator`)
   -> **mint creator** (founder 2026-10-29: "if the wallet that is connected created the mint it should auto approve").
   Mint creator = fee payer (signer, on-curve, not the mint) of the mint's oldest successful transaction, which must

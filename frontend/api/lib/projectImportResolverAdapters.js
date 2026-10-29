@@ -83,6 +83,8 @@ export async function resolveBnbProjectImport({ chainId, tokenAddress, signedWal
     automaticOwnershipAvailable: registrationOnly ? false : raw.ownership?.automaticOwnershipVerification !== "unavailable" && Boolean(raw.ownership?.currentOwner),
     currentAuthority: registrationOnly ? null : raw.ownership?.currentOwner ?? null,
     signedWalletMatchesAuthority: registrationOnly ? false : Boolean(raw.ownership?.automaticOwnershipVerified),
+    authoritySource: registrationOnly ? null : raw.ownership?.method ? `evm_${raw.ownership.method}` : null,
+    ...(registrationOnly || !raw.ownership?.evidence ? {} : { projectAuthorityEvidence: raw.ownership.evidence, authorityEvidenceAccount: raw.ownership.evidence.creationTx }),
   };
 }
 
@@ -98,6 +100,7 @@ export async function resolveRobinhoodProjectImport({ chainId, tokenAddress, sig
     automaticOwnershipAvailable:raw.ownership?.automaticOwnershipVerification!=="unavailable"&&Boolean(raw.ownership?.currentOwner),
     currentAuthority:raw.ownership?.currentOwner??null, signedWalletMatchesAuthority:Boolean(raw.ownership?.automaticOwnershipVerified),
     authoritySource:raw.ownership?.method?`evm_${raw.ownership.method}`:null,
+    ...(raw.ownership?.evidence?{projectAuthorityEvidence:raw.ownership.evidence,authorityEvidenceAccount:raw.ownership.evidence.creationTx}:{}),
     market:{phase:"import_only",verified:true,reason:"robinhood_read_only_project_import",venue:"Robinhood",liquidityAvailable:null,pricingValid:null,buyEnabled:null,sellEnabled:null,requiresLaunchReview:false},
   };
 }

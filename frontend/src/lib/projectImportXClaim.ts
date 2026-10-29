@@ -3,7 +3,7 @@ import type { ProjectImportItem } from "@/lib/projectImports";
 import type { WalletActionAuthPayload } from "@/lib/walletActionAuth";
 
 export type ProjectXIdentity = { available: true; username: string; xUrl: string; source: string; imageUrl?: string | null };
-export type ProjectEvmAuthority = { available: boolean; currentAuthority: string | null; matchesConnected: boolean; authoritySource?: string | null };
+export type ProjectEvmAuthority = { available: boolean; currentAuthority: string | null; matchesConnected: boolean; authoritySource?: string | null; creationTx?: string | null };
 
 async function readJson(res: Response) { return res.json().catch(() => ({})) as Promise<any>; }
 function requestError(res: Response, json: any, fallback: string) {
@@ -18,7 +18,7 @@ export async function resolveProjectEvmAuthority(item: ProjectImportItem, wallet
   });
   const json = await readJson(res);
   if (!res.ok) throw requestError(res, json, "Current owner wallet could not be resolved.");
-  return { available: Boolean(json?.available), currentAuthority: json?.currentAuthority || null, matchesConnected: Boolean(json?.matchesConnected), authoritySource: json?.authoritySource || null };
+  return { available: Boolean(json?.available), currentAuthority: json?.currentAuthority || null, matchesConnected: Boolean(json?.matchesConnected), authoritySource: json?.authoritySource || null, creationTx: json?.creationTx || null };
 }
 
 export async function resolveProjectXIdentity(item: ProjectImportItem): Promise<ProjectXIdentity> {
