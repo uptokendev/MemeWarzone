@@ -53,7 +53,20 @@ export async function getProjectOwnershipAudit(db, projectId) {
     SELECT id,admin_user_id,action,target_type,target_id,before,after,created_at
       FROM public.wm_admin_audit_log
      WHERE target_type='project_ownership_claim' AND target_id=$1
+       AND action NOT LIKE 'x\\_signin\\_%'
      ORDER BY created_at DESC LIMIT 100
+  `, [projectId]);
+  return result.rows || [];
+}
+
+// Claimant X sign-ins (written by the X OAuth callback) are read apart from operator decisions.
+export async function getProjectXSignins(db, projectId) {
+  const result = await db.query(`
+    SELECT id,action,after,created_at
+      FROM public.wm_admin_audit_log
+     WHERE target_type='project_ownership_claim' AND target_id=$1
+       AND action LIKE 'x\\_signin\\_%'
+     ORDER BY created_at DESC LIMIT 50
   `, [projectId]);
   return result.rows || [];
 }

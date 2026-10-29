@@ -32,7 +32,7 @@ export async function resolveProjectXIdentity(item: ProjectImportItem): Promise<
   return json as ProjectXIdentity;
 }
 
-export async function startProjectXClaim(item: ProjectImportItem, auth: WalletActionAuthPayload): Promise<{ authorizeUrl: string; expectedUsername: string; xUrl: string; source: string }> {
+export async function startProjectXClaim(item: ProjectImportItem, auth: WalletActionAuthPayload): Promise<{ authorizeUrl: string; expectedUsername: string | null; xUrl: string | null; source: string | null }> {
   const res = await apiFetch("/api/project-imports/image/x/start", {
     method: "POST",
     headers: { "content-type": "application/json" },

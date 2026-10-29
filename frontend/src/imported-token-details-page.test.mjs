@@ -106,15 +106,25 @@ test("Solana Claim Memecoin offers current project-authority proof before manual
   assert.match(claimDialog, /Recorded project authority:/);
 });
 
-test("manual review is the final ownership fallback and requires a contact X account", () => {
-  assert.match(claimDialog, /Last resort — manual review/);
+test("manual review is the final ownership fallback and requires a proven X sign-in", () => {
+  // 2026-10-29: the contact X is proven by an X sign-in, not typed; the API reads it from its own record.
+  assert.match(claimDialog, /Last resort: manual review/);
   assert.match(claimDialog, /REQUEST MANUAL REVIEW/);
-  assert.match(claimDialog, /SUBMIT MANUAL REVIEW/);
-  assert.match(claimDialog, /Contact X account/);
+  assert.match(claimDialog, /SIGN IN WITH X TO REQUEST MANUAL REVIEW/);
+  assert.match(claimDialog, /claim"\), handle = String\(returnParams\.get\("xHandle"\)/);
   assert.match(claimDialog, /project_import_manual_claim/);
-  assert.match(claimDialog, /requestProjectManualCheck/);
-  assert.match(claimDialog, /Contact X: \$\{contactX\}/);
+  assert.match(claimDialog, /requestProjectManualCheck\(\{chainId:item\.chainId,tokenAddress:item\.tokenAddress,auth\}\)/);
+  assert.doesNotMatch(claimDialog, /Contact X: \$\{contactX\}/);
   assert.match(claimDialog, /This does not verify ownership automatically/);
+});
+
+test("claim dialog stays open during manual review and offers the creator transfer check", () => {
+  assert.match(claimDialog, /item\.ownershipStatus === "ownership_pending" \|\| manualReviewPending/);
+  assert.match(claimDialog, /startPumpOwnershipChallenge\(/);
+  assert.match(claimDialog, /checkPumpOwnershipChallenge\(/);
+  assert.match(claimDialog, /project_import_pump_challenge_start/);
+  assert.match(claimDialog, /project_import_pump_challenge_check/);
+  assert.match(entry, /claimResult === "x_contact"/);
 });
 
 test("failed X OAuth reopens Claim Memecoin and explains account mismatch", () => {

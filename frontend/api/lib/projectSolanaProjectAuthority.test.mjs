@@ -13,7 +13,8 @@ function account(){return {owner:PUMP_PROGRAM_ID,executable:false,data:Buffer.fr
 function connection(extra={}){return {
   async getGenesisHash(){return SOLANA_MAINNET_GENESIS;},
   async getParsedAccountInfo(){return {value:{owner:TOKEN_PROGRAM_ID,data:{parsed:{type:'mint',info:{mintAuthority:null,decimals:6,supply:'1000000000000000'}}}}};},
-  async getAccountInfo(key){return key.toBase58()===curve?account():null;},...extra,
+  async getAccountInfo(key){return key.toBase58()===curve?account():null;},
+  async getSignaturesForAddress(){return [];},async getParsedTransaction(){return null;},...extra,
 };}
 test('canonical mint-derived Pump account identifies exact creator',()=>{assert.equal(pumpBondingCurveAddress(mint).toBase58(),curve);assert.equal(decodePumpProjectCreator(account()),creator);});
 for(const match of [true,false])test(`revoked mintAuthority still resolves authenticated creator; signer match=${match}`,async()=>{

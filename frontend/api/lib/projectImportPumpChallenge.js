@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { Connection, PublicKey } from "@solana/web3.js";
+import { isCreatorAuthority } from "./projectImportAssessment.js";
 
 export const PUMP_CHALLENGE_TTL_MS = 15 * 60 * 1000;
 export const PUMP_CHALLENGE_MIN_LAMPORTS = 10_000;
@@ -100,7 +101,7 @@ export async function verifyPumpOwnershipChallenge(pool, challenge, connection) 
 }
 
 export async function applyVerifiedPumpChallenge(pool, identity, signer, resolved) {
-  if (Number(identity.chainId) !== 101 || resolved?.authoritySource !== "pump_bonding_curve_creator" || !resolved?.currentAuthority || resolved?.signedWalletMatchesAuthority) return resolved;
+  if (Number(identity.chainId) !== 101 || !isCreatorAuthority(resolved) || !resolved?.currentAuthority || resolved?.signedWalletMatchesAuthority) return resolved;
   let result;
   try {
     result = await pool.query(`SELECT * FROM public.project_import_pump_challenges WHERE chain_id=101 AND token_address=$1 AND claimant_wallet=$2 AND creator_wallet=$3 AND verified_at IS NOT NULL AND cancelled_at IS NULL ORDER BY verified_at DESC LIMIT 1`, [identity.tokenAddress, signer, resolved.currentAuthority]);

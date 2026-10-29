@@ -2,9 +2,12 @@ import { pool } from "../server/db.js";
 import { json, readJson } from "../server/http.js";
 import { lookupProjectImport, normalizeProjectIdentity } from "./lib/projectImportCore.js";
 import { resolveProjectImportClaimAuthority } from "./lib/projectImportClaimAuthority.js";
+import { registerDefaultProjectImportResolvers } from "./lib/projectImportResolverAdapters.js";
 import { PROJECT_IMPORT_ACTIONS, requireProjectImportWalletAuth } from "./lib/projectImportSecurity.js";
 import { finishProjectXClaim, projectXClaimRedirect, resolveOfficialProjectX, resolveProjectImportImage, startProjectXClaim } from "./lib/projectImportXClaim.js";
 
+// The X callback checks the on-chain creator on Solana (onchainCreatorOverridesListedX).
+registerDefaultProjectImportResolvers();
 const COOKIE_PATH="/api/project-imports/image/x";
 const EVM_CHAINS=new Set([56,4663]);
 function enabled(){return /^(1|true|yes|on)$/i.test(String(process.env.ENABLE_PROJECT_IMPORTS||"").trim());}
@@ -47,7 +50,7 @@ export default async function projectImportXClaim(req,res){
   if(req.method==="POST"&&path==="/start"){
    const body=await readJson(req),identity=normalizeProjectIdentity(body.chainId,body.tokenAddress);const project=await lookupProjectImport(pool,identity);if(!project)throw Object.assign(new Error("Imported project not found"),{code:"PROJECT_NOT_FOUND"});const auth=await requireStartAuth(res,body,identity,project);if(!auth)return;const started=await startProjectXClaim({req,res,project,walletAddress:auth.walletAddress});normalizeCookiePath(res);return json(res,200,started);
   }
-  if(req.method==="GET"&&path==="/callback"){const url=new URL(String(req.originalUrl||req.url||""),"http://localhost"),state=String(url.searchParams.get("state")||""),code=String(url.searchParams.get("code")||""),denied=String(url.searchParams.get("error")||"");let{tokenAddress,chainId}=recoverNavigation(state);try{if(denied||!state||!code)throw Object.assign(new Error("X authorization was cancelled"),{code:"PROJECT_IMPORT_X_OAUTH_CANCELLED"});const result=await finishProjectXClaim({req,res,pool,state,code});clearCookie(res);tokenAddress=String(result.project.token_address||tokenAddress);chainId=Number(result.project.chain_id||chainId);return res.redirect(302,projectXClaimRedirect({ok:true,tokenAddress,chainId}));}catch(error){clearCookie(res);console.error("[api/projectImportXClaim callback]",error);return res.redirect(302,projectXClaimRedirect({ok:false,tokenAddress,chainId,errorCode:error?.code||"PROJECT_IMPORT_X_ERROR"}));}}
+  if(req.method==="GET"&&path==="/callback"){const url=new URL(String(req.originalUrl||req.url||""),"http://localhost"),state=String(url.searchParams.get("state")||""),code=String(url.searchParams.get("code")||""),denied=String(url.searchParams.get("error")||"");let{tokenAddress,chainId}=recoverNavigation(state);try{if(denied||!state||!code)throw Object.assign(new Error("X authorization was cancelled"),{code:"PROJECT_IMPORT_X_OAUTH_CANCELLED"});const result=await finishProjectXClaim({req,res,pool,state,code});clearCookie(res);tokenAddress=String(result.project?.token_address||tokenAddress);chainId=Number(result.project?.chain_id||chainId);return res.redirect(302,projectXClaimRedirect({ok:true,tokenAddress,chainId,outcome:result.outcome,xUsername:result.xUser?.username}));}catch(error){clearCookie(res);console.error("[api/projectImportXClaim callback]",error);return res.redirect(302,projectXClaimRedirect({ok:false,tokenAddress,chainId,errorCode:error?.code||"PROJECT_IMPORT_X_ERROR",xUsername:error?.actualUsername}));}}
   return json(res,405,{error:"Method or X claim operation not allowed"});
  }catch(error){console.error("[api/projectImportXClaim]",error);return fail(res,error);}
 }

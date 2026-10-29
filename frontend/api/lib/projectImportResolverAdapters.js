@@ -6,6 +6,7 @@ import { resolveProjectOwnershipEvm } from "./projectOwnershipResolveEvm.js";
 import { resolveProjectOwnershipSolana } from "./projectOwnershipResolveSolana.js";
 import { assertSolanaImportMainnet, pumpBondingCurveAddress, resolveSolanaProjectAuthority } from "./projectSolanaProjectAuthority.js";
 import { readPumpImportEvidence } from "./projectImportPumpEvidence.js";
+import { readMeteoraImportEvidence, readMeteoraPoolCustody } from "./projectImportMeteoraCustody.js";
 import { readBnbImportMarket } from "./projectImportBnbMarket.js";
 import { registerProjectImportResolver } from "./projectImportResolvers.js";
 
@@ -170,10 +171,13 @@ async function resolveSolanaRegistrationMarket(connection, raw) {
     throw Object.assign(new Error("Solana market-stage lookup is temporarily unavailable. Please retry."), { code: "PROJECT_IMPORT_RPC_UNAVAILABLE" });
   }
   if (!account) {
+    // Not a Pump.fun token: Meteora pool vaults are market inventory, not a holder, and a DBC pool
+    // that has not migrated is still bonding.
+    const meteora = await readMeteoraImportEvidence({ connection, mint: raw.mint });
     return {
       projectAuthorityEvidence: null,
-      market: { phase: "unknown", verified: false, reason: "launch_platform_unverified" },
-      custody: [],
+      market: meteora.market,
+      custody: meteora.custody,
     };
   }
   try {
@@ -226,7 +230,8 @@ export async function resolveSolanaProjectImport({ chainId, tokenAddress, signed
       };
     }
 
-    const authority = await resolveSolanaProjectAuthority({ connection, mint: raw.mint, mintAuthority: raw.mintAuthority, claimant: new PublicKey(signedWallet).toBase58(), tokenProgram: new PublicKey(raw.tokenProgramId) });
+    const authority = await resolveSolanaProjectAuthority({ connection, mint: raw.mint, mintAuthority: raw.mintAuthority, claimant: new PublicKey(signedWallet).toBase58(), tokenProgram: new PublicKey(raw.tokenProgramId), readMeteora: () => readMeteoraImportEvidence({ connection, mint: raw.mint }) });
+    const custody = Array.isArray(authority.custody) ? authority.custody : await readMeteoraPoolCustody({ connection, mint: raw.mint });
     return {
       chainId: SOLANA_CHAIN_ID,
       tokenAddress: raw.mint,
@@ -238,6 +243,7 @@ export async function resolveSolanaProjectImport({ chainId, tokenAddress, signed
       metadataType: metadata.type,
       automaticOwnershipAvailable: Boolean(authority.currentAuthority),
       ...authority,
+      custody,
       mintAuthority: raw.mintAuthority ?? null,
       observedSlot: raw.observedSlot ?? null,
       signedWalletMatchesAuthority: Boolean(authority.currentAuthority && authority.currentAuthority === new PublicKey(signedWallet).toBase58()),

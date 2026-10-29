@@ -46,4 +46,9 @@ test('disabled service remains an actual error, not a null lookup',async()=>{pro
 for(const [path,action,intent] of [['/','project_import_create',{operation:'create'}],['/manual-claim','project_import_manual_claim',{note:null}]])test(`server-known bonding blocks forged client graduation at ${path}`,async()=>{
  marketOverride={phase:'bonding',verified:true};writes=0;
  try{const res=response();await handler({method:'POST',url:`/project-imports${path}`,body:{chainId:101,tokenAddress:mint,note:null,market:{phase:'postgrad',verified:true},auth:signed(action,intent)}},res);assert.equal(res.statusCode,409);assert.equal(res.body.code,'PROJECT_IMPORT_STILL_BONDING');assert.equal(writes,0);}finally{marketOverride=null;}
+});test('manual review needs a proven X sign-in from the claiming wallet; a typed note is not enough',async()=>{
+  writes=0;
+  const note='Contact X: https://x.com/anyone';
+  const res=response();await handler({method:'POST',url:'/project-imports/manual-claim',body:{chainId:101,tokenAddress:mint,note,auth:signed('project_import_manual_claim',{note})}},res);
+  assert.equal(res.statusCode,409,JSON.stringify(res.body));assert.equal(res.body.code,'PROJECT_IMPORT_X_CONTACT_REQUIRED');assert.equal(writes,0);
 });
