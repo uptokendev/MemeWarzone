@@ -4,7 +4,7 @@ import { getTokenMetadata, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { resolveProjectOwnershipBnb } from "./projectOwnershipResolveBnb.js";
 import { resolveProjectOwnershipEvm } from "./projectOwnershipResolveEvm.js";
 import { resolveProjectOwnershipSolana } from "./projectOwnershipResolveSolana.js";
-import { assertSolanaImportMainnet, pumpBondingCurveAddress, resolveSolanaProjectAuthority } from "./projectSolanaProjectAuthority.js";
+import { assertSolanaImportMainnet, pumpBondingCurveAddress, pumpGraduationProof, resolveSolanaProjectAuthority } from "./projectSolanaProjectAuthority.js";
 import { readPumpImportEvidence } from "./projectImportPumpEvidence.js";
 import { readMeteoraImportEvidence, readMeteoraPoolCustody } from "./projectImportMeteoraCustody.js";
 import { readBnbImportMarket } from "./projectImportBnbMarket.js";
@@ -66,6 +66,17 @@ export function setProjectImportReadClientsForTest({ bnb = null, solana = null, 
   robinhoodProvider = robinhood;
 }
 
+/**
+ * BNB: the market check proves graduation when it verified a post-launch market: a graduated four.meme
+ * coin (postgrad) or a PancakeSwap pool with reserves for a coin no known launchpad holds (dex_market).
+ * four.meme and flap.sh coins that still bond come back as bonding and are never proven.
+ */
+export function bnbGraduationProof(marketEvidence) {
+  const market = marketEvidence?.market;
+  if (market?.verified === true && ["postgrad", "dex_market"].includes(market.phase)) return { proven: true, method: `bnb_${market.phase}`, platform: marketEvidence?.launchEvidence?.platform ?? null, venue: market.venue ?? null };
+  return { proven: false, reason: market?.phase === "bonding" ? `${market.platform || "launchpad"}_bonding` : market?.reason || "market_not_verified", retryable: market?.reason === "launch_registry_unavailable" };
+}
+
 export async function resolveBnbProjectImport({ chainId, tokenAddress, signedWallet, registrationOnly = false, creationTx = null }) {
   const provider = getBnbProvider();
   const raw = await resolveProjectOwnershipBnb({
@@ -80,6 +91,7 @@ export async function resolveBnbProjectImport({ chainId, tokenAddress, signedWal
   const marketEvidence = await readBnbImportMarket({ provider, tokenAddress: raw.contractAddress });
   return {
     ...marketEvidence,
+    graduationProof: bnbGraduationProof(marketEvidence),
     chainId: BNB_CHAIN_ID,
     tokenAddress: raw.contractAddress,
     name: raw.token?.name ?? null,
@@ -189,6 +201,7 @@ async function resolveSolanaRegistrationMarket(connection, raw) {
       projectAuthorityEvidence: null,
       market: meteora.market,
       custody: meteora.custody,
+      graduationProof: meteora.graduationProof,
     };
   }
   try {
@@ -203,6 +216,7 @@ async function resolveSolanaRegistrationMarket(connection, raw) {
       projectAuthorityEvidence: evidence,
       market: evidence.market,
       custody: evidence.custody || [],
+      graduationProof: pumpGraduationProof(evidence, account),
     };
   } catch {
     throw Object.assign(new Error("Pump.fun market-stage lookup is temporarily unavailable. Please retry."), { code: "PROJECT_IMPORT_RPC_UNAVAILABLE" });

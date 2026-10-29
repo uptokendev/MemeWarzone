@@ -37,6 +37,22 @@ export async function assertSolanaImportMainnet(connection) {
     throw Object.assign(new Error("The import service is connected to the wrong Solana network. Solana mainnet is required."), { code: "PROJECT_IMPORT_CHAIN_MISMATCH" });
   }
 }
+/**
+ * Pump.fun: the curve account's own `complete` flag proves graduation (the coin moved to PumpSwap or,
+ * for old coins, Raydium). The flag is byte 48 of the curve (discriminator + 5*u64), present in every
+ * layout; old 49-byte curves (no creator field) are read the same way (SN 3FDydrow…, 2026-10-29).
+ */
+export function pumpCurveComplete(account) {
+  if (!account || account.executable || !account.owner?.equals?.(PUMP_PROGRAM_ID) || !(account.data instanceof Uint8Array)) return null;
+  const data = Buffer.from(account.data);
+  if (data.length < 49 || !data.subarray(0, 8).equals(CURVE_DISCRIMINATOR) || ![0, 1].includes(data[48])) return null;
+  return data[48] === 1;
+}
+export function pumpGraduationProof(evidence, curveAccount = null) {
+  const complete = typeof evidence?.curveComplete === "boolean" ? evidence.curveComplete : pumpCurveComplete(curveAccount);
+  if (complete === true) return { proven: true, method: "pump_curve_complete", curve: evidence?.curveAddress ?? null };
+  return { proven: false, reason: complete === false ? "pump_curve_bonding" : "pump_curve_unreadable" };
+}
 export function pumpBondingCurveAddress(mint) {
   const mintKey = new PublicKey(mint);
   return PublicKey.findProgramAddressSync([Buffer.from("bonding-curve"), mintKey.toBuffer()], PUMP_PROGRAM_ID)[0];
@@ -60,7 +76,7 @@ export async function resolveSolanaProjectAuthority({ connection, mint, mintAuth
   catch { throw rpcError("Solana project-wallet lookup is temporarily unavailable. Please retry."); }
   if (account) {
     const projectAuthorityEvidence = await readPumpImportEvidence({ connection, mint, curveAccount: account, claimant, tokenProgram });
-    const context = { projectAuthorityEvidence, market: projectAuthorityEvidence.market, custody: projectAuthorityEvidence.custody };
+    const context = { projectAuthorityEvidence, market: projectAuthorityEvidence.market, custody: projectAuthorityEvidence.custody, graduationProof: pumpGraduationProof(projectAuthorityEvidence, account) };
     if (projectAuthorityEvidence.authorityError) return { ...unavailable(projectAuthorityEvidence.authorityError, curve.toBase58()), ...context };
     const creator = decodePumpProjectCreator(account);
     if (!creator) return { ...unavailable("project_creator_requires_manual_review", curve.toBase58()), ...context };
@@ -78,7 +94,7 @@ export async function resolveSolanaProjectAuthority({ connection, mint, mintAuth
   const meteora = typeof readMeteora === "function" ? await readMeteora() : null;
   const context = {
     market: meteora?.market || { phase: "unknown", verified: false, reason: "launch_platform_unverified" },
-    ...(meteora ? { custody: meteora.custody || [] } : {}),
+    ...(meteora ? { custody: meteora.custody || [], graduationProof: meteora.graduationProof || null } : {}),
   };
   if (mintAuthority) {
     const authority = new PublicKey(mintAuthority);

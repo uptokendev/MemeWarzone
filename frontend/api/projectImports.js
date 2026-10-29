@@ -16,6 +16,7 @@ import {
 import { projectImportEvmProvider, registerDefaultProjectImportResolvers } from "./lib/projectImportResolverAdapters.js";
 import { issueEvmTransferChallenge, verifyEvmTransferProof } from "./lib/projectImportEvmTransfer.js";
 import { clientIp, widgetRateLimiter } from "./importSwapWidget.js";
+import { robinhoodGraduationProof } from "./lib/projectImportRobinhoodGraduation.js";
 
 // Each transfer-check start runs a full on-chain resolve: 10 per minute per IP.
 const allowTransferChallenge = widgetRateLimiter({ limit: 10 });
@@ -68,6 +69,7 @@ function errorStatus(code) {
     "OWNERSHIP_SUSPENDED", "MANUAL_CLAIM_NOT_ALLOWED", "RESOLVER_IDENTITY_MISMATCH", "PROJECT_IMPORT_X_CONTACT_REQUIRED",
     "PROJECT_IMPORT_TRANSFER_PROOF_INVALID", "PROJECT_IMPORT_TRANSFER_AUTHORITY_CHANGED", "PROJECT_IMPORT_TRANSFER_EXPIRED",
     "PROJECT_IMPORT_TRANSFER_NOT_FOUND", "PROJECT_IMPORT_TRANSFER_UNAVAILABLE", "PROJECT_IMPORT_TRANSFER_NOT_NEEDED",
+    "PROJECT_IMPORT_GRADUATION_UNPROVEN",
     "OWNERSHIP_CONFLICT", "PROJECT_OWNERSHIP_STATE_CONFLICT", "PROJECT_OWNERSHIP_IMAGE_REQUIRED",
   ].includes(code)) return 409;
   if (String(code).startsWith("PROJECT_IMPORT_EVIDENCE") || ["PROJECT_IMPORT_SIGNED_CLAIM_REQUIRED","PROJECT_IMPORT_TECHNICAL_REVIEW","PROJECT_IMPORT_REVIEW_PROOF_REQUIRED", "PROJECT_IMPORT_MARKET_PROOF_REQUIRED","PROJECT_IMPORT_STILL_BONDING","PROJECT_IMPORT_REVIEW_REQUIRED"].includes(code)) return 409;
@@ -83,6 +85,7 @@ function projectError(res, error) {
     currentAuthority: error?.currentAuthority || undefined,
     currentVersion: error?.currentVersion || undefined,
     currentOwnershipStatus: error?.currentOwnershipStatus || undefined,
+    graduationReason: error?.graduationReason || undefined,
   });
 }
 
@@ -125,6 +128,20 @@ function requireResolvedOwner(resolved) {
     const masked = address.length > 8 ? `${address.slice(0, 4)}...${address.slice(-4)}` : address;
     throw Object.assign(new Error(`The connected wallet does not match the recorded creator wallet ${masked}. Connect that wallet to continue.`), { code: "OWNERSHIP_PROOF_REQUIRED", currentAuthority: address });
   }
+}
+
+/**
+ * HARD RULE (founder 2026-10-29): the battle system is built for graduated tokens, so a token in its
+ * bonding phase is never imported. A NEW project needs proven graduation; anything we cannot prove is
+ * refused. Projects that already exist (and claims on them) are not affected.
+ */
+async function requireProvenGraduation(identity, resolved) {
+  const proof = identity.chainId === 4663
+    ? await robinhoodGraduationProof({ provider: projectImportEvmProvider(4663), token: identity.tokenAddress })
+    : resolved?.graduationProof || null;
+  if (proof?.proven === true) return proof;
+  if (proof?.retryable) throw Object.assign(new Error("We could not check this token's market right now. Please retry."), { code: "PROJECT_IMPORT_RPC_UNAVAILABLE" });
+  throw Object.assign(new Error("Only tokens that finished their launch phase and trade on a DEX can be imported. We could not confirm that for this token yet."), { code: "PROJECT_IMPORT_GRADUATION_UNPROVEN", graduationReason: proof?.reason || "graduation_not_proven" });
 }
 
 function requireSecurityPass(security) {
@@ -242,6 +259,7 @@ export async function systemImportProject({ chainId, tokenAddress, importerWalle
   const { resolved, security, assessment } = await buildImportChecks(identity, importerWallet, null, false, { registrationOnly: true });
   assertNewImportMarket(resolved);
   requireSecurityPass(security);
+  if (!(await lookupProjectImport(pool, identity))) await requireProvenGraduation(identity, resolved);
   const result = await withImportTransaction(pool, async (client) => {
     const created = await createProjectImport(client, { resolverResult: { ...resolved, signedWalletMatchesAuthority: false }, signedWallet: importerWallet });
     if (created.created) await appendImportEvidence(client, { project: created.project, assessment, source: "automatic_import" });
@@ -466,6 +484,7 @@ export default async function projectImports(req, res) {
       const {resolved,security,assessment} = await buildImportChecks(identity,auth.walletAddress,body.auth,false,{registrationOnly:true});
       assertNewImportMarket(resolved);
       requireSecurityPass(security);
+      if (!(await lookupProjectImport(pool, identity))) await requireProvenGraduation(identity, resolved);
       const result = await withImportTransaction(pool,async client=>{
         const result=await createProjectImport(client,{resolverResult:{...resolved,signedWalletMatchesAuthority:false},signedWallet:auth.walletAddress});
         // Keep the deployed append-only evidence schema compatible. The source label
@@ -522,6 +541,7 @@ export default async function projectImports(req, res) {
       // The contact X account must be proven by an X sign-in from this wallet, not typed in.
       const provenX = await latestProvenXSignin(pool, { projectId: existing?.id, walletAddress: auth.walletAddress });
       if (!provenX) throw Object.assign(new Error("Sign in with X first. The manual review uses the X account you sign in with as the contact."), { code: "PROJECT_IMPORT_X_CONTACT_REQUIRED" });
+      if (!existing) await requireProvenGraduation(identity, resolved);
       const project=await withImportTransaction(pool,async client=>{
         const created=await createProjectImport(client,{resolverResult:{...resolved,signedWalletMatchesAuthority:false},signedWallet:auth.walletAddress});
         const locked=await client.query("SELECT * FROM public.arena_token_imports WHERE id=$1 FOR UPDATE",[created.project.id]);

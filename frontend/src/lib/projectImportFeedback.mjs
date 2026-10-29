@@ -6,6 +6,7 @@ export function projectImportFeedback(error) {
     return { title: 'CREATOR WALLET DOES NOT MATCH', message: `The recorded creator wallet is ${short}. Connect that wallet to continue.`, retry: false };
   }
   if (code === "PROJECT_IMPORT_STILL_BONDING") return {title:"STILL BONDING",message:"This token is still bonding on another platform. Return after graduation and market verification.",retry:true};
+  if (code === "PROJECT_IMPORT_GRADUATION_UNPROVEN") return {title:"NOT GRADUATED YET",message:"MemeWarzone only imports tokens that finished their launch phase and trade on a DEX. We could not confirm that for this token yet. If it is still bonding, return after graduation.",retry:true};
   if (code === "PROJECT_IMPORT_RPC_UNAVAILABLE" || code === "PROJECT_IMPORT_RESOLVER_UNAVAILABLE") return {title:"IMPORT CHECK TEMPORARILY UNAVAILABLE",message:"The import lookup is busy. Nothing was rejected. Press IMPORT to retry.",retry:true};
   if (code === "PROJECT_IMPORT_REVIEW_REQUIRED") return {title:"ADDITIONAL REVIEW REQUIRED",message:"The latest ownership, market or safety checks need review. Run the checks again for the next step.",retry:true};
   if (code === "PROJECT_IMPORT_SECURITY_REQUIRED") return {title:"TOKEN SECURITY BLOCKED IMPORT",message:String(error?.message || 'Critical token-security findings blocked automatic import.'),retry:false};

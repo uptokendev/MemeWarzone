@@ -66,3 +66,25 @@ A claim sets `project_owner_wallet` on `arena_token_imports`; that wallet gets t
   can approve those by hand. With the mint-creator rule most of them no longer reach manual review.
 - `.github/workflows/import-review-integration.yml` has failed on every PR since at least 2026-10-09; the server-mount
   script needs tables (`token_metadata_registry`, arena columns) its schema step does not create.
+
+## Graduation hard rule (founder 2026-10-29)
+
+"The whole battle system is designed for graduated tokens. So no tokens in bonding phase can be imported."
+Default-deny for NEW projects (`requireProvenGraduation` in `projectImports.js`: POST /, `systemImportProject`, and
+`/manual-claim` when it would create the project). Existing projects and claims on them are not affected.
+`resolveProjectToken` carries `graduationProof` { proven, method | reason, retryable }.
+- Solana Pump.fun: the curve's `complete` byte (offset 48, every layout incl. old 49-byte curves).
+- Solana other (`readSolanaPoolHoldings` + `solanaGraduationProof`): largest token accounts classified on chain.
+  Exchange vaults: authorities Raydium CPMM `GpMZbSM2…`, AMM v4 `5Q544fKr…`, Meteora DAMM v2 `HLnpSz…`; per-pool owners
+  of PumpSwap, Orca, Raydium CLMM, Meteora DLMM programs. Bonding vaults: DBC `FhVo3…`, LaunchLab `WLHv2UAZ…`
+  (LetsBonk), Pump curve. Proven: exchange vaults >= 0.1% of supply and bonding vaults < 1%, or DBC migrated.
+  Needs getTokenLargestAccounts (Helius; the public RPC refuses it).
+- BNB: market check verified `postgrad` (four.meme graduated) or `dex_market` (PancakeSwap pool, no known launchpad
+  holding it). four.meme / flap.sh bonding are never proven. Residual: an unknown launchpad's bonding coin with a side pool.
+- Robinhood (`projectImportRobinhoodGraduation.js`): token's deployer()/creator() contract (curve/auction, not a Safe or
+  the launcher) holding >= 1% blocks; then a Uniswap v3 pool (factory `0x1f7d7550…` PoolCreated, token in topic 1 or 2)
+  with liquidity and >= 0.1% of supply, or a v4 pool (PoolManager `0x8366a39C…` Initialize, token in topic 2 or 3) that is
+  hook-less or has the 0x6319 post-graduation hook `0xE5e70264…`, with liquidity (extsload slot keccak(id,6)+3) and the
+  PoolManager holding >= 0.1%. Unknown hooks never prove (a hook can be a curve). 10-23 s uncached on the public RPC.
+- Audit 2026-10-29 of the 22 visible imports (`frontend/scripts/audit-import-graduation.mjs`): 21 graduated;
+  Glen `FcBb7avR…pump` (the retained "Everglen" page) is still bonding on Pump.fun (17.78 SOL in the curve). Left as is.
