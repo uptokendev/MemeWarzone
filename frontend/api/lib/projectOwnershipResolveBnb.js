@@ -47,11 +47,11 @@ function unavailableOwnership(method = null) {
 }
 
 // Owner, token deployer/creator wallet, then a verified launchpad creator: see projectImportEvmCreator.js.
-async function resolveCurrentOwner(provider, contractAddress, signedConnectedWallet, chainId) {
-  return resolveEvmProjectAuthority({ provider, chainId, token: contractAddress, signedWallet: signedConnectedWallet });
+async function resolveCurrentOwner(provider, contractAddress, signedConnectedWallet, chainId, creationTx) {
+  return resolveEvmProjectAuthority({ provider, chainId, token: contractAddress, signedWallet: signedConnectedWallet, creationTx });
 }
 
-export async function resolveProjectOwnershipBnb({ provider, chainId, contractAddress, signedConnectedWallet, skipOwnership = false }) {
+export async function resolveProjectOwnershipBnb({ provider, chainId, contractAddress, signedConnectedWallet, skipOwnership = false, creationTx = null }) {
   if (Number(chainId) !== BNB_PROJECT_OWNERSHIP_CHAIN_ID) throw new TypeError("BNB ownership resolver only supports chain 56.");
   if (!provider || typeof provider.getCode !== "function" || typeof provider.call !== "function") throw new TypeError("A read-only EVM provider is required.");
   const tokenAddress = normalizeAddress(contractAddress, "contract address");
@@ -68,7 +68,7 @@ export async function resolveProjectOwnershipBnb({ provider, chainId, contractAd
   if (!symbolRead.readable || !decimalsRead.readable) return { ok: false, chainId: 56, contractAddress: tokenAddress, errorCode: "ERC20_READ_FAILED", error: "Required ERC20 symbol() or decimals() read is unavailable." };
   const decimals = Number(decimalsRead.value);
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 255) return { ok: false, chainId: 56, contractAddress: tokenAddress, errorCode: "ERC20_DECIMALS_INVALID", error: "ERC20 decimals() returned an invalid value." };
-  const ownership = skipOwnership ? unavailableOwnership() : await resolveCurrentOwner(provider, tokenAddress, signedWallet, BNB_PROJECT_OWNERSHIP_CHAIN_ID);
+  const ownership = skipOwnership ? unavailableOwnership() : await resolveCurrentOwner(provider, tokenAddress, signedWallet, BNB_PROJECT_OWNERSHIP_CHAIN_ID, creationTx);
   return {
     ok: true,
     chainId: 56,

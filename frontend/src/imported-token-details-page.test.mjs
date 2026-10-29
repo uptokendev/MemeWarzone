@@ -89,7 +89,7 @@ test("all supported unverified imports expose one reusable Claim Memecoin dialog
 
 test("EVM Claim Memecoin checks current owner first and offers X fallback", () => {
   assert.match(xClient, /\/api\/project-imports\/image\/x\/authority/);
-  assert.match(claimDialog, /resolveProjectEvmAuthority\(item, connectedWallet\)/);
+  assert.match(claimDialog, /resolveProjectEvmAuthority\(item, connectedWallet(, creationTx \|\| null)?\)/);
   assert.match(claimDialog, /\{evmChainLabel\} project owner wallet/);
   assert.match(claimDialog, /CONNECT \{evmChainLabel\.toUpperCase\(\)\} OWNER WALLET/);
   assert.match(claimDialog, /VERIFY \{evmChainLabel\.toUpperCase\(\)\} OWNER WALLET/);
@@ -212,4 +212,15 @@ test("imported trades come from the import's own pool, in our own token page's t
   assert.match(table, /fetchArenaImportTrades\(tokenAddress, chainId/);
   for (const head of ["Account", "Type", "Token", "Time", "Txn"]) assert.match(table, new RegExp(`>${head}</th>`));
   assert.match(table, /data-imported-trades-table="true"/);
+});
+
+test("BNB/Robinhood claim offers the creation-tx paste with an explorer link and the on-chain transfer check", () => {
+  assert.match(claimDialog, /data-evm-creation-tx-option="true"/);
+  assert.match(claimDialog, /https:\/\/bscscan\.com\/address\/\$\{address\}/);
+  assert.match(claimDialog, /https:\/\/robinhoodchain\.blockscout\.com\/address\/\$\{address\}/);
+  assert.match(claimDialog, /parseCreationTxInput\(creationTxInput\)/);
+  assert.match(claimDialog, /data-evm-transfer-option="true"/);
+  assert.match(claimDialog, /startEvmTransferChallenge\(\{item,auth,creationTx:creationTx\|\|null\}\)/);
+  assert.match(claimDialog, /transferProof:\{challenge:evmChallenge\.challenge,txHash\}/);
+  assert.match(claimDialog, /MemeWarzone never receives it/);
 });

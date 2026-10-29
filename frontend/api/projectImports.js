@@ -13,7 +13,8 @@ import {
   publicProject,
   requestManualProjectClaim,
 } from "./lib/projectImportCore.js";
-import { registerDefaultProjectImportResolvers } from "./lib/projectImportResolverAdapters.js";
+import { projectImportEvmProvider, registerDefaultProjectImportResolvers } from "./lib/projectImportResolverAdapters.js";
+import { issueEvmTransferChallenge, verifyEvmTransferProof } from "./lib/projectImportEvmTransfer.js";
 import { resolveProjectToken } from "./lib/projectImportResolvers.js";
 import { scanProjectImportSecurity } from "./lib/projectImportRiskSecurity.js";
 import {
@@ -61,10 +62,12 @@ function errorStatus(code) {
   ].includes(code)) return 403;
   if ([
     "OWNERSHIP_SUSPENDED", "MANUAL_CLAIM_NOT_ALLOWED", "RESOLVER_IDENTITY_MISMATCH", "PROJECT_IMPORT_X_CONTACT_REQUIRED",
+    "PROJECT_IMPORT_TRANSFER_PROOF_INVALID", "PROJECT_IMPORT_TRANSFER_AUTHORITY_CHANGED", "PROJECT_IMPORT_TRANSFER_EXPIRED",
+    "PROJECT_IMPORT_TRANSFER_NOT_FOUND", "PROJECT_IMPORT_TRANSFER_UNAVAILABLE", "PROJECT_IMPORT_TRANSFER_NOT_NEEDED",
     "OWNERSHIP_CONFLICT", "PROJECT_OWNERSHIP_STATE_CONFLICT", "PROJECT_OWNERSHIP_IMAGE_REQUIRED",
   ].includes(code)) return 409;
   if (String(code).startsWith("PROJECT_IMPORT_EVIDENCE") || ["PROJECT_IMPORT_SIGNED_CLAIM_REQUIRED","PROJECT_IMPORT_TECHNICAL_REVIEW","PROJECT_IMPORT_REVIEW_PROOF_REQUIRED", "PROJECT_IMPORT_MARKET_PROOF_REQUIRED","PROJECT_IMPORT_STILL_BONDING","PROJECT_IMPORT_REVIEW_REQUIRED"].includes(code)) return 409;
-  if (["PROJECT_IMPORT_RESOLVER_UNAVAILABLE", "PROJECT_IMPORT_RPC_UNAVAILABLE", "PROJECT_IMPORT_CHAIN_MISMATCH"].includes(code)) return 503;
+  if (["PROJECT_IMPORT_RESOLVER_UNAVAILABLE", "PROJECT_IMPORT_RPC_UNAVAILABLE", "PROJECT_IMPORT_CHAIN_MISMATCH", "PROJECT_IMPORT_TRANSFER_NOT_CONFIGURED"].includes(code)) return 503;
   return 500;
 }
 
@@ -200,11 +203,21 @@ async function attachAdminEvidence(row) {
   const evidence = await latestImportEvidence(pool, row);
   return { ...row, import_evidence: evidence?.snapshot || null, import_evidence_id: evidence?.id || null };
 }
-async function buildImportChecks(identity, signer, authPayload, fallback = false, { registrationOnly = false } = {}) {
+// creationTx: a creation tx hash the claimant pasted (EVM; checked on chain, a pointer only).
+// transferProof: { challenge, txHash } of a BNB/Robinhood transfer check, verified against the authority read now.
+async function buildImportChecks(identity, signer, authPayload, fallback = false, { registrationOnly = false, creationTx = null, transferProof = null, projectId = null } = {}) {
   let resolved;
-  try { resolved = await resolveForSigner(identity, signer, { registrationOnly }); }
+  const evm = identity.chainId !== 101;
+  try { resolved = await resolveForSigner(identity, signer, { registrationOnly, ...(evm && creationTx ? { creationTx } : {}) }); }
   catch (error) { if (!fallback || !canFallbackToManual(error)) throw error; resolved = unresolvedEvidence(identity, error); }
   if (!registrationOnly) resolved = await applyVerifiedPumpChallenge(pool, identity, signer, resolved);
+  if (!registrationOnly && evm && transferProof && resolved.automaticOwnershipAvailable && resolved.currentAuthority && !resolved.signedWalletMatchesAuthority) {
+    const proof = await verifyEvmTransferProof({
+      provider: projectImportEvmProvider(identity.chainId), challenge: transferProof.challenge, txHash: transferProof.txHash,
+      chainId: identity.chainId, tokenAddress: identity.tokenAddress, projectId, authority: resolved.currentAuthority, claimant: signer,
+    });
+    resolved = { ...resolved, ...proof, signedWalletMatchesAuthority: true, ownershipReason: "evm_authority_transfer_verified" };
+  }
   const security = await scanProjectImportSecurity({ ...identity, market: resolved.market, custody: resolved.custody });
   const proof = authPayload ? importProofReceipt({ ...authPayload, walletAddress: signer }) : null;
   const assessment = assessProjectImport({ resolved, security, claimantWallet: signer, proof });
@@ -383,6 +396,22 @@ export default async function projectImports(req, res) {
       return json(res, 200, { items: items.map(publicProject) });
     }
 
+    // BNB/Robinhood transfer check: a signed, stateless challenge for the authority the chain names now.
+    if (req.method === "POST" && path === "/evm-transfer-challenge") {
+      const body = await readJson(req);
+      const identity = normalizeProjectIdentity(body.chainId, body.tokenAddress);
+      if (identity.chainId === 101) throw Object.assign(new Error("Use the Solana creator-wallet check on Solana."), { code: "INVALID_CHAIN" });
+      const existing = await lookupProjectImport(pool, identity);
+      if (!existing) throw Object.assign(new Error("Imported project not found"), { code: "PROJECT_NOT_FOUND" });
+      const auth = await strictAuth(res, body, { identity, action: PROJECT_IMPORT_ACTIONS.pumpChallengeStart, projectId: existing.id });
+      if (!auth) return;
+      const resolved = await resolveForSigner(identity, auth.walletAddress, body.creationTx ? { creationTx: String(body.creationTx) } : {});
+      if (!resolved.automaticOwnershipAvailable || !resolved.currentAuthority) throw Object.assign(new Error("No project wallet could be established on chain for this token yet."), { code: "PROJECT_IMPORT_TRANSFER_UNAVAILABLE" });
+      if (resolved.signedWalletMatchesAuthority) throw Object.assign(new Error("This wallet already is the project wallet. Verify it directly."), { code: "PROJECT_IMPORT_TRANSFER_NOT_NEEDED" });
+      const challenge = issueEvmTransferChallenge({ chainId: identity.chainId, tokenAddress: identity.tokenAddress, projectId: existing.id, authority: resolved.currentAuthority, claimant: auth.walletAddress });
+      return json(res, 201, { challenge: { ...challenge, authoritySource: resolved.authoritySource ?? null } });
+    }
+
     if (req.method === "POST" && path === "/pump-challenge") {
       const body = await readJson(req);
       const identity = normalizeProjectIdentity(body.chainId, body.tokenAddress);
@@ -457,7 +486,8 @@ export default async function projectImports(req, res) {
         intentBody: { operation: "claim" },
       });
       if (!auth) return;
-      const {resolved,security,assessment} = await buildImportChecks(identity,auth.walletAddress,body.auth);
+      const transferProof = body.transferProof && typeof body.transferProof === "object" ? { challenge: String(body.transferProof.challenge || ""), txHash: String(body.transferProof.txHash || "") } : null;
+      const {resolved,security,assessment} = await buildImportChecks(identity,auth.walletAddress,body.auth,false,{ creationTx: body.creationTx ? String(body.creationTx) : null, transferProof, projectId: existing.id });
       assertNewImportMarket(resolved); requireResolvedOwner(resolved); requireSecurityPass(security); assertAutomaticImport(assessment);
       const project=await withImportTransaction(pool,async client=>{
         const claimed=await claimExistingProject(client,{resolverResult:resolved,signedWallet:auth.walletAddress});

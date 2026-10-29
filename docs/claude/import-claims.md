@@ -6,27 +6,23 @@ A claim sets `project_owner_wallet` on `arena_token_imports`; that wallet gets t
 ## Who counts as the owner (verified 2026-10-29)
 
 - EVM (BNB 56, Robinhood 4663), `projectImportEvmCreator.js`, used by both resolvers and the claim dialog:
-  1. live `owner()`/`getOwner()` wins (wallet or contract), except four.meme TokenManager V2 `0x5c952063…`, which only
-     holds ownership while a coin bonds (graduated four.meme coins have a renounced owner);
-  2. the token's own `deployer()`/`creator()` when it is a wallet (founder 2026-10-09; that change sat uncommitted in
-     the main checkout until 2026-10-29). EIP-7702 EOAs (code `0xef0100` + address) count as wallets;
-  3. a known launchpad's creation record, verified on chain (founder 2026-10-29 "automate BNB and Robinhood"):
-     - four.meme: API `four.meme/meme-api/v1/private/token/get/v2` gives `userAddress` + `createDate` as a pointer;
-       proof = successful tx from that wallet to TokenManager V2 with a TokenManager `TokenCreate` naming this token and
-       creator == tx.from. Mainnet 2026-10-29: creation lands 2-30 s after createDate; scan window -10 s..+120 s,
-       max 240 blocks; 4-7 s uncached. BSC public RPCs refuse getLogs, hence the block scan.
-     - Robinhood launchpad router `0x6319141D…`: first mint tx sent to the router, router log topic0 `0x01937e4c…`,
-       topic1 = creator = tx.from, data word 0 = token.deployer(). First mint found with getLogs in 10M-block spans.
-  Not automated (X / manual review): Uniswap-style launcher `0x0000FffF…` (no creator event), Safe-deployed coins
-  (THC: Safe 3 owners threshold 1), BNB coins with a renounced owner outside four.meme. Blockscout is behind a
-  Cloudflare challenge, so explorer APIs are not used. A mismatch with a creator source may go to manual review.
-- Solana: Pump curve creator -> live on-curve mint authority -> **Meteora DBC pool creator** (`virtualPool.creator`)
-  -> **mint creator** (founder 2026-10-29: "if the wallet that is connected created the mint it should auto approve").
-  Mint creator = fee payer (signer, on-curve, not the mint) of the mint's oldest successful transaction, which must
-  contain exactly one `initializeMint`/`initializeMint2` for this mint (top-level or inner) that set **that same wallet
-  as the initial mint authority**. That excludes relayer-paid, launchpad-CPI and multisig creations (security review
-  2026-10-29). Only when the mint authority is revoked; a PDA mint authority gets no mint-creator fallback. History is
-  read 5 x 1000 signatures at most (`MINT_CREATOR_MAX_PAGES`), longer stays manual. Positive results cached per process.
+  1. live `owner()`/`getOwner()` wins (wallet or contract), except four.meme TokenManager V2 `0x5c952063…` and the
+     flap.sh portal `0xe2cE6a…`, which own a coin only while it bonds. Only a revert (`CALL_EXCEPTION`/`BAD_DATA`)
+     means "no such method"; any other RPC error stops the check (review 2026-10-29: an RPC blip must never skip a live owner);
+  2. the token's own `deployer()`/`creator()` when it is a wallet (founder 2026-10-09; it sat uncommitted in the main
+     checkout until 2026-10-29) or a Safe (`evm_safe_deployer`). EIP-7702 EOAs (`0xef0100` + address) are wallets;
+  3. the signing wallet that CREATE-deployed the token (nonce search, cap 20k, `evm_contract_deployer`);
+  4. a creator proven by the token's creation tx (`verifyCreationTx`): direct deploy (receipt.contractAddress),
+     four.meme `TokenCreate`, flap.sh `TokenCreated(ts, creator, nonce, token, …)` from the portal, Robinhood router
+     `0x6319141D…` event, Robinhood launcher `0x0000FffF…` (createToken/multicall, full fixed supply minted in that tx).
+     The creator must equal tx.from and be a wallet. Sources: pasted by the claimant (`evm_creation_tx`; the dialog
+     links BscScan / Blockscout "Creator"), or automatic: four.meme via its API pointer (`getLogs`, else header-bloom
+     scan, max 2 concurrent), Robinhood via the token's first mint (`getLogs` 10M spans, 4 in parallel, ~2 s).
+  Transfer check (`projectImportEvmTransfer.js`, founder "yes with solid proof"): any authority above, including a live
+  owner or a Safe, sends an exact 0.00001-0.0001 BNB/ETH to the claimant; the claimant pastes the tx hash. Stateless
+  HMAC challenge (PROJECT_IMPORT_CHALLENGE_SECRET, else the X OAuth state secret), 30 min window, no table. A Safe is
+  accepted via `execTransaction(to=claimant, value, data=0x, operation=0)` + `ExecutionSuccess`.
+  `/authority` (unsigned) is rate-limited to 20/min per IP.
 - A mismatch with a creator-type authority (Pump creator, DBC pool creator, mint creator) may still request manual review
   and may use the SOL transfer check (creator wallet sends an exact amount to the claimant). A live owner/mint authority
   mismatch may not.
@@ -55,6 +51,9 @@ A claim sets `project_owner_wallet` on `arena_token_imports`; that wallet gets t
   DBC `FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM` (program `dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN`),
   DAMM v2 `HLnpSz9h2S4hiLQ43rnSD9XkcUThA7B8hQMKmDaiTLcC` (program `cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG`, read
   on mainnet 2026-10-29; HODL's pool vault holds ~27% under it).
+- BNB: a coin whose `owner()` is the flap.sh portal is `bonding` (platform `flapsh`), like four.meme (5 coins read 2026-10-29).
+  Not detected yet (importable while bonding, market "unknown"): other Solana launchpads (LaunchLab/LetsBonk, Moonshot…),
+  every Robinhood launchpad (`import_only` market). Founder asked 2026-10-29; recommended detecting per launchpad.
 - A DBC pool for the mint that has not migrated (`isMigrated` 0) makes the market `bonding` (platform `meteora_dbc`), so
   the "return after graduation" rule applies like Pump.fun/Four.meme. Pool lookup: SDK `getPoolByBaseMint` (gPA, base
   mint at offset 136, checked on DAZILLA's pool). If it fails while a DBC vault holds supply, the check is retryable.

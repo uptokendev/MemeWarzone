@@ -45,7 +45,7 @@ test("registration is intentionally ownership-neutral", () => {
 });
 
 test("BNB and Robinhood claim UI resolves the current EVM owner and only enables instant verification on a wallet match", () => {
-  assert.match(claimDialog, /resolveProjectEvmAuthority\(item, connectedWallet\)/);
+  assert.match(claimDialog, /resolveProjectEvmAuthority\(item, connectedWallet(, creationTx \|\| null)?\)/);
   assert.match(claimDialog, /authority\?\.available && authority\.matchesConnected && connectedWallet/);
   assert.match(claimDialog, /data-project-owner-wallet-option="true"/);
   assert.match(claimDialog, /Your connected \{evmChainLabel\} wallet matches the current contract owner\./);

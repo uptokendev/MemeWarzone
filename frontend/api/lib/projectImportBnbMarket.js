@@ -7,6 +7,9 @@ export const BNB_IMPORT_MARKETS = Object.freeze({
   chainId: 56,
   fourHelper: '0xf251f83e40a78868fcfa3fa4599dad6494e46034',
   managers: Object.freeze({1:'0xec4549cadce5da21df6e6422d448034b5233bfbc',2:'0x5c952063c7fc8610ffdb798152d69f0b9550762b'}),
+  // flap.sh portal (proxy). It is a coin's owner() exactly while the coin bonds on flap.sh; graduated
+  // coins have a renounced owner (5 coins read on mainnet 2026-10-29).
+  flapPortal: '0xe2ce6ab80874fa9fa2aae65d277dd6b8e65c9de0',
   v2Factory: '0xca143ce32fe78f1f7019d7d551a6402fc5350c73',
   v3Factory: '0x0bfbcf9fa4f9c56b0f40a671ad40e0805a091865',
   wrappedNative: '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c',
@@ -22,6 +25,7 @@ export const BNB_MARKET_ABI = new Interface([
   'function balanceOf(address) view returns(uint256)', 'function totalSupply() view returns(uint256)',
   'function liquidity() view returns(uint128)', 'function fee() view returns(uint24)',
   'function slot0() view returns(uint160,int24,uint16,uint16,uint16,uint32,bool)',
+  'function owner() view returns(address)',
 ]);
 const ZERO='0x0000000000000000000000000000000000000000';
 const address=x=>getAddress(String(x)).toLowerCase();
@@ -79,6 +83,15 @@ export async function readBnbImportMarket({provider,tokenAddress,now=Date.now,re
     if(version===0) {
       if(!same(info[1],ZERO)||info[11]!==false)throw failure('Inconsistent Four non-membership response');
       result.launchEvidence={platform:'unidentified',fourRegistry:'not_registered',helper:BNB_IMPORT_MARKETS.fourHelper};
+      // flap.sh: the portal owns the coin while it bonds. A revert or empty answer means no owner(); other errors fail closed below.
+      let flapOwned=false;
+      try { flapOwned=same((await call(token,'owner'))[0],BNB_IMPORT_MARKETS.flapPortal); }
+      catch(error) { if(!/revert|BAD_DATA|could not decode/i.test(`${error?.code||''} ${error?.message||''}`))throw error; }
+      if(flapOwned) {
+        result.launchEvidence={platform:'flapsh',portal:BNB_IMPORT_MARKETS.flapPortal,fourRegistry:'not_registered',helper:BNB_IMPORT_MARKETS.fourHelper};
+        result.market={phase:'bonding',verified:true,platform:'flapsh',venue:'flap.sh',reason:'external_bonding',liquidityAvailable:false,executionTested:false};
+        return finish(); // Same rule as Four: a permissionless DEX pair cannot override active launch bonding.
+      }
     } else {
       if(!BNB_IMPORT_MARKETS.managers[version]||!same(info[1],BNB_IMPORT_MARKETS.managers[version])||!await code(info[1]))throw failure('Unknown Four registry generation');
       const quote=same(info[2],ZERO)?BNB_IMPORT_MARKETS.wrappedNative:address(info[2]);

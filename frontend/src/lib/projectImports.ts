@@ -113,8 +113,10 @@ export async function createProjectImport(input: { tokenAddress: string; chainId
   const res = await apiFetch("/api/project-imports", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
   const json = await readJson(res); if (!res.ok || !json?.project) throw importRequestError(res, json, `Project import failed (${res.status})`); return { project: json.project, created: Boolean(json.created), ownershipEvidence: json.ownershipEvidence };
 }
-export async function claimProjectImport(input: { item: ProjectImportItem; auth: WalletActionAuthPayload }): Promise<ProjectImportItem> {
-  const res = await apiFetch("/api/project-imports/claim", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chainId: input.item.chainId, tokenAddress: input.item.tokenAddress, auth: input.auth }) });
+export type EvmTransferChallenge = { challenge: string; chainId: number; token: string; authority: string; claimant: string; amountWei: string; issuedAt: number; expiresAt: number; authoritySource?: string | null };
+// creationTx: a pasted creation tx hash (BNB/Robinhood). transferProof: a BNB/Robinhood transfer check. Both are checked on chain by the API.
+export async function claimProjectImport(input: { item: ProjectImportItem; auth: WalletActionAuthPayload; creationTx?: string | null; transferProof?: { challenge: string; txHash: string } | null }): Promise<ProjectImportItem> {
+  const res = await apiFetch("/api/project-imports/claim", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chainId: input.item.chainId, tokenAddress: input.item.tokenAddress, auth: input.auth, creationTx: input.creationTx || null, transferProof: input.transferProof || null }) });
   const json = await readJson(res); if (!res.ok || !json?.project) throw importRequestError(res, json, `Project ownership claim failed (${res.status})`); return json.project;
 }
 export async function requestProjectClaim(input: { item: ProjectImportItem; auth: WalletActionAuthPayload; note?: string }): Promise<ProjectImportItem> {
@@ -139,6 +141,10 @@ export async function uploadProjectRegistrationImage(input: { item: ProjectImpor
   return uploadProjectImportImage(input);
 }
 
+export async function startEvmTransferChallenge(input: { item: ProjectImportItem; auth: WalletActionAuthPayload; creationTx?: string | null }): Promise<EvmTransferChallenge> {
+  const res=await apiFetch("/api/project-imports/evm-transfer-challenge",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({chainId:input.item.chainId,tokenAddress:input.item.tokenAddress,auth:input.auth,creationTx:input.creationTx||null})});
+  const json=await readJson(res); if(!res.ok||!json?.challenge) throw importRequestError(res,json,`Transfer check could not start (${res.status})`); return json.challenge;
+}
 export async function startPumpOwnershipChallenge(input: { tokenAddress:string; chainId:number; auth:WalletActionAuthPayload }): Promise<PumpOwnershipChallenge> {
   const res=await apiFetch("/api/project-imports/pump-challenge",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)});
   const json=await readJson(res); if(!res.ok||!json?.challenge) throw importRequestError(res,json,`Pump.fun verification could not start (${res.status})`); return json.challenge;

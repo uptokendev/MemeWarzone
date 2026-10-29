@@ -3,12 +3,15 @@ import { json, readJson } from "../server/http.js";
 import { lookupProjectImport, normalizeProjectIdentity } from "./lib/projectImportCore.js";
 import { resolveProjectImportClaimAuthority } from "./lib/projectImportClaimAuthority.js";
 import { registerDefaultProjectImportResolvers } from "./lib/projectImportResolverAdapters.js";
+import { clientIp, widgetRateLimiter } from "./importSwapWidget.js";
 import { PROJECT_IMPORT_ACTIONS, requireProjectImportWalletAuth } from "./lib/projectImportSecurity.js";
 import { finishProjectXClaim, projectXClaimRedirect, resolveOfficialProjectX, resolveProjectImportImage, startProjectXClaim } from "./lib/projectImportXClaim.js";
 
 // The X callback checks the on-chain creator on Solana (onchainCreatorOverridesListedX).
 registerDefaultProjectImportResolvers();
 const COOKIE_PATH="/api/project-imports/image/x";
+// /authority needs no signature and can start an on-chain creation lookup: 20 per minute per IP.
+const allowAuthority=widgetRateLimiter({limit:20});
 const EVM_CHAINS=new Set([56,4663]);
 function enabled(){return /^(1|true|yes|on)$/i.test(String(process.env.ENABLE_PROJECT_IMPORTS||"").trim());}
 function routePath(req){const raw=String(req.originalUrl||req.url||"");return new URL(raw,"http://localhost").pathname.replace(/^\/api\/project-imports\/image\/x\/?/,"/");}
@@ -36,10 +39,11 @@ export default async function projectImportXClaim(req,res){
  if(!enabled())return json(res,404,{error:"Project imports are disabled.",code:"PROJECT_IMPORTS_DISABLED"});if(!pool)return json(res,503,{error:"Project imports require DATABASE_URL."});const path=routePath(req);
  try{
   if(req.method==="POST"&&path==="/authority"){
+   if(!allowAuthority(clientIp(req)))return json(res,429,{error:"Too many ownership lookups; try again in a minute.",code:"RATE_LIMITED"});
    const body=await readJson(req),identity=normalizeProjectIdentity(body.chainId,body.tokenAddress);
    if(!EVM_CHAINS.has(identity.chainId))throw Object.assign(new Error("Owner-wallet verification is available on BNB and Robinhood only"),{code:"INVALID_CHAIN"});
    const project=await lookupProjectImport(pool,identity);if(!project)throw Object.assign(new Error("Imported project not found"),{code:"PROJECT_NOT_FOUND"});
-   const resolved=await resolveProjectImportClaimAuthority({chainId:identity.chainId,tokenAddress:identity.tokenAddress,connectedWallet:body.walletAddress});
+   const resolved=await resolveProjectImportClaimAuthority({chainId:identity.chainId,tokenAddress:identity.tokenAddress,connectedWallet:body.walletAddress,creationTx:body.creationTx?String(body.creationTx):null});
    return json(res,200,resolved);
   }
   if(req.method==="POST"&&path==="/resolve"){

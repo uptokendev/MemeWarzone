@@ -36,11 +36,11 @@ async function optionalRead(provider, contractAddress, method) {
 }
 
 // Owner, token deployer/creator wallet, then a verified launchpad creator: see projectImportEvmCreator.js.
-async function resolveCurrentOwner(provider, contractAddress, signedWallet, chainId) {
-  return resolveEvmProjectAuthority({ provider, chainId, token: contractAddress, signedWallet: signedWallet });
+async function resolveCurrentOwner(provider, contractAddress, signedWallet, chainId, creationTx) {
+  return resolveEvmProjectAuthority({ provider, chainId, token: contractAddress, signedWallet, creationTx });
 }
 
-export async function resolveProjectOwnershipEvm({ provider, chainId, contractAddress, signedConnectedWallet }) {
+export async function resolveProjectOwnershipEvm({ provider, chainId, contractAddress, signedConnectedWallet, creationTx = null }) {
   const id = Number(chainId);
   if (!Number.isSafeInteger(id) || id <= 0) throw new TypeError("A valid EVM chain id is required.");
   if (!provider || typeof provider.getCode !== "function" || typeof provider.call !== "function") throw new TypeError("A read-only EVM provider is required.");
@@ -75,7 +75,7 @@ export async function resolveProjectOwnershipEvm({ provider, chainId, contractAd
   const decimals = Number(decimalsRead.value);
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 255) return { ok:false, chainId:id, contractAddress:tokenAddress, errorCode:"ERC20_DECIMALS_INVALID", error:"ERC20 decimals() returned an invalid value." };
 
-  const ownership = await resolveCurrentOwner(provider, tokenAddress, signedWallet, Number(chainId));
+  const ownership = await resolveCurrentOwner(provider, tokenAddress, signedWallet, Number(chainId), creationTx);
   return {
     ok:true,
     chainId:id,

@@ -53,7 +53,7 @@ test("wallet family auto-select remains safe while explicit chain choice is poss
 });
 
 test("EVM and Solana ownership verification lives only in the reusable claim dialog", () => {
-  assert.match(claimDialog, /resolveProjectEvmAuthority\(item, connectedWallet\)/);
+  assert.match(claimDialog, /resolveProjectEvmAuthority\(item, connectedWallet(, creationTx \|\| null)?\)/);
   assert.match(claimDialog, /claimProjectImport\(\{item,auth\}\)/);
   assert.match(claimDialog, /Solana project authority wallet/);
   assert.match(claimDialog, /VERIFY PROJECT AUTHORITY/);

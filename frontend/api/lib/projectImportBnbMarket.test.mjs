@@ -38,6 +38,7 @@ function fixture(o={}) {
     else if(name==='liquidity')v=[o.inactive?0n:1000n];
     else if(name==='fee')v=[o.wrongFee?10000:500];
     else if(name==='slot0')v=[o.uninitialized?0n:1n<<96n,0,1,1,1,0,!o.locked];
+    else if(name==='owner')v=[o.owner||zero];
     else throw Error(`Unexpected ${name}`);
     return I.encodeFunctionResult(name,v);
   }};
@@ -85,4 +86,11 @@ test('only exact verified BNB factory custody is excluded, not another wallet or
 test('BNB display text names Four/Pancake rather than Pump and preserves observed block',async()=>{
  const {result}=await read({four:true});const a=assessment(result);assert.match(a.checks.find(x=>x.key==='market').finding,/Four.meme/);assert.deepEqual(a.observedBlock,result.observedBlock);
  registerProjectImportResolver(56,async()=>({...result,chainId:56,tokenAddress:token}));try{const r=await resolveProjectToken({chainId:56,tokenAddress:token});assert.deepEqual(r.launchEvidence,result.launchEvidence);assert.deepEqual(r.observedBlock,result.observedBlock);}finally{unregisterProjectImportResolver(56);}
+});
+
+test('flap.sh: a coin whose owner() is the flap portal is still bonding and cannot be newly imported',async()=>{
+  const bonding=await readBnbImportMarket({provider:fixture({owner:C.flapPortal}),tokenAddress:token,now:()=>now});
+  assert.deepEqual([bonding.market.phase,bonding.market.verified,bonding.market.platform],['bonding',true,'flapsh']);
+  const graduated=await readBnbImportMarket({provider:fixture({owner:zero}),tokenAddress:token,now:()=>now});
+  assert.notEqual(graduated.market.phase,'bonding');
 });

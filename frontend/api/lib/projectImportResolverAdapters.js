@@ -53,13 +53,20 @@ function getSolanaConnection() {
   return solanaConnection;
 }
 
+/** The read-only provider the import resolvers use for an EVM chain (transfer-check reads). */
+export function projectImportEvmProvider(chainId) {
+  if (Number(chainId) === BNB_CHAIN_ID) return getBnbProvider();
+  if (Number(chainId) === ROBINHOOD_CHAIN_ID) return getRobinhoodProvider();
+  throw Object.assign(new Error("No EVM provider for this chain"), { code: "INVALID_CHAIN" });
+}
+
 export function setProjectImportReadClientsForTest({ bnb = null, solana = null, robinhood = null } = {}) {
   bnbProvider = bnb;
   solanaConnection = solana;
   robinhoodProvider = robinhood;
 }
 
-export async function resolveBnbProjectImport({ chainId, tokenAddress, signedWallet, registrationOnly = false }) {
+export async function resolveBnbProjectImport({ chainId, tokenAddress, signedWallet, registrationOnly = false, creationTx = null }) {
   const provider = getBnbProvider();
   const raw = await resolveProjectOwnershipBnb({
     provider,
@@ -67,6 +74,7 @@ export async function resolveBnbProjectImport({ chainId, tokenAddress, signedWal
     contractAddress: tokenAddress,
     signedConnectedWallet: signedWallet,
     skipOwnership: registrationOnly,
+    creationTx,
   });
   if (!raw?.ok) throw Object.assign(new Error(raw?.error || "BNB token resolution failed"), { code: raw?.errorCode || "PROJECT_IMPORT_RESOLVE_FAILED" });
   const marketEvidence = await readBnbImportMarket({ provider, tokenAddress: raw.contractAddress });
@@ -88,10 +96,10 @@ export async function resolveBnbProjectImport({ chainId, tokenAddress, signedWal
   };
 }
 
-export async function resolveRobinhoodProjectImport({ chainId, tokenAddress, signedWallet }) {
+export async function resolveRobinhoodProjectImport({ chainId, tokenAddress, signedWallet, creationTx = null }) {
   if (!robinhoodEnabled()) throw Object.assign(new Error("Robinhood project import is disabled"), { code: "PROJECT_IMPORT_CHAIN_DISABLED" });
   if (Number(chainId) !== ROBINHOOD_CHAIN_ID) throw Object.assign(new Error("Robinhood project import resolver only supports chain 4663"), { code: "UNSUPPORTED_CHAIN" });
-  const raw = await resolveProjectOwnershipEvm({ provider:getRobinhoodProvider(), chainId:ROBINHOOD_CHAIN_ID, contractAddress:tokenAddress, signedConnectedWallet:signedWallet });
+  const raw = await resolveProjectOwnershipEvm({ provider:getRobinhoodProvider(), chainId:ROBINHOOD_CHAIN_ID, contractAddress:tokenAddress, signedConnectedWallet:signedWallet, creationTx });
   if (!raw?.ok) throw Object.assign(new Error(raw?.error || "Robinhood token resolution failed"), { code: raw?.errorCode || "PROJECT_IMPORT_RESOLVE_FAILED" });
   return {
     chainId:ROBINHOOD_CHAIN_ID, tokenAddress:raw.contractAddress,
