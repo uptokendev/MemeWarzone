@@ -38,7 +38,7 @@ function fixture(o={}) {
     else if(name==='liquidity')v=[o.inactive?0n:1000n];
     else if(name==='fee')v=[o.wrongFee?10000:500];
     else if(name==='slot0')v=[o.uninitialized?0n:1n<<96n,0,1,1,1,0,!o.locked];
-    else if(name==='owner')v=[o.owner||zero];
+    else if(name==='owner'){ if(o.ownerRpcError)throw Object.assign(new Error('missing revert data'),{code:'CALL_EXCEPTION',info:{error:{code:-32005,message:'limit exceeded'}}}); v=[o.owner||zero]; }
     else throw Error(`Unexpected ${name}`);
     return I.encodeFunctionResult(name,v);
   }};
@@ -93,4 +93,10 @@ test('flap.sh: a coin whose owner() is the flap portal is still bonding and cann
   assert.deepEqual([bonding.market.phase,bonding.market.verified,bonding.market.platform],['bonding',true,'flapsh']);
   const graduated=await readBnbImportMarket({provider:fixture({owner:zero}),tokenAddress:token,now:()=>now});
   assert.notEqual(graduated.market.phase,'bonding');
+});
+
+test('flap.sh check fails closed: an RPC error on owner() never lets a coin pass as not bonding',async()=>{
+  const r=await readBnbImportMarket({provider:fixture({ownerRpcError:true}),tokenAddress:token,now:()=>now});
+  assert.equal(r.market.verified,false);
+  assert.equal(r.market.reason,'launch_registry_unavailable');
 });

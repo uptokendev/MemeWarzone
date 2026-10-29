@@ -81,3 +81,11 @@ test('assessment: a verified transfer from the live owner lets the claimant clai
   const forged = assessProjectImport({ resolved: { ...resolved, signedWalletMatchesAuthority: true, ownershipProofSource: 'evm_authority_transfer', ownershipProofTxSignature: HASH, ownershipProofCreatorWallet: addr(), ownershipProofClaimantWallet: claimant }, security, claimantWallet: claimant });
   assert.equal(forged.automaticImportAllowed, false, 'proof from another wallet than the authority');
 });
+
+test('without its own secret the transfer check refuses to run (no fallback to the X OAuth secrets)', () => {
+  const saved = process.env.PROJECT_IMPORT_CHALLENGE_SECRET;
+  delete process.env.PROJECT_IMPORT_CHALLENGE_SECRET;
+  process.env.X_OAUTH_STATE_SECRET = 'x-secret';
+  try { assert.throws(() => issueEvmTransferChallenge({ chainId: 56, tokenAddress: addr(), projectId: 'p', authority: addr(), claimant: addr() }), { code: 'PROJECT_IMPORT_TRANSFER_NOT_CONFIGURED' }); }
+  finally { process.env.PROJECT_IMPORT_CHALLENGE_SECRET = saved; delete process.env.X_OAUTH_STATE_SECRET; }
+});

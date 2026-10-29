@@ -33,6 +33,8 @@ const RH_LAUNCHPAD_CREATED = "0x01937e4cd42e9b7187e05b387d1e47c08cd90a82522fdaa8
 // direct call from the creator's wallet, createToken or multicall wrapping it, which mints the
 // whole fixed supply in the same tx.
 export const RH_TOKEN_LAUNCHER = "0x0000FffFBE8efE702c8703aE3477FF5dE3d319C0";
+// The launcher's own creation event, topic1 = the new token (read on mainnet 2026-10-29).
+const RH_LAUNCHER_TOKEN_CREATED = "0x2e2b3f61b70d2d131b2a807371103cc98d51adcaa5e9a8f9c32658ad8426e74e";
 const RH_LAUNCHER_CREATE_SELECTORS = new Set([
   id("createToken(address,string,string,uint8,uint128,address,bytes)").slice(0, 10),
   id("createToken(string,string,uint8,uint256,address,bytes,bytes32)").slice(0, 10),
@@ -44,7 +46,10 @@ const RH_LOG_SPAN = 9_999_999;
 const TRANSFER = id("Transfer(address,address,uint256)");
 const ZERO_TOPIC = zeroPadValue(ZeroAddress, 32);
 // A wallet that directly deployed the token: its CREATE address for some nonce is the token.
-const CREATE_NONCE_CAP = 20_000;
+// Capped and yielding so a busy wallet cannot stall the API; higher-nonce deployers paste the deploy tx.
+const CREATE_NONCE_CAP = 5_000;
+const CREATE_NONCE_YIELD = 250;
+const nonceResults = new Map();
 const NEGATIVE_TTL_MS = 10 * 60 * 1000;
 const ERROR_TTL_MS = 60 * 1000;
 const POSITIVE_MAX = 5000;
@@ -87,12 +92,22 @@ export function bloomContains(bloom, value) {
   return true;
 }
 
-/** A revert or undecodable result means "this method does not exist"; anything else is an RPC failure. */
-function isMissingMethod(error) {
-  return ["CALL_EXCEPTION", "BAD_DATA"].includes(String(error?.code || ""));
+/**
+ * True only when a call really reverted (the method does not exist) or answered empty ("0x").
+ * ethers 6 reports EVERY JSON-RPC error on eth_call as CALL_EXCEPTION ("missing revert data"),
+ * including rate limits, so the node's own error decides: code 3 or "execution reverted". Real
+ * BNB and Robinhood nodes both answer a missing method that way (checked 2026-10-29).
+ */
+export function isRevertError(error) {
+  if (String(error?.code || "") === "BAD_DATA") return true;
+  const inner = error?.info?.error || error?.error;
+  const text = String(inner ? inner.message || "" : error?.message || "");
+  if (/missing revert data/i.test(text)) return false;
+  return Number(inner?.code) === 3 || /execution reverted/i.test(text);
 }
+const isMissingMethod = isRevertError;
 
-export function clearEvmCreatorCacheForTest() { positives.clear(); negatives.clear(); inFlight.clear(); scansRunning = 0; }
+export function clearEvmCreatorCacheForTest() { positives.clear(); negatives.clear(); inFlight.clear(); nonceResults.clear(); scansRunning = 0; }
 
 async function readFourmemeTokenManager(provider, token) {
   let raw;
@@ -147,7 +162,7 @@ function fourmemeCreatorFrom(tx, receipt, token) {
 }
 
 async function withScanSlot(run) {
-  if (scansRunning >= SCAN_SLOTS) throw rpcError("Creation lookups are busy. Please retry in a minute.");
+  if (scansRunning >= SCAN_SLOTS) throw Object.assign(rpcError("Creation lookups are busy. Please retry in a minute."), { busy: true });
   scansRunning++;
   try { return await run(); } finally { scansRunning--; }
 }
@@ -268,8 +283,9 @@ export async function verifyCreationTx({ provider, chainId, token, txHash }) {
   if (id4663 && sameAddress(tx.to, RH_TOKEN_LAUNCHER) && RH_LAUNCHER_CREATE_SELECTORS.has(lower(String(tx.data || "").slice(0, 10)))) {
     const launcherOwned = sameAddress(await readTokenAddressMethod(provider, token, "creator"), RH_TOKEN_LAUNCHER)
       || sameAddress(await readTokenAddressMethod(provider, token, "deployer"), RH_TOKEN_LAUNCHER);
-    const mint = (receipt.logs || []).find((log) => sameAddress(log.address, token) && log.topics?.[0] === TRANSFER && lower(log.topics?.[1]) === lower(ZERO_TOPIC));
-    if (!launcherOwned || !mint) return null;
+    const mint = (receipt.logs || []).find((log) => sameAddress(log.address, token) && log.topics?.[0] === TRANSFER && lower(log.topics?.[1]) === lower(ZERO_TOPIC) && /^0x[0-9a-fA-F]{64}$/.test(String(log.data || "")));
+    const announced = (receipt.logs || []).some((log) => sameAddress(log.address, RH_TOKEN_LAUNCHER) && log.topics?.[0] === RH_LAUNCHER_TOKEN_CREATED && lower(log.topics?.[1]) === lower(zeroPadValue(token, 32)));
+    if (!launcherOwned || !mint || !announced) return null;
     // Fixed supply: the whole supply was minted in this tx, so it is the token's creation.
     let supply;
     try { supply = BigInt(await provider.call({ to: token, data: id("totalSupply()").slice(0, 10) })); }
@@ -286,8 +302,16 @@ export async function createNonceFor({ provider, token, wallet }) {
   try { count = await provider.getTransactionCount(wallet); }
   catch (error) { throw rpcError("Wallet history lookup is temporarily unavailable. Please retry.", error); }
   const limit = Math.min(Number(count) || 0, CREATE_NONCE_CAP);
-  for (let nonce = 0; nonce < limit; nonce++) if (sameAddress(getCreateAddress({ from: wallet, nonce }), token)) return nonce;
-  return null;
+  const key = `${lower(wallet)}:${lower(token)}:${limit}`;
+  if (nonceResults.has(key)) return nonceResults.get(key);
+  let found = null;
+  for (let nonce = 0; nonce < limit && found === null; nonce++) {
+    if (nonce && nonce % CREATE_NONCE_YIELD === 0) await new Promise((resolve) => setImmediate(resolve));
+    if (sameAddress(getCreateAddress({ from: wallet, nonce }), token)) found = nonce;
+  }
+  if (nonceResults.size >= POSITIVE_MAX) nonceResults.delete(nonceResults.keys().next().value);
+  nonceResults.set(key, found);
+  return found;
 }
 
 /** A Safe (Gnosis Safe proxy): getThreshold() and getOwners() answer. */
@@ -325,6 +349,7 @@ function rememberCreator(key, found) {
 }
 
 function rememberError(key, error) {
+  if (error?.busy) return; // a full scan queue is not this token's fault
   if (negatives.size >= NEGATIVE_MAX) negatives.delete(negatives.keys().next().value);
   negatives.set(key, { expiresAt: Date.now() + ERROR_TTL_MS, error });
 }

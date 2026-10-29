@@ -21,7 +21,8 @@ function sameAddress(a, b) { return Boolean(a && b) && lower(a) === lower(b); }
 function challengeError(message, code = "PROJECT_IMPORT_TRANSFER_PROOF_INVALID") { return Object.assign(new Error(message), { code }); }
 
 function secret() {
-  const value = String(process.env.PROJECT_IMPORT_CHALLENGE_SECRET || process.env.X_OAUTH_STATE_SECRET || process.env.X_OAUTH_CLIENT_SECRET || "").trim();
+  // Its own secret only (review 2026-10-29): never reuse the X OAuth secrets, which X itself knows.
+  const value = String(process.env.PROJECT_IMPORT_CHALLENGE_SECRET || "").trim();
   if (!value) throw challengeError("Transfer verification is not configured", "PROJECT_IMPORT_TRANSFER_NOT_CONFIGURED");
   return value;
 }

@@ -1,4 +1,5 @@
 import { Interface, getAddress } from 'ethers';
+import { isRevertError } from './projectImportEvmCreator.js';
 
 // Read-only import evidence. This is NOT a trading router or the launchpad quote catalog.
 // Four ABI: four-meme-community/four-meme-ai @ c81f0eebbabec16998b2457f7e881e1b70b86420.
@@ -86,7 +87,7 @@ export async function readBnbImportMarket({provider,tokenAddress,now=Date.now,re
       // flap.sh: the portal owns the coin while it bonds. A revert or empty answer means no owner(); other errors fail closed below.
       let flapOwned=false;
       try { flapOwned=same((await call(token,'owner'))[0],BNB_IMPORT_MARKETS.flapPortal); }
-      catch(error) { if(!/revert|BAD_DATA|could not decode/i.test(`${error?.code||''} ${error?.message||''}`))throw error; }
+      catch(error) { if(!isRevertError(error))throw error; }
       if(flapOwned) {
         result.launchEvidence={platform:'flapsh',portal:BNB_IMPORT_MARKETS.flapPortal,fourRegistry:'not_registered',helper:BNB_IMPORT_MARKETS.fourHelper};
         result.market={phase:'bonding',verified:true,platform:'flapsh',venue:'flap.sh',reason:'external_bonding',liquidityAvailable:false,executionTested:false};

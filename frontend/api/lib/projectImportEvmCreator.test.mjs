@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Interface, Wallet, ZeroAddress, getAddress, getBytes, getCreateAddress, hexlify, id, keccak256, zeroPadValue, AbiCoder } from 'ethers';
-import { FLAP_PORTAL, FOURMEME_HELPER, FOURMEME_TOKEN_MANAGER_V2, RH_LAUNCHPAD_ROUTER, RH_TOKEN_LAUNCHER, bloomContains, clearEvmCreatorCacheForTest, isWalletCode, resolveEvmProjectAuthority, verifyCreationTx } from './projectImportEvmCreator.js';
+import { FLAP_PORTAL, FOURMEME_HELPER, FOURMEME_TOKEN_MANAGER_V2, RH_LAUNCHPAD_ROUTER, RH_TOKEN_LAUNCHER, bloomContains, clearEvmCreatorCacheForTest, isRevertError, isWalletCode, resolveEvmProjectAuthority, verifyCreationTx } from './projectImportEvmCreator.js';
 import { isCreatorAuthority } from './projectImportAssessment.js';
 
 const reads = new Interface(['function owner() view returns (address)', 'function getOwner() view returns (address)', 'function deployer() view returns (address)', 'function creator() view returns (address)', 'function totalSupply() view returns (uint256)']);
@@ -10,11 +10,14 @@ const helper = new Interface(['function getTokenInfo(address) view returns(uint2
 const fourEvent = new Interface(['event TokenCreate(address creator,address token,uint256 requestId,string name,string symbol,uint256 totalSupply,uint256 launchTime,uint256 launchFee)']);
 const flapEvent = new Interface(['event TokenCreated(uint256 ts,address creator,uint256 nonce,address token,string name,string symbol,string meta)']);
 const RH_CREATED = '0x01937e4cd42e9b7187e05b387d1e47c08cd90a82522fdaa889731e4bf52c462d';
+const LAUNCHER_CREATED = '0x2e2b3f61b70d2d131b2a807371103cc98d51adcaa5e9a8f9c32658ad8426e74e';
 const TRANSFER = id('Transfer(address,address,uint256)');
 const ZERO_TOPIC = zeroPadValue(ZeroAddress, 32);
 const addr = () => Wallet.createRandom().address;
 const CONTRACT_CODE = '0x6080604052';
-const revert = () => Object.assign(new Error('execution reverted'), { code: 'CALL_EXCEPTION' });
+const revert = () => Object.assign(new Error('execution reverted (no data present; likely require(false) occurred'), { code: 'CALL_EXCEPTION', info: { error: { code: 3, message: 'execution reverted', data: '0x' } } });
+// What ethers 6 makes of a JSON-RPC rate limit on eth_call: also CALL_EXCEPTION.
+const rateLimited = () => Object.assign(new Error('missing revert data (action="call")'), { code: 'CALL_EXCEPTION', shortMessage: 'missing revert data', info: { error: { code: -32005, message: 'limit exceeded' } } });
 
 function bloomFor(values) {
   const bits = new Uint8Array(256);
@@ -29,7 +32,7 @@ function chain({ token, methods = {}, codes = {}, nonces = {}, safes = {}, block
     counts,
     async call({ to, data }) {
       counts.calls++;
-      if (failCall && failCall(to, data)) throw Object.assign(new Error('timeout'), { code: 'TIMEOUT' });
+      if (failCall && failCall(to, data)) throw rateLimited();
       if (to.toLowerCase() === FOURMEME_HELPER.toLowerCase()) {
         if (!fourInfo) throw revert();
         return helper.encodeFunctionResult('getTokenInfo', [fourInfo.version, fourInfo.manager, ZeroAddress, 0, 0, 0, 0, 0, 0, 0, 0, false]);
@@ -88,6 +91,14 @@ test('a live owner always wins, wallet or contract, without any launchpad lookup
   assert.deepEqual([r.method, r.currentOwner, r.automaticOwnershipVerified], ['owner', owner, true]);
   const s = await resolveEvmProjectAuthority({ provider: chain({ token, methods: { owner: safe }, codes: { [safe]: CONTRACT_CODE } }), chainId: 56, token, signedWallet: addr() });
   assert.deepEqual([s.method, s.currentOwner, s.automaticOwnershipVerified], ['owner', safe, false]);
+});
+
+test('revert detection: only a node revert or empty answer means "no such method" (ethers maps rate limits to CALL_EXCEPTION too)', () => {
+  assert.equal(isRevertError(revert()), true);
+  assert.equal(isRevertError(rateLimited()), false);
+  assert.equal(isRevertError(Object.assign(new Error('could not decode result data'), { code: 'BAD_DATA' })), true);
+  assert.equal(isRevertError(Object.assign(new Error('missing revert data'), { code: 'CALL_EXCEPTION', info: { error: { code: -32000, message: 'header not found' } } })), false);
+  assert.equal(isRevertError(new Error('socket hang up')), false);
 });
 
 test('an RPC failure on owner() is retryable, never a fall-through to the deployer (review finding 1)', async () => {
@@ -235,11 +246,13 @@ test('pasted creation tx: direct deploy, four.meme, flap.sh, Robinhood launchpad
 
   const launched = addr();
   const mint = { address: launched, topics: [TRANSFER, ZERO_TOPIC, zeroPadValue(dev, 32)], data: AbiCoder.defaultAbiCoder().encode(['uint256'], [1000n]) };
+  const announce = { address: RH_TOKEN_LAUNCHER, topics: [LAUNCHER_CREATED, zeroPadValue(launched, 32)], data: '0x' };
   const launcherTx = { hash: H(4), from: dev, to: RH_TOKEN_LAUNCHER, data: id('multicall(bytes[])').slice(0, 10) + '00' };
-  const ok = await verifyCreationTx({ provider: pasted({ token: launched, tx: launcherTx, receipt: { status: 1, logs: [mint], blockNumber: 5 }, methods: { creator: RH_TOKEN_LAUNCHER }, supply: 1000n }), chainId: 4663, token: launched, txHash: H(4) });
+  const ok = await verifyCreationTx({ provider: pasted({ token: launched, tx: launcherTx, receipt: { status: 1, logs: [mint, announce], blockNumber: 5 }, methods: { creator: RH_TOKEN_LAUNCHER }, supply: 1000n }), chainId: 4663, token: launched, txHash: H(4) });
   assert.equal(ok.launchpad, 'robinhood_token_launcher');
-  assert.equal(await verifyCreationTx({ provider: pasted({ token: launched, tx: launcherTx, receipt: { status: 1, logs: [mint], blockNumber: 5 }, methods: { creator: RH_TOKEN_LAUNCHER }, supply: 2000n }), chainId: 4663, token: launched, txHash: H(4) }), null, 'partial mint is not the creation');
-  assert.equal(await verifyCreationTx({ provider: pasted({ token: launched, tx: { ...launcherTx, data: '0xdeadbeef' }, receipt: { status: 1, logs: [mint], blockNumber: 5 }, methods: { creator: RH_TOKEN_LAUNCHER }, supply: 1000n }), chainId: 4663, token: launched, txHash: H(4) }), null, 'other launcher calls are not creations');
+  assert.equal(await verifyCreationTx({ provider: pasted({ token: launched, tx: launcherTx, receipt: { status: 1, logs: [mint], blockNumber: 5 }, methods: { creator: RH_TOKEN_LAUNCHER }, supply: 1000n }), chainId: 4663, token: launched, txHash: H(4) }), null, 'the launcher must announce this token');
+  assert.equal(await verifyCreationTx({ provider: pasted({ token: launched, tx: launcherTx, receipt: { status: 1, logs: [mint, announce], blockNumber: 5 }, methods: { creator: RH_TOKEN_LAUNCHER }, supply: 2000n }), chainId: 4663, token: launched, txHash: H(4) }), null, 'partial mint is not the creation');
+  assert.equal(await verifyCreationTx({ provider: pasted({ token: launched, tx: { ...launcherTx, data: '0xdeadbeef' }, receipt: { status: 1, logs: [mint, announce], blockNumber: 5 }, methods: { creator: RH_TOKEN_LAUNCHER }, supply: 1000n }), chainId: 4663, token: launched, txHash: H(4) }), null, 'other launcher calls are not creations');
 });
 
 test('pasted creation tx: unrelated, failed, malformed or other-chain transactions prove nothing', async () => {
@@ -264,7 +277,8 @@ test('Robinhood: the first-mint tx is checked with every recogniser, so launcher
   const dev = addr(), token = addr();
   const hash = `0x${'9'.repeat(64)}`;
   const mint = { address: token, blockNumber: 12, transactionHash: hash, topics: [TRANSFER, ZERO_TOPIC, zeroPadValue(dev, 32)], data: AbiCoder.defaultAbiCoder().encode(['uint256'], [500n]) };
-  const p = chain({ token, methods: { creator: RH_TOKEN_LAUNCHER }, codes: { [getAddress(RH_TOKEN_LAUNCHER)]: CONTRACT_CODE }, supply: 500n, logs: [mint], blocks: [{ number: 20, timestamp: 1, prefetchedTransactions: [] }], txs: { [hash]: { hash, from: dev, to: RH_TOKEN_LAUNCHER, data: id('multicall(bytes[])').slice(0, 10) } }, receipts: { [hash]: { status: 1, logs: [mint], blockNumber: 12 } } });
+  const announce = { address: RH_TOKEN_LAUNCHER, topics: [LAUNCHER_CREATED, zeroPadValue(token, 32)], data: '0x' };
+  const p = chain({ token, methods: { creator: RH_TOKEN_LAUNCHER }, codes: { [getAddress(RH_TOKEN_LAUNCHER)]: CONTRACT_CODE }, supply: 500n, logs: [mint], blocks: [{ number: 20, timestamp: 1, prefetchedTransactions: [] }], txs: { [hash]: { hash, from: dev, to: RH_TOKEN_LAUNCHER, data: id('multicall(bytes[])').slice(0, 10) } }, receipts: { [hash]: { status: 1, logs: [mint, announce], blockNumber: 12 } } });
   const r = await resolveEvmProjectAuthority({ provider: p, chainId: 4663, token, signedWallet: dev });
   assert.deepEqual([r.method, r.currentOwner, r.automaticOwnershipVerified, r.evidence.launchpad], ['launchpad_creator', getAddress(dev), true, 'robinhood_token_launcher']);
 });
@@ -276,4 +290,21 @@ test('flap.sh: the portal holding owner() while bonding is not treated as the ow
   const p = chain({ token: flap, methods: { owner: FLAP_PORTAL }, codes: { [getAddress(FLAP_PORTAL)]: CONTRACT_CODE }, txs: { [hash]: { hash, from: dev, to: FLAP_PORTAL } }, receipts: { [hash]: { status: 1, logs: [flapLog], blockNumber: 5 } } });
   const r = await resolveEvmProjectAuthority({ provider: p, chainId: 56, token: flap, signedWallet: dev, creationTx: hash, fetchImpl: () => { throw Error('no fetch'); } });
   assert.deepEqual([r.method, r.automaticOwnershipVerified], ['creation_tx', true]);
+});
+
+test('a full scan queue is not cached against the token (review finding 4)', async () => {
+  clearEvmCreatorCacheForTest();
+  const slow = fourmemeSetup(), other = fourmemeSetup();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  for (const s of [slow]) { const g = s.provider.getBlockNumber; s.provider.getBlockNumber = async () => { await gate; return g(); }; }
+  const a = resolveEvmProjectAuthority({ provider: slow.provider, chainId: 56, token: slow.token, signedWallet: slow.creator, fetchImpl: slow.fetchImpl });
+  const b = resolveEvmProjectAuthority({ provider: slow.provider, chainId: 56, token: slow.token + '', signedWallet: slow.creator, fetchImpl: slow.fetchImpl });
+  const third = fourmemeSetup(); const g3 = third.provider.getBlockNumber; third.provider.getBlockNumber = async () => { await gate; return g3(); };
+  const c = resolveEvmProjectAuthority({ provider: third.provider, chainId: 56, token: third.token, signedWallet: third.creator, fetchImpl: third.fetchImpl });
+  await new Promise((resolve) => setImmediate(resolve));
+  await assert.rejects(resolveEvmProjectAuthority({ provider: other.provider, chainId: 56, token: other.token, signedWallet: other.creator, fetchImpl: other.fetchImpl }), /busy/);
+  release(); await Promise.all([a, b, c]);
+  const r = await resolveEvmProjectAuthority({ provider: other.provider, chainId: 56, token: other.token, signedWallet: other.creator, fetchImpl: other.fetchImpl });
+  assert.equal(r.method, 'fourmeme_creator', 'retry after a slot frees succeeds');
 });

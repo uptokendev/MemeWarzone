@@ -67,7 +67,7 @@ function makeProvider({
 }
 
 // A node reports a reverted eth_call as ethers CALL_EXCEPTION; any other error is an RPC failure.
-function revert(message) { return Object.assign(new Error(message), { code: "CALL_EXCEPTION" }); }
+function revert(message) { return Object.assign(new Error(message), { code: "CALL_EXCEPTION", info: { error: { code: 3, message: "execution reverted", data: "0x" } } }); }
 
 async function resolve(provider, wallet = OWNER) {
   return resolveProjectOwnershipBnb({

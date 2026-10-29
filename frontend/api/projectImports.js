@@ -15,6 +15,10 @@ import {
 } from "./lib/projectImportCore.js";
 import { projectImportEvmProvider, registerDefaultProjectImportResolvers } from "./lib/projectImportResolverAdapters.js";
 import { issueEvmTransferChallenge, verifyEvmTransferProof } from "./lib/projectImportEvmTransfer.js";
+import { clientIp, widgetRateLimiter } from "./importSwapWidget.js";
+
+// Each transfer-check start runs a full on-chain resolve: 10 per minute per IP.
+const allowTransferChallenge = widgetRateLimiter({ limit: 10 });
 import { resolveProjectToken } from "./lib/projectImportResolvers.js";
 import { scanProjectImportSecurity } from "./lib/projectImportRiskSecurity.js";
 import {
@@ -398,6 +402,7 @@ export default async function projectImports(req, res) {
 
     // BNB/Robinhood transfer check: a signed, stateless challenge for the authority the chain names now.
     if (req.method === "POST" && path === "/evm-transfer-challenge") {
+      if (!allowTransferChallenge(clientIp(req))) return json(res, 429, { error: "Too many transfer checks; try again in a minute.", code: "RATE_LIMITED" });
       const body = await readJson(req);
       const identity = normalizeProjectIdentity(body.chainId, body.tokenAddress);
       if (identity.chainId === 101) throw Object.assign(new Error("Use the Solana creator-wallet check on Solana."), { code: "INVALID_CHAIN" });
