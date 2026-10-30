@@ -21,3 +21,9 @@ test('bonding and new policy failure are explicit',()=>{assert.equal(projectImpo
 test('API RPC misses stay unavailable, not a custom wallet-sign title',()=>{
   assert.equal(projectImportFeedback({status:503,code:'PROJECT_IMPORT_RPC_UNAVAILABLE',message:'Unexpected error'}).title,'IMPORT CHECK TEMPORARILY UNAVAILABLE');
 });
+
+test("graduation hard rule refusal explains what is needed", () => {
+  const f = projectImportFeedback(Object.assign(new Error("x"), { code: "PROJECT_IMPORT_GRADUATION_UNPROVEN", status: 409 }));
+  assert.equal(f.title, "NOT GRADUATED YET");
+  assert.match(f.message, /finished their launch phase and trade on a DEX/);
+});

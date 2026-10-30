@@ -42,6 +42,7 @@ function makeProvider({
       calls.push({ type: "getCode", address });
       return code;
     },
+    async getTransactionCount() { return 0; },
     async call({ to, data }) {
       calls.push({ type: "call", to, data });
       const sig = selector(data);
@@ -49,21 +50,24 @@ function makeProvider({
       if (sig === selector(ABI.encodeFunctionData("symbol"))) return ABI.encodeFunctionResult("symbol", [symbol]);
       if (sig === selector(ABI.encodeFunctionData("decimals"))) return ABI.encodeFunctionResult("decimals", [decimals]);
       if (sig === selector(ABI.encodeFunctionData("totalSupply"))) {
-        if (!totalSupplyAvailable) throw new Error("missing totalSupply");
+        if (!totalSupplyAvailable) throw revert("missing totalSupply");
         return ABI.encodeFunctionResult("totalSupply", [totalSupply]);
       }
       if (sig === selector(ABI.encodeFunctionData("owner"))) {
-        if (!ownerAvailable) throw new Error("missing owner");
+        if (!ownerAvailable) throw revert("missing owner");
         return ABI.encodeFunctionResult("owner", [owner]);
       }
       if (sig === selector(ABI.encodeFunctionData("getOwner"))) {
-        if (!getOwnerAvailable) throw new Error("missing getOwner");
+        if (!getOwnerAvailable) throw revert("missing getOwner");
         return ABI.encodeFunctionResult("getOwner", [getOwner]);
       }
-      throw new Error("unexpected call");
+      throw revert("unexpected call");
     },
   };
 }
+
+// A node reports a reverted eth_call as ethers CALL_EXCEPTION; any other error is an RPC failure.
+function revert(message) { return Object.assign(new Error(message), { code: "CALL_EXCEPTION", info: { error: { code: 3, message: "execution reverted", data: "0x" } } }); }
 
 async function resolve(provider, wallet = OWNER) {
   return resolveProjectOwnershipBnb({

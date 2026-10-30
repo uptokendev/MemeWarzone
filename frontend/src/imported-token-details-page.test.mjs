@@ -89,7 +89,7 @@ test("all supported unverified imports expose one reusable Claim Memecoin dialog
 
 test("EVM Claim Memecoin checks current owner first and offers X fallback", () => {
   assert.match(xClient, /\/api\/project-imports\/image\/x\/authority/);
-  assert.match(claimDialog, /resolveProjectEvmAuthority\(item, connectedWallet\)/);
+  assert.match(claimDialog, /resolveProjectEvmAuthority\(item, connectedWallet(, creationTx \|\| null)?\)/);
   assert.match(claimDialog, /\{evmChainLabel\} project owner wallet/);
   assert.match(claimDialog, /CONNECT \{evmChainLabel\.toUpperCase\(\)\} OWNER WALLET/);
   assert.match(claimDialog, /VERIFY \{evmChainLabel\.toUpperCase\(\)\} OWNER WALLET/);
@@ -106,15 +106,25 @@ test("Solana Claim Memecoin offers current project-authority proof before manual
   assert.match(claimDialog, /Recorded project authority:/);
 });
 
-test("manual review is the final ownership fallback and requires a contact X account", () => {
-  assert.match(claimDialog, /Last resort — manual review/);
+test("manual review is the final ownership fallback and requires a proven X sign-in", () => {
+  // 2026-10-29: the contact X is proven by an X sign-in, not typed; the API reads it from its own record.
+  assert.match(claimDialog, /Last resort: manual review/);
   assert.match(claimDialog, /REQUEST MANUAL REVIEW/);
-  assert.match(claimDialog, /SUBMIT MANUAL REVIEW/);
-  assert.match(claimDialog, /Contact X account/);
+  assert.match(claimDialog, /SIGN IN WITH X TO REQUEST MANUAL REVIEW/);
+  assert.match(claimDialog, /claim"\), handle = String\(returnParams\.get\("xHandle"\)/);
   assert.match(claimDialog, /project_import_manual_claim/);
-  assert.match(claimDialog, /requestProjectManualCheck/);
-  assert.match(claimDialog, /Contact X: \$\{contactX\}/);
+  assert.match(claimDialog, /requestProjectManualCheck\(\{chainId:item\.chainId,tokenAddress:item\.tokenAddress,auth\}\)/);
+  assert.doesNotMatch(claimDialog, /Contact X: \$\{contactX\}/);
   assert.match(claimDialog, /This does not verify ownership automatically/);
+});
+
+test("claim dialog stays open during manual review and offers the creator transfer check", () => {
+  assert.match(claimDialog, /item\.ownershipStatus === "ownership_pending" \|\| manualReviewPending/);
+  assert.match(claimDialog, /startPumpOwnershipChallenge\(/);
+  assert.match(claimDialog, /checkPumpOwnershipChallenge\(/);
+  assert.match(claimDialog, /project_import_pump_challenge_start/);
+  assert.match(claimDialog, /project_import_pump_challenge_check/);
+  assert.match(entry, /claimResult === "x_contact"/);
 });
 
 test("failed X OAuth reopens Claim Memecoin and explains account mismatch", () => {
@@ -202,4 +212,15 @@ test("imported trades come from the import's own pool, in our own token page's t
   assert.match(table, /fetchArenaImportTrades\(tokenAddress, chainId/);
   for (const head of ["Account", "Type", "Token", "Time", "Txn"]) assert.match(table, new RegExp(`>${head}</th>`));
   assert.match(table, /data-imported-trades-table="true"/);
+});
+
+test("BNB/Robinhood claim offers the creation-tx paste with an explorer link and the on-chain transfer check", () => {
+  assert.match(claimDialog, /data-evm-creation-tx-option="true"/);
+  assert.match(claimDialog, /https:\/\/bscscan\.com\/address\/\$\{address\}/);
+  assert.match(claimDialog, /https:\/\/robinhoodchain\.blockscout\.com\/address\/\$\{address\}/);
+  assert.match(claimDialog, /parseCreationTxInput\(creationTxInput\)/);
+  assert.match(claimDialog, /data-evm-transfer-option="true"/);
+  assert.match(claimDialog, /startEvmTransferChallenge\(\{item,auth,creationTx:creationTx\|\|null\}\)/);
+  assert.match(claimDialog, /transferProof:\{challenge:evmChallenge\.challenge,txHash\}/);
+  assert.match(claimDialog, /MemeWarzone never receives it/);
 });

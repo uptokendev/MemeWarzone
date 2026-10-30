@@ -1,4 +1,5 @@
-import { Interface, ZeroAddress, getAddress, isAddress } from "ethers";
+import { Interface, getAddress, isAddress } from "ethers";
+import { resolveEvmProjectAuthority } from "./projectImportEvmCreator.js";
 
 // Import-only EVM authority resolver. Intentionally has no launch, market-routing, graduation, claims or Arena dependency.
 export const AUTOMATIC_EVM_OWNERSHIP_UNAVAILABLE = "automatic ownership verification unavailable";
@@ -34,41 +35,12 @@ async function optionalRead(provider, contractAddress, method) {
   catch { return { readable: false, value: null }; }
 }
 
-function unavailableOwnership(method = null) {
-  return {
-    method,
-    currentOwner: null,
-    automaticOwnershipVerified: false,
-    automaticOwnershipVerification: "unavailable",
-    message: AUTOMATIC_EVM_OWNERSHIP_UNAVAILABLE,
-  };
+// Owner, token deployer/creator wallet, then a verified launchpad creator: see projectImportEvmCreator.js.
+async function resolveCurrentOwner(provider, contractAddress, signedWallet, chainId, creationTx) {
+  return resolveEvmProjectAuthority({ provider, chainId, token: contractAddress, signedWallet, creationTx });
 }
 
-async function resolveCurrentOwner(provider, contractAddress, signedWallet) {
-  const ownerRead = await optionalRead(provider, contractAddress, "owner");
-  let method = "owner";
-  let rawOwner = ownerRead.value;
-  if (!ownerRead.readable) {
-    const getOwnerRead = await optionalRead(provider, contractAddress, "getOwner");
-    if (!getOwnerRead.readable) return unavailableOwnership();
-    method = "getOwner";
-    rawOwner = getOwnerRead.value;
-  }
-  let currentOwner;
-  try { currentOwner = normalizeEvmAddress(rawOwner, "current owner"); }
-  catch { return unavailableOwnership(method); }
-  if (currentOwner === getAddress(ZeroAddress)) return unavailableOwnership(method);
-  const verified = currentOwner === signedWallet;
-  return {
-    method,
-    currentOwner,
-    automaticOwnershipVerified: verified,
-    automaticOwnershipVerification: verified ? "verified" : "rejected",
-    message: verified ? "signed connected wallet matches current owner" : "signed connected wallet does not match current owner",
-  };
-}
-
-export async function resolveProjectOwnershipEvm({ provider, chainId, contractAddress, signedConnectedWallet }) {
+export async function resolveProjectOwnershipEvm({ provider, chainId, contractAddress, signedConnectedWallet, creationTx = null }) {
   const id = Number(chainId);
   if (!Number.isSafeInteger(id) || id <= 0) throw new TypeError("A valid EVM chain id is required.");
   if (!provider || typeof provider.getCode !== "function" || typeof provider.call !== "function") throw new TypeError("A read-only EVM provider is required.");
@@ -103,7 +75,7 @@ export async function resolveProjectOwnershipEvm({ provider, chainId, contractAd
   const decimals = Number(decimalsRead.value);
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 255) return { ok:false, chainId:id, contractAddress:tokenAddress, errorCode:"ERC20_DECIMALS_INVALID", error:"ERC20 decimals() returned an invalid value." };
 
-  const ownership = await resolveCurrentOwner(provider, tokenAddress, signedWallet);
+  const ownership = await resolveCurrentOwner(provider, tokenAddress, signedWallet, Number(chainId), creationTx);
   return {
     ok:true,
     chainId:id,

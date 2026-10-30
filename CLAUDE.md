@@ -53,6 +53,7 @@ Never mix targets. The dashboard and all expansion work run on the TEST stack un
 | `solana-ops.md` | graduation keeper, treasury_operator role, indexer pg pool starvation |
 | `payouts-and-rewards.md` | protocol fee flush, league vaults, poker payouts, airdrop runner + recovery, recruiter/creator payouts, payout operator, monthly vault cap bug |
 | `story-mode.md` | Story Mode API, share cards, `/s/` links |
+| `import-claims.md` | imported-coin ownership claims: Solana creator rules, X sign-in records, manual review, Meteora vaults in the holder check |
 | `meteora-dbc.md` | Meteora DBC launch type, fees, tx shape, mainnet canary |
 | `dogeos.md` | DogeOS Chikyū testnet (6281971): Barkswap custom-pool launch (gen-8 on Algebra), sub-projects and their branches, founder decisions |
 

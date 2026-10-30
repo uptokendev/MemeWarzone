@@ -24,7 +24,7 @@ export default function TokenDetailsEntry() {
   const [project, setProject] = useState<ProjectImportItem | null>(null);
   const [resolved, setResolved] = useState(!projectImportsEnabled);
   const claimResult = searchParams.get("claim");
-  const [claimOpen, setClaimOpen] = useState(claimResult === "prompt" || claimResult === "x_failed");
+  const [claimOpen, setClaimOpen] = useState(claimResult === "prompt" || claimResult === "x_failed" || claimResult === "x_contact");
 
   useEffect(() => {
     if (!projectImportsEnabled || !routeId) { setProject(null); setResolved(true); return; }

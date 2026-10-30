@@ -25,7 +25,7 @@ function providerFor(chainId) {
   return provider;
 }
 
-export async function resolveProjectImportClaimAuthority({ chainId, tokenAddress, connectedWallet }) {
+export async function resolveProjectImportClaimAuthority({ chainId, tokenAddress, connectedWallet, creationTx = null }) {
   const id = Number(chainId);
   const wallet = String(connectedWallet || "0x0000000000000000000000000000000000000000").trim();
   const raw = await resolveProjectOwnershipEvm({
@@ -33,6 +33,7 @@ export async function resolveProjectImportClaimAuthority({ chainId, tokenAddress
     chainId: id,
     contractAddress: tokenAddress,
     signedConnectedWallet: wallet,
+    creationTx,
   });
   if (!raw?.ok) throw Object.assign(new Error(raw?.error || "EVM claim authority lookup failed"), { code: raw?.errorCode || "PROJECT_IMPORT_RESOLVE_FAILED" });
   return {
@@ -42,6 +43,9 @@ export async function resolveProjectImportClaimAuthority({ chainId, tokenAddress
     currentAuthority: raw.ownership?.currentOwner ?? null,
     matchesConnected: Boolean(raw.ownership?.automaticOwnershipVerified),
     authoritySource: raw.ownership?.method ? `evm_${raw.ownership.method}` : null,
+    creationTx: raw.ownership?.evidence?.creationTx ?? null,
+    launchpad: raw.ownership?.evidence?.launchpad ?? null,
+    safe: raw.ownership?.evidence?.safe ? { address: raw.ownership.evidence.safe, threshold: raw.ownership.evidence.threshold } : null,
   };
 }
 

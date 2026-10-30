@@ -253,6 +253,18 @@ try {
     used_at timestamptz,
     PRIMARY KEY(chain_id,address)
   )`);
+  // X sign-ins are recorded in the ownership audit; manual review requires one (2026-10-29).
+  await pool.query(`CREATE TABLE IF NOT EXISTS public.wm_admin_audit_log (
+    id uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    admin_user_id uuid,
+    action text NOT NULL,
+    target_type text,
+    target_id uuid,
+    before jsonb,
+    after jsonb,
+    created_at timestamptz NOT NULL DEFAULT now()
+  )`);
+  await pool.query(`DELETE FROM public.wm_admin_audit_log WHERE target_type='project_ownership_claim'`);
   await pool.query(`TRUNCATE TABLE public.project_import_review_evidence, public.project_import_pump_challenges, public.arena_token_imports, public.auth_nonces RESTART IDENTITY`);
   await assertCampaignTableAbsent("before certification");
   await pool.query(
@@ -357,6 +369,22 @@ try {
   const manualSeed = await postJson(baseOn, "/api/project-imports", { chainId: 56, tokenAddress: MANUAL_TOKEN, auth: manualCreateAuth });
   assert.equal(manualSeed.response.status, 201, `manual-claim seed create failed: ${JSON.stringify(manualSeed.body)}`);
   assert.equal(manualSeed.body?.project?.ownershipStatus, "ownership_pending");
+  const manualAuthWithoutX = await issueAuth({
+    wallet: manualClaimantWallet,
+    action: PROJECT_IMPORT_ACTIONS.manualClaim,
+    token: MANUAL_TOKEN,
+    projectId: manualSeed.body.project.id,
+    body: { note: null },
+  });
+  const manualWithoutX = await postJson(baseOn, "/api/project-imports/manual-claim", { chainId: 56, tokenAddress: MANUAL_TOKEN, note: null, auth: manualAuthWithoutX });
+  assert.equal(manualWithoutX.response.status, 409, `manual-claim without a proven X sign-in must be refused: ${JSON.stringify(manualWithoutX.body)}`);
+  assert.equal(manualWithoutX.body?.code, "PROJECT_IMPORT_X_CONTACT_REQUIRED");
+  // Stands in for the X OAuth callback, which records the proven account for this wallet.
+  await pool.query(
+    `INSERT INTO public.wm_admin_audit_log(admin_user_id,action,target_type,target_id,before,after)
+     VALUES(NULL,'x_signin_contact','project_ownership_claim',$1,'{}'::jsonb,$2::jsonb)`,
+    [manualSeed.body.project.id, JSON.stringify({ walletAddress: lower(manualClaimantWallet.address), chainId: 56, tokenAddress: lower(MANUAL_TOKEN), xUserId: "1", xUsername: "mountcert", expectedUsername: null, outcome: "contact" })],
+  );
   const manualAuth = await issueAuth({
     wallet: manualClaimantWallet,
     action: PROJECT_IMPORT_ACTIONS.manualClaim,
@@ -369,6 +397,8 @@ try {
   assert.equal(manualClaim.body?.project?.ownershipStatus, "ownership_manual_review");
   assert.equal(lower(manualClaim.body?.project?.manualClaimWallet), lower(manualClaimantWallet.address));
   assert.equal(manualClaim.body?.project?.projectOwnerWallet, null);
+  const manualNote = await pool.query(`SELECT manual_claim_note FROM public.arena_token_imports WHERE id=$1`, [manualSeed.body.project.id]);
+  assert.match(String(manualNote.rows[0]?.manual_claim_note || ""), /Proven X: @mountcert \(X id 1/);
 
   const metadata = {
     description: "Mounted metadata update",

@@ -7,6 +7,18 @@ const EVERGLEN = {id:'de2321a6-3314-45e5-8114-48cedbd50213',chainId:101,token:'F
 const error = (message,code) => Object.assign(new Error(message),{code});
 export const maskImportWallet = value => {const s=String(value||'');return s.length>8?`${s.slice(0,4)}...${s.slice(-4)}`:s;};
 function sameAddress(a,b,chainId){return Number(chainId)===101?a===b:String(a).toLowerCase()===String(b).toLowerCase();}
+// Wallets that created the token (Pump curve creator, Meteora DBC pool creator, Solana mint creator). Pump.fun and other
+// launchpads often create with a separate wallet, and a creator can hand a project on, so a
+// mismatch with one of these may still go to manual review. A live owner/mint authority may not.
+export const CREATOR_AUTHORITY_SOURCES = new Set([
+  "pump_bonding_curve_creator", "meteora_dbc_creator", "mint_creator",
+  // EVM (2026-10-29): the token's own deployer()/creator() wallet and verified launchpad creators.
+  "evm_deployer", "evm_creator", "evm_fourmeme_creator", "evm_launchpad_creator",
+  "evm_safe_deployer", "evm_contract_deployer", "evm_creation_tx",
+]);
+export function isCreatorAuthority(resolved) {
+  return CREATOR_AUTHORITY_SOURCES.has(String(resolved?.authoritySource || ""));
+}
 export function isPumpFunImportToken(resolved) {
   const source = String(resolved?.authoritySource || "");
   const platform = String(resolved?.market?.platform || resolved?.projectAuthorityEvidence?.platform || "");
@@ -29,13 +41,17 @@ export function assessProjectImport({resolved,security,claimantWallet,proof=null
   const authority=resolved.currentAuthority||null;
   const known=resolved.automaticOwnershipAvailable===true&&Boolean(authority);
   const directMatch=known&&sameAddress(authority,claimantWallet,identity.chainId)&&resolved.signedWalletMatchesAuthority===true;
-  const transferMatch=known&&resolved.authoritySource==='pump_bonding_curve_creator'&&resolved.signedWalletMatchesAuthority===true&&resolved.ownershipProofSource==='pump_creator_transfer_challenge'&&sameAddress(resolved.ownershipProofCreatorWallet,authority,identity.chainId)&&sameAddress(resolved.ownershipProofClaimantWallet,claimantWallet,identity.chainId)&&Boolean(resolved.ownershipProofTxSignature);
-  const match=directMatch||transferMatch;
+  const transferMatch=known&&isCreatorAuthority(resolved)&&resolved.signedWalletMatchesAuthority===true&&resolved.ownershipProofSource==='pump_creator_transfer_challenge'&&sameAddress(resolved.ownershipProofCreatorWallet,authority,identity.chainId)&&sameAddress(resolved.ownershipProofClaimantWallet,claimantWallet,identity.chainId)&&Boolean(resolved.ownershipProofTxSignature);
+  // BNB/Robinhood (founder 2026-10-29): an exact transfer from the authority the chain names (live
+  // owner, deployer/creator, launchpad creator or a Safe) to the signed claimant, checked on chain.
+  const evmTransferMatch=known&&identity.chainId!==101&&resolved.signedWalletMatchesAuthority===true&&resolved.ownershipProofSource==='evm_authority_transfer'&&sameAddress(resolved.ownershipProofCreatorWallet,authority,identity.chainId)&&sameAddress(resolved.ownershipProofClaimantWallet,claimantWallet,identity.chainId)&&Boolean(resolved.ownershipProofTxSignature);
+  const match=directMatch||transferMatch||evmTransferMatch;
   const mismatch=known&&!match;
-  // Pump.fun commonly creates a separate embedded creator wallet. A known Pump creator
-  // mismatch may enter MANUAL ownership review. A server-verified exact transfer from
-  // that creator to the signed claimant is also accepted as cryptographic control proof.
-  const pumpCreatorMismatch=mismatch&&isPumpFunImportToken(resolved);
+  // Pump.fun commonly creates a separate embedded creator wallet. A known creator
+  // mismatch (Pump curve creator or Solana mint creator) may enter MANUAL ownership review.
+  // A server-verified exact transfer from that creator to the signed claimant is also
+  // accepted as cryptographic control proof.
+  const pumpCreatorMismatch=mismatch&&(isPumpFunImportToken(resolved)||isCreatorAuthority(resolved));
   const bonding=market.verified===true&&market.phase==='bonding';
   const postgrad=market.verified===true&&['postgrad','dex_market'].includes(market.phase)&&market.liquidityAvailable===true;
   const robinhoodImportOnly=identity.chainId===4663&&market.verified===true&&market.phase==='import_only';
@@ -44,13 +60,13 @@ export function assessProjectImport({resolved,security,claimantWallet,proof=null
   const launchReview=market.requiresLaunchReview===true;
   const marketControlsOk=market.pricingValid!==false && market.buyEnabled!==false && market.sellEnabled!==false;
   const venue=market.venue||'Supported DEX';
-  const platform=market.platform==='fourmeme'?'Four.meme':market.platform==='pumpfun'?'Pump.fun':'another launch platform';
+  const platform=market.platform==='fourmeme'?'Four.meme':market.platform==='pumpfun'?'Pump.fun':market.platform==='meteora_dbc'?'Meteora DBC':market.platform==='flapsh'?'flap.sh':'another launch platform';
   const blocked=security?.status==='blocked';
   const safe=security?.status==='pass';
   const checks=[
     {key:'identity',status:resolved.resolverError?'unknown':'pass',title:'Token identity',finding:resolved.resolverError?'Token checks could not finish.':`${resolved.name||'Token'} (${resolved.symbol||'symbol unavailable'}) on ${identity.chainId===101?'Solana':identity.chainId===4663?'Robinhood':'BNB'}.`,meaning:'This identifies the token, not its owner or safety.',nextAction:resolved.resolverError?'Retry the technical check.':'Confirm the Contract Address matches the project.'},
     {key:'market',status:bonding?'blocked':postgrad?'pass':robinhoodImportOnly?'review':'unknown',title:'Market stage',finding:bonding?`Still bonding on ${platform}.`:postgrad?`${venue} pool identity and actual funded reserves verified.${launchReview?' Launch origin is unresolved; independent review is required.':''}`:robinhoodImportOnly?'Robinhood import checks token identity and ownership only. No trading market is approved by this check.':['migration_pending','postgrad_unverified'].includes(market.phase)?'Bonding completed; this verifier has not established a supported post-grad market. This does not prove migration is pending.':'Launch stage or market is not supported by the current automatic verifier.',meaning:'Bonding tokens cannot be newly imported for the post-grad system. A detected pool is not a trading approval.',nextAction:bonding?'Return after graduation.':postgrad?(launchReview?'Independently confirm the launch history and absence of active external bonding; record the evidence reference.':'Continue ownership and safety review.'):robinhoodImportOnly?'Continue ownership and safety review. Trading remains disabled.':'Escalate for a supported market verifier; do not approve on a chart alone.'},
-    {key:'ownership',status:mismatch?'blocked':match?'pass':'review',title:'Project wallet',finding:mismatch?`Connected wallet does not match recorded creator ${maskImportWallet(authority)}.`:transferMatch?'The detected Pump.fun creator wallet sent the exact one-time verification transfer to the signed connected wallet.':match?'The signed wallet matches the detected project authority.':resolved.projectAuthorityEvidence?.authorityType==='fee_sharing'?'Pump.fun uses an automated fee-sharing account.':'Automatic project authority is unavailable.',meaning:'Wallet control, fee entitlement and project-management authority are different.',nextAction:mismatch?'Connect the identified creator wallet or use the Pump.fun verification flow.':match?'Keep this cryptographic proof with the claim.':'Review the recorded relationships and obtain independent project-management authorization.'},
+    {key:'ownership',status:mismatch?'blocked':match?'pass':'review',title:'Project wallet',finding:mismatch?`Connected wallet does not match recorded creator ${maskImportWallet(authority)}.`:transferMatch||evmTransferMatch?'The detected project wallet sent the exact one-time verification transfer to the signed connected wallet.':match?'The signed wallet matches the detected project authority.':resolved.projectAuthorityEvidence?.authorityType==='fee_sharing'?'Pump.fun uses an automated fee-sharing account.':'Automatic project authority is unavailable.',meaning:'Wallet control, fee entitlement and project-management authority are different.',nextAction:mismatch?'Connect the identified creator wallet or use the Pump.fun verification flow.':match?'Keep this cryptographic proof with the claim.':'Review the recorded relationships and obtain independent project-management authorization.'},
     {key:'security',status:safe?'pass':security?.status==='blocked'?'blocked':'review',title:'Token safety',finding:safe?'Configured safety checks passed.':(security?.criticalRisks||[]).concat(security?.reviewRisks||[]).map(x=>x.label).join('; ')||'Safety data unavailable.',meaning:'No scan guarantees future safety. Ownership approval does not clear token risk.',nextAction:safe?'Keep the dated results; recheck before future competition admission.':'Resolve confirmed restrictions or escalate uncertain evidence. Do not call missing data safe.'},
   ];
   // Matching creator/authority is enough ownership proof to auto-import.
@@ -62,7 +78,7 @@ export function assessProjectImport({resolved,security,claimantWallet,proof=null
   return {
     schemaVersion:1,policyVersion:IMPORT_REVIEW_POLICY,checkedAt,...identity,claimantWallet,
     proof,observedSlot:resolved.observedSlot??null,observedBlock:resolved.observedBlock??null,launchEvidence:resolved.launchEvidence??null,
-    authority:{status:mismatch?'mismatch':match?'matched':'unresolved',address:authority,source:resolved.authoritySource??null,reason:resolved.ownershipReason??null,evidence:resolved.projectAuthorityEvidence??null,controlProof:transferMatch?{method:'pump_creator_transfer_challenge',txSignature:resolved.ownershipProofTxSignature,creatorWallet:resolved.ownershipProofCreatorWallet,claimantWallet:resolved.ownershipProofClaimantWallet,verifiedAt:resolved.ownershipProofVerifiedAt??null}:null},
+    authority:{status:mismatch?'mismatch':match?'matched':'unresolved',address:authority,source:resolved.authoritySource??null,reason:resolved.ownershipReason??null,evidence:resolved.projectAuthorityEvidence??null,controlProof:transferMatch||evmTransferMatch?{method:transferMatch?'pump_creator_transfer_challenge':'evm_authority_transfer',txSignature:resolved.ownershipProofTxSignature,creatorWallet:resolved.ownershipProofCreatorWallet,claimantWallet:resolved.ownershipProofClaimantWallet,verifiedAt:resolved.ownershipProofVerifiedAt??null}:null},
     market,security,checks,decision,automaticImportAllowed,manualRequestAllowed,
     canVerifyOwner:!bonding&&(!mismatch||pumpCreatorMismatch)&&!blocked,
     permissions:{battle:'locked',trading:'locked',graduationAsset:'not_approved'},

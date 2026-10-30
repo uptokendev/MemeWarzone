@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { getTokenMetadata, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { pumpBondingCurveAddress, assertSolanaImportMainnet } from "./projectSolanaProjectAuthority.js";
+import { resolveProjectToken } from "./projectImportResolvers.js";
 
 const BNB_CHAIN_ID = 56;
 const SOLANA_CHAIN_ID = 101;
@@ -9,6 +10,12 @@ const ROBINHOOD_CHAIN_ID = 4663;
 const TOKEN_METADATA_PROGRAM_ID = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
 const COOKIE_NAME = "mwz_x_claim";
 const OAUTH_TTL_MS = 10 * 60 * 1000;
+// A proven X sign-in that did not match the official account stays usable as the
+// contact for a manual review for this long.
+export const X_CONTACT_PROOF_MAX_AGE_MS = 60 * 60 * 1000;
+export const X_SIGNIN_ACTIONS = Object.freeze({ verified: "x_signin_verified", mismatch: "x_signin_mismatch", contact: "x_signin_contact" });
+// Codes that mean "this token lists no X account we can match", not "the lookup failed".
+const NO_OFFICIAL_X_CODES = new Set(["PROJECT_IMPORT_X_NOT_FOUND", "PROJECT_IMPORT_X_NOT_PUMP", "PROJECT_IMPORT_X_CONFLICT"]);
 const ALLOWED_METADATA_HOSTS = new Set([
   "cf-ipfs.com",
   "ipfs.io",
@@ -328,6 +335,67 @@ export async function resolveDexScreenerOfficialX(chainId, tokenAddress) {
   return { username, xUrl: `https://x.com/${username}`, source: "dexscreener_token_profile", chain };
 }
 
+function safeHttpsUrl(raw) {
+  try { const url = new URL(String(raw || "").trim()); return url.protocol === "https:" ? url.toString() : null; }
+  catch { return null; }
+}
+
+function settledError(result) {
+  return { error: String(result.reason?.message || result.reason || "lookup failed"), code: String(result.reason?.code || "LOOKUP_FAILED") };
+}
+
+/**
+ * Where the official X account of a token is listed, for the ownership reviewer. Read-only:
+ * on-chain token metadata (Solana), the DexScreener token profile, and which one the X
+ * sign-in uses. Links are returned, never fetched.
+ */
+export async function officialProjectSources(chainId, tokenAddress) {
+  const id = Number(chainId);
+  const [official, dex, metadata] = await Promise.allSettled([
+    resolveOfficialProjectX(id, tokenAddress),
+    readDexScreenerPairs(id, tokenAddress),
+    id === SOLANA_CHAIN_ID ? readSolanaMetadataJson(tokenAddress) : Promise.resolve(null),
+  ]);
+  let dexscreener;
+  if (dex.status === "fulfilled") {
+    const socials = [], websites = [], usernames = new Set();
+    let pairUrl = null;
+    for (const pair of dex.value.pairs) {
+      pairUrl = pairUrl || safeHttpsUrl(pair?.url);
+      for (const social of Array.isArray(pair?.info?.socials) ? pair.info.socials : []) {
+        const type = String(social?.platform || social?.type || "").toLowerCase();
+        const url = safeHttpsUrl(social?.url || (social?.handle ? `https://x.com/${social.handle}` : ""));
+        if (url && !socials.some((entry) => entry.url === url)) socials.push({ type, url });
+        if (type === "twitter" || type === "x") { const username = normalizeXUsername(social?.handle || social?.url || ""); if (username) usernames.add(username); }
+      }
+      for (const site of Array.isArray(pair?.info?.websites) ? pair.info.websites : []) {
+        const url = safeHttpsUrl(site?.url);
+        if (url && !websites.some((entry) => entry.url === url)) websites.push({ label: String(site?.label || "Website").slice(0, 60), url });
+      }
+    }
+    dexscreener = { pairUrl, pairs: dex.value.pairs.length, socials: socials.slice(0, 20), websites: websites.slice(0, 20), xUsernames: [...usernames] };
+  } else dexscreener = settledError(dex);
+  let tokenMetadata = null;
+  if (metadata.status === "fulfilled" && metadata.value) {
+    const json = metadata.value.json || {};
+    tokenMetadata = {
+      source: metadata.value.metadataSource,
+      metadataUrl: metadata.value.metadataUrl,
+      xRaw: json.twitter ? String(json.twitter).slice(0, 300) : null,
+      xUsername: normalizeXUsername(json.twitter) || null,
+      website: safeHttpsUrl(json.website),
+      telegram: safeHttpsUrl(json.telegram),
+    };
+  } else if (metadata.status === "rejected") tokenMetadata = settledError(metadata);
+  return {
+    chainId: id,
+    tokenAddress: String(tokenAddress),
+    official: official.status === "fulfilled" ? official.value : settledError(official),
+    tokenMetadata,
+    dexscreener,
+  };
+}
+
 export async function resolveProjectImportImage(chainId, tokenAddress) {
   try {
     const { pairs } = await readDexScreenerPairs(chainId, tokenAddress);
@@ -353,7 +421,14 @@ export async function resolveProjectImportImage(chainId, tokenAddress) {
 
 export async function resolveOfficialProjectX(chainId, tokenAddress) {
   const id = Number(chainId);
-  if (id === SOLANA_CHAIN_ID) return resolvePumpOfficialX(tokenAddress);
+  if (id === SOLANA_CHAIN_ID) {
+    // Pump.fun metadata first (set by the creator at launch). Any other launchpad, or a Pump
+    // token whose metadata lists no usable X account, falls back to the DexScreener profile,
+    // the same source BNB and Robinhood use. A failed metadata fetch does not fall back.
+    try { return await resolvePumpOfficialX(tokenAddress); }
+    catch (error) { if (!["PROJECT_IMPORT_X_NOT_PUMP", "PROJECT_IMPORT_X_NOT_FOUND"].includes(String(error?.code || ""))) throw error; }
+    return resolveDexScreenerOfficialX(id, tokenAddress);
+  }
   if (id === BNB_CHAIN_ID || id === ROBINHOOD_CHAIN_ID) return resolveDexScreenerOfficialX(id, tokenAddress);
   throw Object.assign(new Error("X project verification is not supported on this chain"), { code: "INVALID_CHAIN" });
 }
@@ -375,7 +450,11 @@ export async function startProjectXClaim({ req, res, project, walletAddress }) {
     throw Object.assign(new Error("Another project claim is already pending"), { code: "OWNERSHIP_CONFLICT" });
   }
 
-  const expected = await resolveOfficialProjectX(chainId, project.token_address);
+  // No official X account to match is not an error here: the sign-in then only proves the
+  // claimant's own X account, which a manual review request requires.
+  let expected = null;
+  try { expected = await resolveOfficialProjectX(chainId, project.token_address); }
+  catch (error) { if (!NO_OFFICIAL_X_CODES.has(String(error?.code || ""))) throw error; }
   const verifier = randomUrlSafe(48);
   const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
   const nonce = randomUrlSafe(20);
@@ -386,8 +465,8 @@ export async function startProjectXClaim({ req, res, project, walletAddress }) {
     chainId,
     tokenAddress: String(project.token_address),
     walletAddress: String(walletAddress),
-    expectedUsername: expected.username,
-    source: expected.source,
+    expectedUsername: expected?.username || null,
+    source: expected?.source || null,
     exp: Date.now() + OAUTH_TTL_MS,
   };
   const state = signState(payload);
@@ -404,9 +483,9 @@ export async function startProjectXClaim({ req, res, project, walletAddress }) {
   });
   return {
     authorizeUrl: `https://x.com/i/oauth2/authorize?${params.toString()}`,
-    expectedUsername: expected.username,
-    xUrl: expected.xUrl,
-    source: expected.source,
+    expectedUsername: expected?.username || null,
+    xUrl: expected?.xUrl || null,
+    source: expected?.source || null,
   };
 }
 
@@ -438,6 +517,84 @@ async function authenticatedXUser(accessToken) {
   return json.data;
 }
 
+/**
+ * On Solana the creator's own record (Pump metadata, mint/DBC creator) outranks a DexScreener
+ * profile, which whoever pays for it can set. When a DexScreener-sourced X matches but the chain
+ * names a different creator wallet, the sign-in proves contact only and the claim goes to manual
+ * review. Returns that creator wallet, or null when the match may verify. BNB/Robinhood unchanged.
+ */
+export async function onchainCreatorOverridesListedX({ chainId, source, tokenAddress, walletAddress, resolve = resolveProjectToken }) {
+  if (Number(chainId) !== SOLANA_CHAIN_ID || source !== "dexscreener_token_profile") return null;
+  const resolved = await resolve({ chainId: SOLANA_CHAIN_ID, tokenAddress, signedWallet: walletAddress });
+  if (resolved?.automaticOwnershipAvailable === true && resolved?.currentAuthority && resolved?.signedWalletMatchesAuthority !== true) return String(resolved.currentAuthority);
+  return null;
+}
+
+function xSigninRecord(payload, xUser, outcome, extra = {}) {
+  return {
+    walletAddress: String(payload.walletAddress || ""),
+    chainId: Number(payload.chainId),
+    tokenAddress: String(payload.tokenAddress || ""),
+    xUserId: String(xUser?.id || ""),
+    xUsername: String(xUser?.username || ""),
+    xName: xUser?.name ? String(xUser.name).slice(0, 100) : null,
+    xVerified: xUser?.verified === true,
+    expectedUsername: payload.expectedUsername ? String(payload.expectedUsername) : null,
+    expectedSource: payload.source ? String(payload.source) : null,
+    outcome,
+    ...extra,
+  };
+}
+
+// Every completed X sign-in is written to the ownership audit, matched or not, so a reviewer
+// can see which X account the claimant proved. Same table and target as operator decisions.
+// A repeat of the same wallet + X account + outcome within 10 minutes is not written again, so
+// repeated sign-ins cannot flood the ownership audit. Verified sign-ins are always written.
+async function recordXSignin(db, payload, xUser, outcome, ownershipStatus, extra = {}) {
+  await db.query(
+    `INSERT INTO public.wm_admin_audit_log(admin_user_id,action,target_type,target_id,before,after)
+     SELECT NULL,$1,'project_ownership_claim',$2,$3::jsonb,$4::jsonb
+      WHERE $1 = '${X_SIGNIN_ACTIONS.verified}' OR NOT EXISTS (
+        SELECT 1 FROM public.wm_admin_audit_log
+         WHERE target_type='project_ownership_claim' AND target_id=$2 AND action=$1
+           AND after->>'walletAddress' = $5 AND after->>'xUserId' = $6
+           AND created_at > NOW() - INTERVAL '10 minutes')`,
+    [X_SIGNIN_ACTIONS[outcome], payload.projectId, JSON.stringify({ ownershipStatus: ownershipStatus || null }), JSON.stringify(xSigninRecord(payload, xUser, outcome, extra)), String(payload.walletAddress || ""), String(xUser?.id || "")],
+  );
+}
+
+async function recordXSigninBestEffort(pool, payload, xUser, outcome, extra = {}) {
+  try {
+    const current = await pool.query("SELECT ownership_status FROM public.arena_token_imports WHERE id=$1 LIMIT 1", [payload.projectId]);
+    await recordXSignin(pool, payload, xUser, outcome, current.rows?.[0]?.ownership_status, extra);
+  } catch (error) {
+    console.warn("[projectImportXClaim] X sign-in audit write failed", { projectId: payload.projectId, outcome, error: String(error?.message || error) });
+  }
+}
+
+/**
+ * Latest X sign-in this wallet completed for this project within maxAgeMs, or null.
+ * Only rows written by recordXSignin count; the wallet in them was proven by the
+ * signed /start request carried in the HMAC-signed OAuth state.
+ */
+export async function latestProvenXSignin(db, { projectId, walletAddress, maxAgeMs = X_CONTACT_PROOF_MAX_AGE_MS }) {
+  if (!projectId || !walletAddress) return null;
+  const result = await db.query(
+    `SELECT action, after, created_at
+       FROM public.wm_admin_audit_log
+      WHERE target_type='project_ownership_claim' AND target_id=$1
+        AND action = ANY($2::text[])
+        AND after->>'walletAddress' = $3
+        AND created_at > NOW() - ($4::bigint * INTERVAL '1 millisecond')
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [projectId, [X_SIGNIN_ACTIONS.mismatch, X_SIGNIN_ACTIONS.contact], String(walletAddress), Math.max(0, Math.floor(Number(maxAgeMs) || 0))],
+  );
+  const row = result.rows?.[0];
+  if (!row?.after?.xUsername || !row?.after?.xUserId) return null;
+  return { ...row.after, action: row.action, createdAt: row.created_at };
+}
+
 export async function finishProjectXClaim({ req, res, pool, state, code }) {
   const payload = verifyState(state);
   const cookie = readClaimCookie(req);
@@ -450,7 +607,13 @@ export async function finishProjectXClaim({ req, res, pool, state, code }) {
   const xUser = await authenticatedXUser(accessToken);
   const actualUsername = String(xUser.username || "").toLowerCase();
   const expectedUsername = String(payload.expectedUsername || "").toLowerCase();
+  if (!expectedUsername) {
+    // No official X account to match: the sign-in proves the claimant's contact account only.
+    await recordXSigninBestEffort(pool, payload, xUser, "contact");
+    return { project: null, xUser, outcome: "contact" };
+  }
   if (!actualUsername || actualUsername !== expectedUsername) {
+    await recordXSigninBestEffort(pool, payload, xUser, "mismatch");
     throw Object.assign(new Error(`This X account does not match @${expectedUsername}`), {
       code: "PROJECT_IMPORT_X_ACCOUNT_MISMATCH",
       expectedUsername,
@@ -462,38 +625,60 @@ export async function finishProjectXClaim({ req, res, pool, state, code }) {
   if (currentExpected.username !== expectedUsername) {
     throw Object.assign(new Error("The official project X account changed during verification"), { code: "PROJECT_IMPORT_X_ACCOUNT_CHANGED" });
   }
+  const onchainCreator = await onchainCreatorOverridesListedX({ chainId: payload.chainId, source: currentExpected.source, tokenAddress: payload.tokenAddress, walletAddress: payload.walletAddress });
+  if (onchainCreator) {
+    await recordXSigninBestEffort(pool, payload, xUser, "contact", { matchedListedX: true, onchainCreator });
+    return { project: null, xUser, outcome: "contact" };
+  }
 
-  const result = await pool.query(
-    `UPDATE public.arena_token_imports
-        SET project_owner_wallet=$4,
-            ownership_status='ownership_verified',
-            verified_at=NOW(),
-            ownership_verified_at=NOW(),
-            manual_claim_wallet=NULL,
-            manual_claim_requested_at=NULL,
-            manual_claim_note=NULL,
-            x_url=$5,
-            metadata_updated_at=NOW(),
-            updated_at=NOW()
-      WHERE id=$1 AND chain_id=$2 AND token_address=$3
-        AND ownership_status IN ('ownership_pending','ownership_manual_review')
-        AND (ownership_status='ownership_pending' OR manual_claim_wallet IS NULL OR manual_claim_wallet=$4)
-      RETURNING *`,
-    [payload.projectId, Number(payload.chainId), payload.tokenAddress, payload.walletAddress, currentExpected.xUrl],
-  );
-  if (!result.rows?.[0]) {
+  // Ownership update and its audit row commit together.
+  const client = await pool.connect();
+  let updated = null;
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `UPDATE public.arena_token_imports
+          SET project_owner_wallet=$4,
+              ownership_status='ownership_verified',
+              verified_at=NOW(),
+              ownership_verified_at=NOW(),
+              manual_claim_wallet=NULL,
+              manual_claim_requested_at=NULL,
+              manual_claim_note=NULL,
+              x_url=$5,
+              metadata_updated_at=NOW(),
+              updated_at=NOW()
+        WHERE id=$1 AND chain_id=$2 AND token_address=$3
+          AND ownership_status IN ('ownership_pending','ownership_manual_review')
+          AND (ownership_status='ownership_pending' OR manual_claim_wallet IS NULL OR manual_claim_wallet=$4)
+        RETURNING *`,
+      [payload.projectId, Number(payload.chainId), payload.tokenAddress, payload.walletAddress, currentExpected.xUrl],
+    );
+    updated = result.rows?.[0] || null;
+    if (updated) await recordXSignin(client, payload, xUser, "verified", "ownership_verified");
+    await client.query("COMMIT");
+  } catch (error) {
+    try { await client.query("ROLLBACK"); } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
+  if (!updated) {
     const current = await pool.query("SELECT * FROM public.arena_token_imports WHERE id=$1 LIMIT 1", [payload.projectId]);
     const row = current.rows?.[0];
-    if (row?.ownership_status === "ownership_verified" && String(row?.project_owner_wallet || "").toLowerCase() === String(payload.walletAddress || "").toLowerCase()) return { project: row, xUser };
+    if (row?.ownership_status === "ownership_verified" && String(row?.project_owner_wallet || "").toLowerCase() === String(payload.walletAddress || "").toLowerCase()) return { project: row, xUser, outcome: "verified" };
     throw Object.assign(new Error("Project ownership changed during X verification"), { code: "OWNERSHIP_CONFLICT" });
   }
-  return { project: result.rows[0], xUser };
+  return { project: updated, xUser, outcome: "verified" };
 }
 
-export function projectXClaimRedirect({ ok, tokenAddress, chainId = SOLANA_CHAIN_ID, errorCode = null }) {
+export function projectXClaimRedirect({ ok, tokenAddress, chainId = SOLANA_CHAIN_ID, errorCode = null, outcome = null, xUsername = null }) {
   const url = new URL(`/token/${encodeURIComponent(String(tokenAddress || ""))}`, `${publicSiteUrl()}/`);
   url.searchParams.set("chainId", String(chainId));
-  url.searchParams.set("claim", ok ? "x_verified" : "x_failed");
+  url.searchParams.set("claim", ok ? (outcome === "contact" ? "x_contact" : "x_verified") : "x_failed");
   if (errorCode) url.searchParams.set("claimError", String(errorCode));
+  // Display only. The manual-review request reads the proven account from the audit row.
+  const handle = String(xUsername || "");
+  if (/^[A-Za-z0-9_]{1,15}$/.test(handle)) url.searchParams.set("xHandle", handle);
   return url.toString();
 }
