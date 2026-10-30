@@ -6,11 +6,12 @@ import { buildWalletActionMessage } from './walletActionAuth.js';
 import { projectImportIntent } from './projectImportSecurity.js';
 import { registerProjectImportResolver } from './projectImportResolvers.js';
 const mint='7AVB9viRcpmr8gRMTCAYSmhP7gbuBMpBR51DMjwcpump',owner='3cG2kAQ4NQfy4zN1g7pTYUUHSiCCMmECenBssYddBrS3';
-let failDb=false,writes=0;const nonces=new Set();
+let failDb=false,writes=0,lastImportInsert=null;const nonces=new Set();
 async function query(sql,params=[]){
   if(failDb)throw Object.assign(Error('Connection failed'),{code:'08006'});
   if(/update public.auth_nonces/i.test(sql)){if(!nonces.delete(params.join(':')))return {rows:[]};return {rows:[{expires_at:new Date(Date.now()+60000).toISOString()}]};}
   if(/insert into/i.test(sql))writes++;
+  if(/insert into public\.arena_token_imports/i.test(sql))lastImportInsert=params;
   if(existingRow&&/from public\.arena_token_imports/i.test(sql)&&!/for update/i.test(sql))return {rows:[existingRow]};
   return {rows:[]};
 }
@@ -55,6 +56,22 @@ for(const [path,action,intent] of [['/','project_import_create',{operation:'crea
   assert.equal(res.statusCode,409,JSON.stringify(res.body));assert.equal(res.body.code,'PROJECT_IMPORT_X_CONTACT_REQUIRED');assert.equal(writes,0);
 });
 
+test('import needs no signature: the connected wallet is recorded, ownership is not granted even when it is the creator',async()=>{
+  writes=0;const res=response();await handler({method:'POST',url:'/project-imports/',body:{chainId:101,tokenAddress:mint,walletAddress:owner}},res);
+  assert.equal(res.statusCode,200,JSON.stringify(res.body));
+  assert.equal(writes,1);
+  // INSERT params: chain, token, imported_by_wallet, project_owner_wallet, ..., ownership_status
+  assert.equal(lastImportInsert[2],owner,'the connected wallet is recorded as importer');
+  assert.equal(lastImportInsert[3],null,'an unsigned wallet never becomes the project owner');
+  assert.equal(lastImportInsert[8],'ownership_pending');
+  assert.equal(res.body.ownershipEvidence.assessment.proof,null);
+});
+test('import without a valid connected wallet is refused before anything is written',async()=>{
+  for (const walletAddress of [undefined,'','0xnot-a-solana-wallet']) {
+    writes=0;const res=response();await handler({method:'POST',url:'/project-imports/',body:{chainId:101,tokenAddress:mint,walletAddress}},res);
+    assert.equal(res.statusCode,400,JSON.stringify(res.body));assert.equal(res.body.code,'INVALID_WALLET');assert.equal(writes,0);
+  }
+});
 test('HARD RULE: a new import without proven graduation is refused before anything is written',async()=>{
   for (const proof of [null,{proven:false,reason:'no_verified_dex_pool'},{proven:false,reason:'pump_curve_bonding'}]) {
     graduationOverride=proof;writes=0;
