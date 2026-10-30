@@ -12,8 +12,6 @@ import { projectImportRobinhoodEnabled } from "@/features/projectImports/config"
 import { isSolanaAddress } from "@/lib/address";
 import { commandCenterImportPath, createProjectImport, type ProjectImportItem } from "@/lib/projectImports";
 import { projectImportFeedback } from "@/lib/projectImportFeedback.mjs";
-import { signSolanaMessage } from "@/lib/solanaWallet";
-import { signWalletAction } from "@/lib/walletActionAuth";
 import { cp } from "@/components/token/coinPageStyles";
 
 const primaryBtn = "mw-focus inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-mw-accent bg-mw-accent px-4 text-[15px] font-semibold text-[#140A02] hover:bg-[#FF8F3D] disabled:opacity-50";
@@ -60,14 +58,10 @@ export function ProjectImportPanel({ embedded = false, onProjectChange }: { embe
   useEffect(() => { if (chainChosenByUser || !detectedChain || detectedChain === chain) return; setChain(detectedChain); setFeedback(null); }, [detectedChain, chainChosenByUser, chain]);
 
   const connect = async () => { try { if (chain === "solana") await solanaWallet.connectSolana(); else await wallet.connect(); } catch (error: any) { setFeedback(projectImportFeedback(error)); } };
-  const signCreate = async () => {
-    if (!connectedWallet || !current()) throw new Error("Wallet changed. Connect your wallet and press IMPORT again.");
-    return signWalletAction({ action: "project_import_create", walletAddress: connectedWallet, chainId, walletType: chain === "solana" ? "solana" : "evm", signMessage: chain === "solana" ? async (message) => (await signSolanaMessage(message, connectedWallet)).signature : undefined, signer: chain === "solana" ? undefined : wallet.signer });
-  };
   const importToken = async () => {
     if (!validAddress || !connected || working) return;
     setWorking(true); setFeedback(null);
-    try { const auth = await signCreate(); if (!current()) return; const result = await createProjectImport({ tokenAddress: tokenAddress.trim(), chainId, auth }); if (!current()) return; onProjectChange?.(result.project); navigate(projectUrl(result.project)); }
+    try { const result = await createProjectImport({ tokenAddress: tokenAddress.trim(), chainId, walletAddress: connectedWallet }); if (!current()) return; onProjectChange?.(result.project); navigate(projectUrl(result.project)); }
     catch (error: any) { if (current()) setFeedback(projectImportFeedback(error)); }
     finally { setWorking(false); }
   };

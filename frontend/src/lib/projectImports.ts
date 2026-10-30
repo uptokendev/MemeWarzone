@@ -109,7 +109,8 @@ export async function resolveProjectImportWithProject(input: { tokenAddress: str
   if (!res.ok || !json?.resolved) throw importRequestError(res, json, `Project resolve failed (${res.status})`);
   return { resolved: json.resolved, project: json.project ?? null };
 }
-export async function createProjectImport(input: { tokenAddress: string; chainId: number; auth: WalletActionAuthPayload }): Promise<{ project: ProjectImportItem; created: boolean; ownershipEvidence?: ProjectResolveResult }> {
+// No signature: the connected wallet is only recorded as the importer. The claim is what proves ownership.
+export async function createProjectImport(input: { tokenAddress: string; chainId: number; walletAddress: string }): Promise<{ project: ProjectImportItem; created: boolean; ownershipEvidence?: ProjectResolveResult }> {
   const res = await apiFetch("/api/project-imports", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
   const json = await readJson(res); if (!res.ok || !json?.project) throw importRequestError(res, json, `Project import failed (${res.status})`); return { project: json.project, created: Boolean(json.created), ownershipEvidence: json.ownershipEvidence };
 }

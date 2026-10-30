@@ -22,7 +22,7 @@ test('registration is generic, ownership-neutral, and Robinhood stays independen
   await expect(page.getByRole('button', { name: 'Robinhood', exact: true })).toHaveCount(0);
 });
 
-test('Solana registration posts one signed Project Import request and pending ownership routes to Claim Memecoin', async ({ page }) => {
+test('Solana registration posts one unsigned Project Import request and pending ownership routes to Claim Memecoin', async ({ page }) => {
   let posts = 0;
   let resolves = 0;
   await page.route('**/api/project-imports/resolve', async route => {
@@ -35,8 +35,8 @@ test('Solana registration posts one signed Project Import request and pending ow
     const body = route.request().postDataJSON();
     expect(body.chainId).toBe(101);
     expect(body.tokenAddress).toBe(mint);
-    expect(body.auth.action).toBe('project_import_create');
-    expect(body.auth.walletAddress).toBe(wallet);
+    expect(body.auth).toBeUndefined();
+    expect(body.walletAddress).toBe(wallet);
     await route.fulfill({ json: { created: true, project: { id: 'fixture', chainId: 101, tokenAddress: mint, ownershipStatus: 'ownership_pending' } } });
   });
   await openImport(page);

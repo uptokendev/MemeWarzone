@@ -1,5 +1,5 @@
 import { pool } from "../server/db.js";
-import { getQuery, json, readJson } from "../server/http.js";
+import { getQuery, json, normalizeAddress, readJson } from "../server/http.js";
 import { requireDashboardAdmin } from "./dashboard/_auth.js";
 import {
   assertResolverIdentity,
@@ -483,15 +483,17 @@ export default async function projectImports(req, res) {
       if (!allowImportCheck(clientIp(req))) return json(res, 429, { error: "Too many import checks; try again in a minute.", code: "RATE_LIMITED" });
       const body = await readJson(req);
       const identity = normalizeProjectIdentity(body.chainId, body.tokenAddress);
-      const intentBody = { operation: "create" };
-      const auth = await strictAuth(res, body, { identity, action: PROJECT_IMPORT_ACTIONS.create, intentBody });
-      if (!auth) return;
-      const {resolved,security,assessment} = await buildImportChecks(identity,auth.walletAddress,body.auth,false,{registrationOnly:true});
+      // No signature (founder 2026-10-31): anyone may import; the claim is what makes a coin someone's.
+      // The connected wallet is only recorded as imported_by_wallet (the "my imports" list) and gets no rights.
+      // Older app builds still send a signed `auth`; its wallet is used, the signature is not needed.
+      const importerWallet = normalizeAddress(body.walletAddress || body.auth?.walletAddress, identity.chainId);
+      if (!importerWallet) return json(res, 400, { error: "Connect a wallet to import.", code: "INVALID_WALLET" });
+      const {resolved,security,assessment} = await buildImportChecks(identity,importerWallet,null,false,{registrationOnly:true});
       assertNewImportMarket(resolved);
       requireSecurityPass(security);
       if (!(await lookupProjectImport(pool, identity))) await requireProvenGraduation(identity, resolved);
       const result = await withImportTransaction(pool,async client=>{
-        const result=await createProjectImport(client,{resolverResult:{...resolved,signedWalletMatchesAuthority:false},signedWallet:auth.walletAddress});
+        const result=await createProjectImport(client,{resolverResult:{...resolved,signedWalletMatchesAuthority:false},signedWallet:importerWallet});
         // Keep the deployed append-only evidence schema compatible. The source label
         // denotes an automatic registration event; it does not imply owner verification.
         if(result.created) await appendImportEvidence(client,{project:result.project,assessment,source:"automatic_import"});
