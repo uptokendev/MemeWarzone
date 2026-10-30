@@ -59,6 +59,16 @@ id = "generic-api-key"
   regexes = [ '''(?i)0xe7dec18b0b29c8e02fb90a5dce413b3bc66e8251''' ]
   paths = [ '''^frontend/api/lib/arenaImportScanDexProbes\.test\.mjs$''' ]
 
+  # Public on-chain constants of the import ownership / graduation checks (2026-10-29): four.meme's TokenManager,
+  # the Robinhood token launcher and its creation event topic, Robinhood WETH, and the Raydium CPMM / LaunchLab program
+  # ids. The default heuristic flags them because the variable names contain "token"/"auth". Not credentials.
+  # Scoped to these exact values and the two files that hold them.
+  [[rules.allowlists]]
+  description = "Known false positive: public program ids, contract addresses and event topics in the import checks"
+  condition = "AND"
+  regexes = [ '''(?i)0x5c952063c7fc8610ffdb798152d69f0b9550762b''', '''(?i)0x0000fffFbe8efe702c8703ae3477ff5de3d319c0''', '''(?i)0x2e2b3f61b70d2d131b2a807371103cc98d51adcaa5e9a8f9c32658ad8426e74e''', '''(?i)0x0bd7d308f8e1639fab988df18a8011f41eacad73''', '''CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C''', '''LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj''' ]
+  paths = [ '''^frontend/api/lib/projectImportEvmCreator\.js$''', '''^frontend/api/lib/projectImportGraduation\.test\.mjs$''' ]
+
   # CAKE's public BNB Chain token contract, the stand-in coin of the widget's BNB import fork proof
   # (const TOKEN = ... "0x..."). It is not a credential. Scoped to the exact address and the one test.
   [[rules.allowlists]]
