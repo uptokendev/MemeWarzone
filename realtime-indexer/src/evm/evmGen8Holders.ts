@@ -8,9 +8,11 @@
  * choice vault, PancakeSwap Infinity Vault, and every side-pool contract the watcher found: V2 pairs, V3 and Topaz
  * pools; the coin itself and 0x0 never count), written to evm_gen8_pools.holder_count and, once graduated, to
  * market_stats.holders (campaigns-base.js already prefers market_stats.holders over the buyer count).
+ * Barkswap (DogeOS 6281971): plugin, 0xdEaD, launcher, reserve lock, escrow, choice vault, Barkswap's community vault
+ * (it receives the community fee of every sell in coins) and each coin's own pool (evm_gen8_pools.pool_manager_address).
  */
 import { ethers } from "ethers";
-import { gen8MoneyHead, intEnv, type Gen8ChainConfig } from "./evmGen8Config.js";
+import { GEN8_BARK_MAX_LOG_SPAN, gen8CoreAddress, gen8MoneyHead, intEnv, type Gen8AnyChainConfig } from "./evmGen8Config.js";
 import type { Queryable } from "./evmGen8Store.js";
 import { INFINITY_VAULT } from "./evmGen8SidePools.js";
 
@@ -19,7 +21,22 @@ export const TRANSFER_TOPIC = TRANSFER_IFACE.getEvent("Transfer")!.topicHash;
 export const DEAD = "0x000000000000000000000000000000000000dead";
 const ZERO = ethers.ZeroAddress.toLowerCase();
 
-export function gen8HolderExclusions(cfg: Gen8ChainConfig): Array<{ wallet: string; reason: string }> {
+/** Barkswap's community vault per chain (one for every pool, docs/dogeos/barkswap-facts.md): the community fee lands there. */
+export const BARKSWAP_COMMUNITY_VAULT: Readonly<Record<number, string>> = Object.freeze({ 6281971: "0xa305f8bdf7eaa3233b3918a39d1e0867c6116c83" });
+
+export function gen8HolderExclusions(cfg: Gen8AnyChainConfig): Array<{ wallet: string; reason: string }> {
+  if (cfg.venue === "barkswap") {
+    const bark: Array<{ wallet: string; reason: string }> = [
+      { wallet: cfg.plugin.address, reason: "plugin" },
+      { wallet: DEAD, reason: "dead" },
+      { wallet: cfg.launcher.address, reason: "launcher" },
+    ];
+    if (cfg.reserveLock) bark.push({ wallet: cfg.reserveLock, reason: "reserve_lock" });
+    if (cfg.escrow) bark.push({ wallet: cfg.escrow, reason: "escrow" });
+    if (cfg.choiceVault) bark.push({ wallet: cfg.choiceVault, reason: "choice_vault" });
+    if (BARKSWAP_COMMUNITY_VAULT[cfg.chainId]) bark.push({ wallet: BARKSWAP_COMMUNITY_VAULT[cfg.chainId]!, reason: "barkswap_community_vault" });
+    return bark.map((x) => ({ wallet: x.wallet.toLowerCase(), reason: x.reason }));
+  }
   const out: Array<{ wallet: string; reason: string }> = [
     { wallet: cfg.poolManager, reason: "pool_manager" },
     { wallet: cfg.hook.address, reason: "hook" },
@@ -90,8 +107,9 @@ async function inTx<T>(db: DbWithConnect, fn: (q: Queryable) => Promise<T>): Pro
   }
 }
 
-export async function runGen8HolderCensusOnce(opts: { db: DbWithConnect; cfg: Gen8ChainConfig; provider: HolderProvider; env?: NodeJS.ProcessEnv }): Promise<{ tokens: number; applied: number; to: number | null }> {
+export async function runGen8HolderCensusOnce(opts: { db: DbWithConnect; cfg: Gen8AnyChainConfig; provider: HolderProvider; env?: NodeJS.ProcessEnv }): Promise<{ tokens: number; applied: number; to: number | null }> {
   const { db, cfg, provider } = opts;
+  const core = gen8CoreAddress(cfg);
   const env = opts.env || process.env;
   for (const x of gen8HolderExclusions(cfg)) {
     await db.query(
@@ -108,16 +126,28 @@ export async function runGen8HolderCensusOnce(opts: { db: DbWithConnect; cfg: Ge
      on conflict (chain_id, wallet) do nothing`,
     [cfg.chainId],
   );
+  if (cfg.venue === "barkswap") {
+    // Each Barkswap coin has its own pool contract, which holds the pool's coins (V4: the one PoolManager above).
+    await db.query(
+      `insert into public.evm_gen8_holder_exclusions(chain_id, wallet, reason)
+       select chain_id, pool_manager_address, 'barkswap_pool' from public.evm_gen8_pools
+        where chain_id = $1 and hook_address = $2
+       on conflict (chain_id, wallet) do nothing`,
+      [cfg.chainId, core],
+    );
+  }
   const tokensRes = await db.query(
     `select p.token_address, p.launch_block, s.last_block
        from public.evm_gen8_pools p
        left join public.token_holder_sync s on s.chain_id = p.chain_id and s.token_address = p.token_address
       where p.chain_id = $1 and p.hook_address = $2`,
-    [cfg.chainId, cfg.hook.address],
+    [cfg.chainId, core],
   );
   if (!tokensRes.rows.length) return { tokens: 0, applied: 0, to: null };
-  const head = await gen8MoneyHead(provider, cfg.chainId, env); // F10: the census feeds payouts: money tag (safe / finalized)
-  const span = intEnv(env.EVM_GEN8_HOLDER_CHUNK, 2_000, 1, 50_000);
+  const head = await gen8MoneyHead(provider, cfg.chainId, env); // F10: the census feeds payouts: the money head (gen8MoneyHead)
+  const chunk = intEnv(env.EVM_GEN8_HOLDER_CHUNK, 2_000, 1, 50_000);
+  // DogeOS: the Chikyu getLogs window, whatever EVM_GEN8_HOLDER_CHUNK says.
+  const span = cfg.venue === "barkswap" ? Math.min(chunk, GEN8_BARK_MAX_LOG_SPAN) : chunk;
   const perCall = intEnv(env.EVM_GEN8_HOLDER_ADDRESSES_PER_CALL, 100, 1, 1_000);
   // next block per token: one past its cursor, or its launch block (the mint to the launcher is in the launch tx).
   const next = new Map<string, number>();
@@ -170,14 +200,14 @@ export async function runGen8HolderCensusOnce(opts: { db: DbWithConnect; cfg: Ge
                  and not exists (select 1 from public.evm_gen8_holder_exclusions x where x.chain_id = b.chain_id and x.wallet = b.wallet)),
             holders_updated_at = now()
       where p.chain_id = $1 and p.hook_address = $2`,
-    [cfg.chainId, cfg.hook.address],
+    [cfg.chainId, core],
   );
   await db.query(
     `update public.market_stats m set holders = p.holder_count, updated_at = now()
        from public.evm_gen8_pools p
       where p.chain_id = $1 and p.hook_address = $2 and p.graduated_block is not null
         and m.chain_id = p.chain_id and m.campaign_address = p.token_address and p.holder_count is not null`,
-    [cfg.chainId, cfg.hook.address],
+    [cfg.chainId, core],
   );
   return { tokens: next.size, applied, to };
 }

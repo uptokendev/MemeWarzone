@@ -1,14 +1,60 @@
 import { execSync } from "node:child_process";
 import path from "node:path";
-import { HardhatUserConfig } from "hardhat/config";
+import { HardhatUserConfig, subtask } from "hardhat/config";
+import { TASK_COMPILE_SOLIDITY_GET_SOURCE_PATHS, TASK_TEST_GET_TEST_FILES } from "hardhat/builtin-tasks/task-names";
 import "@nomicfoundation/hardhat-toolbox";
 import "hardhat-gas-reporter";
 import "solidity-coverage";
 import * as dotenv from "dotenv";
+import {
+  DOGEOS_TESTNET_CHAIN_ID,
+  assertDogeosKeyPresentWhenSelected,
+  resolveDogeosTestnetDeployerKey,
+  resolveDogeosTestnetRpcUrl,
+} from "./scripts/lib/dogeosNetwork";
 
 dotenv.config({ path: path.resolve(__dirname, ".env") });
 dotenv.config({ path: path.resolve(__dirname, "config/robinhood.local") });
 dotenv.config({ path: path.resolve(__dirname, "config/bnb.local") });
+dotenv.config({ path: path.resolve(__dirname, "config/dogeos.local") });
+
+// Gen-8 (contracts/gen8) and the DogeOS Barkswap contracts (contracts/dogeos/barkswap) are solc 0.8.26 and build
+// with their own config (hardhat.gen8.config.ts) into their own artifact directories. The root build stays on
+// 0.8.24 for every earlier generation, so it skips those sources (adding 0.8.26 here would recompile every
+// ^0.8.24 file and change its bytecode), and the root test run skips their specs. Only the root ./contracts and
+// ./test trees are filtered, and explicitly named test files always run.
+const ROOT_SOURCES_DIR = path.resolve(__dirname, "contracts");
+const ROOT_TESTS_DIR = path.resolve(__dirname, "test");
+const SEPARATE_BUILD_SOURCE_DIRS = [path.join(ROOT_SOURCES_DIR, "gen8"), path.join(ROOT_SOURCES_DIR, "dogeos", "barkswap")];
+const SEPARATE_BUILD_TEST_DIRS = [path.join(ROOT_TESTS_DIR, "gen8"), path.join(ROOT_TESTS_DIR, "dogeos", "barkswap")];
+
+// Windows paths compare case-insensitively.
+function normalizedPath(file: string): string {
+  const resolved = path.resolve(file);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function samePath(a: string, b: string): boolean {
+  return normalizedPath(a) === normalizedPath(b);
+}
+
+function isInsideAny(file: string, dirs: string[]): boolean {
+  const target = normalizedPath(file);
+  return dirs.some((dir) => target.startsWith(normalizedPath(dir) + path.sep));
+}
+
+subtask(TASK_COMPILE_SOLIDITY_GET_SOURCE_PATHS).setAction(async (args, hre, runSuper) => {
+  const sourcePaths: string[] = await runSuper(args);
+  if (!samePath(args.sourcePath ?? hre.config.paths.sources, ROOT_SOURCES_DIR)) return sourcePaths;
+  return sourcePaths.filter((file) => !isInsideAny(file, SEPARATE_BUILD_SOURCE_DIRS));
+});
+
+subtask(TASK_TEST_GET_TEST_FILES).setAction(async (args, hre, runSuper) => {
+  const testFiles: string[] = await runSuper(args);
+  if ((args.testFiles ?? []).length !== 0) return testFiles;
+  if (!samePath(hre.config.paths.tests, ROOT_TESTS_DIR)) return testFiles;
+  return testFiles.filter((file) => !isInsideAny(file, SEPARATE_BUILD_TEST_DIRS));
+});
 
 function argvSelectsNetwork(name: string): boolean {
   return process.argv.some((arg, index, args) => arg === name || (arg === "--network" && args[index + 1] === name));
@@ -49,6 +95,10 @@ const robinhoodTestnetPrivateKey = normalizePrivateKey(
 const robinhoodMainnetPrivateKey = normalizePrivateKey(
   process.env.ROBINHOOD_MAINNET_DEPLOYER_PRIVATE_KEY || process.env.PRIVATE_KEY_DEPLOY || process.env.DEPLOYER_PK || "",
 );
+// DogeOS reads only DOGEOS_TESTNET_DEPLOYER_PRIVATE_KEY (no DEPLOYER_PK fallback); a missing key fails --network dogeosTestnet.
+const dogeosTestnetRpcUrl = resolveDogeosTestnetRpcUrl(process.env);
+const dogeosTestnetPrivateKey = resolveDogeosTestnetDeployerKey(process.env);
+assertDogeosKeyPresentWhenSelected(process.argv, dogeosTestnetPrivateKey);
 const explorerApiKey = process.env.ETHERSCAN_API_KEY || "";
 const forkMainnet = ["1", "true", "yes", "on"].includes(String(process.env.BNB_FORK || "").trim().toLowerCase());
 
@@ -150,6 +200,11 @@ const config: HardhatUserConfig = {
       url: robinhoodMainnetRpcUrl,
       accounts: robinhoodMainnetPrivateKey ? [robinhoodMainnetPrivateKey] : [],
       chainId: 4663,
+    },
+    dogeosTestnet: {
+      url: dogeosTestnetRpcUrl,
+      accounts: dogeosTestnetPrivateKey ? [dogeosTestnetPrivateKey] : [],
+      chainId: DOGEOS_TESTNET_CHAIN_ID,
     },
   },
 

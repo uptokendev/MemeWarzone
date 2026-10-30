@@ -13,10 +13,9 @@ import { getReadProvider } from "@/lib/readProvider";
 import {
   getActiveChainId,
   isEvmChainId,
-  ROBINHOOD_CHAIN_ID,
-  ROBINHOOD_TESTNET_CHAIN_ID,
 } from "@/lib/chainConfig";
 import { useNativeUsdPrice } from "@/hooks/useNativeUsdPrice";
+import { profileNativeSymbol } from "@/lib/chainPresentation";
 import { isSolanaAddress } from "@/lib/address";
 import { getSolanaReadConnection } from "@/lib/solanaReadConnection";
 import { fetchPublicPortfolio } from "@/lib/profileApi";
@@ -162,8 +161,7 @@ export function useProfileBalances({
   const effectiveEvmChainId = isEvmChainId(requestedChainId)
     ? requestedChainId
     : getActiveChainId(walletChainId);
-  const robinhood = effectiveEvmChainId === ROBINHOOD_CHAIN_ID || effectiveEvmChainId === ROBINHOOD_TESTNET_CHAIN_ID;
-  const nativeSymbol = robinhood ? "ETH" : "BNB";
+  const nativeSymbol = profileNativeSymbol(effectiveEvmChainId);
   const { price: nativeUsdPrice } = useNativeUsdPrice(effectiveEvmChainId);
 
   useEffect(() => {

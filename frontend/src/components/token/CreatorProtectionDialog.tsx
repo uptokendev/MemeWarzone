@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ShieldAlert } from "lucide-react";
-import { getActiveChainId, isRobinhoodChainId, isSolanaChainId } from "@/lib/chainConfig";
+import { getActiveChainId, getNativeSymbol } from "@/lib/chainConfig";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -37,9 +37,8 @@ const TIER_RULES = [
 /** This dialog is global, so the chain comes from whatever the user is trading. */
 function activeNativeSymbol(): string {
   try {
-    const chainId = getActiveChainId();
-    if (isSolanaChainId(Number(chainId))) return "SOL";
-    if (isRobinhoodChainId(Number(chainId))) return "ETH";
+    // SOL, ETH on Robinhood, DOGE on DogeOS, else BNB.
+    return getNativeSymbol(Number(getActiveChainId()));
   } catch {
     // fall through to the BNB default
   }

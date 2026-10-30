@@ -56,7 +56,8 @@ test("handler: 400 on a non-address, rows on a hit", async () => {
 test("client: searches every chain, puts an exact address match first, no Wallet row for a coin address", () => {
   const src = fs.readFileSync(new URL("../src/lib/searchClient.ts", import.meta.url), "utf8");
   assert.match(src, /const chainIds = opts\?\.chainOnly \? getBnbCampaignFeedChainIds\(opts\?\.chainId\) : searchChainIds\(\);/);
-  assert.match(src, /\[SOLANA_CHAIN_ID, BNB_CHAIN_ID, ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID\]\.flatMap\(\(id\) => getBnbCampaignFeedChainIds\(id\)\)/);
+  // DogeOS (6281971) is appended last; the existing chains keep their order (getBnbCampaignFeedChainIds gates it).
+  assert.match(src, /\[SOLANA_CHAIN_ID, BNB_CHAIN_ID, ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID, DOGEOS_TESTNET_CHAIN_ID\]\.flatMap\(\(id\) => getBnbCampaignFeedChainIds\(id\)\)/);
   assert.match(src, /apiFetch\(`\/api\/search\/address\?address=\$\{encodeURIComponent\(raw\)\}`/);
   assert.match(src, /score: exact\.has\(key\(row\)\) \? 2000 : scoreRow\(query, row\)/);
   assert.match(src, /const wallet = addressMatches\.length \? null : walletResult\(query, profileChain\);/);

@@ -53,7 +53,7 @@ export function thresholdsFor(chainId, nativeUsd) {
   };
 }
 
-const SYMBOL = { 56: "BNB", 97: "BNB", 101: "SOL", 102: "SOL", 4663: "ETH", 46630: "ETH" };
+const SYMBOL = { 56: "BNB", 97: "BNB", 101: "SOL", 102: "SOL", 4663: "ETH", 46630: "ETH", 6281971: "DOGE" };
 
 /** Spot native/USD. AIRDROP_NATIVE_USD_<chainId> pins it. Throws rather than guessing. */
 export async function nativeUsdFor(chainId, fetchImpl = fetch) {

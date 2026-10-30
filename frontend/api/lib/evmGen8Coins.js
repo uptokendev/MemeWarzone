@@ -5,10 +5,13 @@
  * Order: the campaigns row (factory_generation 8, written by the gen-8 indexer; campaign address = token address),
  * then, only when the database has no row for the address or cannot be read, the hook on chain (pools(id).creator,
  * id from the token and the hook). A gen-6/7 coin with a campaigns row is answered from the database alone.
+ * Barkswap venue (DogeOS, plan t21): the same order; the chain read is MwzBarkLauncher.launches(coin).pool (then the
+ * plugin's latch), and the answer names the venue and the pool address instead of a V4 pool id / key.
  */
 import { ethers } from "ethers";
-import { EVM_GEN8_FACTORY_GENERATION, GEN8_TRADE_PATH, gen8PoolId, gen8PoolKey } from "../../shared/evmGen8.mjs";
-import { gen8ConfigFor } from "./evmGen8Config.js";
+import { EVM_GEN8_FACTORY_GENERATION, GEN8_TRADE_PATH, GEN8_VENUE_BARKSWAP, gen8PoolId, gen8PoolKey } from "../../shared/evmGen8.mjs";
+import { gen8ConfigFor, isGen8BarkConfig } from "./evmGen8Config.js";
+import { BARK_LAUNCHER_ABI, BARK_PLUGIN_ABI } from "./evmGen8Bark.js";
 
 // build/evm-gen8 20d95e0a: openAt (was launchTime) and a tenth field graduatedAt. Read by name only.
 const HOOK_POOLS_ABI = ["function pools(bytes32) view returns (address creator, uint40 openAt, bool graduated, int24 tickGrad, int24 tickStart, uint128 liqA, uint128 liqB, uint160 sqrtGrad, tuple(uint16,uint16,uint16,uint16,uint16) fees, uint40 graduatedAt)"];
@@ -23,14 +26,18 @@ export async function findGen8Coin({ chainId, address, db = null, getProvider = 
   const cfg = gen8ConfigFor(chainId, env);
   if (!cfg || !ethers.isAddress(String(address || ""))) return null;
   const token = ethers.getAddress(address);
-  const answer = (source, graduated = null) => ({
-    token,
-    poolId: gen8PoolId(token, cfg.hook),
-    poolKey: gen8PoolKey(token, cfg.hook),
-    graduated,
-    source,
-    tradePath: GEN8_TRADE_PATH,
-  });
+  const bark = isGen8BarkConfig(cfg);
+  // Barkswap: no V4 pool id / key; the pool address when the launcher was read (null from the campaigns row).
+  const answer = (source, graduated = null, pool = null) => (bark
+    ? { token, venue: cfg.venue, pool, poolId: null, poolKey: null, graduated, source, tradePath: GEN8_TRADE_PATH }
+    : {
+        token,
+        poolId: gen8PoolId(token, cfg.hook),
+        poolKey: gen8PoolKey(token, cfg.hook),
+        graduated,
+        source,
+        tradePath: GEN8_TRADE_PATH,
+      });
 
   let dbAnswered = false;
   if (db) {
@@ -52,6 +59,7 @@ export async function findGen8Coin({ chainId, address, db = null, getProvider = 
     }
   }
   if (dbAnswered || !getProvider) return null;
+  if (bark) return findBarkCoinOnChain({ cfg, token, getProvider, chainId, answer });
   try {
     const provider = await getProvider(Number(chainId));
     if (!provider) return null;
@@ -66,8 +74,39 @@ export async function findGen8Coin({ chainId, address, db = null, getProvider = 
   }
 }
 
+/** Barkswap: MwzBarkLauncher.launches(coin).pool != 0, then the plugin's latch for that pool. Never throws. */
+async function findBarkCoinOnChain({ cfg, token, getProvider, chainId, answer }) {
+  try {
+    const provider = await getProvider(Number(chainId));
+    if (!provider) return null;
+    const launcher = new ethers.Contract(cfg.launcher, BARK_LAUNCHER_ABI, provider);
+    const l = await launcher.launches(token);
+    const pool = l.pool ?? l[0];
+    if (!pool || pool === ethers.ZeroAddress) return null;
+    const plugin = new ethers.Contract(cfg.plugin, BARK_PLUGIN_ABI, provider);
+    const graduated = await plugin.pools(pool).then((p) => Boolean(p.graduated)).catch(() => null);
+    return answer("launcher", graduated, ethers.getAddress(pool));
+  } catch (error) {
+    console.warn("[gen8] Bark launcher lookup failed", error?.shortMessage || error?.message || error);
+    return null;
+  }
+}
+
 /** The 409 body for a trade authorization request on a gen-8 coin (trading is never signed, D3). */
 export function gen8TradeAuthorizationRefusal(coin, chainId) {
+  if (coin?.venue === GEN8_VENUE_BARKSWAP) {
+    return {
+      error: "Generation 8 coins trade without an authorization: swap in the coin's Barkswap pool.",
+      code: "GEN8_TRADES_NOT_SIGNED",
+      chainId: Number(chainId),
+      tradePath: GEN8_TRADE_PATH,
+      token: coin.token,
+      venue: coin.venue,
+      pool: coin.pool,
+      poolId: null,
+      poolKey: null,
+    };
+  }
   return {
     error: "Generation 8 coins trade without an authorization: swap in the coin's Uniswap V4 pool.",
     code: "GEN8_TRADES_NOT_SIGNED",

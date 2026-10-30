@@ -12,6 +12,7 @@ import { startDbcFeeRoutingWorker } from "./dbcFeeRoutingWorker.js";
 import { startDbcCreatorChoiceWorker } from "./dbcCreatorChoiceWorker.js";
 import { startDbcGraduationWorker } from "./dbcGraduationWorker.js";
 import { startEvmGraduationKeeperWorker } from "./evm/evmGraduationKeeperWorker.js";
+import { startDogeosOraclePushWorker } from "./evm/dogeosOraclePushWorker.js";
 import { startEvmCreatorChoiceWorker } from "./evm/evmCreatorChoiceWorker.js";
 import { startEvmGen8Workers } from "./evm/evmGen8Worker.js";
 import { startRhTestnetMockFeedRefresh } from "./evm/rhTestnetMockFeed.js";
@@ -33,6 +34,8 @@ startDbcFeeRoutingWorker();
 startDbcCreatorChoiceWorker();
 startDbcGraduationWorker();
 startEvmGraduationKeeperWorker();
+// DogeOS 6281971 DOGE/USD oracle push: off unless DOGEOS_ORACLE_PUSH_ENABLED; signs only with the updater key.
+startDogeosOraclePushWorker();
 startEvmCreatorChoiceWorker();
 // EVM generation 8 (Uniswap V4 hook pools): off unless EVM_GEN8_LAUNCHER_<id> and EVM_GEN8_HOOK_<id> are set.
 startEvmGen8Workers();

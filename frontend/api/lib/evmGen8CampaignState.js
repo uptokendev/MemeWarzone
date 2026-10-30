@@ -15,6 +15,14 @@
  * A gen-8 coin is recognised by its pool: id = keccak256(abi.encode(native, token, dynamic fee, 10, hook)) and
  * hook.pools(id).creator != 0. Quotes are not served here: the trade panel quotes through Uniswap's V4Quoter with
  * the pool key returned below (design 6.2); trading is never signed by the API (D3).
+ *
+ * Barkswap venue (DogeOS; barkswap plan t21, spec section 4 API): a coin is MwzBarkLauncher.launches(coin).pool != 0;
+ * its state comes from MwzBarkLaunchLens keyed by the coin (progress, tradingOpen, currentFeeBps, owed, poolState),
+ * with the pool's globalState() and the launcher's creatorOwed / pendingCreator standing in when no lens is configured
+ * or a lens read fails. Barkswap orientation: coin = token0, the price (WDOGE per coin) rises on buys
+ * (shared/evmGen8Bark.mjs). Same top-level shape as the V4 answer; `gen8.venue` = "barkswap", no pool key / hook /
+ * PoolManager, and `creatorClaims.claimContract` = the launcher (claimCreator(coin, to)). The choice vault, reserve lock
+ * and escrow are the Bark variants, keyed by coin. Quotes come from Barkswap's QuoterV2 in the app (plan t22).
  */
 import { ethers } from "ethers";
 import {
@@ -23,6 +31,7 @@ import {
   GEN8_RESERVE_RELEASE_DELAY_SECONDS,
   GEN8_TOTAL_SUPPLY,
   GEN8_TRADE_PATH,
+  GEN8_VENUE_BARKSWAP,
   WAD,
   gen8FeeRate,
   gen8MarketCapWei,
@@ -33,6 +42,16 @@ import {
   gen8Progress,
   nativePerCoinWei,
 } from "../../shared/evmGen8.mjs";
+import { isGen8BarkConfig, isGen8V4Config } from "./evmGen8Config.js";
+import { barkMarketCapWei, barkPriceNativeWeiPerCoin, barkProgress } from "../../shared/evmGen8Bark.mjs";
+import {
+  ALGEBRA_POOL_STATE_ABI,
+  BARK_CHOICE_VAULT_ABI,
+  BARK_LAUNCHER_ABI,
+  BARK_LENS_ABI,
+  BARK_PLUGIN_ABI,
+  BARK_RESERVE_LOCK_ABI,
+} from "./evmGen8Bark.js";
 
 const ZERO = ethers.ZeroAddress;
 const POOLS_SLOT = 6n; // v4-core StateLibrary.POOLS_SLOT
@@ -186,6 +205,8 @@ export function decodeSlot0(word) {
  * before the gen-5/6/7 reader (one eth_call).
  */
 export async function readGen8Pool({ provider, cfg, token }) {
+  if (isGen8BarkConfig(cfg)) return readBarkPool({ provider, cfg, token });
+  if (!isGen8V4Config(cfg)) return null;
   const poolId = gen8PoolId(token, cfg.hook);
   const hook = new ethers.Contract(cfg.hook, GEN8_HOOK_STATE_ABI, provider);
   const p = await hook.pools(poolId);
@@ -265,6 +286,8 @@ export function gen8PhaseFields({ openAt, latched, graduatedAt, postPhase, now, 
  * PoolManager nor the lens answered).
  */
 export async function readGen8CampaignState({ provider, cfg, token, wallet = null, pool = null, indexed = null }) {
+  if (isGen8BarkConfig(cfg)) return readBarkCampaignState({ provider, cfg, token, wallet, pool, indexed });
+  if (!isGen8V4Config(cfg)) return null;
   const tokenAddress = ethers.getAddress(token);
   const p = pool || (await readGen8Pool({ provider, cfg, token: tokenAddress }));
   if (!p) return null;
@@ -510,8 +533,11 @@ export async function readGen8IndexedPool(db, chainId, token) {
  * Coin-page state from the indexer alone (the RPC failed): the phase, open and reserve fields of gen8PhaseFields from
  * evm_gen8_pools.open_at / last_phase / graduated_block and campaigns.graduated_at_chain, plus progress from the last
  * indexed price. `source: "indexer"`, `stale: true`; nothing that needs the chain (claims, fee ledgers) is present.
+ * On Barkswap: barkIndexedCampaignState below (Barkswap-orientation progress, no pool key).
  */
 export function gen8IndexedCampaignState({ cfg, indexed, nowSec = Math.floor(Date.now() / 1000) }) {
+  if (isGen8BarkConfig(cfg)) return barkIndexedCampaignState({ cfg, indexed, nowSec });
+  if (!isGen8V4Config(cfg)) return null;
   const latched = indexed.graduatedBlock !== null;
   const postPhase = indexed.lastPhase === "post" ? true : indexed.lastPhase === "bonding" ? false : null;
   const phase = gen8PhaseFields({ openAt: indexed.openAt ?? 0, latched, graduatedAt: indexed.graduatedAt, postPhase, now: nowSec });
@@ -553,5 +579,365 @@ export function gen8IndexedCampaignState({ cfg, indexed, nowSec = Math.floor(Dat
       tickGrad: indexed.tickGrad,
       tradeAuthorization: "none",
     },
+  };
+}
+
+// ------------------------------------------------------------------ Barkswap venue (DogeOS)
+
+/**
+ * The launcher's and the plugin's record of a coin's Barkswap pool, or null when the token is not a coin of this
+ * launcher (launches(coin).pool == 0; one eth_call). Same field names as readGen8Pool's V4 record where they mean the
+ * same thing; `creator` is the launcher's feeCreator (who may call claimCreator: the creator, or the choice vault).
+ */
+async function readBarkPool({ provider, cfg, token }) {
+  const coin = ethers.getAddress(token);
+  const launcher = new ethers.Contract(cfg.launcher, BARK_LAUNCHER_ABI, provider);
+  const l = await launcher.launches(coin);
+  const pool = l.pool ?? l[0];
+  if (!pool || pool === ZERO) return null;
+  const plugin = new ethers.Contract(cfg.plugin, BARK_PLUGIN_ABI, provider);
+  const ps = await plugin.pools(pool);
+  const openAt = Number(l.openAt);
+  const graduatedAt = Number(ps.graduatedAt);
+  return {
+    venue: GEN8_VENUE_BARKSWAP,
+    poolId: null,
+    pool: ethers.getAddress(pool),
+    coin,
+    launcher,
+    creator: ethers.getAddress(l.feeCreator),
+    openAt,
+    launchTime: openAt,
+    graduated: Boolean(ps.graduated),
+    graduatedAt: graduatedAt > 0 ? graduatedAt : null,
+    tickStart: Number(l.tickStart),
+    tickGrad: Number(l.tickGrad),
+    liqA: BigInt(l.liqA),
+    liqB: BigInt(l.liqB),
+    sqrtGrad: BigInt(ps.sqrtGrad),
+    sqrtStart: BigInt(ps.sqrtStart),
+    gradFeeTaken: Boolean(l.gradFeeTaken),
+    graduationFee: BigInt(l.graduationFee),
+    lastConvertAt: Number(l.lastConvertAt),
+    // MwzBarkPlugin.feeConfig() is compile-time and equal to gen-8's (plugin constants; shared GEN8_RATES)
+    fees: {
+      bondingBps: GEN8_RATES.bondingBps,
+      postBps: GEN8_RATES.postBps,
+      creatorPostBps: GEN8_RATES.creatorPostBps,
+      sniperStartBps: GEN8_RATES.sniperStartBps,
+      creatorBondingBps: GEN8_RATES.creatorBondingBps,
+    },
+  };
+}
+
+/**
+ * The Barkswap pool address behind an indexed pool id: the indexer stores it left-padded to bytes32
+ * (realtime-indexer evmGen8Bark.ts barkPoolId); a bare address reads as itself. Null for anything else (a V4 keccak id).
+ */
+export function barkPoolAddressFromId(poolId) {
+  const id = String(poolId || "").trim().toLowerCase();
+  if (/^0x[0-9a-f]{40}$/.test(id)) return ethers.getAddress(id);
+  const padded = id.match(/^0x0{24}([0-9a-f]{40})$/);
+  return padded && !/^0+$/.test(padded[1]) ? ethers.getAddress(`0x${padded[1]}`) : null;
+}
+
+/** gen8IndexedCampaignState on the Barkswap venue: the same fields, progress in Barkswap orientation. */
+function barkIndexedCampaignState({ cfg, indexed, nowSec }) {
+  const latched = indexed.graduatedBlock !== null;
+  const postPhase = indexed.lastPhase === "post" ? true : indexed.lastPhase === "bonding" ? false : null;
+  const phase = gen8PhaseFields({ openAt: indexed.openAt ?? 0, latched, graduatedAt: indexed.graduatedAt, postPhase, now: nowSec });
+  const platformGraduated = phase.platformStatus === "graduated";
+  let progress = null;
+  try {
+    if (indexed.liqA != null && indexed.sqrtPriceX96 != null) progress = barkProgress({ liqA: indexed.liqA, tickStart: indexed.tickStart, tickGrad: indexed.tickGrad, sqrtPriceX96: indexed.sqrtPriceX96 });
+  } catch {
+    progress = null;
+  }
+  return {
+    campaignAddress: indexed.token,
+    supported: true,
+    source: "indexer",
+    stale: true,
+    generation: { factoryGeneration: 8, campaignGeneration: 8, factoryAddress: cfg.launcher, kind: "gen8", venue: GEN8_VENUE_BARKSWAP },
+    blockTimestamp: nowSec,
+    creator: indexed.creator,
+    token: indexed.token,
+    ...phase,
+    phaseSource: postPhase === null ? null : "indexer",
+    graduation: {
+      state: platformGraduated ? "graduated" : "trading",
+      phase: platformGraduated ? "graduated" : "bonding",
+      latched,
+      progressBps: progress ? progress.bps : null,
+      progressPct: progress ? progress.pct : null,
+    },
+    gen8: {
+      venue: GEN8_VENUE_BARKSWAP,
+      poolId: indexed.poolId,
+      poolKey: null,
+      pool: barkPoolAddressFromId(indexed.poolId),
+      plugin: cfg.plugin,
+      hook: null,
+      poolManager: null,
+      lens: cfg.lens,
+      launcher: cfg.launcher,
+      tradePath: GEN8_TRADE_PATH,
+      phase: platformGraduated ? "graduated" : "bonding",
+      tickStart: indexed.tickStart,
+      tickGrad: indexed.tickGrad,
+      tradeAuthorization: "none",
+    },
+  };
+}
+
+const NOT_READ = Promise.resolve({ ok: false });
+const strings = (list) => Array.from(list, (v) => BigInt(v).toString());
+
+/** readGen8CampaignState on the Barkswap venue (see the header). */
+async function readBarkCampaignState({ provider, cfg, token, wallet = null, pool = null, indexed = null }) {
+  const tokenAddress = ethers.getAddress(token);
+  const p = pool || (await readBarkPool({ provider, cfg, token: tokenAddress }));
+  if (!p) return null;
+  const block = await provider.getBlock("latest");
+  const now = Number(block.timestamp);
+  const lens = cfg.lens ? new ethers.Contract(cfg.lens, BARK_LENS_ABI, provider) : null;
+  const launcher = p.launcher || new ethers.Contract(cfg.launcher, BARK_LAUNCHER_ABI, provider);
+
+  const [progR, openR, feeR, owedR, stateR] = await Promise.all(lens
+    ? [
+        settle(lens.progress(tokenAddress)),
+        settle(lens.tradingOpen(tokenAddress)),
+        settle(lens.currentFeeBps(tokenAddress, ZERO)),
+        settle(lens.owed(tokenAddress)),
+        settle(lens.poolState(tokenAddress)),
+      ]
+    : [NOT_READ, NOT_READ, NOT_READ, NOT_READ, NOT_READ]);
+  // What the lens did not answer: the pool's own price and the launcher's creator ledger.
+  const [globalR, credR, pendR] = await Promise.all([
+    stateR.ok || progR.ok ? NOT_READ : settle(new ethers.Contract(p.pool, ALGEBRA_POOL_STATE_ABI, provider).globalState()),
+    owedR.ok ? NOT_READ : settle(launcher.creatorOwed(tokenAddress)),
+    owedR.ok ? NOT_READ : settle(launcher.pendingCreator(tokenAddress)),
+  ]);
+  const sqrtPriceX96 = stateR.ok
+    ? BigInt(stateR.value.sqrtPriceX96)
+    : progR.ok
+      ? BigInt(progR.value.sqrtPriceX96)
+      : globalR.ok
+        ? BigInt(globalR.value.price)
+        : null;
+  const tick = stateR.ok ? Number(stateR.value.tick) : globalR.ok ? Number(globalR.value.tick) : null;
+  // F1: post when the price is at or past the plugin's graduation price (the lens rule); else the lens's postPhase;
+  // else the indexer's last_phase.
+  let postPhase = sqrtPriceX96 !== null ? sqrtPriceX96 >= p.sqrtGrad : null;
+  let phaseSource = postPhase !== null ? "price" : null;
+  if (postPhase === null && progR.ok) {
+    postPhase = Boolean(progR.value.postPhase);
+    phaseSource = "lens";
+  }
+  if (postPhase === null && (indexed?.lastPhase === "post" || indexed?.lastPhase === "bonding")) {
+    postPhase = indexed.lastPhase === "post";
+    phaseSource = "indexer";
+  }
+  const phase = gen8PhaseFields({
+    openAt: p.openAt,
+    latched: p.graduated,
+    graduatedAt: p.graduatedAt,
+    postPhase,
+    now,
+    lensTradingOpen: openR.ok ? Boolean(openR.value.open) : null,
+  });
+  const platformGraduated = phase.platformStatus === "graduated";
+  let progress = null;
+  if (progR.ok) {
+    const soldRaw = BigInt(progR.value.coinsSoldFromA);
+    const capacityRaw = BigInt(progR.value.coinsInA);
+    const bps = capacityRaw > 0n ? Math.min(10_000, Number((soldRaw * 10_000n) / capacityRaw)) : 0;
+    progress = { soldRaw, capacityRaw, bps, pct: bps / 100 };
+  } else if (sqrtPriceX96 !== null) {
+    progress = barkProgress({ liqA: p.liqA, tickStart: p.tickStart, tickGrad: p.tickGrad, sqrtPriceX96 });
+  }
+  const priceWei = sqrtPriceX96 ? barkPriceNativeWeiPerCoin(sqrtPriceX96) : null;
+  const marketCapWei = sqrtPriceX96 ? barkMarketCapWei(sqrtPriceX96) : null;
+  const feePost = postPhase ?? p.graduated;
+  // The rate the next normal swap pays: the lens's currentFeeBps (the plugin's own math), else the same rule here.
+  const currentBps = feeR.ok ? Number(feeR.value) : gen8FeeRate({ postPhase: feePost, openAt: p.openAt, nowTs: now, fees: p.fees });
+  const antiSniperEndsAt = p.openAt + GEN8_RATES.sniperWindowSeconds;
+
+  const owed = owedR.ok ? owedR.value : null;
+  const feeCreator = owed ? addr(owed.feeCreator) || p.creator : p.creator;
+  const creatorOwedWei = owed ? BigInt(owed.creatorOwed).toString() : credR.ok ? credR.value.toString() : null;
+  const pendingCreator = owed ? addr(owed.pendingCreator) : pendR.ok ? addr(pendR.value) : null;
+
+  // Fee choice: keep coins name the human creator as feeCreator; holders / split / buyback coins name the choice vault.
+  const isChoiceCoin = Boolean(cfg.choiceVault && feeCreator && feeCreator.toLowerCase() === cfg.choiceVault.toLowerCase());
+  let feeChoice = { id: 1, name: "keep", creatorPct: null, vault: null };
+  let choiceVault = null;
+  let humanCreator = feeCreator;
+  if (isChoiceCoin) {
+    const vault = new ethers.Contract(cfg.choiceVault, BARK_CHOICE_VAULT_ABI, provider);
+    const [cfgR, credVR, holdR, buyR, pendVR] = await Promise.all([
+      settle(vault.cfg(tokenAddress)), settle(vault.creatorBalance(tokenAddress)), settle(vault.holderBalance(tokenAddress)),
+      settle(vault.buybackBalance(tokenAddress)), settle(vault.pendingCreator(tokenAddress)),
+    ]);
+    if (cfgR.ok) {
+      const c = cfgR.value;
+      humanCreator = addr(c.creator ?? c[0]) || humanCreator;
+      const id = Number(c.choice ?? c[1]);
+      feeChoice = { id, name: GEN8_FEE_CHOICE_NAMES[id] || "unknown", creatorPct: Number(c.creatorPct ?? c[2]) || null, vault: cfg.choiceVault };
+    } else {
+      feeChoice = { id: null, name: "unknown", creatorPct: null, vault: cfg.choiceVault };
+    }
+    choiceVault = {
+      address: cfg.choiceVault,
+      // the launcher's claimCreator(coin, vault) moves the creator ledger into the vault; these are the vault's balances
+      creatorClaimableWei: credVR.ok ? credVR.value.toString() : null,
+      holderPendingWei: holdR.ok ? holdR.value.toString() : null,
+      buybackPendingWei: buyR.ok ? buyR.value.toString() : null,
+      pendingCreator: pendVR.ok ? addr(pendVR.value) : null,
+      error: cfgR.ok ? null : "The creator-choice vault could not be read.",
+    };
+  }
+
+  let reserve = null;
+  if (cfg.reserveLock) {
+    const lock = new ethers.Contract(cfg.reserveLock, BARK_RESERVE_LOCK_ABI, provider);
+    const [resR, benR] = await Promise.all([settle(lock.reserves(tokenAddress)), settle(lock.beneficiaryOf(tokenAddress))]);
+    if (resR.ok) {
+      const amount = BigInt(resR.value.amount ?? resR.value[1]);
+      reserve = {
+        address: cfg.reserveLock,
+        amount: amount.toString(),
+        // MwzBarkReserveLock.release: latched, price at or past graduation, an hour after the latch (and its own tx).
+        releasable: Boolean(phase.reserveReleasable && amount > 0n),
+        releaseAt: phase.reserveReleaseAt,
+        beneficiary: benR.ok ? addr(benR.value) : null,
+      };
+    }
+  }
+
+  const viewer = wallet && ethers.isAddress(wallet) ? ethers.getAddress(wallet) : null;
+  let escrow = null;
+  if (viewer && cfg.escrow) {
+    const e = new ethers.Contract(cfg.escrow, ESCROW_ABI, provider);
+    const [cR, dR, tR] = await Promise.all([settle(e.claimable(tokenAddress, viewer)), settle(e.claimed(tokenAddress, viewer)), settle(e.escrowedTotal(tokenAddress, viewer))]);
+    escrow = {
+      address: cfg.escrow,
+      totalTokens: tR.ok ? tR.value.toString() : null,
+      claimedTokens: dR.ok ? dR.value.toString() : null,
+      claimableTokens: cR.ok ? cR.value.toString() : null,
+    };
+  }
+
+  return {
+    campaignAddress: tokenAddress,
+    supported: true,
+    generation: { factoryGeneration: 8, campaignGeneration: 8, factoryAddress: cfg.launcher, kind: "gen8", venue: GEN8_VENUE_BARKSWAP },
+    blockNumber: Number(block.number),
+    blockTimestamp: now,
+    creator: humanCreator,
+    token: tokenAddress,
+    ...phase,
+    phaseSource,
+    tradeFee: {
+      currentBps,
+      baseBps: feePost ? p.fees.postBps : p.fees.bondingBps,
+      bondingBps: p.fees.bondingBps,
+      postGraduationBps: p.fees.postBps,
+      antiSniperStartBps: p.fees.sniperStartBps,
+      antiSniperWindowSeconds: GEN8_RATES.sniperWindowSeconds,
+      launchAt: p.openAt,
+      openAt: p.openAt,
+      antiSniperEndsAt,
+      antiSniperActive: !feePost && now >= p.openAt && now < antiSniperEndsAt,
+      source: feeR.ok ? "lens" : "computed",
+      appliesTo: "every swap in the coin's Barkswap pool, from any wallet or router, as the pool's fee on the input; the creator's first buy at launch pays the bonding rate",
+    },
+    quotes: {},
+    economics: {
+      generationKind: "gen8",
+      bondingFeeBps: p.fees.bondingBps,
+      postGraduationFeeBps: p.fees.postBps,
+      creatorPostGraduationBps: p.fees.creatorPostBps,
+      creatorBondingShareBpsOfFee: p.fees.creatorBondingBps,
+      antiSniperStartBps: p.fees.sniperStartBps,
+      graduationFeeBps: GEN8_RATES.graduationFeeBps,
+      totalSupply: GEN8_TOTAL_SUPPLY.toString(),
+      marketCapBasis: "fully_diluted",
+    },
+    graduation: {
+      state: platformGraduated ? "graduated" : "trading",
+      phase: platformGraduated ? "graduated" : "bonding",
+      latched: p.graduated,
+      pendingSince: null,
+      sold: progress ? progress.soldRaw.toString() : null,
+      curveSupply: progress ? progress.capacityRaw.toString() : null,
+      progressBps: progress ? progress.bps : null,
+      progressPct: progress ? progress.pct : null,
+      lensNativeInAWei: progR.ok ? BigInt(progR.value.nativeInA).toString() : null,
+      lensNativeTargetAWei: progR.ok ? BigInt(progR.value.nativeTargetA).toString() : null,
+      graduationFeeTaken: p.gradFeeTaken,
+      graduate: { callable: false, repairNeeded: false, reason: platformGraduated ? "graduated" : "in_swap" },
+    },
+    market: {
+      sqrtPriceX96: sqrtPriceX96 != null ? sqrtPriceX96.toString() : null,
+      tick,
+      priceNativeWeiPerCoin: priceWei != null ? priceWei.toString() : null,
+      priceNative: priceWei != null ? Number(priceWei) / Number(WAD) : null,
+      marketCapNativeWei: marketCapWei != null ? marketCapWei.toString() : null,
+    },
+    creatorClaims: {
+      // MwzBarkLauncher.claimCreator(coin, to): the feeCreator only (the human creator on keep coins, the vault otherwise).
+      // The hook* names are kept so the gen-8 coin page reads both venues; claimContract says where to claim.
+      claimContract: cfg.launcher,
+      hookCreator: feeCreator,
+      hookCreatorOwedWei: creatorOwedWei,
+      hookPendingCreator: pendingCreator,
+      fees: owed
+        ? {
+            coinBooks: strings(owed.coinBooks),
+            uncollectedNative: strings(owed.uncollectedNative),
+            uncollectedCoin: strings(owed.uncollectedCoin),
+            lastConvertAt: Number(owed.lastConvertAt) || null,
+            nextConvertAt: Number(owed.nextConvertAt),
+            graduationFeeWei: BigInt(owed.graduationFee).toString(),
+          }
+        : null,
+      feeChoice,
+      vault: choiceVault,
+      reserve,
+      escrow,
+    },
+    gen8: {
+      venue: GEN8_VENUE_BARKSWAP,
+      poolId: null,
+      poolKey: null,
+      pool: p.pool,
+      plugin: cfg.plugin,
+      hook: null,
+      poolManager: null,
+      lens: cfg.lens,
+      launcher: cfg.launcher,
+      displayPair: null,
+      tradePath: GEN8_TRADE_PATH,
+      phase: platformGraduated ? "graduated" : "bonding",
+      tickStart: p.tickStart,
+      tickGrad: p.tickGrad,
+      liqA: p.liqA.toString(),
+      liqB: p.liqB.toString(),
+      // false: a Barkswap admin changed the pool's plugin, lastFee or config; the keeper calls launcher.restore(coin)
+      launchSettings: stateR.ok ? Boolean(stateR.value.launchSettings) : null,
+      communityFee: stateR.ok ? Number(stateR.value.communityFee) : null,
+      tradeAuthorization: "none",
+    },
+    viewer: viewer
+      ? {
+          wallet: viewer,
+          isCreator: viewer === humanCreator,
+          canClaimHookCreatorFees: Boolean(viewer === feeCreator && creatorOwedWei && BigInt(creatorOwedWei) > 0n),
+          canClaimVaultFees: Boolean(isChoiceCoin && viewer === humanCreator && choiceVault?.creatorClaimableWei && BigInt(choiceVault.creatorClaimableWei) > 0n),
+          canAcceptCreator: Boolean((pendingCreator && viewer === pendingCreator) || (choiceVault?.pendingCreator && viewer === choiceVault.pendingCreator)),
+          canClaimEscrow: Boolean(escrow?.claimableTokens && BigInt(escrow.claimableTokens) > 0n),
+        }
+      : null,
   };
 }

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import http from "node:http";
 import test from "node:test";
 
 import {
@@ -7,17 +8,19 @@ import {
   assertSupportedGenerations,
   buildBnbBasicQuoteAuthorizationDigest,
   buildScheduledCreateAuthorizationDigest,
+  generationRule,
   hashCampaignRequest,
   isSupportedBnbBasicGenerationPair,
   isSupportedGenerationPair,
   requestHashLayout,
+  supportedGenerationPairs,
   usesGen6RequestHash,
 } from "./routeAuthorizationSigner.js";
 import { gen7CurveFromConfig, quoteGen7FirstBuy } from "../../shared/evmGen7Curve.mjs";
 import { Gen6CreateOptionError, quoteGen6CreatorFirstBuy } from "../lib/evmLaunchGen6.js";
 // route-auth.js and draft-deploy-base.js import the DB module, which needs a URL (never connected here).
 process.env.DATABASE_URL ||= "postgresql://test:test@127.0.0.1:1/test";
-const { applyGenerationCreateFields, validateGraduationTargetForGeneration } = await import("./route-auth.js");
+const { applyGenerationCreateFields, routingCreateAuthorization, validateGraduationTargetForGeneration } = await import("./route-auth.js");
 const { normalizeTargetForGeneration, readVerifiedGenerations, resolveScheduledGen6Fields, ScheduledGenerationMismatchError } =
   await import("./draft-deploy-base.js");
 
@@ -59,7 +62,13 @@ test("7/6 is signed wherever 6/5 is (56, 97, 4663, 46630, 31337); other 7/x pair
     assert.deepEqual(assertSupportedGenerations(chainId, 7, 6), { factoryGen: 7, campaignGen: 6 });
   }
   assert.equal(isSupportedGenerationPair(1, 7, 6), false);
-  assert.equal(isSupportedGenerationPair(6281971, 7, 6), false, "DogeOS is not a route-authority chain yet");
+  // DogeOS (6281971) launches on gen-8 only (barkswap spec section 4, Removed B8): no LaunchFactory pair is signed there.
+  assert.deepEqual(supportedGenerationPairs(6281971), [], "DogeOS has no gen-7 (or older) generation pair");
+  for (const [f, c] of [[7, 6], [6, 5], [7, 5], [6, 6], [4, 3], [3, 2]]) {
+    assert.equal(isSupportedGenerationPair(6281971, f, c), false, `6281971 ${f}/${c}`);
+  }
+  assert.equal(generationRule(6281971), "unsupported chain");
+  assert.throws(() => assertSupportedGenerations(6281971, 7, 6), /chain 6281971 requires unsupported chain/);
 });
 
 test("7/6 signs the same 11-field request hash as 6/5 (identical CampaignRequest and _hashCampaignRequest)", () => {
@@ -218,4 +227,107 @@ test("scheduled arm: the generation pair is read from the factory on the draft's
     }),
     (error) => !(error instanceof ScheduledGenerationMismatchError) && /got 0\/0\.$/.test(error.message),
   );
+});
+
+// The chain-level test-target gate of POST /api/routing/create-authorization (validateGraduationTarget), driven
+// through the handler against local JSON-RPC stubs that answer the chain id and refuse every eth_call: a target
+// the gate accepts reaches the factory read and fails there (503), a target it refuses is a 400 before any read.
+async function startFailingFactoryRpc(chainId) {
+  const calls = [];
+  const server = http.createServer((req, res) => {
+    let raw = "";
+    req.on("data", (chunk) => (raw += chunk));
+    req.on("end", () => {
+      const reply = (call) => {
+        calls.push(call.method);
+        if (call.method === "eth_chainId") return { jsonrpc: "2.0", id: call.id, result: `0x${chainId.toString(16)}` };
+        if (call.method === "net_version") return { jsonrpc: "2.0", id: call.id, result: String(chainId) };
+        if (call.method === "eth_blockNumber") return { jsonrpc: "2.0", id: call.id, result: "0x1" };
+        return { jsonrpc: "2.0", id: call.id, error: { code: -32000, message: "stub: no factory here" } };
+      };
+      const parsed = JSON.parse(raw);
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify(Array.isArray(parsed) ? parsed.map(reply) : reply(parsed)));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return {
+    url: `http://127.0.0.1:${server.address().port}`,
+    calls,
+    close: () => {
+      server.closeAllConnections?.();
+      return new Promise((resolve) => server.close(resolve));
+    },
+  };
+}
+
+const GATE_ENV = [
+  "ENABLE_TEST_GRADUATION_THRESHOLD",
+  "VITE_ENABLE_TEST_GRADUATION_THRESHOLD",
+  "ROUTE_AUTHORITY_PRIVATE_KEY",
+  "MWZ_ROUTE_AUTHORITY_PRIVATE_KEY",
+  "ROUTE_AUTH_PRIVATE_KEY",
+  "CREATE_CANARY_WALLETS",
+  "BSC_RPC_HTTP_97",
+  "ROBINHOOD_RPC_HTTP_46630",
+  "DOGEOS_RPC_HTTP_6281971",
+  "EVM_RPC_HTTP_6281971",
+  "VITE_PUBLIC_RPC_6281971",
+];
+
+async function createAuthorizationFor(chainId, graduationTarget) {
+  let body = null;
+  const res = {
+    statusCode: 200,
+    setHeader() {},
+    end(value) {
+      body = value == null || value === "" ? null : JSON.parse(String(value));
+    },
+  };
+  const req = {
+    method: "POST",
+    body: { chainId, walletAddress: CREATOR, factoryAddress: FACTORY, campaignRequest: { name: "Gen Seven", symbol: "SEVEN", logoURI: "ipfs://seven", graduationTarget } },
+    async *[Symbol.asyncIterator]() {},
+  };
+  await routingCreateAuthorization(req, res);
+  return { statusCode: res.statusCode, body };
+}
+
+test("create-authorization test-target gate: 97 and 46630 keep the $6 and $150 tiers; 6281971 has no gen-7 tier (B8)", async () => {
+  const stubs = new Map();
+  for (const chainId of [97, 46630, 6281971]) stubs.set(chainId, await startFailingFactoryRpc(chainId));
+  const saved = new Map(GATE_ENV.map((key) => [key, process.env[key]]));
+  for (const key of GATE_ENV) delete process.env[key];
+  process.env.ENABLE_TEST_GRADUATION_THRESHOLD = "true";
+  process.env.ROUTE_AUTHORITY_PRIVATE_KEY = `0x${"a1".repeat(32)}`; // throwaway test key
+  process.env.BSC_RPC_HTTP_97 = stubs.get(97).url;
+  process.env.ROBINHOOD_RPC_HTTP_46630 = stubs.get(46630).url;
+  process.env.DOGEOS_RPC_HTTP_6281971 = stubs.get(6281971).url;
+  try {
+    // BNB testnet and Robinhood testnet: both test tiers pass the gate and stop at the (stubbed) factory read.
+    for (const chainId of [97, 46630]) {
+      for (const target of [usd(6), usd(150)]) {
+        const { statusCode, body } = await createAuthorizationFor(chainId, target);
+        assert.equal(statusCode, 503, `${chainId} ${target}: ${JSON.stringify(body)}`);
+        assert.notEqual(body.error, "Unsupported graduation target");
+      }
+    }
+    // DogeOS: no gen-7 factory, so neither test tier passes the gate, and no factory is read.
+    for (const target of [usd(6), usd(150)]) {
+      const { statusCode, body } = await createAuthorizationFor(6281971, target);
+      assert.equal(statusCode, 400, `6281971 ${target}: ${JSON.stringify(body)}`);
+      assert.equal(body.error, "Unsupported graduation target");
+    }
+    assert.ok(!stubs.get(6281971).calls.includes("eth_call"), "no DogeOS factory read");
+    // Mainnet never takes a test tier (unchanged).
+    const mainnet = await createAuthorizationFor(56, usd(150));
+    assert.equal(mainnet.statusCode, 400);
+    assert.equal(mainnet.body.error, "Unsupported graduation target");
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    for (const stub of stubs.values()) await stub.close();
+  }
 });

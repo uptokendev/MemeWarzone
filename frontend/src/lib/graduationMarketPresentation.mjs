@@ -1,3 +1,5 @@
+import { DOGEOS_NATIVE_SYMBOL, DOGEOS_TESTNET_CHAIN_ID, isDogeosTestnetChain } from "./dogeosPresentation.mjs";
+
 // Tabs of the Graduation Market picker (stonk.xyz-style browse by asset
 // kind). Only tabs holding an eligible asset on the selected chain render.
 export const GRADUATION_MARKET_CATEGORIES = Object.freeze([
@@ -48,6 +50,7 @@ export function nativeSymbol(chainId) {
   const n = Number(chainId);
   if (n === 101) return "SOL";
   if (ROBINHOOD_CHAIN_IDS.has(n)) return "ETH";
+  if (isDogeosTestnetChain(n)) return DOGEOS_NATIVE_SYMBOL;
   return "BNB";
 }
 
@@ -83,6 +86,7 @@ export function providerLabel(asset) {
   const chainId = Number(asset?.chainId);
   if (chainId === 101 || key.includes("solana")) return "Solana";
   if (chainId === 56 || chainId === 97 || key.includes("bnb") || key.includes("bsc")) return "BNB";
+  if (isDogeosTestnetChain(chainId) || key === "dogeos-basic") return "DogeOS";
   const displayName = String(asset?.provider?.displayName || "").trim();
   return displayName || "MemeWarzone";
 }
@@ -229,6 +233,7 @@ export function nativeProviderKey(chainId) {
   const n = Number(chainId);
   if (n === 101) return "solana-basic";
   if (ROBINHOOD_CHAIN_IDS.has(n)) return "robinhood-basic";
+  if (isDogeosTestnetChain(n)) return "dogeos-basic";
   return "bnb-basic";
 }
 
@@ -240,7 +245,7 @@ export function nativeProviderKey(chainId) {
  * picker (the catalog's WETH row is a wrapped duplicate the verifier does not
  * activate) and could not pass the market step at all.
  */
-export const EVM_NATIVE_LAUNCH_CHAIN_IDS = Object.freeze(new Set([56, 97, 4663, 46630]));
+export const EVM_NATIVE_LAUNCH_CHAIN_IDS = Object.freeze(new Set([56, 97, 4663, 46630, DOGEOS_TESTNET_CHAIN_ID]));
 
 export function evmNativeLaunchQuote(chainId) {
   const n = Number(chainId);

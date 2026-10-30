@@ -34,6 +34,7 @@ export function keeperRpc(chainId: number): string {
     : chainId === 97 ? ENV.BSC_RPC_HTTP_97
     : chainId === 4663 ? ENV.ROBINHOOD_RPC_HTTP_4663
     : chainId === 46630 ? ENV.ROBINHOOD_RPC_HTTP_46630
+    : chainId === 6281971 ? ENV.DOGEOS_RPC_HTTP_6281971
     : "";
   return parseRpcList(raw)[0] || "";
 }

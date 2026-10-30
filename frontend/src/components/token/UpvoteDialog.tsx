@@ -23,11 +23,10 @@ import {
   getPublicRpcUrl,
   getVoteTreasuryAddress,
   isSolanaChainId,
-  ROBINHOOD_CHAIN_ID,
-  ROBINHOOD_TESTNET_CHAIN_ID,
   SOLANA_CHAIN_ID,
 } from "@/lib/chainConfig";
 import { getBnbContractAddresses } from "@/lib/bnbContracts";
+import { upvoteNativeUnit, upvoteNetworkLabel } from "@/lib/chainPresentation";
 import { getReadProvider } from "@/lib/readProvider";
 import { apiFetch } from "@/lib/apiBase";
 import { isSolanaAddress } from "@/lib/address";
@@ -62,10 +61,6 @@ function formatNativeAmount(weiOrLamports: bigint, decimals: number): string {
   } catch {
     return "—";
   }
-}
-
-function isRobinhood(chainId: number) {
-  return chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID;
 }
 
 type Props = {
@@ -111,8 +106,7 @@ export function UpvoteDialog({
   const chainId = isSolanaCampaign
     ? SOLANA_CHAIN_ID
     : getActiveChainId(chainIdOverride ?? wallet.chainId);
-  const robinhood = isRobinhood(Number(chainId));
-  const nativeUnit = isSolanaCampaign ? "SOL" : robinhood ? "ETH" : "BNB";
+  const nativeUnit = upvoteNativeUnit(Number(chainId), isSolanaCampaign);
   const nativeDecimals = isSolanaCampaign ? 9 : 18;
   const { price: nativeUsdPrice, loading: nativePriceLoading } = useNativeUsdPrice(chainId);
 
@@ -529,7 +523,7 @@ export function UpvoteDialog({
     }
     if (!walletOnCampaignChain) {
       window.dispatchEvent(new CustomEvent("memewarzone:openWalletModal"));
-      fail(`Switch to ${robinhood ? "Robinhood" : "BNB"}`, `This campaign uses ${nativeUnit}. Connect the wallet on the campaign network before voting.`);
+      fail(`Switch to ${upvoteNetworkLabel(Number(chainId))}`, `This campaign uses ${nativeUnit}. Connect the wallet on the campaign network before voting.`);
     }
     if (voteWei <= 0n) {
       fail("Price unavailable", `We couldn’t calculate the current ${nativeUnit} amount for the $3 UpVote. Please try again.`);
@@ -682,7 +676,7 @@ export function UpvoteDialog({
 
           {!isSolanaCampaign && wallet.account && !walletOnCampaignChain ? (
             <div className="rounded-[10px] border border-[#5A3416] bg-mw-accent-fill px-3 py-2.5 text-sm text-mw-accent-soft">
-              This campaign is on {robinhood ? "Robinhood" : "BNB"}. Switch the connected wallet network before voting.
+              This campaign is on {upvoteNetworkLabel(Number(chainId))}. Switch the connected wallet network before voting.
             </div>
           ) : null}
 

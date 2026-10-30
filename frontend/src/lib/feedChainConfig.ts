@@ -5,6 +5,7 @@ const BNB_MAINNET_CHAIN_ID: SupportedChainId = 56;
 const ROBINHOOD_MAINNET_CHAIN_ID: SupportedChainId = 4663;
 const ROBINHOOD_TESTNET_CHAIN_ID: SupportedChainId = 46630;
 const SOLANA_CHAIN_ID: SupportedChainId = 101;
+const DOGEOS_TESTNET_CHAIN_ID: SupportedChainId = 6281971;
 const LAST_FEATURED_CHAIN_KEY = "mwz:last_featured_chain_id";
 
 function readEnv(name: string): string {
@@ -70,6 +71,8 @@ function shouldDefaultDevFeedsToTestnet(): boolean {
  * Feed inventory for the explicitly selected product chain.
  * BNB may merge 56+97 for backward-compatible legacy inventory. Solana and
  * Robinhood stay isolated so selecting them can never show BNB campaigns.
+ * DogeOS (6281971) is isolated the same way and only when VITE_ALLOWED_CHAIN_IDS
+ * includes it.
  *
  * Keep the old export name until callers are migrated; its behavior is now
  * chain-aware rather than BNB-only.
@@ -82,6 +85,9 @@ export function getBnbCampaignFeedChainIds(selectedChainId?: number | null): Sup
   }
   if (selected === ROBINHOOD_TESTNET_CHAIN_ID && isAllowedChainId(ROBINHOOD_TESTNET_CHAIN_ID)) {
     return [ROBINHOOD_TESTNET_CHAIN_ID];
+  }
+  if (selected === DOGEOS_TESTNET_CHAIN_ID && isAllowedChainId(DOGEOS_TESTNET_CHAIN_ID)) {
+    return [DOGEOS_TESTNET_CHAIN_ID];
   }
   // Prefer BNB testnet first (current legacy inventory), then BNB mainnet.
   const chains = [BNB_TESTNET_CHAIN_ID, BNB_MAINNET_CHAIN_ID].filter(isAllowedChainId);
@@ -103,8 +109,8 @@ function resolveFeedChainId(envNames: string[], walletChainId?: number | null, o
   const configured = readConfiguredChainId(envNames);
   if (configured) return configured;
   const active = getActiveChainId(walletChainId);
-  // Do not let BNB's historical staging fallback override an explicit Robinhood/Solana selection.
-  if (active === SOLANA_CHAIN_ID || active === ROBINHOOD_MAINNET_CHAIN_ID || active === ROBINHOOD_TESTNET_CHAIN_ID) return active;
+  // Do not let BNB's historical staging fallback override an explicit Robinhood/Solana/DogeOS selection.
+  if (active === SOLANA_CHAIN_ID || active === ROBINHOOD_MAINNET_CHAIN_ID || active === ROBINHOOD_TESTNET_CHAIN_ID || active === DOGEOS_TESTNET_CHAIN_ID) return active;
   if (options?.devTestnetFallback && shouldDefaultDevFeedsToTestnet() && isAllowedChainId(BNB_TESTNET_CHAIN_ID)) return BNB_TESTNET_CHAIN_ID;
   return active;
 }
@@ -129,7 +135,7 @@ export function getFeaturedFeedChainId(walletChainId?: number | null): Supported
   const configured = readConfiguredChainId(["VITE_FEATURED_FEED_CHAIN_ID", "VITE_CAMPAIGN_FEED_CHAIN_ID", "VITE_LOCALDEV_CAMPAIGN_CHAIN_ID"]);
   if (configured) return rememberFeaturedChain(configured);
   const active = getActiveChainId(walletChainId);
-  if (active === SOLANA_CHAIN_ID || active === ROBINHOOD_MAINNET_CHAIN_ID || active === ROBINHOOD_TESTNET_CHAIN_ID) {
+  if (active === SOLANA_CHAIN_ID || active === ROBINHOOD_MAINNET_CHAIN_ID || active === ROBINHOOD_TESTNET_CHAIN_ID || active === DOGEOS_TESTNET_CHAIN_ID) {
     return rememberFeaturedChain(active);
   }
   if (shouldDefaultDevFeedsToTestnet() && isAllowedChainId(BNB_TESTNET_CHAIN_ID)) return rememberFeaturedChain(BNB_TESTNET_CHAIN_ID);

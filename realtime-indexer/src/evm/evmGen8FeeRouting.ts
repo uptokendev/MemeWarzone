@@ -22,9 +22,19 @@
  *      PaidMismatch (someone claimed in between) is recorded and the next pass re-plans from step 2.
  * A run is confirmed only by its Routed event (recordRoutedRun): its rows are the unrouted rows before the claim whose
  * cumulative amount equals the cumulative routed amount, i.e. the same cut the plan used.
+ *
+ * Barkswap venue (DogeOS 6281971, barkswap spec section 3 Money flow 5 and "Attribution for D1"): the router bucket is
+ * the launcher's (MwzBarkLauncher routerPaid / routerOwed / routerParked / claimRouter / payParkedRouter, same shapes as
+ * the hook's; RouterClaimed is the launcher's event) and the splitter is MwzBarkFeeSplitter (same route / pending /
+ * bands). The bucket is credited at collects, conversions and the graduation fee, not at swaps, so a Barkswap run's
+ * rows are the router credits (public.evm_gen8_bark_credits, evmGen8BarkAttribution.ts) before the claim: the buys
+ * covered by collects, the converted parts of sells, the graduation fee and surpluses, each at its crediting log.
+ * Their fee is the net DOGE credited (B11), so B, G and the total match pending() and expectedPaid to the wei.
+ * claimRouter / payParkedRouter go to the launcher from the DogeOS operator key (B9). recordRoutedRun also stamps the
+ * run on the buy and graduation accrual rows those credits cover.
  */
 import { ethers } from "ethers";
-import { configuredGen8Chains, intEnv, truthyEnv, type Gen8ChainConfig } from "./evmGen8Config.js";
+import { configuredGen8Chains, gen8CoreAddress, intEnv, truthyEnv, type Gen8AnyChainConfig } from "./evmGen8Config.js";
 import { GEN8_HOOK_IFACE, GEN8_SPLITTER_ABI } from "./evmGen8Abi.js";
 import {
   addToSums,
@@ -46,6 +56,26 @@ type RoutedEvent = Extract<Gen8Event, { kind: "Routed" }>;
 type Alert = (a: { severity: "critical" | "warning" | "info"; kind: string; chainId: number; subject?: string; title: string; message: string }) => Promise<unknown>;
 
 const big = (v: unknown) => BigInt(String(v ?? "0").split(".")[0] || "0");
+
+/**
+ * MwzBarkLauncher's router-bucket functions (contracts/dogeos/barkswap/abi/MwzBarkLauncher.abi.json; selectors pinned
+ * in evmGen8BarkAttribution.test.ts). Same names and shapes as the hook's (GEN8_HOOK_VIEWS); claimRouter returns the amount.
+ */
+export const BARK_LAUNCHER_ROUTER_FRAGMENTS = [
+  "function routerPaid(address) view returns (uint256 amount, uint256 bondingFees, uint256 gradFees)",
+  "function routerOwed() view returns (uint128)",
+  "function treasuryRouter() view returns (address)",
+  "function routerParked(address) view returns (uint256 amount, uint256 bondingFees, uint256 gradFees)",
+  "function parkedOwed() view returns (uint256)",
+  "function claimRouter() returns (uint256 amount)",
+  "function payParkedRouter(address r) returns (uint256 amount)",
+] as const;
+const BARK_LAUNCHER_ROUTER_IFACE = new ethers.Interface(BARK_LAUNCHER_ROUTER_FRAGMENTS as unknown as string[]);
+
+/** The contract holding the router bucket and emitting RouterClaimed: the hook on V4, the launcher on Barkswap. */
+export function gen8RouterBucketAddress(cfg: Gen8AnyChainConfig): string {
+  return cfg.venue === "barkswap" ? cfg.launcher.address : cfg.hook.address;
+}
 
 /**
  * Wallets allowed to call hook.claimRouter() (audit C-M1 / F11 foreign-claim alert): the splitter operator as indexed
@@ -74,7 +104,7 @@ export async function gen8KnownClaimers(db: Queryable, chainId: number, splitter
 export type Gen8Claim = { blockNumber: number; logIndex: number; txHash: string; amount: bigint; bondingFees: bigint; gradFees: bigint; cumulative: bigint };
 
 /** RouterClaimed events paying the splitter (claimRouter or the A4 flush), in order, with the cumulative amount. */
-export async function claimsToSplitter(db: Queryable, cfg: Gen8ChainConfig, upToBlock?: number): Promise<Gen8Claim[]> {
+export async function claimsToSplitter(db: Queryable, cfg: Gen8AnyChainConfig, upToBlock?: number): Promise<Gen8Claim[]> {
   if (!cfg.splitter) return [];
   // F10: only claims at or below the money head count (the contract events table is written by the display pass).
   const { rows } = await db.query(
@@ -82,7 +112,7 @@ export async function claimsToSplitter(db: Queryable, cfg: Gen8ChainConfig, upTo
       where chain_id = $1 and contract_address = $2 and event_name = 'RouterClaimed' and lower(args->>'router') = $3
         and ($4::bigint is null or block_number <= $4::bigint)
       order by block_number, log_index`,
-    [cfg.chainId, cfg.hook.address, cfg.splitter.address, upToBlock ?? null],
+    [cfg.chainId, gen8RouterBucketAddress(cfg), cfg.splitter.address, upToBlock ?? null],
   );
   let cumulative = 0n;
   return rows.map((r) => {
@@ -98,7 +128,19 @@ export function claimCut(claims: Gen8Claim[], paid: bigint): Gen8Claim | null {
   return claims.find((c) => c.cumulative === paid) ?? null;
 }
 
-async function unroutedRowsBefore(db: Queryable, cfg: Gen8ChainConfig, cut: { blockNumber: number; logIndex: number }) {
+async function unroutedRowsBefore(db: Queryable, cfg: Gen8AnyChainConfig, cut: { blockNumber: number; logIndex: number }) {
+  if (cfg.venue === "barkswap") {
+    // the router credits before the claim, at their crediting log; tx_hash / log_index = the source (the leaf's identity)
+    const { rows } = await db.query(
+      `select id, source_tx_hash as tx_hash, source_log_index as log_index, block_number, log_index as credit_log_index, kind, phase, trader, profile, fee, router_amount, league_weekly, league_monthly, recruiter, squad, airdrop, protocol
+         from public.evm_gen8_bark_credits
+        where chain_id = $1 and hook_address = $2 and run_id is null
+          and (block_number < $3 or (block_number = $3 and log_index < $4))
+        order by block_number, credit_log_index, id`,
+      [cfg.chainId, gen8CoreAddress(cfg), cut.blockNumber, cut.logIndex],
+    );
+    return rows;
+  }
   const { rows } = await db.query(
     `select id, tx_hash, log_index, block_number, kind, phase, trader, profile, fee, router_amount, league_weekly, league_monthly, recruiter, squad, airdrop, protocol
        from public.evm_gen8_fee_accruals
@@ -147,7 +189,7 @@ export function routedPlanDifferences(planned: Record<string, any> | null | unde
 }
 
 /** Called by the ingest loop for every Routed log of the splitter. Idempotent. */
-export async function recordRoutedRun(db: Queryable, cfg: Gen8ChainConfig, e: RoutedEvent, _at: Date, alert?: Alert, env: NodeJS.ProcessEnv = process.env) {
+export async function recordRoutedRun(db: Queryable, cfg: Gen8AnyChainConfig, e: RoutedEvent, _at: Date, alert?: Alert, env: NodeJS.ProcessEnv = process.env) {
   if (!cfg.splitter) return;
   const splitter = cfg.splitter.address;
   const runId = Number(e.runId);
@@ -158,6 +200,14 @@ export async function recordRoutedRun(db: Queryable, cfg: Gen8ChainConfig, e: Ro
     [cfg.chainId, splitter, runId],
   );
   const planned = prior.rows[0];
+  if (cfg.venue === "barkswap" && planned?.status === "confirmed") {
+    // A re-scan of a confirmed run (a crash mid-range, or the t19 backfill rewind): its credits are assigned already,
+    // so the unrouted rows before its claim are gone and a recount would report a false mismatch. Only when no credit
+    // carries the run (a crash between the upsert and the assignment) does it go on and assign them. V4 keeps its
+    // behaviour (its money cursor is never rewound; only a crash mid-range re-scans a confirmed run there).
+    const assigned = await db.query(`select 1 from public.evm_gen8_bark_credits where chain_id = $1 and hook_address = $2 and run_id = $3 limit 1`, [cfg.chainId, gen8CoreAddress(cfg), runId]);
+    if (assigned.rows.length) return;
+  }
   // F11: every Routed is compared with our plan; a run nobody planned, or one that differs, is a critical alert (a
   // stolen operator key or the Safe routing by hand). A re-scan of an already confirmed run compares nothing.
   if (!planned || planned.status !== "confirmed") {
@@ -201,6 +251,25 @@ export async function recordRoutedRun(db: Queryable, cfg: Gen8ChainConfig, e: Ro
   if (sums.B !== r.bondingFees || sums.G !== r.gradFees || sums.T !== r.total) {
     await alert?.({ severity: "critical", kind: "gen8_run_rows_mismatch", chainId: cfg.chainId, subject: String(runId), title: `Gen-8 run ${runId}: indexed rows differ from the run on chain ${cfg.chainId}`, message: `rows B ${sums.B} G ${sums.G} T ${sums.T}; Routed B ${r.bondingFees} G ${r.gradFees} T ${r.total}. Should never happen.` });
   }
+  if (cfg.venue === "barkswap") {
+    if (planned && Array.isArray(planned.leaves) && String(planned.accrual_root || "").toLowerCase() === e.accrualRoot.toLowerCase()) {
+      // (key, fee) multisets, not key sets: on Barkswap one sell converted twice before a claim is two rows with one key
+      const plannedKeys = planned.leaves.filter((l: any) => l.kind !== 3).map((l: any) => `${String(l.txHash).toLowerCase()}:${Number(l.logIndex)}:${big(l.fee)}`).sort();
+      const actualKeys = rows.map((x) => `${String(x.tx_hash).toLowerCase()}:${Number(x.log_index)}:${big(x.fee)}`).sort();
+      if (plannedKeys.length !== actualKeys.length || plannedKeys.some((k: string, i: number) => k !== actualKeys[i])) {
+        await alert?.({ severity: "critical", kind: "gen8_run_rows_mismatch", chainId: cfg.chainId, subject: `${runId}:root`, title: `Gen-8 run ${runId}: covered rows differ from its accrualRoot`, message: `planned ${plannedKeys.length} rows, covered ${actualKeys.length}. Should never happen.` });
+      }
+    }
+    for (const row of rows) await db.query(`update public.evm_gen8_bark_credits set run_id = $2 where id = $1 and run_id is null`, [row.id, runId]);
+    // the buys and the graduation fee those credits cover (one collect each, so one run each)
+    await db.query(
+      `update public.evm_gen8_fee_accruals a set run_id = $3 from public.evm_gen8_bark_credits c
+        where c.chain_id = $1 and c.hook_address = $2 and c.run_id = $3 and a.chain_id = c.chain_id and a.hook_address = c.hook_address
+          and a.tx_hash = c.source_tx_hash and a.log_index = c.source_log_index and a.run_id is null`,
+      [cfg.chainId, gen8CoreAddress(cfg), runId],
+    );
+    return;
+  }
   if (planned && Array.isArray(planned.leaves) && String(planned.accrual_root || "").toLowerCase() === e.accrualRoot.toLowerCase()) {
     const plannedKeys = new Set(planned.leaves.filter((l: any) => l.kind !== 3).map((l: any) => `${String(l.txHash).toLowerCase()}:${Number(l.logIndex)}`));
     const actualKeys = new Set(rows.map((x) => `${String(x.tx_hash).toLowerCase()}:${Number(x.log_index)}`));
@@ -228,7 +297,7 @@ export type Gen8RouteState = {
 
 export type Gen8RouteChain = {
   readState(blockTag: number | "latest"): Promise<Gen8RouteState>;
-  /** hook.claimRouter() from the operator key, waits for the receipt; returns its hash and block. Send mode only. */
+  /** hook.claimRouter() (Barkswap: the launcher's) from the operator key, waits for the receipt; returns its hash and block. Send mode only. */
   sendClaim(): Promise<{ hash: string; blockNumber: number }>;
   /** hook.payParkedRouter(splitter) from the operator key (F3). Send mode only. */
   sendPayParked?(): Promise<{ hash: string; blockNumber: number }>;
@@ -240,11 +309,12 @@ export type Gen8RouteChain = {
   txKnown?(hash: string): Promise<boolean>;
 };
 
-export function ethersRouteChain(cfg: Gen8ChainConfig, provider: ethers.JsonRpcProvider, signer: ethers.Signer | null): Gen8RouteChain {
+export function ethersRouteChain(cfg: Gen8AnyChainConfig, provider: ethers.JsonRpcProvider, signer: ethers.Signer | null): Gen8RouteChain {
   if (!cfg.splitter) throw new Error("gen8 routing: no splitter");
   const splitterAddr = cfg.splitter.address;
   const splitterRead = new ethers.Contract(splitterAddr, GEN8_SPLITTER_ABI as unknown as string[], provider) as any;
-  const hook = new ethers.Contract(cfg.hook.address, GEN8_HOOK_IFACE, provider) as any;
+  // the router bucket: the hook on V4, MwzBarkLauncher on Barkswap (same functions; the splitter checks the same one)
+  const hook = new ethers.Contract(gen8RouterBucketAddress(cfg), cfg.venue === "barkswap" ? BARK_LAUNCHER_ROUTER_IFACE : GEN8_HOOK_IFACE, provider) as any;
   return {
     async readState(blockTag) {
       const o = { blockTag };
@@ -321,7 +391,7 @@ export const PAID_MISMATCH_SELECTOR = "0x3897fc19";
  */
 export async function runGen8RoutePass(opts: {
   db: Queryable;
-  cfg: Gen8ChainConfig;
+  cfg: Gen8AnyChainConfig;
   chain: Gen8RouteChain;
   send: boolean;
   operatorAddress?: string | null;
@@ -338,8 +408,9 @@ export async function runGen8RoutePass(opts: {
   const { db, cfg, chain } = opts;
   if (!cfg.splitter) return { status: "skipped", reason: "no-splitter" };
   const splitter = cfg.splitter.address;
-  // F10: the money cursor (accruals, Routed runs, claims at or below the safe / finalized block).
-  const cursor = await db.query(`select last_indexed_block from public.indexer_state where chain_id = $1 and cursor = $2`, [cfg.chainId, `gen8-money:${cfg.hook.address}`]);
+  // F10: the money cursor (accruals / credits, Routed runs, claims) runs only up to the money head (evmGen8Config.ts
+  // gen8MoneyHead: safe on Robinhood, finalized on BNB, latest - 20 on DogeOS); keyed by the hook (V4) / plugin (Barkswap).
+  const cursor = await db.query(`select last_indexed_block from public.indexer_state where chain_id = $1 and cursor = $2`, [cfg.chainId, `gen8-money:${gen8CoreAddress(cfg)}`]);
   const indexedThrough = Number(cursor.rows[0]?.last_indexed_block || 0) - 1;
   if (indexedThrough < cfg.startBlock) return { status: "skipped", reason: "not-indexed-yet" };
   const n = Math.min(indexedThrough, await chain.headBlock());
@@ -521,12 +592,19 @@ export async function runGen8RoutePass(opts: {
 }
 
 /** Backlog alert: router money waiting longer than EVM_GEN8_ROUTE_BACKLOG_HOURS without a confirmed run. */
-export async function checkGen8Backlog(db: Queryable, cfg: Gen8ChainConfig, hours: number, alert: (a: any) => Promise<unknown>) {
-  const r = await db.query(
-    `select min(block_time) as oldest, coalesce(sum(router_amount), 0)::text as amount
+export async function checkGen8Backlog(db: Queryable, cfg: Gen8AnyChainConfig, hours: number, alert: (a: any) => Promise<unknown>) {
+  // Barkswap: what the launcher credited to the router bucket (collected / converted / graduation fee) and is not routed
+  const r = cfg.venue === "barkswap"
+    ? await db.query(
+      `select min(block_time) as oldest, coalesce(sum(router_amount), 0)::text as amount
+         from public.evm_gen8_bark_credits where chain_id = $1 and hook_address = $2 and run_id is null`,
+      [cfg.chainId, gen8CoreAddress(cfg)],
+    )
+    : await db.query(
+      `select min(block_time) as oldest, coalesce(sum(router_amount), 0)::text as amount
        from public.evm_gen8_fee_accruals where chain_id = $1 and hook_address = $2 and run_id is null`,
-    [cfg.chainId, cfg.hook.address],
-  );
+      [cfg.chainId, cfg.hook.address],
+    );
   const oldest = r.rows[0]?.oldest ? new Date(r.rows[0].oldest) : null;
   if (oldest && Date.now() - oldest.getTime() > hours * 3_600_000 && big(r.rows[0].amount) > 0n) {
     await alert({ severity: "warning", kind: "gen8_splitter_backlog", chainId: cfg.chainId, title: `Gen-8 router money waiting on chain ${cfg.chainId}`, message: `${r.rows[0].amount} wei accrued since ${oldest.toISOString()} without a confirmed splitter run.` });

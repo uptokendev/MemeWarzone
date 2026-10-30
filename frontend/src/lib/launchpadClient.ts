@@ -10,6 +10,7 @@ import {
   ROBINHOOD_CHAIN_ID,
   ROBINHOOD_TESTNET_CHAIN_ID,
   getActiveChainId,
+  isDogeosChainId,
   isEvmTokenRoutePath,
   resolveTokenPageChainId,
   isSolanaChainId,
@@ -592,7 +593,8 @@ export function useLaunchpad(): LaunchpadAdapter {
   const evmFallbackChainId = useMemo<SupportedChainId>(() => {
     if (tokenPageReadChain) return tokenPageReadChain;
     const productChain = getActiveChainId(walletChainId);
-    if (productChain === ROBINHOOD_CHAIN_ID || productChain === ROBINHOOD_TESTNET_CHAIN_ID) {
+    // DogeOS (6281971) is its own EVM product chain like Robinhood: never read it through BNB.
+    if (productChain === ROBINHOOD_CHAIN_ID || productChain === ROBINHOOD_TESTNET_CHAIN_ID || isDogeosChainId(productChain)) {
       return productChain;
     }
     if (walletChainId === 56) return BNB_CHAIN_ID;
@@ -602,7 +604,9 @@ export function useLaunchpad(): LaunchpadAdapter {
   const evmReadChainId = isSolanaChainId(activeChainId) ? evmFallbackChainId : activeChainId;
   const bnbAddresses = useMemo(() => getBnbContractAddresses(evmReadChainId), [evmReadChainId]);
   const bnbReadiness = useMemo(() => getBnbContractReadiness(evmReadChainId), [evmReadChainId]);
-  const factoryAddress = bnbAddresses.launchFactory;
+  // The gen-7 factory this client reads and writes. DogeOS has none (gen-8 on Barkswap only, B8): its launchFactory is
+  // the Bark launcher (bnbContracts.ts readiness), which the gen-8 create path uses, never these gen-7 calls.
+  const factoryAddress = isDogeosChainId(evmReadChainId) ? "" : bnbAddresses.launchFactory;
   const readProvider = useMemo(() => getReadProvider(evmReadChainId), [evmReadChainId]);
 
   const getFactoryRead = useCallback(() => {

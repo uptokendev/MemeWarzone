@@ -17,6 +17,7 @@ import { buildCandles, type CurveTradePoint as ChartPoint } from "@/lib/chart/bu
 import { fetchUserProfile } from "@/lib/profileApi";
 import { resolveImageUri } from "@/lib/media";
 import { getDefaultChainId, getNativeSymbol, isSolanaChainId } from "@/lib/chainConfig";
+import { chartExplorerTxUrl as explorerTxUrl } from "@/lib/chainPresentation";
 import {
   solanaMarginalSpotSol,
   type SolanaCurvePricingState,
@@ -442,17 +443,6 @@ function formatNativeAmt(raw: bigint, decimals: number, symbol: string): string 
   if (n >= 1) return `${n.toFixed(3)} ${symbol}`;
   if (n >= 0.001) return `${n.toFixed(4)} ${symbol}`;
   return `${trimFixed(n, symbol === "SOL" ? 9 : 8)} ${symbol}`;
-}
-
-function explorerTxUrl(chainId: number, txHash: string): string {
-  if (isSolanaChainId(chainId)) {
-    const cluster = Number(chainId) === 102 ? "?cluster=devnet" : "";
-    return `https://explorer.solana.com/tx/${encodeURIComponent(txHash)}${cluster}`;
-  }
-  if (Number(chainId) === 46630) return `https://explorer.testnet.chain.robinhood.com/tx/${txHash}`;
-  if (Number(chainId) === 4663) return `https://explorer.chain.robinhood.com/tx/${txHash}`;
-  const base = Number(chainId) === 56 ? "https://bscscan.com" : "https://testnet.bscscan.com";
-  return `${base}/tx/${txHash}`;
 }
 
 export function UnifiedMarketChart({

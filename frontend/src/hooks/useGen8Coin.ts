@@ -54,7 +54,23 @@ export type Gen8CoinState = {
     reserve: { address: string; amount: string; releasable: boolean; releaseAt?: number | null; beneficiary: string | null } | null;
     escrow: { address: string; totalTokens: string | null; claimedTokens: string | null; claimableTokens: string | null } | null;
   };
-  gen8: { poolId: string; poolKey: { currency0: string; currency1: string; fee: number; tickSpacing: number; hooks: string }; hook: string; poolManager: string; lens: string | null; launcher: string; displayPair: string | null; tradePath: string; phase: "bonding" | "graduated"; tickStart?: number; tickGrad?: number };
+  gen8: {
+    poolId: string;
+    poolKey: { currency0: string; currency1: string; fee: number; tickSpacing: number; hooks: string };
+    hook: string;
+    poolManager: string;
+    lens: string | null;
+    launcher: string;
+    displayPair: string | null;
+    tradePath: string;
+    phase: "bonding" | "graduated";
+    tickStart?: number;
+    tickGrad?: number;
+    /** Barkswap (DogeOS): "barkswap", the coin's Algebra pool and our plugin; poolId / poolKey / hook / poolManager are null there. */
+    venue?: "v4" | "barkswap";
+    pool?: string | null;
+    plugin?: string | null;
+  };
   viewer: { wallet: string; isCreator: boolean; canClaimHookCreatorFees: boolean; canClaimVaultFees: boolean; canAcceptCreator: boolean; canClaimEscrow: boolean } | null;
 };
 

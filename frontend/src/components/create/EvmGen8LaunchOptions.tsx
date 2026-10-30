@@ -4,15 +4,18 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { getNativeSymbol, isRobinhoodChainId } from "@/lib/chainConfig";
+import { getNativeSymbol, isDogeosChainId, isRobinhoodChainId } from "@/lib/chainConfig";
 import { getReadProvider } from "@/lib/readProvider";
 import { GEN7_LAUNCH_FEE_NOTE } from "../../../shared/evmGen7Curve.mjs";
 import { gen8FirstBuyPlan, gen8MaxFirstBuyByBalance, gen8MaxFirstBuyValue, readGen8LaunchPlan } from "@/lib/evmGen8Client.mjs";
-import { evmLaunchBalanceMessage, evmLaunchGasReserveWei } from "@/lib/tradeBalanceReserve";
+import { DOGE_LAUNCH_GAS_RESERVE_WEI, evmLaunchBalanceMessage, evmLaunchGasReserveWei } from "@/lib/tradeBalanceReserve";
+import { dogeosLiveGasReserveWei, formatDogeosReserve, type DogeosLaunchStrings } from "@/lib/dogeosGasReserve";
+import { useDogeosGasReserve } from "@/hooks/useDogeosGasReserve";
 import { CreatorFeeChoicePicker, type CreatorFeeChoice } from "@/components/create/CreatorFeeChoicePicker";
 import { parseNativeInput, readEvmNativeBalance } from "@/components/create/EvmGen6LaunchOptions";
 
-export type Gen8LaunchPlan = { marketCapNative: bigint; virtualNative: bigint; virtualToken: bigint; tickStart: number; tickGrad: number };
+/** launcher.plan(target). A Barkswap plan (DogeOS) also carries liqA / liqB and venue "barkswap" (its first-buy estimate needs liqA). */
+export type Gen8LaunchPlan = { marketCapNative: bigint; virtualNative: bigint; virtualToken: bigint; tickStart: number; tickGrad: number; venue?: string; liqA?: bigint; liqB?: bigint };
 
 function formatNative(wei: bigint, symbol: string) {
   const n = Number(ethers.formatEther(wei));
@@ -21,22 +24,51 @@ function formatNative(wei: bigint, symbol: string) {
   return `${n.toFixed(digits).replace(/0+$/, "").replace(/\.$/, "")} ${symbol}`;
 }
 
-/** Before the wallet opens on a gen-8 launch: the first buy plus the gas reserve must fit in the balance. */
-export async function assertEvmGen8LaunchBalance(input: { chainId: number; account: string; valueWei: bigint }) {
+/**
+ * The launch's gas reserve. DogeOS: the 0.2 DOGE floor (plan t34; a Bark launch is ~6.3M gas plus an L1 data fee in DOGE,
+ * and the live amount is max(floor, estimate): useDogeosGasReserve / dogeosLiveGasReserveWei). Other chains unchanged.
+ */
+export function gen8LaunchGasReserveWei(chainId: number): bigint {
+  if (isDogeosChainId(chainId)) return DOGE_LAUNCH_GAS_RESERVE_WEI;
+  return evmLaunchGasReserveWei(isRobinhoodChainId(chainId));
+}
+
+function formatReserve(wei: bigint) {
+  const n = Math.floor((Number(wei) / 1e18) * 10_000) / 10_000;
+  return n.toFixed(4).replace(/\.?0+$/, "") || "0";
+}
+
+/**
+ * evmLaunchBalanceMessage with the chain's own reserve. DogeOS names the DOGE it keeps back for network fees: the live
+ * `reserveWei` when given, else the floor. Other chains unchanged (they ignore `reserveWei`).
+ */
+export function gen8LaunchBalanceMessage(maxFirstBuyWei: bigint, chainId: number, reserveWei?: bigint | null): string {
+  const symbol = getNativeSymbol(chainId as any);
+  if (!isDogeosChainId(chainId)) return evmLaunchBalanceMessage(maxFirstBuyWei, symbol, isRobinhoodChainId(chainId));
+  const reserve = formatDogeosReserve(reserveWei ?? gen8LaunchGasReserveWei(chainId));
+  if (maxFirstBuyWei <= 0n) return `Not enough ${symbol}. A launch needs about ${reserve} ${symbol} for network fees.`;
+  return `Not enough ${symbol}. A launch keeps about ${reserve} ${symbol} for network fees. Your first buy can be up to ${formatReserve(maxFirstBuyWei)} ${symbol}.`;
+}
+
+/**
+ * Before the wallet opens on a gen-8 launch: the first buy plus the gas reserve must fit in the balance. DogeOS: the live
+ * reserve, priced at the size of this launch's strings when given (plan t34); other chains unchanged.
+ */
+export async function assertEvmGen8LaunchBalance(input: { chainId: number; account: string; valueWei: bigint; launchStrings?: DogeosLaunchStrings | null }) {
   if (input.valueWei <= 0n) return;
   const balance = await readEvmNativeBalance(input.chainId, input.account);
   if (balance == null) return;
-  const isRobinhood = isRobinhoodChainId(input.chainId);
-  const reserve = evmLaunchGasReserveWei(isRobinhood);
+  const live = await dogeosLiveGasReserveWei({ chainId: input.chainId, kind: "launch", launchStrings: input.launchStrings });
+  const reserve = live ?? gen8LaunchGasReserveWei(input.chainId);
   if (input.valueWei + reserve > balance) {
-    throw new Error(evmLaunchBalanceMessage(gen8MaxFirstBuyByBalance({ balanceWei: balance, gasReserveWei: reserve }), getNativeSymbol(input.chainId as any), isRobinhood));
+    throw new Error(gen8LaunchBalanceMessage(gen8MaxFirstBuyByBalance({ balanceWei: balance, gasReserveWei: reserve }), input.chainId, reserve));
   }
 }
 
 /** Before the wallet opens: the first buy priced again on the launcher's plan for this block; throws over the cap. */
 export async function freshEvmGen8FirstBuyCheck(input: { chainId: number; launcher: string; targetUsd: bigint; valueWei: bigint }) {
   if (input.valueWei <= 0n) return null;
-  const plan = await readGen8LaunchPlan({ provider: getReadProvider(input.chainId as any), launcher: input.launcher, targetUsd: input.targetUsd });
+  const plan = await readGen8LaunchPlan({ provider: getReadProvider(input.chainId as any), launcher: input.launcher, targetUsd: input.targetUsd, chainId: input.chainId });
   const firstBuy = gen8FirstBuyPlan({ valueWei: input.valueWei, plan });
   if (firstBuy.exceedsCap) throw new Error("Your first buy is over the cap. Lower the amount or press MAX.");
   return firstBuy;
@@ -45,7 +77,9 @@ export async function freshEvmGen8FirstBuyCheck(input: { chainId: number; launch
 /**
  * Create-page options for an EVM generation 8 launcher: the same controls and words as generation 7 (fee choice,
  * first buy up to 70% of the supply with MAX, balance line with the gas reserve, the 90% launch fee note). The first
- * buy is a native amount sent with the launch; the coins it buys are the launch's own V4 swap, replayed exactly.
+ * buy is a native amount sent with the launch; the coins it buys are the launch's own V4 swap, replayed exactly. On
+ * DogeOS (Barkswap) it is the launch's own Algebra swap on the Bark launcher's plan, priced in DOGE with the DOGE gas
+ * reserve.
  */
 export function EvmGen8LaunchOptions({
   chainId,
@@ -73,8 +107,8 @@ export function EvmGen8LaunchOptions({
   onBlockedChange?: (blocked: boolean) => void;
 }) {
   const symbol = getNativeSymbol(chainId as any);
-  const isRobinhood = isRobinhoodChainId(chainId);
-  const gasReserveWei = evmLaunchGasReserveWei(isRobinhood);
+  // DogeOS: the live DOGE reserve (the floor until it is read); other chains: their fixed reserve, unchanged.
+  const gasReserveWei = useDogeosGasReserve(chainId, "launch") ?? gen8LaunchGasReserveWei(chainId);
   const [plan, setPlan] = useState<Gen8LaunchPlan | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
   const [balanceWei, setBalanceWei] = useState<bigint | null>(null);
@@ -85,7 +119,7 @@ export function EvmGen8LaunchOptions({
     setPlan(null);
     setPlanError(null);
     if (!launcher || graduationTarget <= 0n) return;
-    void readGen8LaunchPlan({ provider: getReadProvider(chainId as any), launcher, targetUsd: graduationTarget })
+    void readGen8LaunchPlan({ provider: getReadProvider(chainId as any), launcher, targetUsd: graduationTarget, chainId })
       .then((next: Gen8LaunchPlan) => {
         if (!cancelled) setPlan(next);
       })
@@ -135,7 +169,7 @@ export function EvmGen8LaunchOptions({
         if (fits < max) max = fits;
       }
       if (max <= 0n) {
-        toast.error(evmLaunchBalanceMessage(0n, symbol, isRobinhood));
+        toast.error(gen8LaunchBalanceMessage(0n, chainId, gasReserveWei));
         return;
       }
       const step = 10n ** 12n;
@@ -170,7 +204,7 @@ export function EvmGen8LaunchOptions({
           </Button>
         </div>
         {overBalance && maxByBalance != null ? (
-          <p className="mt-1 text-xs text-orange-300">{evmLaunchBalanceMessage(maxByBalance, symbol, isRobinhood)}</p>
+          <p className="mt-1 text-xs text-orange-300">{gen8LaunchBalanceMessage(maxByBalance, chainId, gasReserveWei)}</p>
         ) : balanceWei != null ? (
           <p className="mt-1 text-xs text-muted-foreground">
             Balance {formatNative(balanceWei, symbol)}. About {formatNative(gasReserveWei, symbol)} stays in your wallet for gas.

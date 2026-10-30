@@ -6,7 +6,7 @@
  * includes that coin's gen-8 dex rows (execution_source gen8_v4). Other dex rows stay out.
  * The curve_trades / dex_trades tables themselves are not rewritten.
  */
-import { evmGen8Config } from "./evm/evmGen8Config.js";
+import { evmGen8BarkConfig, evmGen8Config } from "./evm/evmGen8Config.js";
 
 export type TradeListDb = { query(sql: string, params?: unknown[]): Promise<{ rows: any[]; rowCount?: number | null }> };
 
@@ -66,7 +66,8 @@ export const GEN8_TRADE_LIST_SQL = `select
 export const GEN8_POOL_LOOKUP_SQL = `select 1 from public.evm_gen8_pools where chain_id = $1 and token_address = $2 limit 1`;
 
 export function chainHasGen8Launcher(chainId: number, env: NodeJS.ProcessEnv = process.env): boolean {
-  return evmGen8Config(chainId, env).config != null;
+  // A Barkswap chain (DogeOS 6281971) writes the same gen-8 rows (execution_source gen8_v4) under its own config.
+  return evmGen8Config(chainId, env).config != null || evmGen8BarkConfig(chainId, env).config != null;
 }
 
 export function storedGen8TokenAddress(campaign: string): string {

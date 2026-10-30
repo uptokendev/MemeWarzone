@@ -5,6 +5,10 @@
  * This module builds the leaf file, the operator propose calldata, and the Safe batch. It does not send any of
  * them. The Safe batch is approveHolderBatch (4 arguments, including claimDeadline) plus authorizeBatch.
  * executeHolderBatch is not in the batch.
+ *
+ * Barkswap (DogeOS): pool ids are the pool address left-padded to bytes32 (evmGen8Bark.ts barkPoolId), so the plan is
+ * keyed the same way, but MwzBarkCreatorChoiceVault.proposeHolderBatch takes the coins (address[]), not pool ids:
+ * pass `barkswapCoins` (pool id -> coin) and the propose call and the leaf file name the coins.
  */
 import { ethers } from "ethers";
 import { allocateToHolders, holderLeaves, type HolderBalance } from "../dbc/dbcCreatorChoice.js";
@@ -22,6 +26,9 @@ const APPROVE_IFACE = new ethers.Interface([
   "function authorizeBatch(bytes32 batchId, uint256 maxAmount, uint64 publishAfter, uint64 publishDeadline)",
   "function executeHolderBatch(bytes32 batchId)",
   "function proposeHolderBatch(bytes32 batchId, bytes32 root, uint64 claimDeadline, bytes32[] ids, uint256[] amounts)",
+]);
+const BARK_PROPOSE_IFACE = new ethers.Interface([
+  "function proposeHolderBatch(bytes32 batchId, bytes32 root, uint64 claimDeadline, address[] coins, uint256[] amounts)",
 ]);
 
 export function gen8PoolId(id: string): string {
@@ -60,7 +67,8 @@ export type Gen8LeafFile = {
   claimDeadline: number;
   root: string;
   total: string;
-  pools: Array<{ poolId: string; amount: string }>;
+  /** `coin` on Barkswap only (the vault is keyed by coin). */
+  pools: Array<{ poolId: string; coin?: string; amount: string }>;
   leaves: Array<{ account: string; amount: string; parts: Array<{ poolId: string; amount: string }> }>;
 };
 
@@ -98,6 +106,8 @@ export function planGen8HolderWeek(input: {
   authCapWei: bigint;
   pots: Map<string, bigint>;
   holders: Map<string, HolderBalance[]>;
+  /** Barkswap only: pool id -> coin. Every planned pool must have its coin. */
+  barkswapCoins?: Map<string, string>;
 }): Gen8HolderPlan {
   const empty = (reason: string): Gen8HolderPlan => ({ file: null, reason, sends: [], propose: null, safe: null });
   if (input.pots.size === 0) return empty("no holder balance this week");
@@ -128,6 +138,11 @@ export function planGen8HolderWeek(input: {
     .map(([poolId, amount]) => ({ poolId, amount }))
     .sort((a, b) => (a.poolId < b.poolId ? -1 : 1));
   const byPool = pools.reduce((sum, pool) => sum + pool.amount, 0n);
+  const coinOf = (poolId: string): string => {
+    const coin = input.barkswapCoins?.get(poolId);
+    if (!coin || !ethers.isAddress(coin)) throw new Error(`no coin for Barkswap pool id ${poolId}`);
+    return coin.toLowerCase();
+  };
   if (byPool !== total) throw new Error(`holder leaves (${total}) and pool amounts (${byPool}) disagree`);
   const { root } = merklePlan(entries);
   const batchId = holderBatchId(input.chainId, input.weekId, GEN8_HOLDER_PROGRAM);
@@ -143,10 +158,11 @@ export function planGen8HolderWeek(input: {
     claimDeadline,
     root,
     total: total.toString(),
-    pools: pools.map((pool) => ({ poolId: pool.poolId, amount: pool.amount.toString() })),
+    pools: pools.map((pool) => (input.barkswapCoins ? { poolId: pool.poolId, coin: coinOf(pool.poolId), amount: pool.amount.toString() } : { poolId: pool.poolId, amount: pool.amount.toString() })),
     leaves: entries.map((entry) => ({ account: entry.account, amount: entry.amount.toString(), parts: leafParts(perCoin, entry.account) })),
   };
-  const poolIds = file.pools.map((pool) => pool.poolId);
+  const bark = Boolean(input.barkswapCoins);
+  const poolIds = file.pools.map((pool) => (bark ? pool.coin! : pool.poolId));
   const amounts = file.pools.map((pool) => BigInt(pool.amount));
   const proposeArgs = [file.batchId, file.root, BigInt(file.claimDeadline), poolIds, amounts] as [string, string, bigint, string[], bigint[]];
   const executableAt = input.nowSec + input.holderBatchDelaySec;
@@ -156,7 +172,7 @@ export function planGen8HolderWeek(input: {
   }
   const calls: Gen8PlannedCall[] = [
     {
-      contract: "MwzCreatorChoiceVault",
+      contract: bark ? "MwzBarkCreatorChoiceVault" : "MwzCreatorChoiceVault",
       to: file.vault,
       fn: "approveHolderBatch",
       args: [file.batchId, file.root, total.toString(), String(file.claimDeadline)],
@@ -177,7 +193,7 @@ export function planGen8HolderWeek(input: {
     file,
     reason: "built",
     sends: [],
-    propose: { fn: "proposeHolderBatch", args: proposeArgs, data: APPROVE_IFACE.encodeFunctionData("proposeHolderBatch", proposeArgs) },
+    propose: { fn: "proposeHolderBatch", args: proposeArgs, data: (bark ? BARK_PROPOSE_IFACE : APPROVE_IFACE).encodeFunctionData("proposeHolderBatch", proposeArgs) },
     safe: { applied: false, executes: false, calls },
   };
 }

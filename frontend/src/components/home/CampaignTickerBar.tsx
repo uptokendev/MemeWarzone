@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import { Contract } from "ethers";
 import { cn } from "@/lib/utils";
-import { BNB_CHAIN_ID, ROBINHOOD_CHAIN_ID, SOLANA_CHAIN_ID, getFactoryAddress, isAllowedChainId, isRobinhoodChainId, isSolanaChainId } from "@/lib/chainConfig";
+import { BNB_CHAIN_ID, ROBINHOOD_CHAIN_ID, SOLANA_CHAIN_ID, getFactoryAddress, getNativeSymbol, isAllowedChainId, isSolanaChainId } from "@/lib/chainConfig";
 import { useSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
 import { isPublicHiddenCampaign, isPublicHiddenSymbol, loadPublicHiddenCampaigns } from "@/lib/publicHiddenCampaigns";
 import { getReadProvider } from "@/lib/readProvider";
@@ -70,12 +70,6 @@ function asNumber(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function nativeTickerSymbol(chainId: number) {
-  if (isSolanaChainId(chainId)) return "SOL";
-  if (isRobinhoodChainId(chainId)) return "ETH";
-  return "BNB";
-}
-
 function formatMc(value: number | null, nativeUsd: number | null, chainId: number) {
   if (value == null || !Number.isFinite(value)) return "MC —";
 
@@ -89,7 +83,7 @@ function formatMc(value: number | null, nativeUsd: number | null, chainId: numbe
     }).format(usd)}`;
   }
 
-  const symbol = nativeTickerSymbol(chainId);
+  const symbol = getNativeSymbol(chainId);
   return `MC ${value >= 1 ? value.toFixed(2) : value.toFixed(4)} ${symbol}`;
 }
 

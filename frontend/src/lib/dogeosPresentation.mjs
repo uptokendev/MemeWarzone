@@ -1,0 +1,18 @@
+// DogeOS Chikyū testnet (chain 6281971) display values, in one place.
+// Plain .mjs so the .mjs presentation modules (and their node tests) can import it; the .ts side
+// gets the same chain id, symbol and label from chainConfig.ts, and dogeosPresentation.test.mjs
+// checks the two agree. DogeOS coins launch on gen-8 in Barkswap custom pools (barkswap spec, B7),
+// so the DEX name lives here and nowhere else.
+
+export const DOGEOS_TESTNET_CHAIN_ID = 6281971;
+export const DOGEOS_NATIVE_SYMBOL = "DOGE";
+/** Network / wallet name, where other chains show their long name too ("Robinhood Chain Testnet"). */
+export const DOGEOS_CHAIN_LABEL = "DogeOS Chikyū Testnet";
+/** Short name for chips, cards and badges, where other chains show "BNB", "Solana", "Robinhood". */
+export const DOGEOS_SHORT_LABEL = "DogeOS";
+export const DOGEOS_EXPLORER_BASE = "https://dogeos-testnet.l2scan.co";
+export const DOGEOS_DEX_LABEL = "Barkswap";
+
+export function isDogeosTestnetChain(chainId) {
+  return Number(chainId) === DOGEOS_TESTNET_CHAIN_ID;
+}

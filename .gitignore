@@ -122,3 +122,14 @@ env.zip
 **/env.zip
 *.env.zip
 deployments/fork-rehearsal/
+
+# gen-8 hardhat build outputs (hardhat.gen8.config.ts)
+cache-gen8
+artifacts-gen8
+typechain-types-gen8
+reports/gen8/local-*.json
+
+# DogeOS Barkswap hardhat build outputs (hardhat.dogeos-bark-fork.config.ts)
+cache-bark
+artifacts-bark
+typechain-types-bark

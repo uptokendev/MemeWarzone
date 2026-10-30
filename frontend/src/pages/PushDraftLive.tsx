@@ -71,7 +71,7 @@ import { submitDbcCreateTransaction } from "@/lib/dbcCreateSubmit";
 import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
 import { isScheduleLocked } from "../../shared/dbcSchedule.mjs";
 import { EvmGen8LaunchOptions, assertEvmGen8LaunchBalance, freshEvmGen8FirstBuyCheck } from "@/components/create/EvmGen8LaunchOptions";
-import { GEN8_DEFAULT_GRADUATION_TARGET_WEI, gen8GraduationTiers } from "@/lib/evmGen8Client.mjs";
+import { GEN8_DEFAULT_GRADUATION_TARGET_WEI, gen8GraduationTiers, gen8LauncherFor, gen8PoolVenueLabel } from "@/lib/evmGen8Client.mjs";
 import { gen8LaunchReadiness } from "../../shared/gen8LaunchReadiness.mjs";
 import { createGen8Campaign } from "@/lib/evmGen8Create";
 import { timestampSeconds } from "@/lib/scheduledLaunchApi";
@@ -858,7 +858,20 @@ export default function PushDraftLive() {
       const deployAuth = await signDraftAction({ signer: wallet.signer, walletAddress: wallet.account, chainId, action: "deploy_draft", draftId: draft.id });
       const firstBuyValueWei = parseNativeInput(evmFirstBuyInput);
       await freshEvmGen8FirstBuyCheck({ chainId, launcher: gen8Launcher, targetUsd: graduationTargetWei, valueWei: firstBuyValueWei });
-      await assertEvmGen8LaunchBalance({ chainId, account: wallet.account, valueWei: firstBuyValueWei });
+      // DogeOS prices the launch at the size of the strings it sends (plan t34).
+      await assertEvmGen8LaunchBalance({
+        chainId,
+        account: wallet.account,
+        valueWei: firstBuyValueWei,
+        launchStrings: {
+          name: draft.name,
+          symbol: draft.ticker.toUpperCase(),
+          logoURI,
+          xAccount: draft.xUrl || bundle?.promotion?.xUrl || "",
+          website: draft.websiteUrl || bundle?.promotion?.websiteUrl || "",
+          extraLink: draft.otherUrl || "",
+        },
+      });
       const created = await createGen8Campaign({
         signer: wallet.signer as any,
         account: wallet.account,
@@ -1147,7 +1160,7 @@ export default function PushDraftLive() {
           {...(gen8Tiers && !dbcDraft
             ? {
                 title: "Graduation market cap",
-                description: "The market cap at which the coin graduates. It keeps trading in the same Uniswap pool.",
+                description: `The market cap at which the coin graduates. It keeps trading in the same ${gen8PoolVenueLabel(Number(draft?.chainId || 0))} pool.`,
               }
             : {})}
           {...(evmGen7Tiers && !gen8Tiers && !dbcDraft

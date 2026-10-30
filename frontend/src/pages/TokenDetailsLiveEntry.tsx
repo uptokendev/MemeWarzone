@@ -10,6 +10,7 @@ import {
   ROBINHOOD_TESTNET_CHAIN_ID,
   SOLANA_CHAIN_ID,
   getDefaultChainId,
+  isDogeosChainId,
 } from "@/lib/chainConfig";
 import { apiFetch } from "@/lib/apiBase";
 import type { CampaignInfo } from "@/lib/launchpadClient";
@@ -64,6 +65,11 @@ function isRobinhoodChainId(chainId: number): boolean {
   return chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID;
 }
 
+/** Robinhood or DogeOS: an EVM product chain of its own, never folded into the BNB default (chain identity only). */
+function isOwnEvmProductChainId(chainId: number): boolean {
+  return isRobinhoodChainId(chainId) || isDogeosChainId(chainId);
+}
+
 function isBnbChainId(chainId: number): boolean {
   return chainId === BNB_CHAIN_ID || chainId === BNB_TESTNET_CHAIN_ID;
 }
@@ -105,15 +111,17 @@ const TokenDetailsEntry = () => {
 
   const routeId = String(campaignAddress || "").trim();
   const forcedChainId = Number(searchParams.get("chainId") || "");
-  const selectedEvmChainId = isRobinhoodChainId(Number(selectedFeedChainId)) || isBnbChainId(Number(selectedFeedChainId))
+  const selectedEvmChainId = isOwnEvmProductChainId(Number(selectedFeedChainId)) || isBnbChainId(Number(selectedFeedChainId))
     ? Number(selectedFeedChainId)
     : 0;
   // Explicit URL identity wins. Legacy /token/0x... links inherit the currently
   // selected EVM product chain instead of silently becoming BNB testnet.
-  const effectiveEvmChainId = isRobinhoodChainId(forcedChainId) || isBnbChainId(forcedChainId)
+  const effectiveEvmChainId = isOwnEvmProductChainId(forcedChainId) || isBnbChainId(forcedChainId)
     ? forcedChainId
     : selectedEvmChainId || getDefaultChainId();
-  const robinhoodRoute = isRobinhoodChainId(effectiveEvmChainId);
+  // True on DogeOS too (chain identity): it selects the EVM wallet family and labels the page view below; no trade
+  // path is chosen from it.
+  const robinhoodRoute = isOwnEvmProductChainId(effectiveEvmChainId);
   const isSolanaRoute = useMemo(() => {
     // A 0x BNB/Robinhood token is never a Solana route, even if the wallet latch
     // or a stale ?chainId=101 is present. That was collapsing EVM trades/holders.
@@ -146,7 +154,7 @@ const TokenDetailsEntry = () => {
   useEffect(() => {
     if (!routeId) return;
     analytics.track("token_page_viewed", {
-      chain: isSolanaRoute ? "solana" : robinhoodRoute ? "robinhood" : "bnb",
+      chain: isSolanaRoute ? "solana" : isDogeosChainId(effectiveEvmChainId) ? "dogeos" : robinhoodRoute ? "robinhood" : "bnb",
       chainId: isSolanaRoute ? SOLANA_CHAIN_ID : effectiveEvmChainId,
     });
   }, [effectiveEvmChainId, isSolanaRoute, robinhoodRoute, routeId]);
@@ -303,7 +311,7 @@ const TokenDetailsEntry = () => {
     const campaignChainId = Number((campaign as { chainId?: number } | null)?.chainId || 0);
     const chainId = isSolanaRoute
       ? SOLANA_CHAIN_ID
-      : isRobinhoodChainId(forcedChainId) || isBnbChainId(forcedChainId)
+      : isOwnEvmProductChainId(forcedChainId) || isBnbChainId(forcedChainId)
         ? forcedChainId
         : campaignChainId || effectiveEvmChainId;
 

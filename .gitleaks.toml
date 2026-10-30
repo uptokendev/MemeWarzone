@@ -74,3 +74,20 @@ id = "generic-api-key"
   condition = "AND"
   regexes = [ '''(?i)0x1a95c10e4839033686225eaad3ac348f0d8edc4f''' ]
   paths = [ '''^frontend/api/widgetSwapEvm\.test\.mjs$''' ]
+
+  # Hardhat's public default accounts #1 and #0 (the well-known node test keys), the synthetic keys of the DogeOS
+  # network-config test: they check that the dogeosTestnet network reads its own env name. Not credentials; never the
+  # values in config/dogeos.local. Scoped to the two exact keys and the one test.
+  [[rules.allowlists]]
+  description = "Known false positive: Hardhat default test keys in the DogeOS network config test"
+  condition = "AND"
+  regexes = [ '''(?i)0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d''', '''(?i)0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80''' ]
+  paths = [ '''^test/DogeosNetworkConfig\.spec\.ts$''' ]
+
+  # A made-up mixed-case address (0xAbCdEf0123...) of the DogeOS feed isolation test (address normalisation).
+  # Not a credential and not a real contract. Scoped to the exact value and the one test.
+  [[rules.allowlists]]
+  description = "Known false positive: synthetic mixed-case address in the feed chain isolation test"
+  condition = "AND"
+  regexes = [ '''0xAbCdEf0123456789aBcDeF0123456789AbCdEf01''' ]
+  paths = [ '''^frontend/src/lib/feedChainIsolation\.test\.mjs$''' ]

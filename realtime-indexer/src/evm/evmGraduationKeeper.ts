@@ -1088,14 +1088,36 @@ export const FORBIDDEN_KEEPER_ADDRESSES = [
   "0x77f96a7d3bea7a090aacbd00a50002d2b9ae0714", // EVM mainnet deployer (deployments/*.json)
   "0x13ad79765e14927df2c554d9662bbe539e89c8e8", // testnet deployer
   "0x1a367016f10b230e28cf1abda2594c47bf60fe34", // testnet deployer
+  "0x6c5c684d8ddf1d4338dbed21beb7d342dc8382f8", // DogeOS testnet deployer / owner (6281971)
+  "0x7dbdfe829309b4170346cf7e4496094cd126e9c1", // DogeOS testnet DOGE/USD oracle updater (6281971)
+  "0x4fcd24d620f8ecd298bf4d43cb1ca2f4d23876ff", // DogeOS testnet route authority (6281971)
 ];
 
-export function assertKeeperKeyAllowed(address: string, env: NodeJS.ProcessEnv = process.env): void {
+/**
+ * FORBIDDEN_KEEPER_ADDRESSES plus the DogeOS operator (6281971; spec B9 and the foundation-spec amendment): the
+ * splitter, router-claim and choice-vault operator never runs as a keeper. Its address is only known once the founder
+ * generates the key, so it comes from DOGEOS_OPERATOR_ADDRESS, never hard-coded. Kept out of the exported constant on
+ * purpose: the creator-choice operator guard (evmCreatorChoiceConfig.ts) reads that constant, and the operator holds
+ * the choice-vault role. A set but malformed value throws for a DogeOS keeper (`chainId` 6281971), so no DogeOS keeper
+ * key passes an unreadable guard; any other chain's keeper (or a chain-agnostic one, `chainId` unset) ignores the
+ * malformed value, which can match no key, so a DogeOS typo never stops the BNB / Robinhood keepers.
+ */
+export function forbiddenKeeperAddresses(env: NodeJS.ProcessEnv = process.env, chainId?: number): string[] {
+  const operator = String(env.DOGEOS_OPERATOR_ADDRESS || "").trim();
+  if (!operator) return [...FORBIDDEN_KEEPER_ADDRESSES];
+  if (!/^0x[0-9a-fA-F]{40}$/.test(operator)) {
+    if (chainId !== 6281971) return [...FORBIDDEN_KEEPER_ADDRESSES];
+    throw new Error(`DOGEOS_OPERATOR_ADDRESS ${JSON.stringify(operator)} is not an address; the DogeOS keeper refuses every key until it is fixed or unset`);
+  }
+  return [...FORBIDDEN_KEEPER_ADDRESSES, operator.toLowerCase()];
+}
+
+export function assertKeeperKeyAllowed(address: string, env: NodeJS.ProcessEnv = process.env, chainId?: number): void {
   const extra = String(env.EVM_KEEPER_FORBIDDEN_ADDRESSES || "")
     .split(",")
     .map((a) => a.trim().toLowerCase())
     .filter(Boolean);
-  const forbidden = new Set([...FORBIDDEN_KEEPER_ADDRESSES, ...extra]);
+  const forbidden = new Set([...forbiddenKeeperAddresses(env, chainId), ...extra]);
   if (forbidden.has(address.toLowerCase())) {
     throw new Error(`EVM graduation keeper refuses key ${address}: it is a deployer / forbidden address`);
   }

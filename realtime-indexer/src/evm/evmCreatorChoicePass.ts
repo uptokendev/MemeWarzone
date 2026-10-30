@@ -351,7 +351,9 @@ async function setBatch(db: Queryable, chainId: number, vault: string, weekId: s
   );
 }
 
-function nativeSymbol(chainId: number) {
+export function nativeSymbol(chainId: number) {
+  // DogeOS: the creator-choice job stays off there, but the symbol must not lie if it is ever read.
+  if (chainId === 6281971) return "DOGE";
   return chainId === 4663 || chainId === 46630 ? "ETH" : "BNB";
 }
 

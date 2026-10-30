@@ -32,6 +32,7 @@ import { keeperRpc } from "./evmGraduationKeeperWorker.js";
 import { createEthersChoiceChain, createEthersChoiceSender, type Census } from "./evmCreatorChoiceChain.js";
 import { choiceConfig, createHttpBuybackAuthClient, enabledChoiceChains, operatedVaults, operatorWallet, truthy, vaultChoiceConfig } from "./evmCreatorChoiceConfig.js";
 import { runChoiceLanes, type ChoiceLane } from "./evmCreatorChoiceLanes.js";
+import { gen8Venue } from "./evmGen8Config.js";
 
 export { assertOperatorKeyAllowed, choiceConfig, createHttpBuybackAuthClient, enabledChoiceChains, operatedVaults, operatorWallet, vaultAddress } from "./evmCreatorChoiceConfig.js";
 export { holderBatchesKeyedByVault, runChoiceLanes, type ChoiceLane } from "./evmCreatorChoiceLanes.js";
@@ -73,6 +74,8 @@ export function startEvmCreatorChoiceWorker() {
   const api = apiUrl && apiSecret ? createHttpBuybackAuthClient(apiUrl, apiSecret) : null;
 
   for (const chainId of chains) {
+    // DogeOS (Barkswap venue) has no CreatorRewardsVaultV2: its choice-vault buybacks run in dogeosBarkKeepers.ts
+    if (gen8Venue(chainId) === "barkswap") continue;
     const cfg = choiceConfig(chainId);
     const vaults = operatedVaults(chainId);
     const url = keeperRpc(chainId);

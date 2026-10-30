@@ -45,7 +45,7 @@ import {
   gen8SizedSlippageBps,
   permitFromJson,
 } from "../shared/evmGen8Swap.mjs";
-import { gen8ConfigFor } from "./lib/evmGen8Config.js";
+import { gen8V4ConfigFor } from "./lib/evmGen8Config.js";
 import { gen8LaunchReadiness, gen8TradeGap } from "../shared/gen8LaunchReadiness.mjs";
 import { evmFingerprint } from "./lib/importSwapFingerprint.js";
 import { widgetDeadlineJitter } from "./lib/widgetDeadline.js";
@@ -85,9 +85,12 @@ async function defaultPartnerDeps() {
   return { readPartner: mod.readPartner, rememberPartnerSwap: mod.rememberPartnerSwap };
 }
 
-/** The chain's gen-8 swap setup for the API: hook, lens, router (+ layout), quoter. Throws when missing. */
+/**
+ * The chain's gen-8 swap setup for the API: hook, lens, router (+ layout), quoter. Throws when missing. V4 venue
+ * only: the widget builds UniversalRouter / Permit2 calls, which a Barkswap chain (DogeOS) has no use for.
+ */
 export function gen8SwapSetup(chainId, env = process.env) {
-  const cfg = gen8ConfigFor(chainId, env);
+  const cfg = gen8V4ConfigFor(chainId, env);
   if (!cfg) {
     const gap = gen8LaunchReadiness(chainId, env, { vite: false, scope: "create" });
     throw new Gen8SwapError(400, "GEN8_NOT_CONFIGURED", gap.message || "Generation 8 coins are not set up on this chain.");

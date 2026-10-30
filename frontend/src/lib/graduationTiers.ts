@@ -65,13 +65,13 @@ function runtimeSolanaIdentity(identity?: GraduationRuntimeIdentity): Graduation
 
 /**
  * Current $6 eligibility is a safety policy, not a product-chain shortcut.
- * BNB testnet 97 and Robinhood testnet 46630 are eligible (the API's EVM route
- * authority already accepts $6 on both). Solana is eligible only as canonical chain
+ * BNB testnet 97, Robinhood testnet 46630 and DogeOS Chikyu testnet 6281971 are eligible (the API's
+ * EVM route authority accepts the test targets on all three). Solana is eligible only as canonical chain
  * 101 with staging + devnet. Legacy chain 102 can never activate the policy.
  */
 export function isTestGraduationChain(chainId: number, identity?: GraduationRuntimeIdentity): boolean {
   const id = Number(chainId);
-  if (id === 97 || id === 46630) return true;
+  if (id === 97 || id === 46630 || id === 6281971) return true;
   if (id !== 101) return false;
   const runtime = runtimeSolanaIdentity(identity);
   return resolveCurrentSolanaAuthority({

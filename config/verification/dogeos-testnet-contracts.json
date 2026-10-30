@@ -1,0 +1,217 @@
+{
+  "purpose": "Every contract deployed on DogeOS Chikyu testnet (6281971) for the Bark stack (gen-8 on Barkswap custom pools), with the constructor arguments it was created with and the build that verifies it, for L2Scan source verification (scripts/verify-dogeos-testnet.ts: build root with hardhat.dogeos-verify.config.ts, build bark with hardhat.dogeos-bark-verify.config.ts). Barkswap (Algebra factory, entry point, routers, quoter, NPM) and WDOGE are external and not verified by us.",
+  "deployer": "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8",
+  "chains": {
+    "6281971": {
+      "network": "dogeosTestnet",
+      "provider": "l2scan",
+      "apiUrl": "https://dogeos-testnet.l2scan.co/api",
+      "contracts": [
+        {
+          "name": "DogeosTestnetDogeUsdOracle",
+          "address": "0x18b264F9EA74485a83b40d886e3ff3F1076eFFee",
+          "contract": "contracts/dogeos/testnet/DogeosTestnetDogeUsdOracle.sol:DogeosTestnetDogeUsdOracle",
+          "args": [
+            "0x7dBDFe829309B4170346CF7e4496094CD126E9c1",
+            "8016000",
+            false
+          ],
+          "build": "root"
+        },
+        {
+          "name": "GraduationOracle",
+          "address": "0x20b1027c6E7fFD1f81f60fEca3993665F248aE90",
+          "contract": "contracts/GraduationOracle.sol:GraduationOracle",
+          "args": [
+            "0x18b264F9EA74485a83b40d886e3ff3F1076eFFee",
+            "3600"
+          ],
+          "build": "root"
+        },
+        {
+          "name": "TreasuryVaultV2 (weekly)",
+          "address": "0xaFcC0D1Ae6503d79740655ebd1629Ef06F65360C",
+          "contract": "contracts/TreasuryVaultV2.sol:TreasuryVaultV2",
+          "args": [
+            "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8",
+            "0x0000000000000000000000000000000000000000",
+            "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8"
+          ],
+          "build": "root"
+        },
+        {
+          "name": "CharityTreasury",
+          "address": "0xB01768f553843D989192681FC83989614b1B22dC",
+          "contract": "contracts/CharityTreasury.sol:CharityTreasury",
+          "args": [
+            "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8"
+          ],
+          "build": "root"
+        },
+        {
+          "name": "MonthlyLeagueTreasury",
+          "address": "0xaa2E9068Aa9DCb53B514dae7DA247794d7b92a8E",
+          "contract": "contracts/MonthlyLeagueTreasury.sol:MonthlyLeagueTreasury",
+          "args": [
+            "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8",
+            "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8",
+            "0x20b1027c6E7fFD1f81f60fEca3993665F248aE90",
+            "0xB01768f553843D989192681FC83989614b1B22dC",
+            "1500000000000000000000000"
+          ],
+          "build": "root"
+        },
+        {
+          "name": "RecruiterRewardsVault",
+          "address": "0x2E7D45D16A5a418cf53dbc3931549587F5C1f539",
+          "contract": "contracts/RecruiterRewardsVault.sol:RecruiterRewardsVault",
+          "args": [
+            "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8"
+          ],
+          "build": "root"
+        },
+        {
+          "name": "ProtocolRevenueVault",
+          "address": "0x807302eDf28ed1484b787a967f05caF1391f74A2",
+          "contract": "contracts/ProtocolRevenueVault.sol:ProtocolRevenueVault",
+          "args": [
+            "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8"
+          ],
+          "build": "root"
+        },
+        {
+          "name": "RewardDistributor (holders)",
+          "address": "0x5445908F6a103ca42Ea1737e7EA3e32f560a84f6",
+          "contract": "contracts/RewardDistributor.sol:RewardDistributor",
+          "args": [
+            "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8"
+          ],
+          "build": "root"
+        },
+        {
+          "name": "RewardDistributor (airdrop)",
+          "address": "0x4bfc59DB7BcB097BA0119704A03864AC31304493",
+          "contract": "contracts/RewardDistributor.sol:RewardDistributor",
+          "args": [
+            "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8"
+          ],
+          "build": "root"
+        },
+        {
+          "name": "CommunityRewardsVault",
+          "address": "0x9bd2ea48c110D95Dce06Ce2D79a6DE05086C1eD8",
+          "contract": "contracts/CommunityRewardsVault.sol:CommunityRewardsVault",
+          "args": [
+            "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8",
+            "0x59816E1C741c47bC97f422DA3CcBc699ca0eca2b"
+          ],
+          "build": "root"
+        },
+        {
+          "name": "MwzBarkLaunchLib",
+          "address": "0xaeC3D907dB9B3bef52d41B31F47FeE235A00347A",
+          "contract": "contracts/dogeos/barkswap/libraries/MwzBarkLaunchLib.sol:MwzBarkLaunchLib",
+          "args": [],
+          "build": "bark"
+        },
+        {
+          "name": "MwzBarkFeeBooks",
+          "address": "0xD5141A0c9F26e4b8C0FB282cfecCaCe3033ab0C9",
+          "contract": "contracts/dogeos/barkswap/libraries/MwzBarkFeeBooks.sol:MwzBarkFeeBooks",
+          "args": [],
+          "build": "bark"
+        },
+        {
+          "name": "MwzBarkCreatorEscrow",
+          "address": "0xfC8C21d5373Da334565a80487433992d51d2491B",
+          "contract": "contracts/dogeos/barkswap/MwzBarkCreatorEscrow.sol:MwzBarkCreatorEscrow",
+          "args": [
+            "0x66F4D7b8E69f14d1A05fD4c51Ce7459e114aF82C"
+          ],
+          "build": "bark"
+        },
+        {
+          "name": "MwzBarkFeeSplitter",
+          "address": "0x59816E1C741c47bC97f422DA3CcBc699ca0eca2b",
+          "contract": "contracts/dogeos/barkswap/MwzBarkFeeSplitter.sol:MwzBarkFeeSplitter",
+          "args": [
+            "0x66F4D7b8E69f14d1A05fD4c51Ce7459e114aF82C",
+            "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8",
+            "0xaFcC0D1Ae6503d79740655ebd1629Ef06F65360C",
+            "0xaa2E9068Aa9DCb53B514dae7DA247794d7b92a8E",
+            "0x2E7D45D16A5a418cf53dbc3931549587F5C1f539",
+            "0x9bd2ea48c110D95Dce06Ce2D79a6DE05086C1eD8",
+            "0x807302eDf28ed1484b787a967f05caF1391f74A2",
+            "0xca8cc5e31CB5cf4D90aD4585C881c34909C83d1A"
+          ],
+          "build": "bark"
+        },
+        {
+          "name": "MwzBarkCreatorChoiceVault",
+          "address": "0x77e4aB2755CeDc51603e5cd06B345B8e1739A746",
+          "contract": "contracts/dogeos/barkswap/MwzBarkCreatorChoiceVault.sol:MwzBarkCreatorChoiceVault",
+          "args": [
+            "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8",
+            "0x66F4D7b8E69f14d1A05fD4c51Ce7459e114aF82C",
+            "86400"
+          ],
+          "build": "bark"
+        },
+        {
+          "name": "MwzBarkReserveLock",
+          "address": "0x0628bd90833aB4dEf8cA52a8131d845a59213fCD",
+          "contract": "contracts/dogeos/barkswap/MwzBarkReserveLock.sol:MwzBarkReserveLock",
+          "args": [
+            "0x66F4D7b8E69f14d1A05fD4c51Ce7459e114aF82C"
+          ],
+          "build": "bark"
+        },
+        {
+          "name": "MwzBarkPlugin",
+          "address": "0x29D85333709858a84A215E673769ecC815F11548",
+          "contract": "contracts/dogeos/barkswap/MwzBarkPlugin.sol:MwzBarkPlugin",
+          "args": [
+            "0x66F4D7b8E69f14d1A05fD4c51Ce7459e114aF82C",
+            "0xF6BDB158A5ddF77F1B83bC9074F6a472c58D78aE",
+            "0xfC8C21d5373Da334565a80487433992d51d2491B",
+            "0x77e4aB2755CeDc51603e5cd06B345B8e1739A746"
+          ],
+          "build": "bark"
+        },
+        {
+          "name": "MwzBarkLauncher",
+          "address": "0x66F4D7b8E69f14d1A05fD4c51Ce7459e114aF82C",
+          "contract": "contracts/dogeos/barkswap/MwzBarkLauncher.sol:MwzBarkLauncher",
+          "args": [
+            "0x19B1A502Ea56843343E60e44a4a95B3cf4C914f5",
+            "0xF6BDB158A5ddF77F1B83bC9074F6a472c58D78aE",
+            "0x29D85333709858a84A215E673769ecC815F11548",
+            "0x20b1027c6E7fFD1f81f60fEca3993665F248aE90",
+            "0x0628bd90833aB4dEf8cA52a8131d845a59213fCD",
+            "0x77e4aB2755CeDc51603e5cd06B345B8e1739A746",
+            "0x6c5C684D8ddf1D4338DBEd21beb7D342dC8382f8",
+            "0x4fcD24d620f8eCd298bF4d43CB1cA2F4D23876FF",
+            "0x59816E1C741c47bC97f422DA3CcBc699ca0eca2b",
+            "10000000000000000",
+            "10000000000000000000",
+            "3600"
+          ],
+          "build": "bark",
+          "libraries": {
+            "contracts/dogeos/barkswap/libraries/MwzBarkLaunchLib.sol:MwzBarkLaunchLib": "0xaeC3D907dB9B3bef52d41B31F47FeE235A00347A",
+            "contracts/dogeos/barkswap/libraries/MwzBarkFeeBooks.sol:MwzBarkFeeBooks": "0xD5141A0c9F26e4b8C0FB282cfecCaCe3033ab0C9"
+          }
+        },
+        {
+          "name": "MwzBarkLaunchLens",
+          "address": "0xbEeBc4770A61ff83fF20888F059656DF3562BDE2",
+          "contract": "contracts/dogeos/barkswap/MwzBarkLaunchLens.sol:MwzBarkLaunchLens",
+          "args": [
+            "0x66F4D7b8E69f14d1A05fD4c51Ce7459e114aF82C"
+          ],
+          "build": "bark"
+        }
+      ]
+    }
+  }
+}

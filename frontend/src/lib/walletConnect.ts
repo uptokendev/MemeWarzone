@@ -59,6 +59,7 @@ function rpcMapFor(chains: number[]) {
   const fallbacks: Record<number, string> = {
     97: "https://bsc-testnet-rpc.publicnode.com",
     46630: "https://rpc.testnet.chain.robinhood.com",
+    6281971: "https://rpc.testnet.dogeos.com",
   };
   return Object.fromEntries(
     chains.map((chainId) => [

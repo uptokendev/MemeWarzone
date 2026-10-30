@@ -1,0 +1,195 @@
+Barkswap custom-pool plugin fork proof (research only), 2026-10-14T15:13:13.604Z
+compiled with solc 0.8.26+commit.8a97fa7a.Emscripten.clang, evm paris, viaIR, optimizer 200: launcher 15401 B, plugin 5407 B, token 2734 B
+PASS [setup] tickmath self-test
+PASS [setup] fork chainId is DogeOS Chikyu 6281971  block 8578734
+PASS [setup] fork block gas limit is Chikyu's 10,000,000  10000000
+PASS [setup] code at Barkswap factory  0xF3961157f56C983316657f0267B4C04460beE43f 10699 bytes
+PASS [setup] code at Barkswap poolDeployer  0x4151224471B0EeA41eE4295c632cc61779d339C2 24137 bytes
+PASS [setup] code at Barkswap ep  0x19B1A502Ea56843343E60e44a4a95B3cf4C914f5 3286 bytes
+PASS [setup] code at Barkswap router  0x911E5A1630fD1768E5A1710DAAFaBb865cB79531 12561 bytes
+PASS [setup] code at Barkswap npm  0xf596329a6c7E03F0708199cB5435f86783DB4302 21976 bytes
+PASS [setup] code at Barkswap quoterV2  0x187b41968063Cb8A04A5f4d2113844EF2Ba21493 9262 bytes
+PASS [setup] code at Barkswap wdoge  0xF6BDB158A5ddF77F1B83bC9074F6a472c58D78aE 5294 bytes
+PASS [setup] code at Barkswap vault  0xA305F8BDf7EaA3233b3918A39d1e0867c6116c83 4432 bytes
+PASS [setup] EP is the only CUSTOM_POOL_DEPLOYER (no per-deployer grant needed)
+PASS [setup] EP holds POOLS_ADMINISTRATOR (setTickSpacing / setFee / setPluginConfig forwarders work)
+PASS [setup] router poolDeployer / WNativeToken match
+PASS [setup] factory defaultCommunityFee = 30 (3% of every swap fee)
+     [gas] deploy launcher D (+ shared plugin P in its constructor), once per chain: 4,599,820  (D runtime 15401 B, P runtime 5407 B)
+PASS [setup] plugin P deployed by D, P.launcher == D  0x544a84786752c8b97e2611C2234064DAeA25aebf
+     [gas] standalone coin deploy (reference: the coin CREATE inside launch): 763,441
+     [gas] launch tx: direct pool.mint, tickSpacing 200: 6,131,654
+PASS [1 launch] launch fits far under the 10M block gas limit (direct pool.mint, tickSpacing 200)  6131654 gas, 61.3% of 10M
+     [gas] launch tx: NPM mint (2 NFTs to D), tickSpacing 200: 6,636,853
+PASS [1 launch] launch fits far under the 10M block gas limit (NPM mint (2 NFTs to D), tickSpacing 200)  6636853 gas, 66.4% of 10M
+PASS [1 launch] NPM variant: both position NFTs owned by D, liquidity recorded  ids 845/846
+     [gas] launch tx: direct pool.mint, tickSpacing 60 (default, no setTickSpacing): 6,123,293
+PASS [1 launch] launch fits far under the 10M block gas limit (direct pool.mint, tickSpacing 60 (default, no setTickSpacing))  6123293 gas, 61.2% of 10M
+     [gas] launch tx: direct pool.mint, tickSpacing 10: 6,132,142
+PASS [1 launch] launch fits far under the 10M block gas limit (direct pool.mint, tickSpacing 10)  6132142 gas, 61.3% of 10M
+     [gas] launch tx: direct pool.mint, tickSpacing 200, coin side-pool guard on: 6,158,392
+PASS [1 launch] launch fits far under the 10M block gas limit (direct pool.mint, tickSpacing 200, coin side-pool guard on)  6158392 gas, 61.6% of 10M
+     [gas] launch tx: direct pool.mint, tickSpacing 200, creator first buy 10 DOGE: 6,298,252
+PASS [1 launch] launch fits far under the 10M block gas limit (direct pool.mint, tickSpacing 200, creator first buy 10 DOGE)  6298252 gas, 63.0% of 10M
+     [gas] launch tx: direct pool.mint, tickSpacing 200, LP-fee mode (lastFee stays 500): 6,123,743
+PASS [1 launch] launch fits far under the 10M block gas limit (direct pool.mint, tickSpacing 200, LP-fee mode (lastFee stays 500))  6123743 gas, 61.2% of 10M
+PASS [1 launch] pool address == factory.computeCustomPoolAddress(D, coin, WDOGE) and registered under D
+PASS [1 launch] coin is token0, WDOGE token1 (launcher enforces, salt picked off chain)
+PASS [1 launch] pool.plugin() == the shared plugin P
+PASS [1 launch] plugin config 135 = BEFORE_SWAP|AFTER_SWAP|BEFORE_POSITION_MODIFY|DYNAMIC_FEE  135
+PASS [1 launch] tick spacing 200 set through EP.setTickSpacing
+PASS [1 launch] lastFee 0 (EP.setFee(0) before DYNAMIC_FEE): LP fee 0, total fee = plugin fee
+PASS [1 launch] communityFee 30 and vault 0xA305 set by the factory (D cannot change either)
+PASS [1 launch] initialized exactly at the grid start price (tick == tickStart)  tick -171200
+PASS [1 launch] position A owned by D with the planned liquidity  L 193350877107756743066217
+PASS [1 launch] position B owned by D with the planned liquidity  L 158479493606881292137336
+PASS [1 launch] pool holds A + B coins (one-sided, coin only), no WDOGE  979999999 coins (A 849999999.9999 B 129999999.9999)
+PASS [1 launch] creator got the 20M reserve; rounding dust burned to 0xdEaD; D keeps 0 coins  dust 2227 wei
+PASS [1 launch] D's only state-changing functions: launch, callbacks, takeGraduationFee, collectLpFees (no withdraw path for A/B)  algebraMintCallback,algebraSwapCallback,collectLpFees,launch,takeGraduationFee
+PASS [1 launch] beforeInitialize reverts for any sender but D (anti front-run), returns the selector for D  OnlyLauncherMayInitialize / 0x636fd804
+PASS [1 launch] re-initialize reverts (alreadyInitialized)  alreadyInitialized
+PASS [1 launch] nobody but D can create a custom pool under deployer D (EP: Only deployer)  Error(Only deployer)
+     [2 curve] $150 spacing 200: ticks -171200..-134200..887200; grad MC 1486.1390 DOGE (target 1500.0000, 9240.635349 ppm); start MC 36.7493 vs gen-7 36.5259 (6118.427809 ppm); raise in A 198.643221 vs gen-7 198.959693 (1590.63792 ppm)
+     [2 curve] $150 spacing 60: ticks -171240..-134100..887220; grad MC 1501.0742 DOGE (target 1500.0000, 716.16148 ppm); start MC 36.6026 vs gen-7 36.5259 (2102.192731 ppm); raise in A 199.240015 vs gen-7 198.959693 (1408.937302 ppm)
+     [2 curve] $150 spacing 10: ticks -171260..-134110..887270; grad MC 1499.5739 DOGE (target 1500.0000, 284.004506 ppm); start MC 36.5295 vs gen-7 36.5259 (100.091218 ppm); raise in A 198.941394 vs gen-7 198.959693 (91.975093 ppm)
+     [2 curve] $30K spacing 200: ticks -118200..-81200..887200; grad MC 297649.4735 DOGE (target 300000.0000, 7835.088176 ppm); start MC 7360.3060 vs gen-7 7305.1828 (7545.764203 ppm); raise in A 39785.005506 vs gen-7 39791.938775 (174.238029 ppm)
+     [2 curve] $30K spacing 60: ticks -118260..-81120..887220; grad MC 300040.0995 DOGE (target 300000.0000, 133.665202 ppm); start MC 7316.2786 vs gen-7 7305.1828 (1518.88966 ppm); raise in A 39824.808420 vs gen-7 39791.938775 (826.037773 ppm)
+     [2 curve] $30K spacing 10: ticks -118280..-81120..887270; grad MC 300040.0995 DOGE (target 300000.0000, 133.665202 ppm); start MC 7301.6614 vs gen-7 7305.1828 (482.04647 ppm); raise in A 39785.005506 vs gen-7 39791.938775 (174.238029 ppm)
+PASS [2 curve] tickSpacing 10: grid rounding keeps grad MC, start MC and raise within 1,000 ppm of gen-7  worst 482.04647 ppm
+PASS [2 curve] tickSpacing 60: within 6,000 ppm of gen-7  worst 2102.192731 ppm
+PASS [2 curve] tickSpacing 200 (Barkswap's usual): within 20,000 ppm (<=1% price step / 2)  worst 9240.635349 ppm (grid step 2.02% in price)
+PASS [2 curve] $150 sp 200: buying all of A stops exactly at the graduation price  tick -134200 == tickGrad -134200
+PASS [2 curve] $150 sp 200: coins out == A (850M minus rounding)  849999999.999999
+PASS [2 curve] $150 sp 200: native into A (ex fee) == planned raise (V3 math) within 2 wei  198.643221043 DOGE vs plan 198.643221043; gen-7 R 198.959693877 (1590.63792 ppm); at $0.10: $19.86
+PASS [2 curve] $150 sp 200: fee on that buy is the gen-7 2% on top of the curve cost  fee 3.972690171 = 1.9999% of curve cost
+PASS [2 curve] $150 sp 200: the latch fires at the graduation price (price >= sqrtGrad)
+     [gas] buy out all of A ($150, sp 200, crosses into graduation, price-limited multicall): 285,237
+PASS [2 curve] $150 sp 10: buying all of A stops exactly at the graduation price  tick -134110 == tickGrad -134110
+PASS [2 curve] $150 sp 10: coins out == A (850M minus rounding)  849999999.999999
+PASS [2 curve] $150 sp 10: native into A (ex fee) == planned raise (V3 math) within 2 wei  198.941394541 DOGE vs plan 198.941394541; gen-7 R 198.959693877 (91.975093 ppm); at $0.10: $19.89
+PASS [2 curve] $150 sp 10: fee on that buy is the gen-7 2% on top of the curve cost  fee 3.978653379 = 1.9999% of curve cost
+PASS [2 curve] $150 sp 10: the latch fires at the graduation price (price >= sqrtGrad)
+     [gas] buy out all of A ($150, sp 10, crosses into graduation, price-limited multicall): 285,293
+PASS [2 curve] $30K sp 200: buying all of A stops exactly at the graduation price  tick -81200 == tickGrad -81200
+PASS [2 curve] $30K sp 200: coins out == A (850M minus rounding)  849999999.999999
+PASS [2 curve] $30K sp 200: native into A (ex fee) == planned raise (V3 math) within 2 wei  39785.005506489 DOGE vs plan 39785.005506489; gen-7 R 39791.938775510 (174.238029 ppm); at $0.10: $3978.50
+PASS [2 curve] $30K sp 200: fee on that buy is the gen-7 2% on top of the curve cost  fee 795.665210752 = 1.9999% of curve cost
+PASS [2 curve] $30K sp 200: the latch fires at the graduation price (price >= sqrtGrad)
+     [gas] buy out all of A ($30K, sp 200, crosses into graduation, price-limited multicall): 285,289
+     [gas] launch M with creator first buy 10 DOGE (1 tx): 6,298,144
+     [3 fees] first buy: in 10.000000 DOGE, coins 210974750.13, Swap.overrideFee 0 pluginFee 19607
+PASS [3 fees] creator first buy inside launch pays the bonding rate (2%), not the 90% launch fee  pluginFee 19607 = 2/102 of input
+PASS [3 fees] first fee after creation is pushed at once (lastFeeTransferTimestamp was 0): handlePluginFee in the launch tx  P got 0.190187900 WDOGE
+PASS [3 fees] decay t+1s: plugin fee = gen-7 rate 88.5333% on top (input share 46.96%)  fee 0.469589 of 1 DOGE, curve 0.530411, fee/curve 88.533%
+PASS [3 fees] decay t+10s: plugin fee = gen-7 rate 75.3333% on top (input share 42.97%)  fee 0.429657 of 1 DOGE, curve 0.570343, fee/curve 75.333%
+PASS [3 fees] decay t+30s: plugin fee = gen-7 rate 46% on top (input share 31.51%)  fee 0.315068 of 1 DOGE, curve 0.684932, fee/curve 45.9998%
+PASS [3 fees] decay t+45s: plugin fee = gen-7 rate 24% on top (input share 19.35%)  fee 0.193548 of 1 DOGE, curve 0.806452, fee/curve 23.9999%
+PASS [3 fees] decay t+59s: plugin fee = gen-7 rate 3.4666% on top (input share 3.35%)  fee 0.033504 of 1 DOGE, curve 0.966496, fee/curve 3.4665%
+PASS [3 fees] decay t+60s: plugin fee = gen-7 rate 2% on top (input share 1.96%)  fee 0.019607 of 1 DOGE, curve 0.980393, fee/curve 1.9999%
+PASS [3 fees] decay t+61s: plugin fee = gen-7 rate 2% on top (input share 1.96%)  fee 0.019607 of 1 DOGE, curve 0.980393, fee/curve 1.9999%
+     [gas] router buy 5 DOGE (exactInputSingle, native in), bonding, no payout: 175,645
+PASS [3 fees] bonding buy: fee 2% on top of the curve cost (gen-7 definition)  in 5.000000 curve 4.901965000 fee 0.098035000
+PASS [3 fees] buy fee is collected in the INPUT token: WDOGE (token1) only
+PASS [3 fees] community vault share = 3% of the whole fee (plugin keeps 97%)  community 0.002941050 plugin 0.095093950 = 1.9399% of curve volume to us
+PASS [3 fees] LP fee is 0: totalFeeGrowth unchanged (overrideFee 0 + lastFee 0)
+PASS [3 fees] not pushed yet (8 h timer): fees wait in getPluginFeePending
+     [gas] direct pool.swap buy 1 WDOGE (helper contract, no router), bonding: 149,178
+     [gas] router sell 2M coins (multicall exactInputSingle + unwrapWNativeToken), bonding: 158,294
+PASS [3 fees] sell fee is collected in the INPUT token: the coin (token0), not native  plugin 38800.00 coins, community 1200.00 coins
+PASS [3 fees] sell fee = 2% of the coins sold within 1,000 wei (price-step rounding dust lands in the fee; gen-7 takes 2% of the native payout: same value, other token)  fee 40000.00 coins of 2000000 (diff 12 wei, pluginFee 20000, override 0); seller got 0.145492508 DOGE
+PASS [3 overrideFee] LP-fee mode: lastFee stays 500 but overrideFee != 0 replaces it; pluginFee 0
+PASS [3 overrideFee] LP-fee mode: nothing goes to plugin pending; fee accrues as LP fee growth to our positions  LP fee ~0.095093949 WDOGE, community 0.002941050
+     [gas] LP-fee mode: collectLpFees (poke A+B with burn 0, collect both): 164,954
+PASS [3 overrideFee] LP-fee mode: treasury collects the LP fees at once (no 8 h wait, no handlePluginFee)  0.285281849 WDOGE (first-buy + this buy, 97% of fees)
+PASS [4 LP block] outsider NPM mint (coin-only above price) into our pool reverts LiquidityIsLocked  LiquidityIsLocked
+PASS [4 LP block] outsider NPM mint (WDOGE-only below price) reverts LiquidityIsLocked  LiquidityIsLocked
+PASS [4 LP block] outsider direct pool.mint (own callback) reverts LiquidityIsLocked  LiquidityIsLocked
+PASS [4 LP block] NPM.createAndInitializePoolIfNecessary with deployer D is a no-op on our initialized pool
+     [4 LP block] D's own mints are proven by every launch (sender == D passes beforeModifyPosition); D's burn in takeGraduationFee below
+PASS [7 router] QuoterV2.quoteExactInputSingle(deployer = D) quotes our custom pool incl. the plugin fee exactly  quote 37627885.37 == got 37627885.37
+PASS [7 router] router exactInputSingle(deployer = D, native value) swaps in our pool (router wraps DOGE)
+PASS [7 router] router with deployer = address(0) targets the (non-existent) default pool and reverts  revert (no data)
+     [7 router] the router derives the pool from (deployer, token0, token1) by CREATE2: custom pools need deployer = D in every swap and quote; multi-hop paths encode tokenIn|deployer|tokenOut
+PASS [5 graduation] takeGraduationFee before the latch reverts NotGraduated  NotGraduated
+     [gas] graduation-crossing buy (latch + plugin drops its afterSwap flag): 183,257
+PASS [5 graduation] crossing buy started below the graduation price and ended above it  tick -163109 -> -134099 (grad -134200)
+PASS [5 graduation] crossing buy pays the bonding rate (price at swap START was inside A, F1)
+PASS [5 graduation] afterSwap latch: graduated = true, graduatedAt = block time, Graduated event  graduatedAt 1791991325
+PASS [5 graduation] plugin reconfigured the pool from afterSwap (pool unlocked): config 135 -> 133, afterSwap off
+     [gas] post-graduation buy 2 DOGE (1%, no afterSwap call): 136,930
+PASS [5 graduation] post-graduation buy pays 1% on top (price at start >= graduation price)  fee 0.019800000
+     [gas] takeGraduationFee (burn 2% of A + collect to treasury), separate permissionless tx: 143,660
+PASS [5 graduation] graduation fee step: A returns only native (amount0 0) and the treasury receives it  3.972864420 WDOGE
+PASS [5 graduation] graduation fee == 2% of the native in A within 2 wei (gen-8 one-time 2%)  want floor(2% of 198.643221043) = 3.972864420
+PASS [5 graduation] A keeps 98% of its liquidity; B untouched
+PASS [5 graduation] second takeGraduationFee reverts AlreadyTaken  AlreadyTaken
+PASS [5 graduation] sell starting at/above the graduation price pays 1% (in coins)  price fell back into A: tick -147483
+PASS [5 graduation] next sell starting inside A pays the bonding 2% again (F1), latch stays set
+     [gas] graduation-crossing buy WITH inline 2% graduation fee in afterSwap (pool L): 310,057
+PASS [5 graduation] inline variant: afterSwap latch calls D.takeGraduationFee in the same swap (pool unlocked, D's burn passes the plugin)  3.972864420 WDOGE to treasury
+PASS [6 payout] fees from all M swaps since the launch push are pending in both tokens  1513200.00 coins + 3.704371792 WDOGE
+PASS [6 payout] a swap 10 s before the 8 h mark does not push (pending grows)
+PASS [6 payout] with handlePluginFee reverting, swaps before the 8 h mark still work (handler not called)
+PASS [6 payout] a reverting handlePluginFee reverts every payout swap (P must never revert)  ResearchRevert
+     [gas] payout swap: buy 1 DOGE that triggers the 8 h push (plugin + community, 2 tokens each): 234,093
+PASS [6 payout] 8 h later the next fee-bearing swap calls P.handlePluginFee(fee0, fee1) once  fee0 1513200.00 coins, fee1 3.742409372 WDOGE
+PASS [6 payout] handlePluginFee amounts == pending + this swap's fee; pending now 0
+PASS [6 payout] P receives BOTH tokens (coin from sells, WDOGE from buys) and its balances move by exactly those amounts
+PASS [6 payout] community vault receives its pending 3% in both tokens in the same swap  vault +46799.99 coins, +0.115744619 WDOGE
+PASS [6 payout] lastFeeTransferTimestamp reset to the payout block
+PASS [6 payout] per-pool attribution (msg.sender = pool): sum of feesNative over our pools == P's WDOGE balance  M 3.932597272 G 0.190187900 L 0.000000000 (LP mode) = 4.122785172
+PASS [6 payout] per-pool coin books == P's balance of each coin
+     [6 payout] lifetime M: P received 3.932597272 WDOGE + 1513200.00 coins
+     [gas] convertCoinFees: P sells its coin fees into the pool (hooks skipped): 144,774
+PASS [6 payout] P's own swap skips beforeSwap/afterSwap: overrideFee 0, pluginFee 0, no community fee (lastFee 0)  sold 1513200.00 coins for 0.608626133 WDOGE
+PASS [6 payout] after conversion P holds only WDOGE for M and the books still reconcile
+     [gas] router buy 2 DOGE, coin WITHOUT guard (twin pool): 175,681
+     [gas] router buy 2 DOGE, coin WITH side-pool guard: 175,821  (+140)
+     [gas] router sell 500K coins, coin WITHOUT guard: 158,307
+     [gas] router sell 500K coins, coin WITH guard: 160,648  (+2341)
+     [gas] plain transfer to an EOA, no guard / guard: 51,433  (guard 54073, +2640)
+     [gas] plain transfer to a contract (not a pool), no guard / guard: 51,433  (guard 56818, +5385)
+PASS [8 side pool] router swaps on our pool keep working with the guarded coin (buy and sell)
+     [gas] side pool: factory.createPool(coin, WDOGE) by an outsider (unguarded): 8,114,099  (deploys a BasePluginV1 per pool)
+PASS [8 side pool] outsider created a default (side) pool for our unguarded coin, next to our custom pool  0xa70722f0C538b916A4a5361BaCd328F896d560BA
+PASS [8 side pool] unguarded coin: outsider adds coin liquidity to the side pool (we cannot stop it)  ok
+     [gas] side pool: factory.createPool(coin, WDOGE) by an outsider (guarded): 8,114,099  (deploys a BasePluginV1 per pool)
+PASS [8 side pool] outsider created a default (side) pool for our guarded coin, next to our custom pool  0x6BE3B4165122B73B1bC0Ac4A66aef9E7418d9a8b
+PASS [8 side pool] guarded coin: outsider's NPM mint into the side pool reverts (coin refuses the transfer; NPM reports STF)  Error(STF)
+PASS [8 side pool] guarded coin: a direct transfer to the side pool reverts SidePoolBlocked  SidePoolBlocked(0x6BE3B4165122B73B1bC0Ac4A66aef9E7418d9a8b)
+PASS [8 side pool] guarded coin: after our pool graduates the guard lifts (side-pool mint works)  ok
+
+GAS TABLE
+     4599820  deploy launcher D (+ shared plugin P in its constructor), once per chain  (D runtime 15401 B, P runtime 5407 B)
+      763441  standalone coin deploy (reference: the coin CREATE inside launch)
+     6131654  launch tx: direct pool.mint, tickSpacing 200
+     6636853  launch tx: NPM mint (2 NFTs to D), tickSpacing 200
+     6123293  launch tx: direct pool.mint, tickSpacing 60 (default, no setTickSpacing)
+     6132142  launch tx: direct pool.mint, tickSpacing 10
+     6158392  launch tx: direct pool.mint, tickSpacing 200, coin side-pool guard on
+     6298252  launch tx: direct pool.mint, tickSpacing 200, creator first buy 10 DOGE
+     6123743  launch tx: direct pool.mint, tickSpacing 200, LP-fee mode (lastFee stays 500)
+      285237  buy out all of A ($150, sp 200, crosses into graduation, price-limited multicall)
+      285293  buy out all of A ($150, sp 10, crosses into graduation, price-limited multicall)
+      285289  buy out all of A ($30K, sp 200, crosses into graduation, price-limited multicall)
+     6298144  launch M with creator first buy 10 DOGE (1 tx)
+      175645  router buy 5 DOGE (exactInputSingle, native in), bonding, no payout
+      149178  direct pool.swap buy 1 WDOGE (helper contract, no router), bonding
+      158294  router sell 2M coins (multicall exactInputSingle + unwrapWNativeToken), bonding
+      164954  LP-fee mode: collectLpFees (poke A+B with burn 0, collect both)
+      183257  graduation-crossing buy (latch + plugin drops its afterSwap flag)
+      136930  post-graduation buy 2 DOGE (1%, no afterSwap call)
+      143660  takeGraduationFee (burn 2% of A + collect to treasury), separate permissionless tx
+      310057  graduation-crossing buy WITH inline 2% graduation fee in afterSwap (pool L)
+      234093  payout swap: buy 1 DOGE that triggers the 8 h push (plugin + community, 2 tokens each)
+      144774  convertCoinFees: P sells its coin fees into the pool (hooks skipped)
+      175681  router buy 2 DOGE, coin WITHOUT guard (twin pool)
+      175821  router buy 2 DOGE, coin WITH side-pool guard  (+140)
+      158307  router sell 500K coins, coin WITHOUT guard
+      160648  router sell 500K coins, coin WITH guard  (+2341)
+       51433  plain transfer to an EOA, no guard / guard  (guard 54073, +2640)
+       51433  plain transfer to a contract (not a pool), no guard / guard  (guard 56818, +5385)
+     8114099  side pool: factory.createPool(coin, WDOGE) by an outsider (unguarded)  (deploys a BasePluginV1 per pool)
+     8114099  side pool: factory.createPool(coin, WDOGE) by an outsider (guarded)  (deploys a BasePluginV1 per pool)
+
+RESULT: 117/117 checks passed, 0 failed, 372 s

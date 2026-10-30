@@ -36,10 +36,14 @@ import { weeklyContractBatchId } from "../frontend/scripts/weekly-airdrop/materi
 import { epochWindow } from "../frontend/scripts/weekly-airdrop/config.mjs";
 
 const DAY = 86_400;
-const CHAINS = [56, 97, 4663, 46630];
+const CHAINS = [56, 97, 4663, 46630, 6281971];
 const PROGRAMS = ["airdrop_trader", "airdrop_creator"];
 
-function wiringCalls({ vault, distributor, operator }) {
+/**
+ * The three wiring calls of one pot. Exported for the DogeOS Bark deploy (scripts/lib/dogeosBarkStack.ts), which sends
+ * exactly these at deploy time and leaves the weekly authorizations to this script (--chain 6281971 --skip-wiring).
+ */
+export function airdropWiringCalls({ vault, distributor, operator }) {
   return [
     { contract: "CommunityRewardsVault", to: vault, fn: "setRewardDistributor", args: [distributor] },
     { contract: "CommunityRewardsVault", to: vault, fn: "setAirdropOperator", args: [operator] },
@@ -64,7 +68,7 @@ export function firstWeekEnd({ now = new Date(), from = null } = {}) {
  * pots: [{ pot: "main" | "gen7", vault, distributor, cap (wei), operator, wire }]
  */
 export function airdropSetupCalls({ chainId, pots, weeks = 12, now = new Date(), from = null }) {
-  if (!CHAINS.includes(Number(chainId))) throw new Error("--chain must be 56, 97, 4663 or 46630");
+  if (!CHAINS.includes(Number(chainId))) throw new Error("--chain must be 56, 97, 4663, 46630 or 6281971");
   const count = Math.max(1, Math.min(26, Number(weeks) || 12));
   const seen = new Set();
   for (const p of pots) {
@@ -77,7 +81,7 @@ export function airdropSetupCalls({ chainId, pots, weeks = 12, now = new Date(),
     if (p.wire && !p.operator) throw new Error(`--operator (the Coolify airdrop key) is required to wire the ${p.pot} pot`);
   }
   const calls = [];
-  for (const p of pots) if (p.wire) calls.push(...wiringCalls(p));
+  for (const p of pots) if (p.wire) calls.push(...airdropWiringCalls(p));
   const firstEnd = firstWeekEnd({ now, from });
   for (const p of pots) {
     for (let week = 0; week < count; week += 1) {
@@ -100,7 +104,7 @@ export function airdropSetupCalls({ chainId, pots, weeks = 12, now = new Date(),
 export function parseSetupArgs(argv) {
   const flag = (name) => { const i = argv.indexOf(`--${name}`); return i >= 0 ? argv[i + 1] : undefined; };
   const chainId = Number(flag("chain"));
-  if (!CHAINS.includes(chainId)) throw new Error("--chain must be 56, 97, 4663 or 46630");
+  if (!CHAINS.includes(chainId)) throw new Error("--chain must be 56, 97, 4663, 46630 or 6281971");
   const vault = getAddress(flag("vault"));
   const distributor = getAddress(flag("distributor"));
   const operator = flag("operator") ? getAddress(flag("operator")) : null;

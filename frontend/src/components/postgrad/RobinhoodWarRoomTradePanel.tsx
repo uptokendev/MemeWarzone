@@ -16,11 +16,12 @@ import {
   type RobinhoodV3Quote,
   type RobinhoodV3ResolvedRoute,
 } from "@/lib/robinhoodV3Trade";
-import { ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
+import { ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID, getNativeSymbol, isDogeosChainId } from "@/lib/chainConfig";
+import { DOGEOS_TRADE_UNAVAILABLE } from "@/features/launchpad/dogeosBarkswapAdapter";
 import type { SupportedChainId } from "@/lib/chainConfig";
 import { getReadProvider } from "@/lib/readProvider";
 import LaunchTokenArtifact from "@/abi/LaunchToken.json";
-import { ETH_BUY_GAS_RESERVE_WEI } from "@/lib/tradeBalanceReserve";
+import { evmBuyGasReserveWeiForChain } from "@/lib/tradeBalanceReserve";
 import { ImportedTradePanel } from "@/components/arena/ImportedTradePanel";
 import { graduatedCampaignTradeItem, graduatedImportRouteEnabled } from "@/lib/graduatedEvmTradeRoute.mjs";
 import { resolveImportPool } from "@/lib/robinhoodImportSwap.mjs";
@@ -78,7 +79,9 @@ function shortAddress(value: string | null | undefined) {
 
 function campaignChainId(campaign: CampaignInfo): number {
   const id = Number((campaign as { chainId?: number }).chainId);
-  return id === ROBINHOOD_CHAIN_ID || id === ROBINHOOD_TESTNET_CHAIN_ID ? id : ROBINHOOD_TESTNET_CHAIN_ID;
+  // DogeOS keeps its own id so the panel refuses it (gen-8 Barkswap, B8), never traded as 46630; only an unknown id
+  // falls back to Robinhood testnet.
+  return id === ROBINHOOD_CHAIN_ID || id === ROBINHOOD_TESTNET_CHAIN_ID || isDogeosChainId(id) ? id : ROBINHOOD_TESTNET_CHAIN_ID;
 }
 
 /**
@@ -112,6 +115,13 @@ export function RobinhoodWarRoomTradePanel({ campaign }: { campaign: CampaignInf
       if (timer) window.clearTimeout(timer);
     };
   }, [importOn, chainId, campaign.token, retry]);
+  if (isDogeosChainId(chainId)) {
+    return (
+      <p className="m-0 text-sm text-mw-muted" data-war-room-trade-unavailable="dogeos">
+        {DOGEOS_TRADE_UNAVAILABLE}
+      </p>
+    );
+  }
   if (route === "import") return <ImportedTradePanel item={graduatedCampaignTradeItem(campaign, chainId)} graduated />;
   if (route === "pending") return <p className="m-0 text-sm text-mw-muted" data-graduated-import-route="pending">Loading the trade route…</p>;
   return <RobinhoodWarRoomDirectTradePanel campaign={campaign} />;
@@ -121,6 +131,12 @@ function RobinhoodWarRoomDirectTradePanel({ campaign }: { campaign: CampaignInfo
   const { toast } = useToast();
   const wallet = useWallet();
   const chainId = useMemo(() => campaignChainId(campaign), [campaign]);
+  // Robinhood only: ETH on Robinhood V3 (a DogeOS campaign is refused above, B8).
+  const nativeSymbol = getNativeSymbol(chainId);
+  const networkName = "Robinhood";
+  const venueLabel = "Robinhood V3";
+  // ETH 0.0002 on Robinhood (unchanged); 0.01 DOGE on DogeOS (L1 data fee included).
+  const buyGasReserveWei = evmBuyGasReserveWeiForChain(chainId);
   const [tab, setTab] = useState<"buy" | "sell">("buy");
   const [amount, setAmount] = useState("0");
   const [tradeInputDenom, setTradeInputDenom] = useState<"ETH" | "TOKEN">("ETH");
@@ -157,9 +173,9 @@ function RobinhoodWarRoomDirectTradePanel({ campaign }: { campaign: CampaignInfo
     } catch (err) {
       setRoute(null);
       setQuoteDetails(null);
-      setError(String((err as Error)?.message || err || "Robinhood V3 route unavailable."));
+      setError(String((err as Error)?.message || err || `${venueLabel} route unavailable.`));
     }
-  }, [campaign.campaign, campaign.token, chainId]);
+  }, [campaign.campaign, campaign.token, chainId, venueLabel]);
 
   const loadBalances = useCallback(async () => {
     if (!connectedOnCampaignChain || !wallet.provider || !wallet.account) {
@@ -226,15 +242,15 @@ function RobinhoodWarRoomDirectTradePanel({ campaign }: { campaign: CampaignInfo
         tradeProvider = switched.provider;
         tradeSigner = switched.signer;
       } catch (err) {
-        const message = String((err as Error)?.message || err || `Switch MetaMask to Robinhood chain ${chainId} and try again.`);
+        const message = String((err as Error)?.message || err || `Switch MetaMask to ${networkName} chain ${chainId} and try again.`);
         setError(message);
-        toast({ title: "Robinhood network switch failed", description: message, variant: "destructive" });
+        toast({ title: `${networkName} network switch failed`, description: message, variant: "destructive" });
         return;
       }
     }
 
     if (!route) {
-      setError("Robinhood V3 route is not ready yet.");
+      setError(`${venueLabel} route is not ready yet.`);
       return;
     }
     const amountIn = parseAmount(amount, TOKEN_DECIMALS);
@@ -248,10 +264,10 @@ function RobinhoodWarRoomDirectTradePanel({ campaign }: { campaign: CampaignInfo
         const tx = await executeRobinhoodV3Buy({ signer: tradeSigner, quote });
         await tx.wait();
         toast({
-          title: "Robinhood buy confirmed",
+          title: `${networkName} buy confirmed`,
           description: route.routeKind === "STOCK_TWO_HOP"
-            ? `${formatAmount(amountIn, 18, "ETH")} routed atomically through ${route.market.stockToken?.symbol || "Stock Token"} into ${campaign.symbol || "the token"}.`
-            : `${formatAmount(amountIn, 18, "ETH")} traded on the Robinhood V3 pool.`,
+            ? `${formatAmount(amountIn, 18, nativeSymbol)} routed atomically through ${route.market.stockToken?.symbol || "Stock Token"} into ${campaign.symbol || "the token"}.`
+            : `${formatAmount(amountIn, 18, nativeSymbol)} traded on the ${venueLabel} pool.`,
         });
       } else {
         const quote = await quoteRobinhoodV3Sell(tradeProvider, route, amountIn, SLIPPAGE_BPS);
@@ -259,28 +275,28 @@ function RobinhoodWarRoomDirectTradePanel({ campaign }: { campaign: CampaignInfo
         const tx = await executeRobinhoodV3Sell({ signer: tradeSigner, quote });
         await tx.wait();
         toast({
-          title: "Robinhood sell confirmed",
+          title: `${networkName} sell confirmed`,
           description: route.routeKind === "STOCK_TWO_HOP"
-            ? `${formatAmount(amountIn, TOKEN_DECIMALS, campaign.symbol || "tokens")} routed atomically through ${route.market.stockToken?.symbol || "Stock Token"} back to ETH.`
-            : `${formatAmount(amountIn, TOKEN_DECIMALS, campaign.symbol || "tokens")} sold for ETH.`,
+            ? `${formatAmount(amountIn, TOKEN_DECIMALS, campaign.symbol || "tokens")} routed atomically through ${route.market.stockToken?.symbol || "Stock Token"} back to ${nativeSymbol}.`
+            : `${formatAmount(amountIn, TOKEN_DECIMALS, campaign.symbol || "tokens")} sold for ${nativeSymbol}.`,
         });
       }
       setAmount("0");
       setQuoteDetails(null);
       await Promise.all([loadBalances(), loadRoute()]);
     } catch (err) {
-      const message = String((err as Error)?.message || err || "Robinhood V3 trade failed.");
+      const message = String((err as Error)?.message || err || `${venueLabel} trade failed.`);
       setError(message);
-      toast({ title: "Robinhood trade failed", description: message, variant: "destructive" });
+      toast({ title: `${networkName} trade failed`, description: message, variant: "destructive" });
     } finally {
       setLoading(false);
     }
   };
 
   const amountIn = parseAmount(amount, TOKEN_DECIMALS);
-  // Buys pay gas in ETH on top of the amount entered.
+  // Buys pay gas in the native coin (ETH / DOGE) on top of the amount entered.
   const insufficient = tab === "buy"
-    ? nativeBalance != null && amountIn + ETH_BUY_GAS_RESERVE_WEI > nativeBalance
+    ? nativeBalance != null && amountIn + buyGasReserveWei > nativeBalance
     : tokenBalance != null && amountIn > tokenBalance;
   const quoteOut = quoteDetails?.amountOutRaw ?? null;
   const minimumOut = quoteDetails?.minimumOutRaw ?? null;
@@ -290,14 +306,14 @@ function RobinhoodWarRoomDirectTradePanel({ campaign }: { campaign: CampaignInfo
   const stockDecimals = Number.isInteger(stockToken?.decimals) ? Number(stockToken?.decimals) : 18;
   const pairLabel = isStockRoute
     ? `${campaign.symbol || "MEME"} / ${stockSymbol}`
-    : `${campaign.symbol || "MEME"} / WETH`;
+    : `${campaign.symbol || "MEME"} / W${nativeSymbol}`;
   const routeSummary = isStockRoute
     ? tab === "buy"
-      ? `ETH → ${stockSymbol} → ${campaign.symbol || "MEME"}`
-      : `${campaign.symbol || "MEME"} → ${stockSymbol} → ETH`
+      ? `${nativeSymbol} → ${stockSymbol} → ${campaign.symbol || "MEME"}`
+      : `${campaign.symbol || "MEME"} → ${stockSymbol} → ${nativeSymbol}`
     : tab === "buy"
-      ? `ETH → ${campaign.symbol || "MEME"}`
-      : `${campaign.symbol || "MEME"} → ETH`;
+      ? `${nativeSymbol} → ${campaign.symbol || "MEME"}`
+      : `${campaign.symbol || "MEME"} → ${nativeSymbol}`;
   const routeHealthLabel = isStockRoute
     ? route?.stockRoute ? "Healthy · both V3 hops verified" : "Unavailable"
     : route ? "Healthy · direct V3 route verified" : "Unavailable";
@@ -319,7 +335,7 @@ function RobinhoodWarRoomDirectTradePanel({ campaign }: { campaign: CampaignInfo
     <div className="flex items-center justify-between gap-2 text-[13px]">
       <span className="text-mw-muted">{label}</span>
       <span className="flex gap-1">
-        <button type="button" aria-pressed={tradeInputDenom === "ETH"} onClick={tradeInputDenom === "ETH" ? undefined : switchDenom} className={`${chipClass} ${tradeInputDenom === "ETH" ? chipOnClass : ""}`}>ETH</button>
+        <button type="button" aria-pressed={tradeInputDenom === "ETH"} onClick={tradeInputDenom === "ETH" ? undefined : switchDenom} className={`${chipClass} ${tradeInputDenom === "ETH" ? chipOnClass : ""}`}>{nativeSymbol}</button>
         <button type="button" aria-pressed={tradeInputDenom === "TOKEN"} onClick={tradeInputDenom === "TOKEN" ? undefined : switchDenom} className={`${chipClass} ${tradeInputDenom === "TOKEN" ? chipOnClass : ""}`}>{tokenSymbol}</button>
       </span>
     </div>
@@ -330,19 +346,19 @@ function RobinhoodWarRoomDirectTradePanel({ campaign }: { campaign: CampaignInfo
         value={amount}
         onChange={(e) => setAmount(e.target.value)}
         inputMode="decimal"
-        aria-label={tradeInputDenom === "ETH" ? "ETH amount" : `${campaign.symbol || "Token"} amount`}
+        aria-label={tradeInputDenom === "ETH" ? `${nativeSymbol} amount` : `${campaign.symbol || "Token"} amount`}
         className="mw-focus h-12 w-full rounded-[10px] border border-[#2E353D] bg-mw-input pl-3.5 pr-20 font-mw-mono text-lg text-mw-text focus:border-mw-accent focus:outline-none"
       />
-      <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 font-mw-mono text-[13px] text-mw-muted">{tradeInputDenom === "ETH" ? "ETH" : tokenSymbol}</span>
+      <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 font-mw-mono text-[13px] text-mw-muted">{tradeInputDenom === "ETH" ? nativeSymbol : tokenSymbol}</span>
     </div>
   );
-  // 25% / 50% fill the field from the balance of the unit being entered (buy in ETH, sell in the token).
+  // 25% / 50% fill the field from the balance of the unit being entered (buy in the native coin, sell in the token).
   const percentBalance = tab === "buy" ? (tradeInputDenom === "ETH" ? nativeBalance : null) : tradeInputDenom === "TOKEN" ? tokenBalance : null;
   const percentDecimals = tab === "buy" ? 18 : TOKEN_DECIMALS;
   const balanceRow = (
     <div className="flex flex-wrap items-center gap-1.5">
       <span className="min-w-0 flex-1 truncate font-mw-mono text-[13px] text-mw-muted">
-        Bal {tradeInputDenom === "ETH" ? formatAmount(nativeBalance, 18, "ETH") : formatAmount(tokenBalance, TOKEN_DECIMALS, tokenSymbol)}
+        Bal {tradeInputDenom === "ETH" ? formatAmount(nativeBalance, 18, nativeSymbol) : formatAmount(tokenBalance, TOKEN_DECIMALS, tokenSymbol)}
       </span>
       {percentBalance != null ? (
         <>
@@ -363,11 +379,11 @@ function RobinhoodWarRoomDirectTradePanel({ campaign }: { campaign: CampaignInfo
   return (
     <div className="flex flex-col gap-2.5 rounded-[14px] border border-mw-border bg-mw-input p-3.5 font-mw-body text-mw-text">
       <div>
-        <div className={`${lblClass} text-mw-accent-soft`}>{isStockRoute ? "Robinhood Stock Battlefield" : "Robinhood V3"}</div>
+        <div className={`${lblClass} text-mw-accent-soft`}>{isStockRoute ? "Robinhood Stock Battlefield" : venueLabel}</div>
         <p className="m-0 mt-0.5 text-[13px] text-mw-muted">
           {isStockRoute
-            ? `Native ETH in/out. Permanent liquidity market: ${pairLabel}.`
-            : "Native ETH in/out. Liquidity remains WETH/token underneath."}
+            ? `Native ${nativeSymbol} in/out. Permanent liquidity market: ${pairLabel}.`
+            : `Native ${nativeSymbol} in/out. Liquidity remains W${nativeSymbol}/token underneath.`}
         </p>
       </div>
 
@@ -382,7 +398,7 @@ function RobinhoodWarRoomDirectTradePanel({ campaign }: { campaign: CampaignInfo
               <div className="sm:col-span-2">
                 {infoCell("Execution route", routeSummary, "text-mw-accent-soft")}
                 <p className="m-0 mt-1 text-[11px] leading-relaxed text-mw-muted">
-                  {stockSymbol} is an intermediate execution asset only. Your wallet supplies or receives ETH; the route is completed atomically inside MemeWarzone.
+                  {stockSymbol} is an intermediate execution asset only. Your wallet supplies or receives {nativeSymbol}; the route is completed atomically inside MemeWarzone.
                 </p>
               </div>
             </>
@@ -413,7 +429,7 @@ function RobinhoodWarRoomDirectTradePanel({ campaign }: { campaign: CampaignInfo
             <span className="truncate">
               {tradeInputDenom === "ETH"
                 ? `get ~${formatAmount(quoteOut, TOKEN_DECIMALS, campaign.symbol || "TOKEN")}`
-                : `pay ~${formatAmount(quoteOut, 18, "ETH")}`}
+                : `pay ~${formatAmount(quoteOut, 18, nativeSymbol)}`}
             </span>
           </div>
           <p className="m-0 text-center text-xs text-mw-muted">Minimum after 1.00% slippage: {formatAmount(minimumOut, TOKEN_DECIMALS, campaign.symbol || "TOKEN")}</p>
@@ -423,10 +439,10 @@ function RobinhoodWarRoomDirectTradePanel({ campaign }: { campaign: CampaignInfo
           {amountInput}
           {balanceRow}
           <div className="flex items-center justify-between gap-2 font-mw-mono text-[13px]">
-            <span className="truncate text-mw-muted">Min {formatAmount(minimumOut, 18, "ETH")}</span>
-            <span className="truncate">get ~{formatAmount(quoteOut, 18, "ETH")}</span>
+            <span className="truncate text-mw-muted">Min {formatAmount(minimumOut, 18, nativeSymbol)}</span>
+            <span className="truncate">get ~{formatAmount(quoteOut, 18, nativeSymbol)}</span>
           </div>
-          <p className="m-0 text-center text-xs text-mw-muted">Minimum after 1.00% slippage: {formatAmount(minimumOut, 18, "ETH")}</p>
+          <p className="m-0 text-center text-xs text-mw-muted">Minimum after 1.00% slippage: {formatAmount(minimumOut, 18, nativeSymbol)}</p>
         </TabsContent>
       </Tabs>
 
@@ -446,7 +462,7 @@ function RobinhoodWarRoomDirectTradePanel({ campaign }: { campaign: CampaignInfo
       {insufficient ? (
         <div className="text-xs text-[#FFB4C0]">
           {tab === "buy"
-            ? `Not enough ETH. Keep about ${ethers.formatEther(ETH_BUY_GAS_RESERVE_WEI)} ETH in your wallet for gas.`
+            ? `Not enough ${nativeSymbol}. Keep about ${ethers.formatEther(buyGasReserveWei)} ${nativeSymbol} in your wallet for gas.`
             : `Insufficient ${campaign.symbol || "token"} balance.`}
         </div>
       ) : null}
@@ -458,7 +474,7 @@ function RobinhoodWarRoomDirectTradePanel({ campaign }: { campaign: CampaignInfo
         onClick={() => void executeTrade()}
       >
         {!wallet.isConnected || !wallet.account
-          ? `Connect Robinhood wallet`
+          ? `Connect ${networkName} wallet`
           : loading
             ? "Processing..."
             : tab === "buy"

@@ -6,6 +6,7 @@ import { isEvmAddress } from "@/lib/address";
 import {
   BNB_CHAIN_ID,
   BNB_TESTNET_CHAIN_ID,
+  DOGEOS_TESTNET_CHAIN_ID,
   isAllowedChainId,
   isEvmChainId,
   ROBINHOOD_CHAIN_ID,
@@ -30,6 +31,11 @@ export function resolveRobinhoodFeedChainId(): SupportedChainId | null {
   if (isAllowedChainId(ROBINHOOD_CHAIN_ID)) return ROBINHOOD_CHAIN_ID;
   if (isAllowedChainId(ROBINHOOD_TESTNET_CHAIN_ID)) return ROBINHOOD_TESTNET_CHAIN_ID;
   return null;
+}
+
+/** DogeOS is offered only where VITE_ALLOWED_CHAIN_IDS includes it; live leaves it out. */
+export function resolveDogeosFeedChainId(): SupportedChainId | null {
+  return isAllowedChainId(DOGEOS_TESTNET_CHAIN_ID) ? DOGEOS_TESTNET_CHAIN_ID : null;
 }
 
 function evmFeedForWallet(chainId?: number | null): SupportedChainId {
@@ -110,6 +116,7 @@ function normalizeFeedChainId(value: unknown): SupportedChainId {
   if (chainId === SOLANA_CHAIN_ID) return SOLANA_CHAIN_ID;
   if (chainId === ROBINHOOD_CHAIN_ID && isAllowedChainId(ROBINHOOD_CHAIN_ID)) return ROBINHOOD_CHAIN_ID;
   if (chainId === ROBINHOOD_TESTNET_CHAIN_ID && isAllowedChainId(ROBINHOOD_TESTNET_CHAIN_ID)) return ROBINHOOD_TESTNET_CHAIN_ID;
+  if (chainId === DOGEOS_TESTNET_CHAIN_ID && isAllowedChainId(DOGEOS_TESTNET_CHAIN_ID)) return DOGEOS_TESTNET_CHAIN_ID;
   if (chainId === BNB_TESTNET_CHAIN_ID && isTestnetCampaignsEnabled() && isAllowedChainId(BNB_TESTNET_CHAIN_ID)) {
     return BNB_TESTNET_CHAIN_ID;
   }
@@ -170,6 +177,7 @@ export function ChainFeedSwitch({ className, value, onChange }: { className?: st
   const active = value ?? selected;
   const bnbChainId = useMemo(() => resolveBnbFeedChainId(), []);
   const robinhoodChainId = useMemo(() => resolveRobinhoodFeedChainId(), []);
+  const dogeosChainId = useMemo(() => resolveDogeosFeedChainId(), []);
 
   const select = (next: SupportedChainId) => {
     const resolved = setSelectedFeedChainId(next);
@@ -181,6 +189,7 @@ export function ChainFeedSwitch({ className, value, onChange }: { className?: st
     { chainId: bnbChainId, label: "BNB", family: "bnb" },
     { chainId: SOLANA_CHAIN_ID, label: "Solana", family: "solana" },
     ...(robinhoodChainId ? [{ chainId: robinhoodChainId, label: "Robinhood", family: "robinhood" } as const] : []),
+    ...(dogeosChainId ? [{ chainId: dogeosChainId, label: "DogeOS", family: "dogeos" } as const] : []),
   ] as const;
 
   return (

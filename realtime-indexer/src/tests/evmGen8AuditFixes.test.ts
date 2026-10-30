@@ -23,7 +23,7 @@ const ESCROW = "0x00000000000000000000000000000000000e5c20";
 const VAULT = "0x00000000000000000000000000000000000ba017";
 const OPERATOR = "0x0000000000000000000000000000000000000abc";
 const cfg = (chainId = 97): Gen8ChainConfig => ({
-  chainId, launcher: { address: LAUNCHER, startBlock: 1 }, hook: { address: HOOK, startBlock: 1 }, poolManager: "0x0000000000000000000000000000000000000002",
+  chainId, venue: "v4", launcher: { address: LAUNCHER, startBlock: 1 }, hook: { address: HOOK, startBlock: 1 }, poolManager: "0x0000000000000000000000000000000000000002",
   splitter: { address: SPLITTER, startBlock: 1 }, choiceVault: VAULT, reserveLock: null, escrow: ESCROW, startBlock: 1,
 });
 

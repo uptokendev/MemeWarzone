@@ -168,7 +168,8 @@ export function decodeGen8Log(log: LogLike, addrs: Gen8Addresses): Gen8Event | n
 
 export type SwapEvent = Extract<Gen8Event, { kind: "Swap" }>;
 export type HookFeeEvent = Extract<Gen8Event, { kind: "HookFee" }>;
-export type Gen8TradeType = "buy_exact_in" | "sell_exact_out" | "buy_exact_out" | "sell_exact_in";
+/** V4 swap types; on Barkswap (one event per swap, exact-in / exact-out not visible) just "buy" / "sell". */
+export type Gen8TradeType = "buy_exact_in" | "sell_exact_out" | "buy_exact_out" | "sell_exact_in" | "buy" | "sell";
 
 export type JoinedSwap = {
   swap: SwapEvent;

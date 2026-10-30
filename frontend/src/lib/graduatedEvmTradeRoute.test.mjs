@@ -2,7 +2,9 @@
  * Graduated MemeWarzone coins on BNB / Robinhood trade through the import route (founder, 2026-10-09).
  * 1. The routing decision (graduated vs bonding, switch on/off, chain) of graduatedEvmTradeRoute.mjs.
  * 2. Source pins: every in-app trade surface of a graduated EVM coin takes that decision, and the bonding-curve paths
- *    are byte-for-byte the code of the starting commit (only lines added around them).
+ *    are byte-for-byte the code of the starting commit (only lines added around them), line endings ignored, except
+ *    upstream's own later commits (re-pinned) and the reviewed DogeOS hunks (DOGEOS_REVIEWED below) that are still in
+ *    place (the gen-7/MuchFi trade gate was removed again: B8_REMOVED below).
  *   node --test src/lib/graduatedEvmTradeRoute.test.mjs
  */
 import test from "node:test";
@@ -145,13 +147,104 @@ test("every graduated EVM trade surface takes the routing decision", () => {
 const BASE = "3a10c6bf";
 /** The live branch head feat/evm-import-fee-split starts from (build/cross-chain-stabilization-rh-base, PR #555). */
 const LIVE_BASE = "cedff5be";
+/**
+ * Upstream's own later edits, accepted by re-pinning to the upstream commit that made them (both are on
+ * release/evm-gen8, merged into feat/dogeos-testnet as 126ffbc8b):
+ * - 9fd750fb2 "fix(robinhood): gas price headroom ..." changed lib/evmGasHeadroom.mjs after LIVE_BASE.
+ * - 594a9e585 "fix(gen8): refresh chain reads on a trade ..." was the last upstream (gen-8 / live) commit on
+ *   pages/TokenDetails.tsx at that merge; gen-8 reworked the page, so the LIVE_BASE pin no longer applies there.
+ * - 296459392 "fix(gen8): skip gen-6 and gen-7 campaign reads on a gen-8 coin" (after 6bdb53595, the fill wake) is the
+ *   last upstream commit on pages/TokenDetails.tsx since the second release/evm-gen8 merge (efba85c63): re-pinned there.
+ */
+const GAS_HEADROOM_PIN = "9fd750fb2";
+const TOKEN_PAGE_PIN = "296459392";
+/**
+ * The reviewed DogeOS (6281971) commits per file (plan t12 / t13; tradeBalanceReserve.ts also barkswap plan t34,
+ * 8586d465b: the DOGE buy reserve became the 0.05 DOGE floor of the live reserve, plus the 0.2 DOGE launch floor). Every
+ * line a file lost or gained since its pin must be a line one of these commits itself removed or added in that file;
+ * anything else is an unreviewed edit and fails.
+ */
+const DOGEOS_REVIEWED = {
+  "lib/tradeBalanceReserve.ts": ["0d2eb7938", "8586d465b"],
+  "components/postgrad/RobinhoodWarRoomTradePanel.tsx": ["50f618a50", "0d2eb7938"],
+  "pages/TokenDetails.tsx": ["f0b60bc36", "054c6b63f", "79bdad1a6", "0d2eb7938"],
+};
+/**
+ * A reviewed DogeOS line the release/evm-gen8 merge (126ffbc8b) re-applied onto a line gen-8 had reshaped: `was` is
+ * gen-8's line it replaced, `reviewed` the line the DogeOS commit added, `now` the merged line. TokenDetails:
+ * f0b60bc36's DogeOS venue label ("to MuchFi") on gen-8's progress text, which now sits under
+ * `curveProgress.known ?` and so starts with "?" instead of ":" and lost its closing "}".
+ */
+const MERGE_REAPPLIED = {
+  "pages/TokenDetails.tsx": [
+    {
+      was: '? `${curveProgress.pct > 0 && curveProgress.pct < 0.01 ? curveProgress.pct.toFixed(6) : curveProgress.pct.toFixed(2)}% · graduates ${isSolanaPage ? "to Meteora" : isRobinhoodPage ? "to Uniswap" : "to Topaz"} at 100%`',
+      reviewed: ': `${curveProgress.pct > 0 && curveProgress.pct < 0.01 ? curveProgress.pct.toFixed(6) : curveProgress.pct.toFixed(2)}% · graduates ${isSolanaPage ? "to Meteora" : isRobinhoodPage ? "to Uniswap" : isDogeosPage ? `to ${DOGEOS_DEX_LABEL}` : "to Topaz"} at 100%`}',
+      now: '? `${curveProgress.pct > 0 && curveProgress.pct < 0.01 ? curveProgress.pct.toFixed(6) : curveProgress.pct.toFixed(2)}% · graduates ${isSolanaPage ? "to Meteora" : isRobinhoodPage ? "to Uniswap" : isDogeosPage ? `to ${DOGEOS_DEX_LABEL}` : "to Topaz"} at 100%`',
+    },
+  ],
+};
+/**
+ * Reviewed DogeOS lines taken out again by plan t12 and t33 (spec section 4 "Removed (B8)": the gen-7/MuchFi trade path).
+ * TokenDetails: 79bdad1a6's and 0d2eb7938's isV3GraduatedTradePage gate; every site it replaced is back to
+ * isRobinhoodPage, i.e. the pin's own line. Each entry must be a line a reviewed commit added (a stale entry fails)
+ * and must be gone from the file (the gate cannot come back unreviewed). Only these lines leave the "lost" check;
+ * the same commits' kept lines (the DOGE buy gas reserve) stay checked.
+ */
+/**
+ * The token page lines plan t22 added (DogeOS on Barkswap): the Barkswap venue's holder exclusions (the coin's pool,
+ * plugin and the Bark periphery, chart/gen8TokenPage.ts gen8VenueHolderAddresses, empty on V4). Since t22 the token
+ * page may gain no other line outside the reviewed DogeOS commits: these are the only unreviewed additions allowed.
+ */
+const T22_TOKEN_PAGE_ADDED = [
+  "gen8VenueHolderAddresses,",
+  "// Barkswap (DogeOS): the coin's pool, its plugin and the Bark periphery; nothing on V4.",
+  "...gen8VenueHolderAddresses(gen8State),",
+];
+const B8_REMOVED = {
+  "pages/TokenDetails.tsx": [
+    "// Graduated-trade surfaces only: DogeOS graduates into MuchFi (V3) and trades through the Robinhood V3 panel,",
+    "// never the Topaz/BNB V2 box. Text and price branches keep isRobinhoodPage / isDogeosPage.",
+    "const isV3GraduatedTradePage = isRobinhoodPage || isDogeosPage;",
+    "const isTopazTradingActive = isSolanaPage || isV3GraduatedTradePage",
+    "isV3GraduatedTradePage &&",
+    "const rhGraduatedTrade = isV3GraduatedTradePage && (contractGraduated || isUniswapTradingActive);",
+    "const bnbGraduatedImportTrade = !isSolanaPage && !isV3GraduatedTradePage && isDexStage && graduatedImportRouteEnabled(chainIdForStorage);",
+    ") : isV3GraduatedTradePage && (contractGraduated || isUniswapTradingActive) ? (",
+    "enabled: hasValidCampaignAddress && contractGraduatedEarly && !isSolanaPage && !isV3GraduatedTradePage,",
+    "// indexed DEX price, which is the post-swap pool spot. DogeOS (MuchFi V3) graduates the same way.",
+    "if (isV3GraduatedTradePage && contractGraduatedEarly) {",
+    "isV3GraduatedTradePage,",
+    "if (isV3GraduatedTradePage && unifiedNative) {",
+    'if (isV3GraduatedTradePage && isDexStage) return "—";',
+  ],
+  // Plan t33: the Robinhood panel no longer trades DogeOS as a MuchFi V3 coin. It keeps 6281971's own id only to
+  // refuse it (an added line), so the direct panel's network and venue names are Robinhood's constants again and the
+  // MuchFi wording and DOGEOS_DEX_LABEL import are gone. The chain-aware native symbol and gas reserve stay checked.
+  "components/postgrad/RobinhoodWarRoomTradePanel.tsx": [
+    'import { DOGEOS_DEX_LABEL } from "@/lib/dogeosPresentation.mjs";',
+    "// DogeOS keeps its own chain (MuchFi market); only an unknown id falls back to Robinhood testnet.",
+    "// Robinhood: ETH on Robinhood V3. DogeOS: DOGE on MuchFi. Same V3 trade path underneath.",
+    'const networkName = isDogeosChainId(chainId) ? "DogeOS" : "Robinhood";',
+    'const venueLabel = isDogeosChainId(chainId) ? DOGEOS_DEX_LABEL : "Robinhood V3";',
+  ],
+};
+const REPO_ROOT = path.resolve(here, "..", "..", "..");
+function git(args) {
+  return execFileSync("git", args, { cwd: REPO_ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+}
 function baseFile(rel, commit = BASE) {
   try {
-    return execFileSync("git", ["show", `${commit}:frontend/src/${rel}`], { cwd: here, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    return git(["show", `${commit}:frontend/src/${rel}`]);
   } catch {
     return null;
   }
 }
+/**
+ * LF line endings. Git blobs are LF; a Windows checkout (core.autocrlf=true) has CRLF in some files, which failed the
+ * byte pins on line endings alone and hid real pin violations behind them. The pins compare code, not line endings.
+ */
+const lf = (text) => (text == null ? text : text.replace(/\r\n/g, "\n"));
 
 /** Every line of `before` is still in `after`, in order (lines may only have been added), except `changed`. */
 function onlyAdded(before, after, changed = []) {
@@ -167,37 +260,98 @@ function onlyAdded(before, after, changed = []) {
   return missing;
 }
 
+/** Removed and added lines of a one-file `-U0` diff, trimmed (a hunk re-indented by the merge stays the same hunk). */
+function diffLines(diff) {
+  const removed = [];
+  const added = [];
+  let inHunk = false;
+  for (const line of lf(diff).split("\n")) {
+    if (line.startsWith("@@")) inHunk = true;
+    else if (inHunk && line.startsWith("-")) removed.push(line.slice(1).trim());
+    else if (inHunk && line.startsWith("+")) added.push(line.slice(1).trim());
+  }
+  return { removed, added };
+}
+
+/**
+ * How `rel` (working tree, line endings ignored) differs from `pin` beyond its reviewed DogeOS commits:
+ * - removed: lines it lost since the pin that no reviewed commit removed;
+ * - added: lines it gained since the pin that no reviewed commit added;
+ * - lost: lines the reviewed commits added (and did not remove again) that are no longer in the file, so a reviewed
+ *   replacement cannot be swapped for something else.
+ * All empty = every change since the pin is a reviewed DogeOS hunk, still in place. Lines compare trimmed and as a set
+ * (a re-indented hunk is the same hunk). A reviewed commit that does not touch `rel` contributes nothing, so a wrong
+ * hash only makes the check stricter.
+ */
+function unreviewedSince(pin, rel) {
+  const file = `frontend/src/${rel}`;
+  const now = diffLines(git(["diff", "--no-color", "--no-ext-diff", "-U0", "--ignore-cr-at-eol", pin, "--", file]));
+  const reviewed = { removed: new Set(), added: new Set() };
+  for (const commit of DOGEOS_REVIEWED[rel]) {
+    assert.match(git(["log", "-1", "--format=%s", commit]), /^(feat|fix)\(dogeos\): /, `${commit} is not a DogeOS commit`);
+    const own = diffLines(git(["show", "--no-color", "--no-ext-diff", "-U0", "--format=", commit, "--", file]));
+    for (const line of own.removed) reviewed.removed.add(line);
+    for (const line of own.added) reviewed.added.add(line);
+  }
+  for (const { was, reviewed: line, now: merged } of MERGE_REAPPLIED[rel] || []) {
+    assert.ok(reviewed.added.has(line), `${rel}: MERGE_REAPPLIED names a line no reviewed commit added: ${line}`);
+    reviewed.removed.add(was);
+    reviewed.added.delete(line);
+    reviewed.added.add(merged);
+  }
+  const have = new Set(lf(src(rel)).split("\n").map((line) => line.trim()));
+  for (const line of B8_REMOVED[rel] || []) {
+    assert.ok(reviewed.added.has(line), `${rel}: B8_REMOVED names a line no reviewed commit added: ${line}`);
+    assert.ok(!have.has(line), `${rel}: a B8-removed gen-7/MuchFi line is back: ${line}`);
+    reviewed.added.delete(line);
+  }
+  return {
+    removed: now.removed.filter((line) => !reviewed.removed.has(line)),
+    added: now.added.filter((line) => !reviewed.added.has(line)),
+    lost: [...reviewed.added].filter((line) => !reviewed.removed.has(line) && !have.has(line)),
+  };
+}
+
 test("bonding and direct-pool code is the starting commit's, untouched", (t) => {
   if (!baseFile("lib/topazV2Trade.ts") || !baseFile("lib/topazV2Trade.ts", LIVE_BASE)) return t.skip("no git history");
   // The direct pool trade libraries and the curve trade code are not edited at all.
   // On the live branch (feat/evm-import-fee-split) the curve and pool libraries are the live head's, unchanged.
-  for (const rel of ["lib/topazV2Trade.ts", "lib/arenaImportedTopaz.ts", "lib/evmGasHeadroom.mjs"]) {
-    assert.equal(src(rel), baseFile(rel, LIVE_BASE), rel);
+  for (const rel of ["lib/topazV2Trade.ts", "lib/arenaImportedTopaz.ts"]) {
+    assert.equal(lf(src(rel)), baseFile(rel, LIVE_BASE), rel);
   }
+  // Robinhood gas headroom: exactly upstream's own change (9fd750fb2), nothing since.
+  assert.equal(lf(src("lib/evmGasHeadroom.mjs")), baseFile("lib/evmGasHeadroom.mjs", GAS_HEADROOM_PIN), "lib/evmGasHeadroom.mjs");
   // Merged with build/evm-gen7 (release/evm-gen7-live): these three carry gen-7's own edits (the env-selected
-  // RobinhoodV3NativeSwapAdapterV2, the gen-7 launch gas reserve) and are exactly gen-7's at the starting commit.
-  for (const rel of ["lib/robinhoodV3Trade.ts", "lib/arenaImportedRobinhood.ts", "lib/tradeBalanceReserve.ts"]) {
-    assert.equal(src(rel), baseFile(rel), rel);
+  // RobinhoodV3NativeSwapAdapterV2, the gen-7 launch gas reserve) and are exactly gen-7's at the starting commit,
+  // except the reviewed DogeOS DOGE buy / launch reserve floors in tradeBalanceReserve.ts. The Robinhood V3 trade library is
+  // the starting commit's again: the MuchFi V3 trade branch (isV3TradeChainId, DogeOS-only env names, fee 10000)
+  // was removed by plan t12 (spec section 4 "Removed (B8)"). No other line of either file may differ.
+  for (const rel of ["lib/arenaImportedRobinhood.ts", "lib/robinhoodV3Trade.ts"]) {
+    assert.equal(lf(src(rel)), baseFile(rel), rel);
   }
+  assert.deepEqual(
+    unreviewedSince(BASE, "lib/tradeBalanceReserve.ts"),
+    { removed: [], added: [], lost: [] },
+    "lib/tradeBalanceReserve.ts: changed outside the reviewed DogeOS hunks",
+  );
   // The import route libraries are the import fee change's (CI2-CI4), not edited by the graduated route.
   for (const rel of ["lib/importSwapFeeRouter.mjs", "lib/robinhoodImportSwap.mjs", "lib/importSwap.ts"]) {
-    assert.equal(src(rel), baseFile(rel), rel);
+    assert.equal(lf(src(rel)), baseFile(rel), rel);
   }
-  // The trade panels and the token page only gained lines; the one replaced line is the mobile sheet's open flag.
-  assert.deepEqual(onlyAdded(baseFile("components/postgrad/WarRoomTradePanel.tsx", LIVE_BASE), src("components/postgrad/WarRoomTradePanel.tsx")), []);
-  assert.deepEqual(onlyAdded(baseFile("components/postgrad/RobinhoodWarRoomTradePanel.tsx", LIVE_BASE), src("components/postgrad/RobinhoodWarRoomTradePanel.tsx")), []);
-  assert.deepEqual(
-    // Against the live head (which already has the Solana graduated branch): the one replaced line is the mobile
-    // sheet's open flag, which gained !bnbGraduatedImportTrade.
-    onlyAdded(baseFile("pages/TokenDetails.tsx", LIVE_BASE), src("pages/TokenDetails.tsx"), [
-      "          open={mobileTradeOpen && !rhGraduatedTrade && !solanaGraduatedImportTrade}",
-      // build/evm-gen7 (8672c416): the gen-7 curve spot (virtual reserves) and the gen-7 "to target" branch.
-      "      metrics?.basePrice != null &&",
-      "      metrics.basePrice > 0n &&",
-      "    if (isRobinhoodPage && !isDexStage && (metrics?.graduationTarget ?? 0n) > 0n) {",
-    ]),
-    [],
-  );
+  // The trade panels and the token page only gained lines. The only lines they lost are reviewed DogeOS replacements
+  // (the Robinhood panel's ETH / "Robinhood" text and gas reserve became chain-aware; the token page's labels became
+  // chain helpers and its buy gas reserve chain-aware; its graduated-trade gates are isRobinhoodPage again, B8_REMOVED
+  // above). The token page is pinned to upstream's gen-8 version (TOKEN_PAGE_PIN), so its old LIVE_BASE exceptions
+  // (mobile sheet open flag, gen-7 spot) are upstream's.
+  const warRoomPanel = "components/postgrad/WarRoomTradePanel.tsx";
+  assert.deepEqual(onlyAdded(baseFile(warRoomPanel, LIVE_BASE), lf(src(warRoomPanel))), []);
+  // Added lines stay free there (as before), but a reviewed DogeOS replacement must still be in place (lost).
+  for (const [pin, rel] of [[LIVE_BASE, "components/postgrad/RobinhoodWarRoomTradePanel.tsx"], [TOKEN_PAGE_PIN, "pages/TokenDetails.tsx"]]) {
+    const { removed, lost, added } = unreviewedSince(pin, rel);
+    assert.deepEqual({ removed, lost }, { removed: [], lost: [] }, `${rel}: lost lines outside the reviewed DogeOS hunks`);
+    // t22: the token page's only additions outside the reviewed commits are the Barkswap holder-exclusion hunk.
+    if (rel === "pages/TokenDetails.tsx") assert.deepEqual([...added].sort(), [...T22_TOKEN_PAGE_ADDED].sort(), `${rel}: added lines outside the reviewed DogeOS hunks`);
+  }
   // The curve calls with their gas headroom, verbatim.
   const warRoom = src("components/postgrad/WarRoomTradePanel.tsx");
   for (const line of [

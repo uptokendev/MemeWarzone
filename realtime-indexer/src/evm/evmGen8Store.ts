@@ -115,6 +115,12 @@ export async function loadGen8Pool(db: Queryable, chainId: number, poolId: strin
   return rows[0] ? mapPool(rows[0]) : null;
 }
 
+/** A coin's pool row by its token (Barkswap: the pool id is not derivable from the token, see evmGen8Bark.ts barkPoolId). */
+export async function loadGen8PoolByToken(db: Queryable, chainId: number, token: string): Promise<Gen8PoolRow | null> {
+  const { rows } = await db.query(`${POOL_SELECT} where p.chain_id = $1 and p.token_address = $2`, [chainId, token.toLowerCase()]);
+  return rows[0] ? mapPool(rows[0]) : null;
+}
+
 export async function upsertGen8Pool(db: Queryable, row: {
   chainId: number; poolId: string; token: string; hook: string; launcher: string; poolManager: string; creator: string;
   hookCreator: string | null; creatorProfile: Gen8Profile | null; feeChoice: number | null; feeCreatorPct: number | null;
@@ -254,13 +260,14 @@ export async function insertGen8DexTrade(db: Queryable, t: Gen8TradeRow): Promis
 }
 
 /** Latest pool price, written only by a newer (block, log) than the stored one. */
-export async function updateGen8PoolPrice(db: Queryable, input: { chainId: number; poolId: string; sqrtPriceX96: bigint; tick: number; liquidity: bigint; blockNumber: number; logIndex: number; phase: "bonding" | "post" }) {
+/** `liquidity` null: the venue's swap event does not carry the pool's active liquidity (Barkswap's BarkSwap). */
+export async function updateGen8PoolPrice(db: Queryable, input: { chainId: number; poolId: string; sqrtPriceX96: bigint; tick: number; liquidity: bigint | null; blockNumber: number; logIndex: number; phase: "bonding" | "post" }) {
   await db.query(
     `update public.evm_gen8_pools
         set last_sqrt_price_x96 = $3, last_tick = $4, last_liquidity = $5, last_swap_block = $6, last_swap_log_index = $7, last_phase = $8, updated_at = now()
       where chain_id = $1 and pool_id = $2
         and (last_swap_block is null or last_swap_block < $6 or (last_swap_block = $6 and coalesce(last_swap_log_index, -1) < $7))`,
-    [input.chainId, input.poolId, input.sqrtPriceX96.toString(), input.tick, input.liquidity.toString(), input.blockNumber, input.logIndex, input.phase],
+    [input.chainId, input.poolId, input.sqrtPriceX96.toString(), input.tick, input.liquidity === null ? null : input.liquidity.toString(), input.blockNumber, input.logIndex, input.phase],
   );
 }
 
@@ -349,6 +356,54 @@ export async function upsertGen8Candle(db: Queryable, input: {
       input.openPrice != null && Number.isFinite(input.openPrice) ? input.openPrice : null,
       input.openMcap != null && Number.isFinite(input.openMcap) ? input.openMcap : null,
     ],
+  );
+  return r.rows[0] || null;
+}
+
+/**
+ * A price point without a trade (Barkswap coin-fee conversion, spec section 4: its price feeds candles like any price
+ * change, its volume counts nowhere): updates h / l / c (and the price / mcap columns) of each bucket with the same
+ * (block, log) ordering as upsertGen8Candle; trades_count, the per-phase counters and every volume stay as they are.
+ * A bucket the conversion opens starts with zero trades and zero volume.
+ */
+export async function upsertGen8CandlePrice(db: Queryable, input: {
+  chainId: number; token: string; timeframe: string; bucketStart: Date; price: number; mcap: number; blockNumber: number; logIndex: number; phase: "bonding" | "dex";
+}) {
+  const r = await db.query(
+    `insert into public.token_candles(
+       chain_id, campaign_address, timeframe, bucket_start, o, h, l, c, volume_bnb, trades_count,
+       source_mask, bonding_trade_count, dex_trade_count, bonding_volume_bnb, dex_volume_bnb,
+       last_block_number, last_log_index, price_o, price_h, price_l, price_c, mcap_o, mcap_h, mcap_l, mcap_c,
+       canonical_version, canonical_updated_at, updated_at
+     ) values ($1,$2,$3,$4,$5,$5,$5,$5,0,0,$6,0,0,0,0,$7,$8,$5,$5,$5,$5,$9,$9,$9,$9,4,now(),now())
+     on conflict (chain_id, campaign_address, timeframe, bucket_start) do update set
+       h = greatest(public.token_candles.h, excluded.h),
+       l = least(public.token_candles.l, excluded.l),
+       c = case when coalesce(public.token_candles.last_block_number, -1) < excluded.last_block_number
+                  or (public.token_candles.last_block_number = excluded.last_block_number and coalesce(public.token_candles.last_log_index, -1) < excluded.last_log_index)
+                then excluded.c else public.token_candles.c end,
+       price_o = coalesce(public.token_candles.price_o, excluded.price_o),
+       price_h = greatest(coalesce(public.token_candles.price_h, excluded.price_h), excluded.price_h),
+       price_l = least(coalesce(public.token_candles.price_l, excluded.price_l), excluded.price_l),
+       price_c = case when coalesce(public.token_candles.last_block_number, -1) < excluded.last_block_number
+                  or (public.token_candles.last_block_number = excluded.last_block_number and coalesce(public.token_candles.last_log_index, -1) < excluded.last_log_index)
+                then excluded.price_c else coalesce(public.token_candles.price_c, excluded.price_c) end,
+       mcap_o = coalesce(public.token_candles.mcap_o, excluded.mcap_o),
+       mcap_h = greatest(coalesce(public.token_candles.mcap_h, excluded.mcap_h), excluded.mcap_h),
+       mcap_l = least(coalesce(public.token_candles.mcap_l, excluded.mcap_l), excluded.mcap_l),
+       mcap_c = case when coalesce(public.token_candles.last_block_number, -1) < excluded.last_block_number
+                  or (public.token_candles.last_block_number = excluded.last_block_number and coalesce(public.token_candles.last_log_index, -1) < excluded.last_log_index)
+                then excluded.mcap_c else coalesce(public.token_candles.mcap_c, excluded.mcap_c) end,
+       source_mask = (coalesce(public.token_candles.source_mask, 0)::int | excluded.source_mask::int)::smallint,
+       last_block_number = greatest(coalesce(public.token_candles.last_block_number, -1), excluded.last_block_number),
+       last_log_index = case when coalesce(public.token_candles.last_block_number, -1) < excluded.last_block_number then excluded.last_log_index
+                             when public.token_candles.last_block_number = excluded.last_block_number then greatest(coalesce(public.token_candles.last_log_index, -1), excluded.last_log_index)
+                             else public.token_candles.last_log_index end,
+       canonical_version = 4,
+       canonical_updated_at = now(),
+       updated_at = now()
+     returning timeframe, bucket_start, o, h, l, c, volume_bnb, trades_count, mcap_o, mcap_h, mcap_l, mcap_c`,
+    [input.chainId, input.token, input.timeframe, input.bucketStart, input.price, input.phase === "dex" ? 2 : 1, input.blockNumber, input.logIndex, input.mcap],
   );
   return r.rows[0] || null;
 }

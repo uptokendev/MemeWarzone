@@ -16,3 +16,8 @@ test("a missing chain id stays 56, and a bare Solana address stays 101", () => {
   assert.equal(tokenStatsChainId(1, "0x68C681F488Bae70DEEa2f1D375037958a0f80073"), 56);
   assert.equal(tokenStatsChainId(1, "11111111111111111111111111111111"), 101);
 });
+
+test("DogeOS 6281971 stays itself and never asks the BNB book", () => {
+  assert.equal(tokenStatsChainId(6281971, "0x68C681F488Bae70DEEa2f1D375037958a0f80073"), 6281971);
+  assert.equal(tokenStatsChainId(6281971), 6281971);
+});

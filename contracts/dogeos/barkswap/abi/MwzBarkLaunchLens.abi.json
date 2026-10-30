@@ -1,0 +1,290 @@
+[
+  {
+    "inputs": [
+      {
+        "internalType": "contract MwzBarkLauncher",
+        "name": "_launcher",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "constructor"
+  },
+  {
+    "inputs": [],
+    "name": "UnknownCoin",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "coin",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "sender",
+        "type": "address"
+      }
+    ],
+    "name": "currentFeeBps",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "launcher",
+    "outputs": [
+      {
+        "internalType": "contract MwzBarkLauncher",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "coin",
+        "type": "address"
+      }
+    ],
+    "name": "owed",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "feeCreator",
+            "type": "address"
+          },
+          {
+            "internalType": "address",
+            "name": "pendingCreator",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "creatorOwed",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256[4]",
+            "name": "coinBooks",
+            "type": "uint256[4]"
+          },
+          {
+            "internalType": "uint256[4]",
+            "name": "uncollectedNative",
+            "type": "uint256[4]"
+          },
+          {
+            "internalType": "uint256[4]",
+            "name": "uncollectedCoin",
+            "type": "uint256[4]"
+          },
+          {
+            "internalType": "uint40",
+            "name": "lastConvertAt",
+            "type": "uint40"
+          },
+          {
+            "internalType": "uint256",
+            "name": "nextConvertAt",
+            "type": "uint256"
+          },
+          {
+            "internalType": "bool",
+            "name": "gradFeeTaken",
+            "type": "bool"
+          },
+          {
+            "internalType": "uint256",
+            "name": "graduationFee",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct MwzBarkLaunchLens.Owed",
+        "name": "o",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "plugin",
+    "outputs": [
+      {
+        "internalType": "contract MwzBarkPlugin",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "coin",
+        "type": "address"
+      }
+    ],
+    "name": "poolState",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "pool",
+            "type": "address"
+          },
+          {
+            "internalType": "uint160",
+            "name": "sqrtPriceX96",
+            "type": "uint160"
+          },
+          {
+            "internalType": "int24",
+            "name": "tick",
+            "type": "int24"
+          },
+          {
+            "internalType": "uint128",
+            "name": "liquidity",
+            "type": "uint128"
+          },
+          {
+            "internalType": "uint16",
+            "name": "lastFee",
+            "type": "uint16"
+          },
+          {
+            "internalType": "uint8",
+            "name": "pluginConfig",
+            "type": "uint8"
+          },
+          {
+            "internalType": "uint16",
+            "name": "communityFee",
+            "type": "uint16"
+          },
+          {
+            "internalType": "bool",
+            "name": "unlocked",
+            "type": "bool"
+          },
+          {
+            "internalType": "bool",
+            "name": "launchSettings",
+            "type": "bool"
+          }
+        ],
+        "internalType": "struct MwzBarkLaunchLens.PoolView",
+        "name": "v",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "coin",
+        "type": "address"
+      }
+    ],
+    "name": "progress",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "bool",
+            "name": "graduated",
+            "type": "bool"
+          },
+          {
+            "internalType": "bool",
+            "name": "postPhase",
+            "type": "bool"
+          },
+          {
+            "internalType": "uint40",
+            "name": "graduatedAt",
+            "type": "uint40"
+          },
+          {
+            "internalType": "uint160",
+            "name": "sqrtPriceX96",
+            "type": "uint160"
+          },
+          {
+            "internalType": "uint256",
+            "name": "coinsSoldFromA",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "coinsInA",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "nativeInA",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "nativeTargetA",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct MwzBarkLaunchLens.Progress",
+        "name": "p",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "coin",
+        "type": "address"
+      }
+    ],
+    "name": "tradingOpen",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "open",
+        "type": "bool"
+      },
+      {
+        "internalType": "uint256",
+        "name": "openAt",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+]

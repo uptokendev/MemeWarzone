@@ -19,6 +19,7 @@ import { ageSnapshotMeta, runWithSnapshotUsage, snapshotCacheFor, snapshotKeys, 
 import { refreshFinanceSnapshots } from "../lib/financeSnapshotJobs.js";
 import { buildGen8Finance } from "../lib/financeGen8.js";
 import { configuredGen8ChainIds } from "../lib/evmGen8Config.js";
+import { gen8VenueFor } from "../../shared/evmGen8.mjs";
 import { getRpcUrls, getServerReadProvider } from "../lib/getServerReadProvider.js";
 import { WidgetQueryError, buildWidgetFinance, widgetWindow } from "../lib/widgetAnalytics.js";
 
@@ -954,7 +955,8 @@ export async function financeGen8(req, res, { build = buildGen8Finance, db = poo
     return res.status(401).json({ ok: false, error: "Dashboard sign-in with finance.view is required.", code: "FINANCE_VIEW_REQUIRED" });
   }
   const raw = String(req.query?.chainId ?? "all").trim().toLowerCase();
-  const chainIds = raw === "" || raw === "all" ? configuredGen8ChainIds() : [Number(raw)];
+  // V4 venue only: DogeOS (Barkswap venue) has no gen-8 finance path (barkswap spec section 4), so "all" skips it.
+  const chainIds = raw === "" || raw === "all" ? configuredGen8ChainIds().filter((id) => gen8VenueFor(id) === "v4") : [Number(raw)];
   if (chainIds.some((id) => ![56, 97, 4663, 46630].includes(id))) {
     return res.status(400).json({ ok: false, error: "Gen-8 finance covers BNB 56 / 97 and Robinhood 4663 / 46630 (or chainId=all)." });
   }

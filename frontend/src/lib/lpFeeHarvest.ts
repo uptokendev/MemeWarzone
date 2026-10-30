@@ -5,6 +5,7 @@ import {
   ROBINHOOD_CHAIN_ID,
   ROBINHOOD_TESTNET_CHAIN_ID,
   type SupportedChainId,
+  isDogeosChainId,
   isEvmChainId,
 } from "@/lib/chainConfig";
 import { resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
@@ -206,6 +207,9 @@ export async function harvestLpFeesWithWallet(input: {
 }): Promise<{ txHash: string; lockerAddress: string; pairAddress: string }> {
   const chainId = Number(input.chainId);
   if (!isEvmChainId(chainId)) throw new Error("EVM LP fee harvest requires an EVM chain.");
+  // DogeOS launches on gen-8 only (Barkswap): its gen-7 V3 position locker is gone (B8) and no other locker
+  // shape (BNB below) may be called there. The API's lp-fees answers null for 6281971 the same way.
+  if (isDogeosChainId(chainId)) throw new Error("There is no LP locker on DogeOS, so there are no LP fees to harvest.");
 
   const pool = String(input.pairAddress || "").trim().toLowerCase();
   if (!/^0x[a-f0-9]{40}$/.test(pool)) {

@@ -30,7 +30,8 @@ export function notifyIndexerFills(input: {
   }
 
   // 56/97 are the gen-7 ingest chains. 4663/46630 are gen-8: the indexer only wakes its poll (it does not run the gen-7 scanner).
-  if (![56, 97, 4663, 46630].includes(chainId) || !EVM_ADDR_RE.test(campaign)) return;
+  // 6281971 (DogeOS) is gen-8 on Barkswap: the same wake of its own loop (evmGen8Bark.ts).
+  if ((![56, 97, 4663, 46630].includes(chainId) && chainId !== 6281971) || !EVM_ADDR_RE.test(campaign)) return;
   for (const txHash of hashes.filter((value) => EVM_TX_RE.test(value)).slice(0, 12)) {
     void apiFetch(`/api/token/${encodeURIComponent(campaign)}/ingest-tx?chainId=${chainId}`, {
       method: "POST",

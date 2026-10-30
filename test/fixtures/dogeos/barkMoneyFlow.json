@@ -1,0 +1,2833 @@
+{
+  "description": "Recorded on a Chikyu fork by the t9 fork test for t19 (fee accrual, sell attribution and route-run rows): the money flow of two coins on Barkswap (Algebra Integral 1.2.1) with the audited MwzBark contracts. logs[] are every MwzBarkLauncher, MwzBarkPlugin and MwzBarkFeeSplitter log in order (raw topics/data plus args decoded with contracts/dogeos/barkswap/abi). steps[] are the transactions in order with the launcher's and splitter's book read-backs after each (strings are wei / coin units; four-element arrays are in bookOrder). routePlan is the operator's plan of the one route run (expectedPaid = routerPaid(splitter).amount after the claim; amounts inside the bands of splitter.pending()). Per coin, FeesCollected books apportion(received, pluginTotals - previous collectedTotals); CoinFeesConverted draws coinsIn / pending from every pending book (spec D1: every pending sell row converts by that fraction at nativeOut / coinsIn). Accounts are hardhat's well-known local test accounts (fork only).",
+  "recordedBy": "test/dogeos/barkswap/BarkMoney.fork.spec.ts (MWZ_RECORD_BARK_FIXTURES=1)",
+  "chainId": "6281971",
+  "forkBlock": 8578734,
+  "abiSource": "contracts/dogeos/barkswap/abi/{MwzBarkLauncher,MwzBarkPlugin,MwzBarkFeeSplitter}.abi.json",
+  "bookOrder": [
+    "creatorBonding",
+    "routerBonding",
+    "creatorPost",
+    "routerPost"
+  ],
+  "contracts": {
+    "MwzBarkLauncher": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+    "MwzBarkPlugin": "0x851356ae760d987E095750cCeb3bC6014560891C",
+    "MwzBarkFeeSplitter": "0xf5059a5D33d5853360D16C683c16e67980206f36",
+    "CommunityRewardsVault": "0xc5a5C42992dECbae36851359345FE25997F5C42d",
+    "WDOGE": "0xF6BDB158A5ddF77F1B83bC9074F6a472c58D78aE",
+    "SwapRouter": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+    "BarkswapCommunityVault": "0xA305F8BDf7EaA3233b3918A39d1e0867c6116c83"
+  },
+  "coins": [
+    {
+      "coin": "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A",
+      "pool": "0x3B29c7deD3780f07fF29C603C5839444ed510CCD",
+      "creator": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+      "tickStart": -171260,
+      "tickGrad": -134110,
+      "sqrtStart": "15142649358535424586675134",
+      "sqrtGrad": "97020505643419710533833025",
+      "liqA": "192503344038168272441691",
+      "liqB": "159194222526286183102409",
+      "openAt": "1791990792"
+    },
+    {
+      "coin": "0xcca8cF6827886A82A458e13402427117e10e3960",
+      "pool": "0x71A7f7083C3D3F3011C905A7994773e4FB15059F",
+      "creator": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+      "tickStart": -171260,
+      "tickGrad": -134110,
+      "sqrtStart": "15142649358535424586675134",
+      "sqrtGrad": "97020505643419710533833025",
+      "liqA": "192503344038168272441691",
+      "liqB": "159194222526286183102409",
+      "openAt": "1791990793"
+    }
+  ],
+  "initialReadBack": {
+    "coins": {
+      "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A": {
+        "creatorOwed": "0",
+        "coinFees": [
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "collectedTotals": {
+          "native": [
+            "0",
+            "0",
+            "0",
+            "0"
+          ],
+          "coin": [
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "pluginTotals": {
+          "native": [
+            "2195984000000000",
+            "35841596000000000",
+            "0",
+            "0"
+          ],
+          "coin": [
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "lastConvertAt": "0",
+        "launcherCoinBalance": "0"
+      },
+      "0xcca8cF6827886A82A458e13402427117e10e3960": {
+        "creatorOwed": "0",
+        "coinFees": [
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "collectedTotals": {
+          "native": [
+            "0",
+            "0",
+            "0",
+            "0"
+          ],
+          "coin": [
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "pluginTotals": {
+          "native": [
+            "0",
+            "0",
+            "0",
+            "0"
+          ],
+          "coin": [
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "lastConvertAt": "0",
+        "launcherCoinBalance": "0"
+      }
+    },
+    "routerOwed": "0",
+    "pendingBondingFees": "0",
+    "pendingGradFees": "0",
+    "parkedOwed": "0",
+    "launcherNative": "0",
+    "routerPaid": {
+      "amount": "0",
+      "bondingFees": "0",
+      "gradFees": "0"
+    },
+    "splitterPending": {
+      "total": "0",
+      "bondingFees": "0",
+      "gradFees": "0"
+    },
+    "splitterRouted": {
+      "runs": "0",
+      "amount": "0",
+      "bondingFees": "0",
+      "gradFees": "0"
+    }
+  },
+  "steps": [
+    {
+      "step": "X: buy (bonding)",
+      "transactionHash": "0x0c7228fb409914f1f8b42638ba8ddd530fadb9476cd36abdd7d6c5383f586915",
+      "blockNumber": 8578756,
+      "blockTimestamp": 1791990858,
+      "from": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+      "to": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+      "gasUsed": "170145",
+      "readBack": {
+        "coins": {
+          "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A": {
+            "creatorOwed": "0",
+            "coinFees": [
+              "0",
+              "0",
+              "0",
+              "0"
+            ],
+            "collectedTotals": {
+              "native": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "24155824000000000",
+                "394257556000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "0"
+          },
+          "0xcca8cF6827886A82A458e13402427117e10e3960": {
+            "creatorOwed": "0",
+            "coinFees": [
+              "0",
+              "0",
+              "0",
+              "0"
+            ],
+            "collectedTotals": {
+              "native": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "0"
+          }
+        },
+        "routerOwed": "0",
+        "pendingBondingFees": "0",
+        "pendingGradFees": "0",
+        "parkedOwed": "0",
+        "launcherNative": "0",
+        "routerPaid": {
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterPending": {
+          "total": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterRouted": {
+          "runs": "0",
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        }
+      }
+    },
+    {
+      "step": "X: buy (bonding, trader2)",
+      "transactionHash": "0x7ed7a124af0592f0aa6da794a56f295ecdccac93c82176acdee84f8f1a4897ee",
+      "blockNumber": 8578757,
+      "blockTimestamp": 1791990859,
+      "from": "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
+      "to": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+      "gasUsed": "170720",
+      "readBack": {
+        "coins": {
+          "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A": {
+            "creatorOwed": "0",
+            "coinFees": [
+              "0",
+              "0",
+              "0",
+              "0"
+            ],
+            "collectedTotals": {
+              "native": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "35135744000000000",
+                "573465536000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "0"
+          },
+          "0xcca8cF6827886A82A458e13402427117e10e3960": {
+            "creatorOwed": "0",
+            "coinFees": [
+              "0",
+              "0",
+              "0",
+              "0"
+            ],
+            "collectedTotals": {
+              "native": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "0"
+          }
+        },
+        "routerOwed": "0",
+        "pendingBondingFees": "0",
+        "pendingGradFees": "0",
+        "parkedOwed": "0",
+        "launcherNative": "0",
+        "routerPaid": {
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterPending": {
+          "total": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterRouted": {
+          "runs": "0",
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        }
+      }
+    },
+    {
+      "step": "X: sell (bonding)",
+      "transactionHash": "0x69e4245bd253ab7cd8e3f95ed7ea2baa36cc78ed7a49740e2f268b44131f7251",
+      "blockNumber": 8578758,
+      "blockTimestamp": 1791990860,
+      "from": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+      "to": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+      "gasUsed": "207240",
+      "readBack": {
+        "coins": {
+          "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A": {
+            "creatorOwed": "0",
+            "coinFees": [
+              "0",
+              "0",
+              "0",
+              "0"
+            ],
+            "collectedTotals": {
+              "native": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "35135744000000000",
+                "573465536000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "0"
+          },
+          "0xcca8cF6827886A82A458e13402427117e10e3960": {
+            "creatorOwed": "0",
+            "coinFees": [
+              "0",
+              "0",
+              "0",
+              "0"
+            ],
+            "collectedTotals": {
+              "native": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "0"
+          }
+        },
+        "routerOwed": "0",
+        "pendingBondingFees": "0",
+        "pendingGradFees": "0",
+        "parkedOwed": "0",
+        "launcherNative": "0",
+        "routerPaid": {
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterPending": {
+          "total": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterRouted": {
+          "runs": "0",
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        }
+      }
+    },
+    {
+      "step": "Y: buy (bonding)",
+      "transactionHash": "0x3cf39114f7c1e99c99a03b5c9b5ff9dbc52ef6465d34415a4d92c31edb80f70a",
+      "blockNumber": 8578759,
+      "blockTimestamp": 1791990861,
+      "from": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+      "to": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+      "gasUsed": "252082",
+      "readBack": {
+        "coins": {
+          "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A": {
+            "creatorOwed": "0",
+            "coinFees": [
+              "0",
+              "0",
+              "0",
+              "0"
+            ],
+            "collectedTotals": {
+              "native": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "35135744000000000",
+                "573465536000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "0"
+          },
+          "0xcca8cF6827886A82A458e13402427117e10e3960": {
+            "creatorOwed": "0",
+            "coinFees": [
+              "0",
+              "0",
+              "0",
+              "0"
+            ],
+            "collectedTotals": {
+              "native": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "0"
+          }
+        },
+        "routerOwed": "0",
+        "pendingBondingFees": "0",
+        "pendingGradFees": "0",
+        "parkedOwed": "0",
+        "launcherNative": "0",
+        "routerPaid": {
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterPending": {
+          "total": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterRouted": {
+          "runs": "0",
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        }
+      }
+    },
+    {
+      "step": "Y: sell (bonding)",
+      "transactionHash": "0x05248d9f5978bb568a4e2997f8358a1172ebc2f9d6ec283208486c58e0060ac2",
+      "blockNumber": 8578760,
+      "blockTimestamp": 1791990862,
+      "from": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+      "to": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+      "gasUsed": "206793",
+      "readBack": {
+        "coins": {
+          "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A": {
+            "creatorOwed": "0",
+            "coinFees": [
+              "0",
+              "0",
+              "0",
+              "0"
+            ],
+            "collectedTotals": {
+              "native": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "35135744000000000",
+                "573465536000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "0"
+          },
+          "0xcca8cF6827886A82A458e13402427117e10e3960": {
+            "creatorOwed": "0",
+            "coinFees": [
+              "0",
+              "0",
+              "0",
+              "0"
+            ],
+            "collectedTotals": {
+              "native": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "0"
+          }
+        },
+        "routerOwed": "0",
+        "pendingBondingFees": "0",
+        "pendingGradFees": "0",
+        "parkedOwed": "0",
+        "launcherNative": "0",
+        "routerPaid": {
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterPending": {
+          "total": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterRouted": {
+          "runs": "0",
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        }
+      }
+    },
+    {
+      "step": "X: collect",
+      "transactionHash": "0x80970823644094e8081991f6088f4bbd656c26db311a314338da761e45b415a8",
+      "blockNumber": 8578761,
+      "blockTimestamp": 1791990863,
+      "from": "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
+      "to": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "gasUsed": "378118",
+      "readBack": {
+        "coins": {
+          "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A": {
+            "creatorOwed": "35135744000000000",
+            "coinFees": [
+              "179912128855075950617695",
+              "2936422960241775336867383",
+              "0",
+              "4"
+            ],
+            "collectedTotals": {
+              "native": [
+                "35135744000000000",
+                "573465536000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "35135744000000000",
+                "573465536000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "3116335089096851287485082"
+          },
+          "0xcca8cF6827886A82A458e13402427117e10e3960": {
+            "creatorOwed": "0",
+            "coinFees": [
+              "0",
+              "0",
+              "0",
+              "0"
+            ],
+            "collectedTotals": {
+              "native": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "0",
+                "0",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "0"
+          }
+        },
+        "routerOwed": "573465535999999999",
+        "pendingBondingFees": "573465535999999999",
+        "pendingGradFees": "0",
+        "parkedOwed": "0",
+        "launcherNative": "608601279999999999",
+        "routerPaid": {
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterPending": {
+          "total": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterRouted": {
+          "runs": "0",
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        }
+      }
+    },
+    {
+      "step": "Y: collect",
+      "transactionHash": "0x806911defe7b8970cde1b07d6ef254c16dcdab8b4c5766d49c721440c7bd4d93",
+      "blockNumber": 8578762,
+      "blockTimestamp": 1791990864,
+      "from": "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
+      "to": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "gasUsed": "361030",
+      "readBack": {
+        "coins": {
+          "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A": {
+            "creatorOwed": "35135744000000000",
+            "coinFees": [
+              "179912128855075950617695",
+              "2936422960241775336867383",
+              "0",
+              "4"
+            ],
+            "collectedTotals": {
+              "native": [
+                "35135744000000000",
+                "573465536000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "35135744000000000",
+                "573465536000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "3116335089096851287485082"
+          },
+          "0xcca8cF6827886A82A458e13402427117e10e3960": {
+            "creatorOwed": "5489960000000000",
+            "coinFees": [
+              "44208262958526352108245",
+              "721542006144519389766720",
+              "0",
+              "29"
+            ],
+            "collectedTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "765750269103045741874994"
+          }
+        },
+        "routerOwed": "663069525999999998",
+        "pendingBondingFees": "663069525999999998",
+        "pendingGradFees": "0",
+        "parkedOwed": "0",
+        "launcherNative": "703695229999999998",
+        "routerPaid": {
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterPending": {
+          "total": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterRouted": {
+          "runs": "0",
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        }
+      }
+    },
+    {
+      "step": "X: buy crossing graduation (inline graduation fee)",
+      "transactionHash": "0x97af83f9f8e2b5f086302f8c81118877dd3a72611a616860b20faf20061e6cbd",
+      "blockNumber": 8578763,
+      "blockTimestamp": 1791990865,
+      "from": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+      "to": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+      "gasUsed": "394330",
+      "readBack": {
+        "coins": {
+          "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A": {
+            "creatorOwed": "35135744000000000",
+            "coinFees": [
+              "179912128855075950617695",
+              "2936422960241775336867383",
+              "0",
+              "4"
+            ],
+            "collectedTotals": {
+              "native": [
+                "35135744000000000",
+                "573465536000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "319102621577465202",
+                "5208210645032199906",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "3116335089096851287485082"
+          },
+          "0xcca8cF6827886A82A458e13402427117e10e3960": {
+            "creatorOwed": "5489960000000000",
+            "coinFees": [
+              "44208262958526352108245",
+              "721542006144519389766720",
+              "0",
+              "29"
+            ],
+            "collectedTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "765750269103045741874994"
+          }
+        },
+        "routerOwed": "4641897416822032077",
+        "pendingBondingFees": "663069525999999998",
+        "pendingGradFees": "3978827890822032079",
+        "parkedOwed": "0",
+        "launcherNative": "4682523120822032077",
+        "routerPaid": {
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterPending": {
+          "total": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterRouted": {
+          "runs": "0",
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        }
+      }
+    },
+    {
+      "step": "X: buy (post-graduation)",
+      "transactionHash": "0xf0c8c8c2313ded448f934323b507adb1c3e1f0bccd994845c371abb56681e192",
+      "blockNumber": 8578764,
+      "blockTimestamp": 1791990866,
+      "from": "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
+      "to": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+      "gasUsed": "170695",
+      "readBack": {
+        "coins": {
+          "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A": {
+            "creatorOwed": "35135744000000000",
+            "coinFees": [
+              "179912128855075950617695",
+              "2936422960241775336867383",
+              "0",
+              "4"
+            ],
+            "collectedTotals": {
+              "native": [
+                "35135744000000000",
+                "573465536000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "319102621577465202",
+                "5208210645032199906",
+                "14850000000000000",
+                "13959000000000000"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "3116335089096851287485082"
+          },
+          "0xcca8cF6827886A82A458e13402427117e10e3960": {
+            "creatorOwed": "5489960000000000",
+            "coinFees": [
+              "44208262958526352108245",
+              "721542006144519389766720",
+              "0",
+              "29"
+            ],
+            "collectedTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "765750269103045741874994"
+          }
+        },
+        "routerOwed": "4641897416822032077",
+        "pendingBondingFees": "663069525999999998",
+        "pendingGradFees": "3978827890822032079",
+        "parkedOwed": "0",
+        "launcherNative": "4682523120822032077",
+        "routerPaid": {
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterPending": {
+          "total": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterRouted": {
+          "runs": "0",
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        }
+      }
+    },
+    {
+      "step": "X: sell (post-graduation)",
+      "transactionHash": "0xdf053e90b706c939f657b184f4f7f5d77110576558264fc69c17760dac22387c",
+      "blockNumber": 8578765,
+      "blockTimestamp": 1791990867,
+      "from": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+      "to": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+      "gasUsed": "189169",
+      "readBack": {
+        "coins": {
+          "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A": {
+            "creatorOwed": "35135744000000000",
+            "coinFees": [
+              "179912128855075950617695",
+              "2936422960241775336867383",
+              "0",
+              "4"
+            ],
+            "collectedTotals": {
+              "native": [
+                "35135744000000000",
+                "573465536000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "319102621577465202",
+                "5208210645032199906",
+                "14850000000000000",
+                "13959000000000000"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "10000000000000000000000",
+                "9400000000000000000000"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "3116335089096851287485082"
+          },
+          "0xcca8cF6827886A82A458e13402427117e10e3960": {
+            "creatorOwed": "5489960000000000",
+            "coinFees": [
+              "44208262958526352108245",
+              "721542006144519389766720",
+              "0",
+              "29"
+            ],
+            "collectedTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "765750269103045741874994"
+          }
+        },
+        "routerOwed": "4641897416822032077",
+        "pendingBondingFees": "663069525999999998",
+        "pendingGradFees": "3978827890822032079",
+        "parkedOwed": "0",
+        "launcherNative": "4682523120822032077",
+        "routerPaid": {
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterPending": {
+          "total": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterRouted": {
+          "runs": "0",
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        }
+      }
+    },
+    {
+      "step": "X: sell (post-graduation, trader2)",
+      "transactionHash": "0x1639b2f045cb5ebd9833f45fdc4e706715610c2220e9fae2c9fb29a4e63a475c",
+      "blockNumber": 8578766,
+      "blockTimestamp": 1791990868,
+      "from": "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
+      "to": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+      "gasUsed": "173421",
+      "readBack": {
+        "coins": {
+          "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A": {
+            "creatorOwed": "35135744000000000",
+            "coinFees": [
+              "179912128855075950617695",
+              "2936422960241775336867383",
+              "0",
+              "4"
+            ],
+            "collectedTotals": {
+              "native": [
+                "35135744000000000",
+                "573465536000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "319102621577465202",
+                "5208210645032199906",
+                "14850000000000000",
+                "13959000000000000"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "124156214790836538595959",
+                "116706841903386346280202"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "3116335089096851287485082"
+          },
+          "0xcca8cF6827886A82A458e13402427117e10e3960": {
+            "creatorOwed": "5489960000000000",
+            "coinFees": [
+              "44208262958526352108245",
+              "721542006144519389766720",
+              "0",
+              "29"
+            ],
+            "collectedTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "765750269103045741874994"
+          }
+        },
+        "routerOwed": "4641897416822032077",
+        "pendingBondingFees": "663069525999999998",
+        "pendingGradFees": "3978827890822032079",
+        "parkedOwed": "0",
+        "launcherNative": "4682523120822032077",
+        "routerPaid": {
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterPending": {
+          "total": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterRouted": {
+          "runs": "0",
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        }
+      }
+    },
+    {
+      "step": "X: collect",
+      "transactionHash": "0xb8aae04d1c2e8992e77d7544d148139f0f63862593059189d3a7e5eaa64a939c",
+      "blockNumber": 8578767,
+      "blockTimestamp": 1791990869,
+      "from": "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
+      "to": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "gasUsed": "297712",
+      "readBack": {
+        "coins": {
+          "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A": {
+            "creatorOwed": "333952621577465202",
+            "coinFees": [
+              "179912128855075950617695",
+              "2936422960241775336867383",
+              "124156214790836538595959",
+              "116706841903386346280207"
+            ],
+            "collectedTotals": {
+              "native": [
+                "319102621577465202",
+                "5208210645032199906",
+                "14850000000000000",
+                "13959000000000000"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "124156214790836538595959",
+                "116706841903386346280202"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "319102621577465202",
+                "5208210645032199906",
+                "14850000000000000",
+                "13959000000000000"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "124156214790836538595959",
+                "116706841903386346280202"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "3357198145791074172361244"
+          },
+          "0xcca8cF6827886A82A458e13402427117e10e3960": {
+            "creatorOwed": "5489960000000000",
+            "coinFees": [
+              "44208262958526352108245",
+              "721542006144519389766720",
+              "0",
+              "29"
+            ],
+            "collectedTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "765750269103045741874994"
+          }
+        },
+        "routerOwed": "9290601525854231983",
+        "pendingBondingFees": "5297814635032199904",
+        "pendingGradFees": "3978827890822032079",
+        "parkedOwed": "0",
+        "launcherNative": "9630044107431697185",
+        "routerPaid": {
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterPending": {
+          "total": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterRouted": {
+          "runs": "0",
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        }
+      }
+    },
+    {
+      "step": "X: convert",
+      "transactionHash": "0x54c429f9f146823ff17796bc83bb0c3f0687d6be09cf54b40b62dc40f1cc0d75",
+      "blockNumber": 8578769,
+      "blockTimestamp": 1791991470,
+      "from": "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
+      "to": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "gasUsed": "189771",
+      "readBack": {
+        "coins": {
+          "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A": {
+            "creatorOwed": "430689444637182390",
+            "coinFees": [
+              "147801973791289810089142",
+              "2412339357950694400383498",
+              "101997201196606470991598",
+              "95877369124810082732105"
+            ],
+            "collectedTotals": {
+              "native": [
+                "319102621577465202",
+                "5208210645032199906",
+                "14850000000000000",
+                "13959000000000000"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "124156214790836538595959",
+                "116706841903386346280202"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "319102621577465202",
+                "5208210645032199906",
+                "14850000000000000",
+                "13959000000000000"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "124156214790836538595959",
+                "116706841903386346280202"
+              ]
+            },
+            "lastConvertAt": "1791991470",
+            "launcherCoinBalance": "2758015902063400764196343"
+          },
+          "0xcca8cF6827886A82A458e13402427117e10e3960": {
+            "creatorOwed": "5489960000000000",
+            "coinFees": [
+              "44208262958526352108245",
+              "721542006144519389766720",
+              "0",
+              "29"
+            ],
+            "collectedTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "0",
+            "launcherCoinBalance": "765750269103045741874994"
+          }
+        },
+        "routerOwed": "10261929464524496677",
+        "pendingBondingFees": "6232013259352617974",
+        "pendingGradFees": "3978827890822032079",
+        "parkedOwed": "0",
+        "launcherNative": "10698108869161679067",
+        "routerPaid": {
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterPending": {
+          "total": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterRouted": {
+          "runs": "0",
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        }
+      }
+    },
+    {
+      "step": "Y: convert",
+      "transactionHash": "0xe46b8053fec75931dde49adce5f6749464ffb06bfb52fbec27689af10b3df0b7",
+      "blockNumber": 8578770,
+      "blockTimestamp": 1791991471,
+      "from": "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
+      "to": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "gasUsed": "178599",
+      "readBack": {
+        "coins": {
+          "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A": {
+            "creatorOwed": "430689444637182390",
+            "coinFees": [
+              "147801973791289810089142",
+              "2412339357950694400383498",
+              "101997201196606470991598",
+              "95877369124810082732105"
+            ],
+            "collectedTotals": {
+              "native": [
+                "319102621577465202",
+                "5208210645032199906",
+                "14850000000000000",
+                "13959000000000000"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "124156214790836538595959",
+                "116706841903386346280202"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "319102621577465202",
+                "5208210645032199906",
+                "14850000000000000",
+                "13959000000000000"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "124156214790836538595959",
+                "116706841903386346280202"
+              ]
+            },
+            "lastConvertAt": "1791991470",
+            "launcherCoinBalance": "2758015902063400764196343"
+          },
+          "0xcca8cF6827886A82A458e13402427117e10e3960": {
+            "creatorOwed": "7392894429584048",
+            "coinFees": [
+              "0",
+              "0",
+              "0",
+              "0"
+            ],
+            "collectedTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "1791991471",
+            "launcherCoinBalance": "0"
+          }
+        },
+        "routerOwed": "10292988072893064894",
+        "pendingBondingFees": "6263071867721186190",
+        "pendingGradFees": "3978827890822032079",
+        "parkedOwed": "0",
+        "launcherNative": "10731070411959831332",
+        "routerPaid": {
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterPending": {
+          "total": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterRouted": {
+          "runs": "0",
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        }
+      }
+    },
+    {
+      "step": "claimRouter (operator)",
+      "transactionHash": "0x701e929e070e2858365298a043026f9b707c5402550efad4e385542148dc1c62",
+      "blockNumber": 8578771,
+      "blockTimestamp": 1791991472,
+      "from": "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
+      "to": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "gasUsed": "109102",
+      "readBack": {
+        "coins": {
+          "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A": {
+            "creatorOwed": "430689444637182390",
+            "coinFees": [
+              "147801973791289810089142",
+              "2412339357950694400383498",
+              "101997201196606470991598",
+              "95877369124810082732105"
+            ],
+            "collectedTotals": {
+              "native": [
+                "319102621577465202",
+                "5208210645032199906",
+                "14850000000000000",
+                "13959000000000000"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "124156214790836538595959",
+                "116706841903386346280202"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "319102621577465202",
+                "5208210645032199906",
+                "14850000000000000",
+                "13959000000000000"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "124156214790836538595959",
+                "116706841903386346280202"
+              ]
+            },
+            "lastConvertAt": "1791991470",
+            "launcherCoinBalance": "2758015902063400764196343"
+          },
+          "0xcca8cF6827886A82A458e13402427117e10e3960": {
+            "creatorOwed": "7392894429584048",
+            "coinFees": [
+              "0",
+              "0",
+              "0",
+              "0"
+            ],
+            "collectedTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "1791991471",
+            "launcherCoinBalance": "0"
+          }
+        },
+        "routerOwed": "0",
+        "pendingBondingFees": "0",
+        "pendingGradFees": "0",
+        "parkedOwed": "0",
+        "launcherNative": "438082339066766438",
+        "routerPaid": {
+          "amount": "10292988072893064894",
+          "bondingFees": "6263071867721186190",
+          "gradFees": "3978827890822032079"
+        },
+        "splitterPending": {
+          "total": "10292988072893064894",
+          "bondingFees": "6263071867721186190",
+          "gradFees": "3978827890822032079"
+        },
+        "splitterRouted": {
+          "runs": "0",
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        }
+      }
+    },
+    {
+      "step": "X: claimCreator",
+      "transactionHash": "0x88a538ed888c837b3cdff1636166eec12f454697027eef519c0eed8a9fdc3c74",
+      "blockNumber": 8578772,
+      "blockTimestamp": 1791991473,
+      "from": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+      "to": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "gasUsed": "35141",
+      "readBack": {
+        "coins": {
+          "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A": {
+            "creatorOwed": "0",
+            "coinFees": [
+              "147801973791289810089142",
+              "2412339357950694400383498",
+              "101997201196606470991598",
+              "95877369124810082732105"
+            ],
+            "collectedTotals": {
+              "native": [
+                "319102621577465202",
+                "5208210645032199906",
+                "14850000000000000",
+                "13959000000000000"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "124156214790836538595959",
+                "116706841903386346280202"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "319102621577465202",
+                "5208210645032199906",
+                "14850000000000000",
+                "13959000000000000"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "124156214790836538595959",
+                "116706841903386346280202"
+              ]
+            },
+            "lastConvertAt": "1791991470",
+            "launcherCoinBalance": "2758015902063400764196343"
+          },
+          "0xcca8cF6827886A82A458e13402427117e10e3960": {
+            "creatorOwed": "7392894429584048",
+            "coinFees": [
+              "0",
+              "0",
+              "0",
+              "0"
+            ],
+            "collectedTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "1791991471",
+            "launcherCoinBalance": "0"
+          }
+        },
+        "routerOwed": "0",
+        "pendingBondingFees": "0",
+        "pendingGradFees": "0",
+        "parkedOwed": "0",
+        "launcherNative": "7392894429584048",
+        "routerPaid": {
+          "amount": "10292988072893064894",
+          "bondingFees": "6263071867721186190",
+          "gradFees": "3978827890822032079"
+        },
+        "splitterPending": {
+          "total": "10292988072893064894",
+          "bondingFees": "6263071867721186190",
+          "gradFees": "3978827890822032079"
+        },
+        "splitterRouted": {
+          "runs": "0",
+          "amount": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        }
+      }
+    },
+    {
+      "step": "route (run 1, bands at their maximum)",
+      "transactionHash": "0x90312eb9414351f17836daad4bc777b603b4a12077451a5835685bf06d025cbb",
+      "blockNumber": 8578773,
+      "blockTimestamp": 1791991474,
+      "from": "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
+      "to": "0xf5059a5D33d5853360D16C683c16e67980206f36",
+      "gasUsed": "338379",
+      "readBack": {
+        "coins": {
+          "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A": {
+            "creatorOwed": "0",
+            "coinFees": [
+              "147801973791289810089142",
+              "2412339357950694400383498",
+              "101997201196606470991598",
+              "95877369124810082732105"
+            ],
+            "collectedTotals": {
+              "native": [
+                "319102621577465202",
+                "5208210645032199906",
+                "14850000000000000",
+                "13959000000000000"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "124156214790836538595959",
+                "116706841903386346280202"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "319102621577465202",
+                "5208210645032199906",
+                "14850000000000000",
+                "13959000000000000"
+              ],
+              "coin": [
+                "179912128855075950617695",
+                "2936422960241775336867383",
+                "124156214790836538595959",
+                "116706841903386346280202"
+              ]
+            },
+            "lastConvertAt": "1791991470",
+            "launcherCoinBalance": "2758015902063400764196343"
+          },
+          "0xcca8cF6827886A82A458e13402427117e10e3960": {
+            "creatorOwed": "7392894429584048",
+            "coinFees": [
+              "0",
+              "0",
+              "0",
+              "0"
+            ],
+            "collectedTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "pluginTotals": {
+              "native": [
+                "5489960000000000",
+                "89603990000000000",
+                "0",
+                "0"
+              ],
+              "coin": [
+                "44208262958526352108245",
+                "721542006144519389766720",
+                "0",
+                "0"
+              ]
+            },
+            "lastConvertAt": "1791991471",
+            "launcherCoinBalance": "0"
+          }
+        },
+        "routerOwed": "0",
+        "pendingBondingFees": "0",
+        "pendingGradFees": "0",
+        "parkedOwed": "0",
+        "launcherNative": "7392894429584048",
+        "routerPaid": {
+          "amount": "10292988072893064894",
+          "bondingFees": "6263071867721186190",
+          "gradFees": "3978827890822032079"
+        },
+        "splitterPending": {
+          "total": "0",
+          "bondingFees": "0",
+          "gradFees": "0"
+        },
+        "splitterRouted": {
+          "runs": "1",
+          "amount": "10292988072893064894",
+          "bondingFees": "6263071867721186190",
+          "gradFees": "3978827890822032079"
+        }
+      }
+    }
+  ],
+  "routePlan": {
+    "step": "route (run 1, bands at their maximum)",
+    "note": "squad = squadMax / 2, airdrop = (rsaMax - squad) / 3, recruiter = the rest of rsaMax; league = bands.weekly + bands.monthly; protocol = total - league - recruiter - squad - airdrop.",
+    "runId": "1",
+    "expectedPaid": "10292988072893064894",
+    "pending": {
+      "total": "10292988072893064894",
+      "bondingFees": "6263071867721186190",
+      "gradFees": "3978827890822032079"
+    },
+    "bands": {
+      "weekly": "704595585118633446",
+      "monthly": "1644056365276811375",
+      "rsaMin": "1635755661052033541",
+      "rsaMax": "1891803155015613998",
+      "squadMax": "256047493963580456"
+    },
+    "recruiter": "1175852938689215847",
+    "squad": "128023746981790228",
+    "airdrop": "587926469344607923",
+    "accrualRoot": "0x0b0379b1bd2f36eb5ff70ee06bad97bb19d51c386f28c47ac7a61d5443be48b3"
+  },
+  "logs": [
+    {
+      "step": "X: buy (bonding)",
+      "contract": "MwzBarkPlugin",
+      "event": "BarkSwap",
+      "address": "0x851356ae760d987E095750cCeb3bC6014560891C",
+      "blockNumber": 8578756,
+      "blockTimestamp": 1791990858,
+      "transactionHash": "0x0c7228fb409914f1f8b42638ba8ddd530fadb9476cd36abdd7d6c5383f586915",
+      "txFrom": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+      "txTo": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+      "logIndex": 5,
+      "topics": [
+        "0x25037ed3ed628f8f226444ce919428a828f9c23d80f6c0b9cafe8db1b132eb64",
+        "0x0000000000000000000000003b29c7ded3780f07ff29c603c5839444ed510ccd",
+        "0x000000000000000000000000d2bb65ed0e5b1911b3a44f033830c90045788e7a",
+        "0x000000000000000000000000911e5a1630fd1768e5a1710daafabb865cb79531"
+      ],
+      "data": "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001158e460913d0000000000000000000000000000000000000000000000109bfeb83af0c2d277a2394000000000000000000000000000000000000000000000001101d1cc879974000000000000000000000000000f6bdb158a5ddf77f1b83bc9074f6a472c58d78ae000000000000000000000000000000000000000000000000057129409a38c00000000000000000000000000000000000000000000000000005475dc65827b000000000000000000000000000000000000000000000000000004e045bae86400000000000000000000000000000000000000000000000000000000000000000c80000000000000000000000000000000000000000000000000000000000004c97000000000000000000000000000000000000000000000000000000000000001e00000000000000000000000000000000000000000013de598cae671200074e0e",
+      "args": {
+        "pool": "0x3B29c7deD3780f07fF29C603C5839444ed510CCD",
+        "coin": "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A",
+        "sender": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+        "kind": "0",
+        "buy": true,
+        "phase": "0",
+        "crossing": false,
+        "nativeAmount": "20000000000000000000",
+        "coinAmount": "321271658669778483245884308",
+        "curveAmount": "19607860000000000000",
+        "feeToken": "0xF6BDB158A5ddF77F1B83bC9074F6a472c58D78aE",
+        "grossFee": "392140000000000000",
+        "netFee": "380375800000000000",
+        "creatorAmount": "21959840000000000",
+        "rateBps": "200",
+        "feeUnits": "19607",
+        "communityFee": "30",
+        "sqrtPriceAfter": "24019607829250713972067854"
+      }
+    },
+    {
+      "step": "X: buy (bonding, trader2)",
+      "contract": "MwzBarkPlugin",
+      "event": "BarkSwap",
+      "address": "0x851356ae760d987E095750cCeb3bC6014560891C",
+      "blockNumber": 8578757,
+      "blockTimestamp": 1791990859,
+      "transactionHash": "0x7ed7a124af0592f0aa6da794a56f295ecdccac93c82176acdee84f8f1a4897ee",
+      "txFrom": "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
+      "txTo": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+      "logIndex": 5,
+      "topics": [
+        "0x25037ed3ed628f8f226444ce919428a828f9c23d80f6c0b9cafe8db1b132eb64",
+        "0x0000000000000000000000003b29c7ded3780f07ff29c603c5839444ed510ccd",
+        "0x000000000000000000000000d2bb65ed0e5b1911b3a44f033830c90045788e7a",
+        "0x000000000000000000000000911e5a1630fd1768e5a1710daafabb865cb79531"
+      ],
+      "data": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008ac7230489e800000000000000000000000000000000000000000000004b8ad0a4a5fe92df9ab422000000000000000000000000000000000000000000000000880e8e643ccba000000000000000000000000000f6bdb158a5ddf77f1b83bc9074f6a472c58d78ae00000000000000000000000000000000000000000000000002b894a04d1c600000000000000000000000000000000000000000000000000002a3aee32c13d8000000000000000000000000000000000000000000000000000027022dd743200000000000000000000000000000000000000000000000000000000000000000c80000000000000000000000000000000000000000000000000000000000004c97000000000000000000000000000000000000000000000000000000000000001e0000000000000000000000000000000000000000001734ca5083f903048502be",
+      "args": {
+        "pool": "0x3B29c7deD3780f07fF29C603C5839444ed510CCD",
+        "coin": "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A",
+        "sender": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+        "kind": "0",
+        "buy": true,
+        "phase": "0",
+        "crossing": false,
+        "nativeAmount": "10000000000000000000",
+        "coinAmount": "91324971832669230876767266",
+        "curveAmount": "9803930000000000000",
+        "feeToken": "0xF6BDB158A5ddF77F1B83bC9074F6a472c58D78aE",
+        "grossFee": "196070000000000000",
+        "netFee": "190187900000000000",
+        "creatorAmount": "10979920000000000",
+        "rateBps": "200",
+        "feeUnits": "19607",
+        "communityFee": "30",
+        "sqrtPriceAfter": "28054588952303118238155454"
+      }
+    },
+    {
+      "step": "X: sell (bonding)",
+      "contract": "MwzBarkPlugin",
+      "event": "BarkSwap",
+      "address": "0x851356ae760d987E095750cCeb3bC6014560891C",
+      "blockNumber": 8578758,
+      "blockTimestamp": 1791990860,
+      "transactionHash": "0x69e4245bd253ab7cd8e3f95ed7ea2baa36cc78ed7a49740e2f268b44131f7251",
+      "txFrom": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+      "txTo": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+      "logIndex": 3,
+      "topics": [
+        "0x25037ed3ed628f8f226444ce919428a828f9c23d80f6c0b9cafe8db1b132eb64",
+        "0x0000000000000000000000003b29c7ded3780f07ff29c603c5839444ed510ccd",
+        "0x000000000000000000000000d2bb65ed0e5b1911b3a44f033830c90045788e7a",
+        "0x000000000000000000000000911e5a1630fd1768e5a1710daafabb865cb79531"
+      ],
+      "data": "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000d46b2000159a5a8800000000000000000000000000000000000000000084dff5c1d7861693bd11ca000000000000000000000000000000000000000000000000d46b2000159a5a88000000000000000000000000d2bb65ed0e5b1911b3a44f033830c90045788e7a00000000000000000000000000000000000000000002a851b713aba44aa2805b0000000000000000000000000000000000000000000293e8dd1ac2a70af4aa960000000000000000000000000000000000000000000026190e592a6143aae45f00000000000000000000000000000000000000000000000000000000000000c80000000000000000000000000000000000000000000000000000000000004e20000000000000000000000000000000000000000000000000000000000000001e00000000000000000000000000000000000000000011fecc0c56cd28ba2590fb",
+      "args": {
+        "pool": "0x3B29c7deD3780f07fF29C603C5839444ed510CCD",
+        "coin": "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A",
+        "sender": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+        "kind": "0",
+        "buy": false,
+        "phase": "0",
+        "crossing": false,
+        "nativeAmount": "15306362943283288712",
+        "coinAmount": "160635829334889241622942154",
+        "curveAmount": "15306362943283288712",
+        "feeToken": "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A",
+        "grossFee": "3212716586697784832458843",
+        "netFee": "3116335089096851287485078",
+        "creatorAmount": "179912128855075950617695",
+        "rateBps": "200",
+        "feeUnits": "20000",
+        "communityFee": "30",
+        "sqrtPriceAfter": "21754984045012173860475131"
+      }
+    },
+    {
+      "step": "Y: buy (bonding)",
+      "contract": "MwzBarkPlugin",
+      "event": "BarkSwap",
+      "address": "0x851356ae760d987E095750cCeb3bC6014560891C",
+      "blockNumber": 8578759,
+      "blockTimestamp": 1791990861,
+      "transactionHash": "0x3cf39114f7c1e99c99a03b5c9b5ff9dbc52ef6465d34415a4d92c31edb80f70a",
+      "txFrom": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+      "txTo": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+      "logIndex": 6,
+      "topics": [
+        "0x25037ed3ed628f8f226444ce919428a828f9c23d80f6c0b9cafe8db1b132eb64",
+        "0x00000000000000000000000071a7f7083c3d3f3011c905a7994773e4fb15059f",
+        "0x000000000000000000000000cca8cf6827886a82a458e13402427117e10e3960",
+        "0x000000000000000000000000911e5a1630fd1768e5a1710daafabb865cb79531"
+      ],
+      "data": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004563918244f4000000000000000000000000000000000000000000000061f359796bc42a263b760b000000000000000000000000000000000000000000000000440747321e65d000000000000000000000000000f6bdb158a5ddf77f1b83bc9074f6a472c58d78ae000000000000000000000000000000000000000000000000015c4a50268e30000000000000000000000000000000000000000000000000000151d7719609ec0000000000000000000000000000000000000000000000000000138116eba1900000000000000000000000000000000000000000000000000000000000000000c80000000000000000000000000000000000000000000000000000000000004c97000000000000000000000000000000000000000000000000000000000000001e0000000000000000000000000000000000000000000e31cd0c90222b7864ce16",
+      "args": {
+        "pool": "0x71A7f7083C3D3F3011C905A7994773e4FB15059F",
+        "coin": "0xcca8cF6827886A82A458e13402427117e10e3960",
+        "sender": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+        "kind": "0",
+        "buy": true,
+        "phase": "0",
+        "crossing": false,
+        "nativeAmount": "5000000000000000000",
+        "coinAmount": "118414990067481300289943051",
+        "curveAmount": "4901965000000000000",
+        "feeToken": "0xF6BDB158A5ddF77F1B83bC9074F6a472c58D78aE",
+        "grossFee": "98035000000000000",
+        "netFee": "95093950000000000",
+        "creatorAmount": "5489960000000000",
+        "rateBps": "200",
+        "feeUnits": "19607",
+        "communityFee": "30",
+        "sqrtPriceAfter": "17160139920061626719718934"
+      }
+    },
+    {
+      "step": "Y: sell (bonding)",
+      "contract": "MwzBarkPlugin",
+      "event": "BarkSwap",
+      "address": "0x851356ae760d987E095750cCeb3bC6014560891C",
+      "blockNumber": 8578760,
+      "blockTimestamp": 1791990862,
+      "transactionHash": "0x05248d9f5978bb568a4e2997f8358a1172ebc2f9d6ec283208486c58e0060ac2",
+      "txFrom": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+      "txTo": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+      "logIndex": 3,
+      "topics": [
+        "0x25037ed3ed628f8f226444ce919428a828f9c23d80f6c0b9cafe8db1b132eb64",
+        "0x00000000000000000000000071a7f7083c3d3f3011c905a7994773e4fb15059f",
+        "0x000000000000000000000000cca8cf6827886a82a458e13402427117e10e3960",
+        "0x000000000000000000000000911e5a1630fd1768e5a1710daafabb865cb79531"
+      ],
+      "data": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000018221030d504b96a00000000000000000000000000000000000000000020a673287941636213d20300000000000000000000000000000000000000000000000018221030d504b96a000000000000000000000000cca8cf6827886a82a458e13402427117e10e396000000000000000000000000000000000000000000000a72b435e95c9aaebea9900000000000000000000000000000000000000000000a22767bf966a04838f1500000000000000000000000000000000000000000000095c88e4875d36a0aad500000000000000000000000000000000000000000000000000000000000000c80000000000000000000000000000000000000000000000000000000000004e20000000000000000000000000000000000000000000000000000000000000001e0000000000000000000000000000000000000000000d9a3ea840991e725a9bb1",
+      "args": {
+        "pool": "0x71A7f7083C3D3F3011C905A7994773e4FB15059F",
+        "coin": "0xcca8cF6827886A82A458e13402427117e10e3960",
+        "sender": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+        "kind": "0",
+        "buy": false,
+        "phase": "0",
+        "crossing": false,
+        "nativeAmount": "1738970208036764010",
+        "coinAmount": "39471663355827100096647683",
+        "curveAmount": "1738970208036764010",
+        "feeToken": "0xcca8cF6827886A82A458e13402427117e10e3960",
+        "grossFee": "789433267116542001932953",
+        "netFee": "765750269103045741874965",
+        "creatorAmount": "44208262958526352108245",
+        "rateBps": "200",
+        "feeUnits": "20000",
+        "communityFee": "30",
+        "sqrtPriceAfter": "16444435915343227554274225"
+      }
+    },
+    {
+      "step": "X: collect",
+      "contract": "MwzBarkLauncher",
+      "event": "FeesCollected",
+      "address": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "blockNumber": 8578761,
+      "blockTimestamp": 1791990863,
+      "transactionHash": "0x80970823644094e8081991f6088f4bbd656c26db311a314338da761e45b415a8",
+      "txFrom": "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
+      "txTo": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "logIndex": 5,
+      "topics": [
+        "0xba9619685c719d00acc7ca626549a4a03d241b041be8628c3851aa2902c499e5",
+        "0x000000000000000000000000d2bb65ed0e5b1911b3a44f033830c90045788e7a"
+      ],
+      "data": "0x00000000000000000000000000000000000000000000000008722fa3c03f7fff0000000000000000000000000000000000000000000293e8dd1ac2a70af4aa9a000000000000000000000000000000000000000000000000007cd3c5e40a000000000000000000000000000000000000000000000000000007f55bdddc357fff000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000026190e592a6143aae45f000000000000000000000000000000000000000000026dcfcec19845c749c63700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004",
+      "args": {
+        "coin": "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A",
+        "native": "608601279999999999",
+        "coins": "3116335089096851287485082",
+        "nativeBooks": [
+          "35135744000000000",
+          "573465535999999999",
+          "0",
+          "0"
+        ],
+        "coinBooks": [
+          "179912128855075950617695",
+          "2936422960241775336867383",
+          "0",
+          "4"
+        ]
+      }
+    },
+    {
+      "step": "Y: collect",
+      "contract": "MwzBarkLauncher",
+      "event": "FeesCollected",
+      "address": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "blockNumber": 8578762,
+      "blockTimestamp": 1791990864,
+      "transactionHash": "0x806911defe7b8970cde1b07d6ef254c16dcdab8b4c5766d49c721440c7bd4d93",
+      "txFrom": "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
+      "txTo": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "logIndex": 5,
+      "topics": [
+        "0xba9619685c719d00acc7ca626549a4a03d241b041be8628c3851aa2902c499e5",
+        "0x000000000000000000000000cca8cf6827886a82a458e13402427117e10e3960"
+      ],
+      "data": "0x0000000000000000000000000000000000000000000000000151d7719609ebff00000000000000000000000000000000000000000000a22767bf966a04838f3200000000000000000000000000000000000000000000000000138116eba19000000000000000000000000000000000000000000000000000013e565aaa685bff0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000095c88e4875d36a0aad50000000000000000000000000000000000000000000098cadedb0f0ccde2e4400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001d",
+      "args": {
+        "coin": "0xcca8cF6827886A82A458e13402427117e10e3960",
+        "native": "95093949999999999",
+        "coins": "765750269103045741874994",
+        "nativeBooks": [
+          "5489960000000000",
+          "89603989999999999",
+          "0",
+          "0"
+        ],
+        "coinBooks": [
+          "44208262958526352108245",
+          "721542006144519389766720",
+          "0",
+          "29"
+        ]
+      }
+    },
+    {
+      "step": "X: buy crossing graduation (inline graduation fee)",
+      "contract": "MwzBarkPlugin",
+      "event": "BarkSwap",
+      "address": "0x851356ae760d987E095750cCeb3bC6014560891C",
+      "blockNumber": 8578763,
+      "blockTimestamp": 1791990865,
+      "transactionHash": "0x97af83f9f8e2b5f086302f8c81118877dd3a72611a616860b20faf20061e6cbd",
+      "txFrom": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+      "txTo": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+      "logIndex": 5,
+      "topics": [
+        "0x25037ed3ed628f8f226444ce919428a828f9c23d80f6c0b9cafe8db1b132eb64",
+        "0x0000000000000000000000003b29c7ded3780f07ff29c603c5839444ed510ccd",
+        "0x000000000000000000000000d2bb65ed0e5b1911b3a44f033830c90045788e7a",
+        "0x000000000000000000000000911e5a1630fd1768e5a1710daafabb865cb79531"
+      ],
+      "data": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000e05205b968627decc000000000000000000000000000000000000000001de7cefb10d06b0a996112a00000000000000000000000000000000000000000000000dbec1201cc2c4e58e000000000000000000000000f6bdb158a5ddf77f1b83bc9074f6a472c58d78ae000000000000000000000000000000000000000000000000465f3b79c362f93e0000000000000000000000000000000000000000000000004442c67dca53345400000000000000000000000000000000000000000000000003f0da5ee1fb4d7200000000000000000000000000000000000000000000000000000000000000c80000000000000000000000000000000000000000000000000000000000004c97000000000000000000000000000000000000000000000000000000000000001e0000000000000000000000000000000000000000006d5981d3d8034a56f4ee8b",
+      "args": {
+        "pool": "0x3B29c7deD3780f07fF29C603C5839444ed510CCD",
+        "coin": "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A",
+        "sender": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+        "kind": "0",
+        "buy": true,
+        "phase": "0",
+        "crossing": true,
+        "nativeAmount": "258623812903432085196",
+        "coinAmount": "578456536749362873338564906",
+        "curveAmount": "253552975803834492302",
+        "feeToken": "0xF6BDB158A5ddF77F1B83bC9074F6a472c58D78aE",
+        "grossFee": "5070837099597592894",
+        "netFee": "4918711986609665108",
+        "creatorAmount": "283966877577465202",
+        "rateBps": "200",
+        "feeUnits": "19607",
+        "communityFee": "30",
+        "sqrtPriceAfter": "132195599849910041792802443"
+      }
+    },
+    {
+      "step": "X: buy crossing graduation (inline graduation fee)",
+      "contract": "MwzBarkPlugin",
+      "event": "Graduated",
+      "address": "0x851356ae760d987E095750cCeb3bC6014560891C",
+      "blockNumber": 8578763,
+      "blockTimestamp": 1791990865,
+      "transactionHash": "0x97af83f9f8e2b5f086302f8c81118877dd3a72611a616860b20faf20061e6cbd",
+      "txFrom": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+      "txTo": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+      "logIndex": 6,
+      "topics": [
+        "0xc4fefab6a4e41a87d43ca68051a3f5b9a6e9ae573fafe8be87767e114a05feae",
+        "0x0000000000000000000000003b29c7ded3780f07ff29c603c5839444ed510ccd",
+        "0x000000000000000000000000d2bb65ed0e5b1911b3a44f033830c90045788e7a"
+      ],
+      "data": "0x0000000000000000000000000000000000000000006d5981d3d8034a56f4ee8b000000000000000000000000000000000000000000000000000000006acf9c51",
+      "args": {
+        "pool": "0x3B29c7deD3780f07fF29C603C5839444ed510CCD",
+        "coin": "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A",
+        "sqrtPrice": "132195599849910041792802443",
+        "graduatedAt": "1791990865"
+      }
+    },
+    {
+      "step": "X: buy crossing graduation (inline graduation fee)",
+      "contract": "MwzBarkLauncher",
+      "event": "GraduationFeeTaken",
+      "address": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "blockNumber": 8578763,
+      "blockTimestamp": 1791990865,
+      "transactionHash": "0x97af83f9f8e2b5f086302f8c81118877dd3a72611a616860b20faf20061e6cbd",
+      "txFrom": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+      "txTo": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+      "logIndex": 12,
+      "topics": [
+        "0x1b754781f08361f3f0814a7cec746dc1fdf97ec2db119c38818dcec235e9c922",
+        "0x000000000000000000000000d2bb65ed0e5b1911b3a44f033830c90045788e7a",
+        "0x0000000000000000000000003b29c7ded3780f07ff29c603c5839444ed510ccd"
+      ],
+      "data": "0x0000000000000000000000000000000000000000000000003737a2e2cedd2acf0000000000000000000000000000000000000000000000d0b6694586949c5c810000000000000000000000000000000000000000000000000000000000000001",
+      "args": {
+        "coin": "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A",
+        "pool": "0x3B29c7deD3780f07fF29C603C5839444ed510CCD",
+        "amount": "3978827890822032079",
+        "liquidity": "3850066880763365448833",
+        "inlineCall": true
+      }
+    },
+    {
+      "step": "X: buy crossing graduation (inline graduation fee)",
+      "contract": "MwzBarkPlugin",
+      "event": "GraduationFeeInline",
+      "address": "0x851356ae760d987E095750cCeb3bC6014560891C",
+      "blockNumber": 8578763,
+      "blockTimestamp": 1791990865,
+      "transactionHash": "0x97af83f9f8e2b5f086302f8c81118877dd3a72611a616860b20faf20061e6cbd",
+      "txFrom": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+      "txTo": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+      "logIndex": 13,
+      "topics": [
+        "0x4259762739fb1394aa50ff28febe3c2f2534faf2ec3ae45b16a3b93f5d0cc979",
+        "0x0000000000000000000000003b29c7ded3780f07ff29c603c5839444ed510ccd"
+      ],
+      "data": "0x0000000000000000000000000000000000000000000000000000000000000001",
+      "args": {
+        "pool": "0x3B29c7deD3780f07fF29C603C5839444ed510CCD",
+        "ok": true
+      }
+    },
+    {
+      "step": "X: buy (post-graduation)",
+      "contract": "MwzBarkPlugin",
+      "event": "BarkSwap",
+      "address": "0x851356ae760d987E095750cCeb3bC6014560891C",
+      "blockNumber": 8578764,
+      "blockTimestamp": 1791990866,
+      "transactionHash": "0xf0c8c8c2313ded448f934323b507adb1c3e1f0bccd994845c371abb56681e192",
+      "txFrom": "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
+      "txTo": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+      "logIndex": 5,
+      "topics": [
+        "0x25037ed3ed628f8f226444ce919428a828f9c23d80f6c0b9cafe8db1b132eb64",
+        "0x0000000000000000000000003b29c7ded3780f07ff29c603c5839444ed510ccd",
+        "0x000000000000000000000000d2bb65ed0e5b1911b3a44f033830c90045788e7a",
+        "0x000000000000000000000000911e5a1630fd1768e5a1710daafabb865cb79531"
+      ],
+      "data": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000029a2241af62c000000000000000000000000000000000000000000000000df6d65349d7564c000840000000000000000000000000000000000000000000000002938a01cd857c000000000000000000000000000f6bdb158a5ddf77f1b83bc9074f6a472c58d78ae000000000000000000000000000000000000000000000000006983fe1dd44000000000000000000000000000000000000000000000000000006659a2035590000000000000000000000000000000000000000000000000000034c1ff0eea2000000000000000000000000000000000000000000000000000000000000000006400000000000000000000000000000000000000000000000000000000000026ac000000000000000000000000000000000000000000000000000000000000001e0000000000000000000000000000000000000000006e928aca1cdcdf37d5d5cb",
+      "args": {
+        "pool": "0x3B29c7deD3780f07fF29C603C5839444ed510CCD",
+        "coin": "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A",
+        "sender": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+        "kind": "0",
+        "buy": true,
+        "phase": "1",
+        "crossing": false,
+        "nativeAmount": "3000000000000000000",
+        "coinAmount": "1055105713410789370495108",
+        "curveAmount": "2970300000000000000",
+        "feeToken": "0xF6BDB158A5ddF77F1B83bC9074F6a472c58D78aE",
+        "grossFee": "29700000000000000",
+        "netFee": "28809000000000000",
+        "creatorAmount": "14850000000000000",
+        "rateBps": "100",
+        "feeUnits": "9900",
+        "communityFee": "30",
+        "sqrtPriceAfter": "133673865878548495618921931"
+      }
+    },
+    {
+      "step": "X: sell (post-graduation)",
+      "contract": "MwzBarkPlugin",
+      "event": "BarkSwap",
+      "address": "0x851356ae760d987E095750cCeb3bC6014560891C",
+      "blockNumber": 8578765,
+      "blockTimestamp": 1791990867,
+      "transactionHash": "0xdf053e90b706c939f657b184f4f7f5d77110576558264fc69c17760dac22387c",
+      "txFrom": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+      "txTo": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+      "logIndex": 3,
+      "topics": [
+        "0x25037ed3ed628f8f226444ce919428a828f9c23d80f6c0b9cafe8db1b132eb64",
+        "0x0000000000000000000000003b29c7ded3780f07ff29c603c5839444ed510ccd",
+        "0x000000000000000000000000d2bb65ed0e5b1911b3a44f033830c90045788e7a",
+        "0x000000000000000000000000911e5a1630fd1768e5a1710daafabb865cb79531"
+      ],
+      "data": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004c9cd1180524158e00000000000000000000000000000000000000000001a784379d99db420000000000000000000000000000000000000000000000000000004c9cd1180524158e000000000000000000000000d2bb65ed0e5b1911b3a44f033830c90045788e7a00000000000000000000000000000000000000000000043c33c193756480000000000000000000000000000000000000000000000000041bad155e651220000000000000000000000000000000000000000000000000021e19e0c9bab240000000000000000000000000000000000000000000000000000000000000000000640000000000000000000000000000000000000000000000000000000000002710000000000000000000000000000000000000000000000000000000000000001e0000000000000000000000000000000000000000006c4cbe74bd94fecf474793",
+      "args": {
+        "pool": "0x3B29c7deD3780f07fF29C603C5839444ed510CCD",
+        "coin": "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A",
+        "sender": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+        "kind": "0",
+        "buy": false,
+        "phase": "1",
+        "crossing": false,
+        "nativeAmount": "5520517144345056654",
+        "coinAmount": "2000000000000000000000000",
+        "curveAmount": "5520517144345056654",
+        "feeToken": "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A",
+        "grossFee": "20000000000000000000000",
+        "netFee": "19400000000000000000000",
+        "creatorAmount": "10000000000000000000000",
+        "rateBps": "100",
+        "feeUnits": "10000",
+        "communityFee": "30",
+        "sqrtPriceAfter": "130926401664495549837428627"
+      }
+    },
+    {
+      "step": "X: sell (post-graduation, trader2)",
+      "contract": "MwzBarkPlugin",
+      "event": "BarkSwap",
+      "address": "0x851356ae760d987E095750cCeb3bC6014560891C",
+      "blockNumber": 8578766,
+      "blockTimestamp": 1791990868,
+      "transactionHash": "0x1639b2f045cb5ebd9833f45fdc4e706715610c2220e9fae2c9fb29a4e63a475c",
+      "txFrom": "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
+      "txTo": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+      "logIndex": 3,
+      "topics": [
+        "0x25037ed3ed628f8f226444ce919428a828f9c23d80f6c0b9cafe8db1b132eb64",
+        "0x0000000000000000000000003b29c7ded3780f07ff29c603c5839444ed510ccd",
+        "0x000000000000000000000000d2bb65ed0e5b1911b3a44f033830c90045788e7a",
+        "0x000000000000000000000000911e5a1630fd1768e5a1710daafabb865cb79531"
+      ],
+      "data": "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002b5d06dc43d5c722500000000000000000000000000000000000000000012e2b429297fa4b7e6ad08000000000000000000000000000000000000000000000002b5d06dc43d5c7225000000000000000000000000d2bb65ed0e5b1911b3a44f033830c90045788e7a000000000000000000000000000000000000000000003058d7739d6fba28b4ee000000000000000000000000000000000000000000002ee5894eddd555daaf8100000000000000000000000000000000000000000000182c6bb9ceb7dd145a7700000000000000000000000000000000000000000000000000000000000000640000000000000000000000000000000000000000000000000000000000002710000000000000000000000000000000000000000000000000000000000000001e00000000000000000000000000000000000000000057b7e5d5f929dc881c7098",
+      "args": {
+        "pool": "0x3B29c7deD3780f07fF29C603C5839444ed510CCD",
+        "coin": "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A",
+        "sender": "0x911E5A1630fD1768E5A1710DAAFaBb865cB79531",
+        "kind": "0",
+        "buy": false,
+        "phase": "1",
+        "crossing": false,
+        "nativeAmount": "49994580153050362405",
+        "coinAmount": "22831242958167307719191816",
+        "curveAmount": "49994580153050362405",
+        "feeToken": "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A",
+        "grossFee": "228312429581673077191918",
+        "netFee": "221463056694222884876161",
+        "creatorAmount": "114156214790836538595959",
+        "rateBps": "100",
+        "feeUnits": "10000",
+        "communityFee": "30",
+        "sqrtPriceAfter": "106044979095631589193576600"
+      }
+    },
+    {
+      "step": "X: collect",
+      "contract": "MwzBarkLauncher",
+      "event": "FeesCollected",
+      "address": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "blockNumber": 8578767,
+      "blockTimestamp": 1791990869,
+      "transactionHash": "0xb8aae04d1c2e8992e77d7544d148139f0f63862593059189d3a7e5eaa64a939c",
+      "txFrom": "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
+      "txTo": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "logIndex": 7,
+      "topics": [
+        "0xba9619685c719d00acc7ca626549a4a03d241b041be8628c3851aa2902c499e5",
+        "0x000000000000000000000000d2bb65ed0e5b1911b3a44f033830c90045788e7a"
+      ],
+      "data": "0x00000000000000000000000000000000000000000000000044a9201fcda8c45400000000000000000000000000000000000000000000330136643c3a67faaf8200000000000000000000000000000000000000000000000003f0da5ee1fb4d720000000000000000000000000000000000000000000000004051ec1ee857e6e20000000000000000000000000000000000000000000000000034c1ff0eea2000000000000000000000000000000000000000000000000000003197a2f46b700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001a4a859a98728f545a770000000000000000000000000000000000000000000018b6b0c9a3c7d8a6550b",
+      "args": {
+        "coin": "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A",
+        "native": "4947520986609665108",
+        "coins": "240863056694222884876162",
+        "nativeBooks": [
+          "283966877577465202",
+          "4634745109032199906",
+          "14850000000000000",
+          "13959000000000000"
+        ],
+        "coinBooks": [
+          "0",
+          "0",
+          "124156214790836538595959",
+          "116706841903386346280203"
+        ]
+      }
+    },
+    {
+      "step": "X: convert",
+      "contract": "MwzBarkPlugin",
+      "event": "BarkSwap",
+      "address": "0x851356ae760d987E095750cCeb3bC6014560891C",
+      "blockNumber": 8578769,
+      "blockTimestamp": 1791991470,
+      "transactionHash": "0x54c429f9f146823ff17796bc83bb0c3f0687d6be09cf54b40b62dc40f1cc0d75",
+      "txFrom": "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
+      "txTo": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "logIndex": 3,
+      "topics": [
+        "0x25037ed3ed628f8f226444ce919428a828f9c23d80f6c0b9cafe8db1b132eb64",
+        "0x0000000000000000000000003b29c7ded3780f07ff29c603c5839444ed510ccd",
+        "0x000000000000000000000000d2bb65ed0e5b1911b3a44f033830c90045788e7a",
+        "0x00000000000000000000000095401dc811bb5740090279ba06cfa8fcf6113778"
+      ],
+      "data": "0x00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ed2873df0071dba000000000000000000000000000000000000000000007ee1bc0962bbfce514250000000000000000000000000000000000000000000000000ed2873df0071dba000000000000000000000000d2bb65ed0e5b1911b3a44f033830c90045788e7a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001e0000000000000000000000000000000000000000005747561244b7eabb5aa0f4",
+      "args": {
+        "pool": "0x3B29c7deD3780f07fF29C603C5839444ed510CCD",
+        "coin": "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A",
+        "sender": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+        "kind": "1",
+        "buy": false,
+        "phase": "1",
+        "crossing": false,
+        "nativeAmount": "1068064761729981882",
+        "coinAmount": "599182243727673408164901",
+        "curveAmount": "1068064761729981882",
+        "feeToken": "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A",
+        "grossFee": "0",
+        "netFee": "0",
+        "creatorAmount": "0",
+        "rateBps": "0",
+        "feeUnits": "0",
+        "communityFee": "30",
+        "sqrtPriceAfter": "105513422063126031923585268"
+      }
+    },
+    {
+      "step": "X: convert",
+      "contract": "MwzBarkLauncher",
+      "event": "CoinFeesConverted",
+      "address": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "blockNumber": 8578769,
+      "blockTimestamp": 1791991470,
+      "transactionHash": "0x54c429f9f146823ff17796bc83bb0c3f0687d6be09cf54b40b62dc40f1cc0d75",
+      "txFrom": "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
+      "txTo": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "logIndex": 6,
+      "topics": [
+        "0xa45d621bc97928b84a3bd550098f1a295745a90f61027978aab29a0540170555",
+        "0x000000000000000000000000d2bb65ed0e5b1911b3a44f033830c90045788e7a"
+      ],
+      "data": "0x00000000000000000000000000000000000000000002c6ea137efee172ef5a1c000000000000000000000000000000000000000000007ee1bc0962bbfce514250000000000000000000000000000000000000000000000000ed2873df0071dba0000000000000000000000000000000000000000000006ccb1eb1f9ee366efa9000000000000000000000000000000000000000000006efaa106b1ceff86ec2d0000000000000000000000000000000000000000000004b13e16b4776f08ab890000000000000000000000000000000000000000000004692b00dcd6aaee8cc600000000000000000000000000000000000000000000000000cb59402f1259d50000000000000000000000000000000000000000000000000cf6f0b30046f116000000000000000000000000000000000000000000000000008c5460981a426f0000000000000000000000000000000000000000000000000083e8ea28939060",
+      "args": {
+        "coin": "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A",
+        "pending": "3357198145791074172361244",
+        "coinsIn": "599182243727673408164901",
+        "nativeOut": "1068064761729981882",
+        "coins": [
+          "32110155063786140528553",
+          "524083602291080936483885",
+          "22159013594230067604361",
+          "20829472778576263548102"
+        ],
+        "native": [
+          "57237552474773973",
+          "934198624320418070",
+          "39499270584943215",
+          "37129314349846624"
+        ]
+      }
+    },
+    {
+      "step": "Y: convert",
+      "contract": "MwzBarkPlugin",
+      "event": "BarkSwap",
+      "address": "0x851356ae760d987E095750cCeb3bC6014560891C",
+      "blockNumber": 8578770,
+      "blockTimestamp": 1791991471,
+      "transactionHash": "0xe46b8053fec75931dde49adce5f6749464ffb06bfb52fbec27689af10b3df0b7",
+      "txFrom": "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
+      "txTo": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "logIndex": 3,
+      "topics": [
+        "0x25037ed3ed628f8f226444ce919428a828f9c23d80f6c0b9cafe8db1b132eb64",
+        "0x00000000000000000000000071a7f7083c3d3f3011c905a7994773e4fb15059f",
+        "0x000000000000000000000000cca8cf6827886a82a458e13402427117e10e3960",
+        "0x00000000000000000000000095401dc811bb5740090279ba06cfa8fcf6113778"
+      ],
+      "data": "0x000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000751a5939bb924900000000000000000000000000000000000000000000a22767bf966a04838f3200000000000000000000000000000000000000000000000000751a5939bb9249000000000000000000000000cca8cf6827886a82a458e13402427117e10e396000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001e0000000000000000000000000000000000000000000d975f3f791a39d21f717b",
+      "args": {
+        "pool": "0x71A7f7083C3D3F3011C905A7994773e4FB15059F",
+        "coin": "0xcca8cF6827886A82A458e13402427117e10e3960",
+        "sender": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+        "kind": "1",
+        "buy": false,
+        "phase": "0",
+        "crossing": false,
+        "nativeAmount": "32961542798152265",
+        "coinAmount": "765750269103045741874994",
+        "curveAmount": "32961542798152265",
+        "feeToken": "0xcca8cF6827886A82A458e13402427117e10e3960",
+        "grossFee": "0",
+        "netFee": "0",
+        "creatorAmount": "0",
+        "rateBps": "0",
+        "feeUnits": "0",
+        "communityFee": "30",
+        "sqrtPriceAfter": "16430870008306230318035323"
+      }
+    },
+    {
+      "step": "Y: convert",
+      "contract": "MwzBarkLauncher",
+      "event": "CoinFeesConverted",
+      "address": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "blockNumber": 8578770,
+      "blockTimestamp": 1791991471,
+      "transactionHash": "0xe46b8053fec75931dde49adce5f6749464ffb06bfb52fbec27689af10b3df0b7",
+      "txFrom": "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
+      "txTo": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "logIndex": 6,
+      "topics": [
+        "0xa45d621bc97928b84a3bd550098f1a295745a90f61027978aab29a0540170555",
+        "0x000000000000000000000000cca8cf6827886a82a458e13402427117e10e3960"
+      ],
+      "data": "0x00000000000000000000000000000000000000000000a22767bf966a04838f3200000000000000000000000000000000000000000000a22767bf966a04838f3200000000000000000000000000000000000000000000000000751a5939bb924900000000000000000000000000000000000000000000095c88e4875d36a0aad50000000000000000000000000000000000000000000098cadedb0f0ccde2e4400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001d0000000000000000000000000000000000000000000000000006c2b572b4cab0000000000000000000000000000000000000000000000000006e57a3c706c79800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
+      "args": {
+        "coin": "0xcca8cF6827886A82A458e13402427117e10e3960",
+        "pending": "765750269103045741874994",
+        "coinsIn": "765750269103045741874994",
+        "nativeOut": "32961542798152265",
+        "coins": [
+          "44208262958526352108245",
+          "721542006144519389766720",
+          "0",
+          "29"
+        ],
+        "native": [
+          "1902934429584048",
+          "31058608368568216",
+          "0",
+          "1"
+        ]
+      }
+    },
+    {
+      "step": "claimRouter (operator)",
+      "contract": "MwzBarkLauncher",
+      "event": "RouterClaimed",
+      "address": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "blockNumber": 8578771,
+      "blockTimestamp": 1791991472,
+      "transactionHash": "0x701e929e070e2858365298a043026f9b707c5402550efad4e385542148dc1c62",
+      "txFrom": "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
+      "txTo": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "logIndex": 0,
+      "topics": [
+        "0x2a665e6945441ed891d04bf4224d831464c1973f64bc3826a762686cc02bb1d2",
+        "0x000000000000000000000000f5059a5d33d5853360d16c683c16e67980206f36"
+      ],
+      "data": "0x0000000000000000000000000000000000000000000000008ed80a1e221fa6be00000000000000000000000000000000000000000000000056eae6ae36437b8e0000000000000000000000000000000000000000000000003737a2e2cedd2acf",
+      "args": {
+        "router": "0xf5059a5D33d5853360D16C683c16e67980206f36",
+        "amount": "10292988072893064894",
+        "bondingFees": "6263071867721186190",
+        "gradFees": "3978827890822032079"
+      }
+    },
+    {
+      "step": "X: claimCreator",
+      "contract": "MwzBarkLauncher",
+      "event": "CreatorClaimed",
+      "address": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "blockNumber": 8578772,
+      "blockTimestamp": 1791991473,
+      "transactionHash": "0x88a538ed888c837b3cdff1636166eec12f454697027eef519c0eed8a9fdc3c74",
+      "txFrom": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+      "txTo": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+      "logIndex": 0,
+      "topics": [
+        "0x616fabaea8d0ae75f05cb4b3ef0b33a2a9899c9799693afa42f95307f75c0b13",
+        "0x000000000000000000000000d2bb65ed0e5b1911b3a44f033830c90045788e7a",
+        "0x0000000000000000000000003c44cdddb6a900fa2b585dd299e03d12fa4293bc"
+      ],
+      "data": "0x00000000000000000000000000000000000000000000000005fa1dc49c1c09b6",
+      "args": {
+        "coin": "0xd2BB65eD0E5B1911b3a44F033830C90045788e7A",
+        "to": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "amount": "430689444637182390"
+      }
+    },
+    {
+      "step": "route (run 1, bands at their maximum)",
+      "contract": "MwzBarkFeeSplitter",
+      "event": "Routed",
+      "address": "0xf5059a5D33d5853360D16C683c16e67980206f36",
+      "blockNumber": 8578773,
+      "blockTimestamp": 1791991474,
+      "transactionHash": "0x90312eb9414351f17836daad4bc777b603b4a12077451a5835685bf06d025cbb",
+      "txFrom": "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
+      "txTo": "0xf5059a5D33d5853360D16C683c16e67980206f36",
+      "logIndex": 2,
+      "topics": [
+        "0x57881eb45e99d6dfb862adfc2e825ffc08734a496e850ef6106dd14bb24b2ef3",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "0x0b0379b1bd2f36eb5ff70ee06bad97bb19d51c386f28c47ac7a61d5443be48b3",
+        "0x000000000000000000000000976ea74026e726554db657fa54763abd0c3a0aa9"
+      ],
+      "data": "0x0000000000000000000000000000000000000000000000008ed80a1e221fa6be00000000000000000000000000000000000000000000000056eae6ae36437b8e0000000000000000000000000000000000000000000000003737a2e2cedd2acf00000000000000000000000000000000000000000000000009c739f3994dfde600000000000000000000000000000000000000000000000016d0dc8dbb0b506f000000000000000000000000000000000000000000000000105178048eab7d6700000000000000000000000000000000000000000000000001c6d4eb69aa02140000000000000000000000000000000000000000000000000828bc024755beb300000000000000000000000000000000000000000000000053feeaaa8e1b1a3b",
+      "args": {
+        "runId": "1",
+        "accrualRoot": "0x0b0379b1bd2f36eb5ff70ee06bad97bb19d51c386f28c47ac7a61d5443be48b3",
+        "caller": "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
+        "run": [
+          "10292988072893064894",
+          "6263071867721186190",
+          "3978827890822032079",
+          "704595585118633446",
+          "1644056365276811375",
+          "1175852938689215847",
+          "128023746981790228",
+          "587926469344607923",
+          "6052532967482006075"
+        ]
+      }
+    }
+  ]
+}

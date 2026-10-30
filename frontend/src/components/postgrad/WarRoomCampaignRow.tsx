@@ -10,7 +10,12 @@ import { setSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import { getWarRoomCampaignMetrics } from "@/features/postgrad/warRoomMetrics";
 import { isSolanaAddress } from "@/lib/address";
-import { getChainLabel, ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
+import { DOGEOS_TESTNET_CHAIN_ID, getChainLabel, isDogeosChainId, ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
+import { DOGEOS_DEX_LABEL } from "@/lib/dogeosPresentation.mjs";
+import { DOGEOS_TRADE_UNAVAILABLE, isDogeosBarkswapReady } from "@/features/launchpad/dogeosBarkswapAdapter";
+import { Gen8TradePanel } from "@/components/evm/Gen8TradePanel";
+import { useGen8Coin } from "@/hooks/useGen8Coin";
+import { useWallet } from "@/contexts/WalletContext";
 
 function shortenAddress(value?: string | null) {
   const input = String(value ?? "").trim();
@@ -87,6 +92,43 @@ function DraftTextBlock({ label, value }: { label: string; value: string }) {
   );
 }
 
+/** Where a DogeOS coin trades, for a draft or a coin whose gen-8 state is not known yet. */
+export const DOGEOS_LAUNCHES_ON = `Launches on ${DOGEOS_DEX_LABEL}`;
+
+/**
+ * The War Room trade card of a DogeOS coin (barkswap plan t22): the gen-8 trade panel on the Barkswap venue, the same
+ * panel as the coin's token page, never the Robinhood V3 or the BNB curve panel. Until the coin's gen-8 state is known
+ * (not launched yet, or still loading) it says where the coin launches; without the app's Barkswap config it fails
+ * closed.
+ */
+function DogeosWarRoomTradeCard({ campaign }: { campaign: CampaignInfo }) {
+  const wallet = useWallet();
+  const ready = isDogeosBarkswapReady();
+  const coin = String(campaign.token || campaign.campaign || "");
+  const gen8 = useGen8Coin(ready ? DOGEOS_TESTNET_CHAIN_ID : null, coin, wallet.account ? String(wallet.account) : null);
+  if (!ready) {
+    return (
+      <div className={`${card} p-3.5`} data-testid="war-room-dogeos-trade-unavailable">
+        <span className={cardTitle}>Trade</span>
+        <p className="m-0 mt-1.5 text-sm text-mw-muted">{DOGEOS_TRADE_UNAVAILABLE}</p>
+      </div>
+    );
+  }
+  if (!gen8.state) {
+    return (
+      <div className={`${card} p-3.5`} data-testid="war-room-dogeos-launches-on">
+        <span className={cardTitle}>Trade</span>
+        <p className="m-0 mt-1.5 text-sm text-mw-muted">{DOGEOS_LAUNCHES_ON}. It trades in DOGE here and on its token page once it is live.</p>
+      </div>
+    );
+  }
+  return (
+    <div className={`${card} p-3.5`} data-testid="war-room-dogeos-trade">
+      <Gen8TradePanel chainId={DOGEOS_TESTNET_CHAIN_ID} state={gen8.state} symbol={String(campaign.symbol || "").replace(/^\$/, "")} onTraded={() => gen8.refresh()} />
+    </div>
+  );
+}
+
 function DetailLine({ label, value, mono = true }: { label: string; value: string; mono?: boolean }) {
   return (
     <div className="flex items-center justify-between gap-3 text-sm">
@@ -126,9 +168,11 @@ export function WarRoomCampaignRow({
   const inferredChainId = Number(rich.chainId);
   const rowChainId = isSolanaAddress(campaign.campaign)
     ? 101
-    : inferredChainId === 56 || inferredChainId === 97 || inferredChainId === ROBINHOOD_CHAIN_ID || inferredChainId === ROBINHOOD_TESTNET_CHAIN_ID
+    : inferredChainId === 56 || inferredChainId === 97 || inferredChainId === ROBINHOOD_CHAIN_ID || inferredChainId === ROBINHOOD_TESTNET_CHAIN_ID || inferredChainId === DOGEOS_TESTNET_CHAIN_ID
       ? inferredChainId
       : 56;
+  // A DogeOS row keeps its own chain but is no Robinhood row (gen-8 Barkswap, B8): it gets the gen-8 Bark trade card.
+  const isDogeosRow = isDogeosChainId(rowChainId);
   const isRobinhoodRow = rowChainId === ROBINHOOD_CHAIN_ID || rowChainId === ROBINHOOD_TESTNET_CHAIN_ID;
   const tokenRoute = tokenDetailsPath(
     { tokenAddress: campaign.token, campaignAddress: campaign.campaign, chainId: rowChainId },
@@ -148,7 +192,7 @@ export function WarRoomCampaignRow({
     metrics.status === "graduated" ? "success" : metrics.status === "bonding" ? "hot" : isScheduledDraft ? "sponsored" : "default";
   const chartSourceLabel =
     metrics.status === "graduated"
-      ? isRobinhoodRow ? "ROBINHOOD V3" : "TOPAZ"
+      ? isDogeosRow ? DOGEOS_DEX_LABEL.toUpperCase() : isRobinhoodRow ? "ROBINHOOD V3" : "TOPAZ"
       : metrics.status === "bonding"
         ? "BONDING"
         : "CHART";
@@ -172,6 +216,7 @@ export function WarRoomCampaignRow({
       rowChainId === 97 ||
       rowChainId === ROBINHOOD_CHAIN_ID ||
       rowChainId === ROBINHOOD_TESTNET_CHAIN_ID ||
+      rowChainId === DOGEOS_TESTNET_CHAIN_ID ||
       rowChainId === 101
     ) {
       setSelectedFeedChainId(rowChainId);
@@ -273,6 +318,11 @@ export function WarRoomCampaignRow({
               <div className="flex flex-wrap items-center gap-2">
                 <h3 className={`${cardTitle} m-0`}>{campaign.name}</h3>
                 <span className="inline-flex h-6 items-center rounded-full border border-mw-edge px-2.5 text-xs font-semibold text-mw-muted">Not launched yet</span>
+                {isDogeosRow ? (
+                  <span className="inline-flex h-6 items-center rounded-full border border-mw-edge px-2.5 text-xs font-semibold text-mw-muted" data-testid="war-room-dogeos-draft-venue">
+                    {DOGEOS_LAUNCHES_ON}
+                  </span>
+                ) : null}
                 <span className="inline-flex h-6 items-center rounded-full border border-[#7A3A0C] bg-[#2A1609] px-2.5 text-xs font-semibold text-mw-accent-soft">{draftStatus}</span>
               </div>
               <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
@@ -376,7 +426,10 @@ export function WarRoomCampaignRow({
             </div>
 
             <div className="min-w-0">
-              {isRobinhoodRow && metrics.status === "graduated" ? (
+              {isDogeosRow ? (
+                // Neither the Robinhood V3 panel nor the BNB curve panel: DogeOS trades on Barkswap (gen-8).
+                <DogeosWarRoomTradeCard campaign={campaign} />
+              ) : isRobinhoodRow && metrics.status === "graduated" ? (
                 <RobinhoodWarRoomTradePanel campaign={campaign} />
               ) : isRobinhoodRow ? (
                 // WarRoomTradePanel trades on BNB only: for a Robinhood coin it showed "Connect BNB wallet",

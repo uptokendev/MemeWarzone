@@ -7,7 +7,7 @@ import { FEE_CHOICE_NAMES, Gen6CreateOptionError, hasGen6CreateFields, parseGen6
  * `persisted: false`, so nothing that works today starts failing before the migration lands.
  */
 
-export const EVM_LAUNCH_OPTION_CHAIN_IDS = new Set([56, 97, 4663, 46630, 31337]);
+export const EVM_LAUNCH_OPTION_CHAIN_IDS = new Set([56, 97, 4663, 46630, 31337, 6281971]);
 
 function missingRelation(error) {
   return error?.code === "42P01" || error?.code === "42703";

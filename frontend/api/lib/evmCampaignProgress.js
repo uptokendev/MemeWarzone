@@ -1,14 +1,16 @@
 import { ethers } from "ethers";
-import { gen8Progress } from "../../shared/evmGen8.mjs";
-import { gen8ConfigFor } from "./evmGen8Config.js";
+import { GEN8_VENUE_BARKSWAP, gen8Progress, gen8VenueFor } from "../../shared/evmGen8.mjs";
+import { barkProgress } from "../../shared/evmGen8Bark.mjs";
+import { gen8ConfigFor, gen8V4ConfigFor } from "./evmGen8Config.js";
+import { DOGEOS_TESTNET_CHAIN_ID } from "./chainNative.js";
 import { getRpcUrl } from "./getServerReadProvider.js";
 
 /**
- * BNB / Robinhood bonding progress for the campaign list, exactly as Token Details computes it
+ * BNB / Robinhood / DogeOS bonding progress for the campaign list, exactly as Token Details computes it
  * (src/pages/TokenDetails.tsx curveProgress): the larger of tokens sold / curve supply and the
  * campaign's native balance / graduationNativeTarget() -- each campaign's own USD target through the
- * graduation oracle. Robinhood's graduationTarget is USD, so like Token Details it is not read as a
- * native target there. Replaces the fixed 50 BNB default. Batched per page, cached briefly.
+ * graduation oracle. Robinhood's and DogeOS's graduationTarget is USD, so like Token Details it is not
+ * read as a native target there. Replaces the fixed 50 BNB default. Batched per page, cached briefly.
  */
 const CACHE_MS = 15_000;
 const cache = new Map(); // `${chainId}:${address}` -> { at, pct }
@@ -19,7 +21,9 @@ const CAMPAIGN_ABI = [
   "function graduationTarget() view returns (uint256)",
 ];
 
-function rpcUrl(chainId) {
+// Exported for tests (dogeosApiIdentity.test.mjs); the module itself only uses it internally. For 6281971 getRpcUrl
+// reads the DogeOS env, then its public RPC, never a BSC or Robinhood env.
+export function rpcUrl(chainId) {
   return getRpcUrl(chainId);
 }
 
@@ -41,11 +45,13 @@ async function progressFor(chainId, address) {
   if (!provider) return null;
   const campaign = new ethers.Contract(address, CAMPAIGN_ABI, provider);
   const robinhood = chainId === 4663 || chainId === 46630;
+  // DogeOS gen-7 graduationTarget is USD like Robinhood's: never read it as a native target.
+  const usdTarget = robinhood || chainId === DOGEOS_TESTNET_CHAIN_ID;
   const [sold, curveSupply, balance, nativeTarget] = await Promise.all([
     campaign.sold().catch(() => 0n),
     campaign.curveSupply().catch(() => 0n),
     provider.getBalance(address).catch(() => 0n),
-    robinhood ? Promise.resolve(0n) : campaign.graduationNativeTarget().catch(() => campaign.graduationTarget().catch(() => 0n)),
+    usdTarget ? Promise.resolve(0n) : campaign.graduationNativeTarget().catch(() => campaign.graduationTarget().catch(() => 0n)),
   ]);
   if (curveSupply <= 0n && nativeTarget <= 0n) return null;
   return Math.max(0, Math.min(100, Math.max(pctOf(sold, curveSupply), pctOf(balance, nativeTarget))));
@@ -56,34 +62,43 @@ const LENS_PROGRESS_ABI = [
   "function progress(bytes32 id) view returns (tuple(bool graduated, bool postPhase, uint40 graduatedAt, uint160 sqrtPriceX96, uint256 coinsSoldFromA, uint256 coinsInA, uint256 nativeInA, uint256 nativeTargetA))",
 ];
 
+const BARK_LENS_PROGRESS_ABI = [
+  // MwzBarkLaunchLens (DogeOS, Barkswap venue): keyed by the coin address, same Progress struct.
+  "function progress(address coin) view returns (tuple(bool graduated, bool postPhase, uint40 graduatedAt, uint160 sqrtPriceX96, uint256 coinsSoldFromA, uint256 coinsInA, uint256 nativeInA, uint256 nativeTargetA))",
+];
+
 /**
  * Generation 8 progress (design 6.4: coins sold from position A / A's coins, exact from the pool price). From the
  * indexer's evm_gen8_pools row when the item carries it (no RPC); otherwise MwzLaunchLens.progress(poolId) when
  * EVM_GEN8_LENS_<id> is set; otherwise null (never the 50 BNB fallback). Returns undefined when the RPC read failed.
+ * Barkswap venue (DogeOS): the row's price in Barkswap orientation (barkProgress) and MwzBarkLaunchLens.progress(coin).
  */
 export async function gen8ItemProgress(item, { readLens = null, env = process.env } = {}) {
   const g = item?.gen8;
   if (!g) return undefined;
   if (item.isDexTrading || g.phase === "graduated") return 100;
+  const bark = gen8VenueFor(item.chainId) === GEN8_VENUE_BARKSWAP;
   const p = g.pool;
   if (p && p.liqA != null && p.tickStart != null && p.tickGrad != null) {
     if (p.sqrtPriceX96 == null) return 0; // launched, no swap yet (a launch without a first buy)
     try {
-      return gen8Progress({ liqA: p.liqA, tickStart: p.tickStart, tickGrad: p.tickGrad, sqrtPriceX96: p.sqrtPriceX96 }).pct;
+      return (bark ? barkProgress : gen8Progress)({ liqA: p.liqA, tickStart: p.tickStart, tickGrad: p.tickGrad, sqrtPriceX96: p.sqrtPriceX96 }).pct;
     } catch {
       return null;
     }
   }
-  const cfg = gen8ConfigFor(item.chainId, env);
+  const cfg = bark ? gen8ConfigFor(item.chainId, env) : gen8V4ConfigFor(item.chainId, env);
   if (!cfg?.lens) return null;
-  const read = readLens || (async (chainId, lens, poolId) => {
+  const abi = bark ? BARK_LENS_PROGRESS_ABI : LENS_PROGRESS_ABI;
+  const read = readLens || (async (chainId, lens, key) => {
     const provider = providerFor(Number(chainId));
     if (!provider) return null;
-    const c = new ethers.Contract(lens, LENS_PROGRESS_ABI, provider);
-    return c.progress(poolId);
+    const c = new ethers.Contract(lens, abi, provider);
+    return c.progress(key);
   });
   try {
-    const r = await read(item.chainId, cfg.lens, g.poolId);
+    // V4 lens: keyed by the pool id; Bark lens: keyed by the coin (a gen-8 coin's campaign address is its token)
+    const r = await read(item.chainId, cfg.lens, bark ? item.campaignAddress : g.poolId);
     if (!r) return null;
     // F1: complete while the price is at or past the graduation price (postPhase), not because of the latch alone; a
     // latched coin back inside range A shows its progress from the price, as the lens computes it.
@@ -98,7 +113,7 @@ export async function gen8ItemProgress(item, { readLens = null, env = process.en
   }
 }
 
-/** Sets progressPct on BNB / Robinhood items from their own contracts (never throws). */
+/** Sets progressPct on BNB / Robinhood / DogeOS items from their own contracts (never throws). */
 export async function withEvmBondingProgress(items) {
   const now = Date.now();
   // Generation 8 coins have no campaign contract (sold() / curveSupply() do not exist on the token).
@@ -108,7 +123,7 @@ export async function withEvmBondingProgress(items) {
     if (pct === undefined) return; // RPC failed: keep whatever the row had
     item.progressPct = pct;
   }));
-  const evm = items.filter((item) => !item?.gen8 && [56, 97, 4663, 46630].includes(Number(item.chainId)) && !item.isDexTrading && rpcUrl(Number(item.chainId)));
+  const evm = items.filter((item) => !item?.gen8 && [56, 97, 4663, 46630, 6281971].includes(Number(item.chainId)) && !item.isDexTrading && rpcUrl(Number(item.chainId)));
   await Promise.all(evm.map(async (item) => {
     const key = `${item.chainId}:${String(item.campaignAddress).toLowerCase()}`;
     let entry = cache.get(key);

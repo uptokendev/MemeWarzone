@@ -330,7 +330,7 @@ test("provider facets and search text expose provider, category and tags", () =>
 });
 
 test("the native launch default exists for BNB and Robinhood alike, never for Solana, and takes the native create path", () => {
-  assert.deepEqual([...EVM_NATIVE_LAUNCH_CHAIN_IDS].sort((a, b) => a - b), [56, 97, 4663, 46630]);
+  assert.deepEqual([...EVM_NATIVE_LAUNCH_CHAIN_IDS].sort((a, b) => a - b), [56, 97, 4663, 46630, 6281971]);
   const eth = evmNativeLaunchQuote(4663);
   assert.equal(eth.id, "native:4663");
   assert.equal(eth.symbol, "ETH");

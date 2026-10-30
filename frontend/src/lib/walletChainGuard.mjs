@@ -3,12 +3,15 @@
 // that has no contract on the wallet's chain, and any value it carried (a first buy, a buy) would be lost.
 // Both reads go through the wallet's own provider, i.e. the chain the transaction will actually land on.
 
+import { DOGEOS_CHAIN_LABEL, DOGEOS_TESTNET_CHAIN_ID } from "./dogeosPresentation.mjs";
+
 const CHAIN_LABELS = {
   1: "Ethereum",
   56: "BNB Chain",
   97: "BNB testnet",
   4663: "Robinhood Chain",
   46630: "Robinhood testnet",
+  [DOGEOS_TESTNET_CHAIN_ID]: DOGEOS_CHAIN_LABEL,
 };
 
 export function chainLabel(chainId) {

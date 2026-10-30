@@ -20,7 +20,7 @@ import { gen8IndexedCampaignState, readGen8CampaignState, readGen8IndexedPool, r
  * trade-triggered refetch reads the lens again. The 10 s cache is unchanged for every other generation.
  */
 
-const EVM_CHAIN_IDS = new Set([56, 97, 4663, 46630, 31337]);
+const EVM_CHAIN_IDS = new Set([56, 97, 4663, 46630, 31337, 6281971]);
 const GEN8_CAMPAIGN_STATE_CACHE_MS = 60_000;
 const cache = new Map();
 const MAX_CACHE_ENTRIES = 2000;
@@ -71,7 +71,7 @@ export async function evmCampaignStateHandler(req, res, deps = {}) {
   const chainId = Number(q.chainId);
   const campaign = String(q.campaign || q.campaignAddress || "").trim();
   const wallet = String(q.wallet || "").trim();
-  if (!EVM_CHAIN_IDS.has(chainId)) return json(res, 400, { error: "chainId must be an EVM launch chain (56, 97, 4663, 46630)." });
+  if (!EVM_CHAIN_IDS.has(chainId)) return json(res, 400, { error: "chainId must be an EVM launch chain (56, 97, 4663, 46630, 6281971)." });
   if (!ethers.isAddress(campaign)) return json(res, 400, { error: "Invalid campaign address." });
   if (wallet && !ethers.isAddress(wallet)) return json(res, 400, { error: "Invalid wallet address." });
 
@@ -105,9 +105,10 @@ export async function evmCampaignStateHandler(req, res, deps = {}) {
   try {
     const provider = await getProvider(chainId);
     if (!provider) return json(res, 503, { error: `No RPC is configured for chain ${chainId}.`, code: "EVM_RPC_NOT_CONFIGURED" });
-    // Generation 8 (only where EVM_GEN8_LAUNCHER_<id> / EVM_GEN8_HOOK_<id> are set): the address is the coin's
-    // token and its state lives in the hook's pool, not in a campaign contract. One hook read decides; anything
-    // else falls through to the generation 5/6/7 reader unchanged.
+    // Generation 8 (only where EVM_GEN8_LAUNCHER_<id> and EVM_GEN8_HOOK_<id>, or on Barkswap EVM_GEN8_PLUGIN_<id>, are
+    // set): the address is the coin's token and its state lives in its pool, not in a campaign contract. One read
+    // decides (the hook's pools(id) on V4, the Bark launcher's launches(coin) on Barkswap, plan t21; the readers in
+    // lib/evmGen8CampaignState.js branch on cfg.venue); anything else falls through to the generation 5/6/7 reader.
     const gen8Cfg = (deps.gen8Config || gen8ConfigFor)(chainId);
     let state = null;
     let gen8Served = false;

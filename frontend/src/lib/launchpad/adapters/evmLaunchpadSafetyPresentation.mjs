@@ -1,3 +1,10 @@
+import {
+  DOGEOS_CHAIN_LABEL,
+  DOGEOS_DEX_LABEL,
+  DOGEOS_NATIVE_SYMBOL,
+  isDogeosTestnetChain,
+} from "../../dogeosPresentation.mjs";
+
 const BNB_CHAIN_IDS = new Set([56, 97]);
 const ROBINHOOD_CHAIN_IDS = new Set([4663, 46630]);
 
@@ -62,6 +69,26 @@ export function getEvmLaunchpadPresentation(chainId) {
     };
   }
 
+  if (isDogeosTestnetChain(chainId)) {
+    return {
+      chainLabel: DOGEOS_CHAIN_LABEL,
+      nativeSymbol: DOGEOS_NATIVE_SYMBOL,
+      walletLabel: "EVM wallet",
+      routeReadyTitle: "DogeOS launch route ready",
+      routeReadyAction: "DogeOS Live Route",
+      routeReadyDescription:
+        "DogeOS launch services are configured for this environment. Your campaign can use the configured MemeWarzone launch route.",
+      unavailableTitle: "DogeOS launch services unavailable",
+      unavailableDescription: "DogeOS launch services are not configured for this environment.",
+      graduationLabel: `${DOGEOS_DEX_LABEL} graduation`,
+      graduationReadyDetail: "DogeOS graduation services are configured for this environment.",
+      graduationUnavailableDetail: "DogeOS graduation services are not configured for this environment.",
+      isBnb: false,
+      isRobinhood: false,
+      isDogeos: true,
+    };
+  }
+
   throw new Error(`Unsupported EVM launchpad chain ${chainId}`);
 }
 
@@ -120,19 +147,21 @@ function walletNetworkDetail(params, presentation, wrongWalletNetwork) {
   if (wrongWalletNetwork) {
     return `Your wallet is connected to chain ${params.walletChainId}. Switch to ${presentation.chainLabel} (chain ${params.chainId}) to continue.`;
   }
+  // DogeOS reads like Robinhood here (any EVM wallet, gas in its own coin), never like BNB.
+  const evmWalletCopy = presentation.isRobinhood || presentation.isDogeos === true;
   if (params.hasAccount) {
-    return presentation.isRobinhood
+    return evmWalletCopy
       ? `Wallet connected to ${presentation.chainLabel} (chain ${params.chainId}). Gas is paid in ${presentation.nativeSymbol}.`
       : `Wallet connected to ${presentation.chainLabel} (chain ${params.chainId}).`;
   }
-  return presentation.isRobinhood
+  return evmWalletCopy
     ? `Connect an EVM wallet on ${presentation.chainLabel} (chain ${params.chainId}). Gas is paid in ${presentation.nativeSymbol}.`
     : `Connect a BNB-compatible wallet on ${presentation.chainLabel} (chain ${params.chainId}).`;
 }
 
 function walletConnectionDetail(params, presentation) {
   if (params.hasSigner && params.hasAccount) return "Wallet ready.";
-  return presentation.isRobinhood
+  return presentation.isRobinhood || presentation.isDogeos === true
     ? "Connect an EVM wallet to continue."
     : "Connect a BNB-compatible wallet to continue.";
 }

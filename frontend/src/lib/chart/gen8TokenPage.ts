@@ -158,6 +158,34 @@ export function isGen8DexSource(source: unknown): boolean {
 }
 
 /** Protocol wallets the transfer scan must not count. The coin itself is excluded by the scanner. */
+/** The parts of the API's gen-8 coin state the holder census reads (GET /api/evm/campaign-state). */
+export type Gen8HolderState = {
+  gen8?: { venue?: string | null; pool?: string | null; plugin?: string | null; launcher?: string | null } | null;
+  creatorClaims?: {
+    vault?: { address?: string | null } | null;
+    reserve?: { address?: string | null } | null;
+    escrow?: { address?: string | null } | null;
+  } | null;
+} | null;
+
+/** Barkswap's community vault (one for every pool, docs/dogeos/barkswap-facts.md): the community fee of sells lands there in coins. */
+const BARKSWAP_COMMUNITY_VAULT = "0xA305F8BDf7EaA3233b3918A39d1e0867c6116c83";
+
+/**
+ * The holder exclusions only a Barkswap coin has (DogeOS, barkswap plan t22): the coin's Algebra pool (it holds
+ * positions A and B, so a Transfer census would rank it first), the plugin and Barkswap's community vault. With the
+ * launcher, reserve lock, escrow and choice vault (which the page already excludes from the state and config) this is
+ * the indexer's exclusion list for 6281971 (realtime-indexer evmGen8Holders.ts). V4 coins: nothing (their pool coins
+ * sit in the PoolManager, which the caller excludes).
+ */
+export function gen8VenueHolderAddresses(state: Gen8HolderState): string[] {
+  if (state?.gen8?.venue !== "barkswap") return [];
+  const claims = state.creatorClaims;
+  return [state.gen8.pool, state.gen8.plugin, BARKSWAP_COMMUNITY_VAULT, state.gen8.launcher, claims?.vault?.address, claims?.reserve?.address, claims?.escrow?.address]
+    .map((value) => String(value ?? "").trim())
+    .filter((value) => /^0x[0-9a-fA-F]{40}$/.test(value));
+}
+
 export function gen8HolderExcludeList(input: {
   chainId?: number | null;
   addresses?: Array<string | null | undefined>;

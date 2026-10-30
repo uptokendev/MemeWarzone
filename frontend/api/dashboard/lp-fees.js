@@ -47,6 +47,10 @@ function isRobinhoodChain(chainId) {
   return Number(chainId) === 4663 || Number(chainId) === 46630;
 }
 
+function isDogeosChain(chainId) {
+  return Number(chainId) === 6281971;
+}
+
 function isAddress(value) {
   return ethers.isAddress(String(value || "").trim());
 }
@@ -135,7 +139,7 @@ export async function authorize(req, res) {
 
   const q = getQuery(req);
   const chainId = Number(q.chainId ?? 97);
-  if (chainId === 97 || chainId === 46630) return { mode: "testnet-open" };
+  if (chainId === 97 || chainId === 46630 || chainId === 6281971) return { mode: "testnet-open" };
 
   const creator = toAddr(q.creator);
   if (creator) return { mode: "creator-self", creator };
@@ -206,6 +210,9 @@ async function loadGraduatedRows(chainId, limit) {
 }
 
 function resolveLockerAddress(chainId) {
+  // DogeOS launches on gen-8 only (barkswap spec section 4, Removed B8): no gen-7 LaunchFactory, so no
+  // LP locker to read, and never BNB's unsuffixed locker fallback.
+  if (isDogeosChain(chainId)) return null;
   const per = String(
     process.env[`LP_LOCKER_ADDRESS_${chainId}`] ||
       process.env[`VITE_LP_LOCKER_ADDRESS_${chainId}`] ||

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { cp } from "@/components/token/coinPageStyles";
 import { useWallet } from "@/contexts/WalletContext";
 import { getNativeSymbol, type SupportedChainId } from "@/lib/chainConfig";
+import { getReadProvider } from "@/lib/readProvider";
 import { evmFeeChoiceLine } from "@/lib/evmGen6.mjs";
 import {
   acceptGen8Creator,
@@ -14,6 +15,8 @@ import {
   claimGen8VaultCreatorFees,
   gen8AppConfig,
   gen8ErrorMessage,
+  gen8PoolVenueLabel,
+  isGen8BarkAppConfig,
   proposeGen8Creator,
   pullGen8VaultFees,
   releaseGen8Reserve,
@@ -61,7 +64,7 @@ export function Gen8CoinStatus({ chainId, state, explorerBase, nativeUsd = null 
           </div>
         </div>
       ) : (
-        <p className="text-xs text-emerald-300">Graduated. It keeps trading in the same Uniswap pool.</p>
+        <p className="text-xs text-emerald-300">Graduated. It keeps trading in the same {gen8PoolVenueLabel(chainId)} pool.</p>
       )}
       <div className="flex items-center justify-between gap-2">
         <span className="text-mw-muted">Market cap</span>
@@ -140,7 +143,16 @@ export function Gen8EscrowLock({
         if (Number(switched?.chainId) !== Number(chainId) || !switched?.signer) throw new Error("The wallet did not switch chains.");
         signer = switched.signer;
       }
-      await claimGen8Escrow({ signer, chainId, cfg, token: state.token });
+      // Barkswap: the claim is estimated and its receipt polled on the app's read provider (V4 ignores it).
+      let readProvider = null;
+      if (isGen8BarkAppConfig(cfg)) {
+        try {
+          readProvider = getReadProvider(chainId as SupportedChainId);
+        } catch {
+          readProvider = null;
+        }
+      }
+      await claimGen8Escrow({ signer, chainId, cfg, token: state.token, readProvider });
       toast.success("Unlocked tokens claimed.");
       onDone?.();
     } catch (error) {
@@ -177,6 +189,9 @@ type Action = { key: string; title: string; detail: string; amount?: string; dis
  * vault (holders / split / buyback), both claimable to any address; the two-step creator transfer; the 2% reserve
  * released after graduation; the creator's escrowed app buys. Shown to the creator, a proposed new creator, and a
  * wallet with escrowed coins.
+ *
+ * Barkswap (DogeOS): the same actions keyed by the coin address; the creator ledger and the keep-coin transfer live in
+ * MwzBarkLauncher (the API's creatorClaims.claimContract), the rest in the Bark vault / reserve lock / escrow.
  */
 export function Gen8CreatorPanel({ chainId, state, symbol = "tokens", onDone }: { chainId: number; state: Gen8CoinState; symbol?: string; onDone?: () => void }) {
   const wallet = useWallet();
@@ -189,7 +204,9 @@ export function Gen8CreatorPanel({ chainId, state, symbol = "tokens", onDone }: 
   const [busy, setBusy] = useState<string | null>(null);
   if (!cfg || !account || !claims) return null;
 
-  const poolId = state.gen8.poolId;
+  const bark = isGen8BarkAppConfig(cfg);
+  // Bark contracts are keyed by the coin; the V4 ones by the pool id.
+  const poolId = bark ? state.token : state.gen8.poolId;
   const vaultCoin = Boolean(claims.vault && same(claims.hookCreator, claims.vault.address));
   const isHookCreator = same(account, claims.hookCreator);
   const isHumanCreator = same(account, state.creator);
@@ -199,6 +216,15 @@ export function Gen8CreatorPanel({ chainId, state, symbol = "tokens", onDone }: 
   const escrowTotal = claims.escrow?.totalTokens ? BigInt(claims.escrow.totalTokens) : 0n;
   if (!isHookCreator && !isHumanCreator && !canAccept && escrowTotal === 0n) return null;
 
+  // Barkswap: every creator send is estimated and its receipt polled on the app's read provider (V4 ignores it).
+  const readProvider = (() => {
+    if (!bark) return null;
+    try {
+      return getReadProvider(chainId as SupportedChainId);
+    } catch {
+      return null;
+    }
+  })();
   const payTo = to.trim() || account;
   const toValid = ethers.isAddress(payTo);
   const signerFor = async () => {
@@ -233,7 +259,7 @@ export function Gen8CreatorPanel({ chainId, state, symbol = "tokens", onDone }: 
       amount: `${fmtNative(owed)} ${native}`,
       disabled: owed <= 0n || !toValid,
       button: "Claim",
-      run: () => run("hook", (signer) => claimGen8HookCreatorFees({ signer, chainId, cfg, poolId, to: payTo }), "Fees claimed."),
+      run: () => run("hook", (signer) => claimGen8HookCreatorFees({ signer, chainId, cfg, poolId, to: payTo, readProvider }), "Fees claimed."),
     });
   }
   if (vaultCoin && isHumanCreator) {
@@ -244,7 +270,7 @@ export function Gen8CreatorPanel({ chainId, state, symbol = "tokens", onDone }: 
         detail: "Moves them into the fee vault, split by your fee choice.",
         amount: `${fmtNative(owed)} ${native}`,
         button: "Move",
-        run: () => run("pull", (signer) => pullGen8VaultFees({ signer, chainId, cfg, poolId }), "Fees moved into the vault."),
+        run: () => run("pull", (signer) => pullGen8VaultFees({ signer, chainId, cfg, poolId, readProvider }), "Fees moved into the vault."),
       });
     }
     const vaultClaimable = claims.vault?.creatorClaimableWei ? BigInt(claims.vault.creatorClaimableWei) : 0n;
@@ -256,7 +282,7 @@ export function Gen8CreatorPanel({ chainId, state, symbol = "tokens", onDone }: 
         amount: `${fmtNative(vaultClaimable)} ${native}`,
         disabled: vaultClaimable <= 0n || !toValid,
         button: "Claim",
-        run: () => run("vault", (signer) => claimGen8VaultCreatorFees({ signer, chainId, cfg, poolId, to: payTo }), "Fees claimed."),
+        run: () => run("vault", (signer) => claimGen8VaultCreatorFees({ signer, chainId, cfg, poolId, to: payTo, readProvider }), "Fees claimed."),
       });
     }
   }
@@ -279,13 +305,14 @@ export function Gen8CreatorPanel({ chainId, state, symbol = "tokens", onDone }: 
       amount: `${fmtTokens(claims.reserve.amount)} tokens`,
       disabled: !releasable,
       button: "Release",
-      run: () => run("reserve", (signer) => releaseGen8Reserve({ signer, chainId, cfg, poolId }), "Reserve released."),
+      run: () => run("reserve", (signer) => releaseGen8Reserve({ signer, chainId, cfg, poolId, readProvider }), "Reserve released."),
     });
   }
   const showEscrow = escrowTotal > 0n;
 
   // Two-step transfer: on the hook for keep coins, in the vault for holders / split / buyback coins.
-  const transferTarget = vaultCoin ? cfg.choiceVault : cfg.hook;
+  const creatorLedger = bark ? cfg.launcher : cfg.hook;
+  const transferTarget = vaultCoin ? cfg.choiceVault : creatorLedger;
   const pending = vaultCoin ? pendingVault : pendingHook;
   const canPropose = vaultCoin ? isHumanCreator : isHookCreator;
 
@@ -323,13 +350,13 @@ export function Gen8CreatorPanel({ chainId, state, symbol = "tokens", onDone }: 
               size="sm"
               variant="outline"
               disabled={Boolean(busy) || !ethers.isAddress(next.trim())}
-              onClick={() => void run("propose", (signer) => proposeGen8Creator({ signer, chainId, target: transferTarget, poolId, next: next.trim() }), "Proposed. The new wallet must accept.")}
+              onClick={() => void run("propose", (signer) => proposeGen8Creator({ signer, chainId, target: transferTarget, poolId, next: next.trim(), readProvider }), "Proposed. The new wallet must accept.")}
             >
               {busy === "propose" ? "…" : "Propose"}
             </Button>
           </div>
           {pending ? (
-            <Button type="button" size="sm" variant="ghost" className={cp.smallButton} disabled={Boolean(busy)} onClick={() => void run("cancel", (signer) => proposeGen8Creator({ signer, chainId, target: transferTarget, poolId, next: null }), "Proposal cancelled.")}>
+            <Button type="button" size="sm" variant="ghost" className={cp.smallButton} disabled={Boolean(busy)} onClick={() => void run("cancel", (signer) => proposeGen8Creator({ signer, chainId, target: transferTarget, poolId, next: null, readProvider }), "Proposal cancelled.")}>
               Cancel the proposal
             </Button>
           ) : null}
@@ -342,7 +369,7 @@ export function Gen8CreatorPanel({ chainId, state, symbol = "tokens", onDone }: 
             type="button"
             size="sm"
             disabled={Boolean(busy)}
-            onClick={() => void run("accept", (signer) => acceptGen8Creator({ signer, chainId, target: pendingVault && same(account, pendingVault) ? cfg.choiceVault : cfg.hook, poolId }), "You are now the coin's creator.")}
+            onClick={() => void run("accept", (signer) => acceptGen8Creator({ signer, chainId, target: pendingVault && same(account, pendingVault) ? cfg.choiceVault : creatorLedger, poolId, readProvider }), "You are now the coin's creator.")}
           >
             {busy === "accept" ? "…" : "Accept"}
           </Button>

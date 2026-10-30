@@ -1,7 +1,9 @@
 import { Contract, Interface, JsonRpcProvider, Network, getAddress } from "ethers";
 import { getLogsWithRetry, isRangeLimitRpcError, withRpcRetry } from "./rpcResilience.js";
+import { DOGEOS_TESTNET_CHAIN_ID } from "./chainNative.js";
+import { DOGEOS_RPC_ENV_KEYS } from "./getServerReadProvider.js";
 
-const EVM_REWARD_CHAINS = new Set([56, 97, 4663, 46630]);
+const EVM_REWARD_CHAINS = new Set([56, 97, 4663, 46630, 6281971]);
 const REWARD_DISTRIBUTOR_INTERFACE = new Interface([
   "function claim(bytes32 batchId, uint256 amount, bytes32[] proof)",
   "function hasClaimed(bytes32 batchId, address account) view returns (bool)",
@@ -20,7 +22,9 @@ export class RewardClaimVerificationError extends Error {
 
 function rpcUrlForChain(chainId) {
   const chain = Number(chainId);
-  const perChainCandidates = chain === 4663 || chain === 46630
+  const perChainCandidates = chain === DOGEOS_TESTNET_CHAIN_ID
+    ? DOGEOS_RPC_ENV_KEYS.map((key) => process.env[key])
+    : chain === 4663 || chain === 46630
     ? [
         process.env[`ROBINHOOD_RPC_HTTP_${chain}`],
         chain === 46630 ? process.env.ROBINHOOD_TESTNET_RPC_URL : process.env.ROBINHOOD_MAINNET_RPC_URL,

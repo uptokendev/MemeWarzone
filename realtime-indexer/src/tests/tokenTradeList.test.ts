@@ -70,3 +70,28 @@ test("a configured gen-8 chain looks up the stored lowercase token, then limits 
   assert.match(halves[0], /order by block_number desc, log_index desc\s+limit \$3/);
   assert.match(halves[1], /order by block_number desc, log_index desc\s+limit \$3/);
 });
+
+test("a configured Barkswap chain (DogeOS 6281971) also unions its gen-8 dex rows", async () => {
+  const env = {
+    ...process.env,
+    EVM_GEN8_LAUNCHER_6281971: `${launcher}@1`,
+    EVM_GEN8_PLUGIN_6281971: `0x${"cd".repeat(20)}@1`,
+  };
+  delete env.EVM_GEN8_HOOK_6281971;
+  delete env.EVM_GEN8_POOL_MANAGER_6281971;
+  const coin = ethers.getAddress(`0x${"22".repeat(20)}`);
+  const pooled = recordingDb([{ one: 1 }]);
+  await queryTokenTrades(pooled.db, 6281971, coin, 20, env);
+  assert.equal(pooled.calls.length, 2);
+  assert.equal(pooled.calls[0].sql, GEN8_POOL_LOOKUP_SQL);
+  assert.deepEqual(pooled.calls[0].params, [6281971, coin.toLowerCase()]);
+  assert.equal(pooled.calls[1].sql, GEN8_TRADE_LIST_SQL);
+
+  const unset = { ...process.env };
+  delete unset.EVM_GEN8_LAUNCHER_6281971;
+  delete unset.EVM_GEN8_PLUGIN_6281971;
+  const bare = recordingDb([]);
+  await queryTokenTrades(bare.db, 6281971, coin, 20, unset);
+  assert.equal(bare.calls.length, 1);
+  assert.equal(bare.calls[0].sql, CURVE_TRADE_LIST_SQL);
+});

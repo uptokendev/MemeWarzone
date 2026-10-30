@@ -118,3 +118,44 @@ test("the API create check is launcher, hook, and PoolManager", () => {
   assert.match(onlyLauncher.message, /EVM_GEN8_HOOK_97/);
   assert.match(onlyLauncher.message, /EVM_GEN8_POOL_MANAGER_97/);
 });
+
+// Barkswap venue (DogeOS 6281971): launcher + plugin (+ lens for the app button); no hook, PoolManager, router or quoter.
+const fullDoge = {
+  VITE_EVM_GEN8_LAUNCHER_6281971: `${addr(11)}@8600000`,
+  VITE_EVM_GEN8_PLUGIN_6281971: `${addr(12)}@8600000`,
+  VITE_EVM_GEN8_LENS_6281971: addr(13),
+};
+
+test("Barkswap: launcher, plugin and lens are a ready launch; the create scope needs launcher and plugin only", () => {
+  const launch = gen8LaunchReadiness(6281971, fullDoge, { vite: true, scope: "launch" });
+  assert.equal(launch.ready, true);
+  assert.equal(launch.active, true);
+  assert.equal(launch.launcher, addr(11));
+  assert.equal(launch.message, "");
+  const gate = evmLaunchConfigured({ chainId: 6281971, env: fullDoge, legacyReady: false, legacyFactory: "" });
+  assert.equal(gate.configured, true);
+  assert.equal(gate.legacy, false);
+  const api = { EVM_GEN8_LAUNCHER_6281971: addr(11), EVM_GEN8_PLUGIN_6281971: addr(12) };
+  assert.equal(gen8LaunchReadiness(6281971, api, { vite: false, scope: "create" }).ready, true);
+  const noLens = gen8LaunchReadiness(6281971, api, { vite: false, scope: "launch" });
+  assert.deepEqual(noLens.missing.map((m) => m.env), ["EVM_GEN8_LENS_6281971"]);
+});
+
+test("Barkswap: a missing plugin is named; a Uniswap V4 setting on the chain makes it not ready", () => {
+  const { VITE_EVM_GEN8_PLUGIN_6281971: _p, ...noPlugin } = fullDoge;
+  const gap = gen8LaunchReadiness(6281971, noPlugin, { vite: true, scope: "launch" });
+  assert.equal(gap.ready, false);
+  assert.deepEqual(gap.missing.map((m) => m.env), ["VITE_EVM_GEN8_PLUGIN_6281971"]);
+  assert.match(gap.message, /^DogeOS Testnet launch contracts are incomplete\. Missing VITE_EVM_GEN8_PLUGIN_6281971\.$/);
+  const v4 = gen8LaunchReadiness(6281971, { ...fullDoge, VITE_EVM_GEN8_HOOK_6281971: addr(2) }, { vite: true, scope: "launch" });
+  assert.equal(v4.ready, false);
+  assert.match(v4.message, /Remove the Uniswap V4 settings VITE_EVM_GEN8_HOOK_6281971/);
+});
+
+test("Barkswap trade gap: the plugin only; V4 chains unchanged", async () => {
+  const { gen8TradeGap } = await import("./gen8LaunchReadiness.mjs");
+  assert.equal(gen8TradeGap(6281971, fullDoge, { vite: true }).ready, true);
+  const { VITE_EVM_GEN8_PLUGIN_6281971: _p, ...noPlugin } = fullDoge;
+  assert.deepEqual(gen8TradeGap(6281971, noPlugin, { vite: true }).missing.map((m) => m.env), ["VITE_EVM_GEN8_PLUGIN_6281971"]);
+  assert.equal(gen8TradeGap(97, full97, { vite: true }).ready, true);
+});

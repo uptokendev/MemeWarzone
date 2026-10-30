@@ -9,6 +9,7 @@ import {
   gen8PlatformGraduated,
   gen8SpotNative,
   gen8SpotWindowChanges,
+  gen8VenueHolderAddresses,
   isGen8DexSource,
   weiStringToNumber,
 } from "./gen8TokenPage.ts";
@@ -135,4 +136,48 @@ test("gen8_v4 is a pool swap and holder excludes cover protocol wallets", () => 
   );
   const bnb = gen8HolderExcludeList({ chainId: 56, addresses: [] });
   assert.ok(bnb.some((value) => value.toLowerCase() === "0x238a358808379702088667322f80ac48bad5e6c4"));
+});
+
+// DogeOS (Barkswap venue, barkswap plan t22): the coin's Algebra pool holds A + B, so a Transfer census ranks it first
+// unless it is excluded. The indexer excludes pool, launcher, plugin, reserve lock, escrow and choice vault
+// (realtime-indexer evmGen8Holders.ts for 6281971); the page excludes the same from the API's Bark state.
+const BARK_STATE = {
+  gen8: {
+    venue: "barkswap",
+    pool: "0xB9a2852ed4DCFFD2beF97A09a77Ea23A1ADd5196",
+    plugin: "0x1613beB3B2C4f22Ee086B2b38C1476A3cE7f78E8",
+    launcher: "0xf5059a5D33d5853360D16C683c16e67980206f36",
+    hook: null,
+    poolManager: null,
+    displayPair: null,
+  },
+  creatorClaims: {
+    vault: { address: "0x9E545E3C0baAB3E08CdfD552C960A1050f373042" },
+    reserve: { address: "0x84eA74d481Ee0A5332c457a4d796187F6Ba67fEB" },
+    escrow: { address: "0xa82fF9aFd8f496c3d6ac40E2a0F282E47488CFc9" },
+  },
+};
+
+test("a Barkswap coin's holder census excludes its pool, plugin and the Bark periphery", () => {
+  const extra = gen8VenueHolderAddresses(BARK_STATE);
+  const excluded = gen8HolderExcludeList({ chainId: 6281971, addresses: ["0x66C585D8e24F880E0E8a20C728424160F7559B3f", ...extra] }).map((a) => a.toLowerCase());
+  for (const address of [
+    BARK_STATE.gen8.pool,
+    BARK_STATE.gen8.plugin,
+    // Barkswap's community vault (every pool's, docs/dogeos/barkswap-facts.md): it receives the community fee in coins
+    "0xA305F8BDf7EaA3233b3918A39d1e0867c6116c83",
+    BARK_STATE.gen8.launcher,
+    BARK_STATE.creatorClaims.vault.address,
+    BARK_STATE.creatorClaims.reserve.address,
+    BARK_STATE.creatorClaims.escrow.address,
+  ]) {
+    assert.ok(excluded.includes(address.toLowerCase()), address);
+  }
+});
+
+test("a V4 coin's holder census is unchanged: the venue helper adds nothing", () => {
+  const v4 = { gen8: { venue: undefined, pool: "0xB9a2852ed4DCFFD2beF97A09a77Ea23A1ADd5196", plugin: "0x1613beB3B2C4f22Ee086B2b38C1476A3cE7f78E8", hook: "0x68C681F488Bae70DEEa2f1D375037958a0f80073" } };
+  assert.deepEqual(gen8VenueHolderAddresses(v4), []);
+  assert.deepEqual(gen8VenueHolderAddresses({ gen8: { ...v4.gen8, venue: "v4" } }), []);
+  assert.deepEqual(gen8VenueHolderAddresses(null), []);
 });

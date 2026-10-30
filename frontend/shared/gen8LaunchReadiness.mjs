@@ -15,8 +15,15 @@
  * PoolManager defaults match CANONICAL_V4_POOL_MANAGER in frontend/api/lib/evmGen8Config.js
  * (56 and 4663 only). An explicit PoolManager env that does not parse does not fall back to that default.
  * Router and quoter defaults live in evmGen8Swap.mjs (56 and 4663 only). Testnets 97 and 46630 have none.
+ *
+ * Barkswap venue (DogeOS 6281971, GEN8_CHAIN_VENUE): there is no hook, PoolManager, Universal Router or V4 quoter.
+ * scope "launch" is launcher, plugin, lens; scope "create" is launcher, plugin. Barkswap's SwapRouter, QuoterV2 and
+ * WDOGE have defaults (src/lib/barkswapSwap.mjs BARKSWAP_PERIPHERY), so they are not listed. A Uniswap V4 setting on
+ * that chain disables gen-8 there (the app's barkAppConfig: hook, PoolManager, Universal Router, V4 quoter; the API's
+ * evmGen8Config.js: hook, PoolManager), so it makes the chain not ready and is named in the message.
  */
 import { getAddress } from "ethers";
+import { GEN8_VENUE_BARKSWAP, gen8VenueFor } from "./evmGen8.mjs";
 import { gen8QuoterFor, gen8RouterFor } from "./evmGen8Swap.mjs";
 
 const ADDR = /^0x[0-9a-fA-F]{40}$/;
@@ -33,6 +40,7 @@ export function gen8ChainLabel(chainId) {
   if (id === 97) return "BNB Testnet";
   if (id === 4663) return "Robinhood";
   if (id === 46630) return "Robinhood Testnet";
+  if (id === 6281971) return "DogeOS Testnet";
   return `Chain ${id}`;
 }
 
@@ -105,6 +113,7 @@ function quoterGap(chainId, env, vite) {
  */
 export function gen8LaunchReadiness(chainId, env = {}, { vite = true, scope = "launch" } = {}) {
   const id = Number(chainId);
+  if (gen8VenueFor(id) === GEN8_VENUE_BARKSWAP) return barkLaunchReadiness(id, env, { vite, scope });
   const launcher = readAddress(env, "EVM_GEN8_LAUNCHER", id, vite);
   const missing = [];
   if (!launcher.valid) missing.push({ env: launcher.envName, label: "launcher" });
@@ -126,9 +135,43 @@ export function gen8LaunchReadiness(chainId, env = {}, { vite = true, scope = "l
   };
 }
 
-/** Hook, Universal Router (and layout), and V4 quoter. Lens is not a trade-panel hard block. */
+/** The Uniswap V4 settings set on a Barkswap chain (any of them disables gen-8 there; see the header). */
+function barkV4Settings(env, id, vite, scope) {
+  const bases = scope === "create" ? ["EVM_GEN8_HOOK", "EVM_GEN8_POOL_MANAGER"] : ["EVM_GEN8_HOOK", "EVM_GEN8_POOL_MANAGER", "EVM_GEN8_UNIVERSAL_ROUTER", "EVM_GEN8_V4_QUOTER"];
+  return bases.map((base) => readSlot(env, base, id, vite)).filter((slot) => slot.present).map((slot) => ({ env: slot.envName, label: "Uniswap V4 setting" }));
+}
+
+function barkLaunchReadiness(id, env, { vite, scope }) {
+  const launcher = readAddress(env, "EVM_GEN8_LAUNCHER", id, vite);
+  const missing = [];
+  if (!launcher.valid) missing.push({ env: launcher.envName, label: "launcher" });
+  missing.push(...missingAddress(env, "EVM_GEN8_PLUGIN", id, vite, "plugin"));
+  if (scope !== "create") missing.push(...missingAddress(env, "EVM_GEN8_LENS", id, vite, "lens"));
+  const v4 = barkV4Settings(env, id, vite, scope);
+  const ready = missing.length === 0 && v4.length === 0;
+  const parts = [];
+  if (missing.length) parts.push(`Missing ${missing.map((item) => item.env).join(", ")}.`);
+  if (v4.length) parts.push(`Remove the Uniswap V4 settings ${v4.map((item) => item.env).join(", ")} (this chain trades on Barkswap).`);
+  return {
+    active: launcher.present,
+    ready,
+    missing: [...missing, ...v4],
+    message: ready ? "" : `${gen8ChainLabel(id)} launch contracts are incomplete. ${parts.join(" ")}`,
+    launcher: launcher.valid ? getAddress(launcher.address) : null,
+  };
+}
+
+/** Hook, Universal Router (and layout), and V4 quoter. Lens is not a trade-panel hard block. Barkswap: the plugin. */
 export function gen8TradeGap(chainId, env = {}, { vite = true } = {}) {
   const id = Number(chainId);
+  if (gen8VenueFor(id) === GEN8_VENUE_BARKSWAP) {
+    const missing = [...missingAddress(env, "EVM_GEN8_PLUGIN", id, vite, "plugin"), ...barkV4Settings(env, id, vite, "launch")];
+    return {
+      ready: missing.length === 0,
+      missing,
+      message: missing.length ? `Trading for this coin is not set up on this chain yet. Missing or wrong: ${missing.map((item) => item.env).join(", ")}.` : "",
+    };
+  }
   const missing = [
     ...missingAddress(env, "EVM_GEN8_HOOK", id, vite, "hook"),
     ...routerGap(id, env, vite),

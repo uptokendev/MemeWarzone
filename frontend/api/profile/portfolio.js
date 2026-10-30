@@ -5,6 +5,8 @@ import { getServerReadProvider } from "../lib/getServerReadProvider.js";
 import { resolveBnbUsdPrice } from "../lib/bnbUsdPrice.js";
 import { resolveSolUsdPrice } from "../lib/solUsdPrice.js";
 import { resolveEthUsdPrice } from "../lib/ethUsdPrice.js";
+import { resolveDogeUsdPrice } from "../lib/dogeUsdPrice.js";
+import { isDogeosChainId } from "../lib/chainNative.js";
 import { ethers } from "ethers";
 
 const CACHE_MS = 60_000;
@@ -344,12 +346,20 @@ async function scanEvm(chainId, address, nativeUsd) {
   return { native, holdings };
 }
 
-async function nativeUsdForChain(chainId) {
+export async function nativeUsdForChain(chainId) {
   if (isSolanaChain(chainId)) return (await resolveSolUsdPrice().catch(() => null))?.price || 0;
   if (Number(chainId) === 4663 || Number(chainId) === 46630) {
     return (await resolveEthUsdPrice().catch(() => null))?.price || 0;
   }
+  if (isDogeosChainId(chainId)) return (await resolveDogeUsdPrice().catch(() => null))?.price || 0;
   return (await resolveBnbUsdPrice().catch(() => null))?.price || 0;
+}
+
+/** EVM native coin row label. DogeOS has its own branch: 6281971 is never shown as BNB. */
+export function evmNativeCoin(chainId) {
+  if (Number(chainId) === 4663 || Number(chainId) === 46630) return { ticker: "ETH", name: "Ether" };
+  if (isDogeosChainId(chainId)) return { ticker: "DOGE", name: "Dogecoin" };
+  return { ticker: "BNB", name: "BNB" };
 }
 
 async function computePortfolio(chainId, address) {
@@ -373,11 +383,11 @@ async function computePortfolio(chainId, address) {
   const held = scan.holdings.filter((h) => Number.parseFloat(h.balanceFormatted || "0") > 0);
   const platformCoinsCount = held.filter((h) => h.platform).length;
   // EVM native coin row (Solana builds its own with the SOL icon).
-  const evmSymbol = Number(chainId) === 4663 || Number(chainId) === 46630 ? "ETH" : "BNB";
+  const evmCoin = evmNativeCoin(chainId);
   const nativeRow = scan.nativeRow !== undefined
     ? scan.nativeRow
     : scan.native > 0
-      ? { ticker: evmSymbol, name: evmSymbol === "ETH" ? "Ether" : "BNB", image: null, mint: null, campaignAddress: null, kind: "native", platform: false, balanceFormatted: String(scan.native), priceUsd: nativeUsd || null, valueUsd: scan.native * (nativeUsd || 0) }
+      ? { ticker: evmCoin.ticker, name: evmCoin.name, image: null, mint: null, campaignAddress: null, kind: "native", platform: false, balanceFormatted: String(scan.native), priceUsd: nativeUsd || null, valueUsd: scan.native * (nativeUsd || 0) }
       : null;
   return {
     metrics: metrics ? { ...metrics, platformCoinsCount, otherTokensCount: held.length - platformCoinsCount } : metrics,

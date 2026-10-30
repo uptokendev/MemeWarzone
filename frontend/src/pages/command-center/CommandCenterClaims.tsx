@@ -28,6 +28,7 @@ import { useFeedSession } from "@/hooks/useFeedSession";
 import { submitSolanaAirdropClaim } from "@/lib/solanaRewardClaim";
 import { getConfiguredSolanaRewardChainId, isSolanaRewardChainId } from "@/lib/solanaRewardNetwork";
 import { signSolanaMessage } from "@/lib/solanaWallet";
+import { rewardChainLabel, rewardNativeSymbol } from "@/lib/chainPresentation";
 
 type RewardCardState = "claimable" | "pending" | "failed" | "expired" | "empty";
 
@@ -158,18 +159,6 @@ function isSolana(chainId?: number | null) {
 function isRobinhood(chainId?: number | null) {
   const id = Number(chainId || 0);
   return id === 4663 || id === 46630;
-}
-
-function rewardNativeSymbol(chainId?: number | null) {
-  if (isSolana(chainId)) return "SOL";
-  if (isRobinhood(chainId)) return "ETH";
-  return "BNB";
-}
-
-function rewardChainLabel(chainId?: number | null) {
-  if (isSolana(chainId)) return "Solana";
-  if (isRobinhood(chainId)) return "Robinhood";
-  return "BNB";
 }
 
 function formatNativeAmount(raw: string, chainId?: number | null, symbol?: string | null) {

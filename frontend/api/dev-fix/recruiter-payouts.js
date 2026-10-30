@@ -214,7 +214,7 @@ async function getBalances(recruiterId) {
               ), 0)::numeric(78,0) as pending_raw
          from public.recruiter_reward_ledger
         where recruiter_id = $1
-          and (not $2::boolean or coalesce(chain_id, 0) not in (97, 102, 46630))
+          and (not $2::boolean or coalesce(chain_id, 0) not in (97, 102, 46630, 6281971))
         group by chain, token
      ), batched as (
        select c.chain, c.token,
@@ -524,7 +524,7 @@ export async function recruiterMeClaims(req, res) {
     const lockedRows = `select id, amount_raw::text as amount_raw
          from public.recruiter_reward_ledger l
         where recruiter_id = $1 and chain = $2 and token = $3 and status = 'claimable' and claim_id is null
-          and (not $4::boolean or coalesce(chain_id, 0) not in (97, 102, 46630))
+          and (not $4::boolean or coalesce(chain_id, 0) not in (97, 102, 46630, 6281971))
           ${moderated ? `and ${recruiterLedgerNotHeldSql("l")}` : ""}
         for update`;
     await client.query("begin");
