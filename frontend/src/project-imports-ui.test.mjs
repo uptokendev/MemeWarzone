@@ -35,7 +35,7 @@ test("BNB and Solana registration stay live while Robinhood uses its own gate", 
 });
 
 test("registration is ownership-neutral and redirects pending projects into the separate claim flow", () => {
-  assert.match(importPage, /Your wallet signs the import request only\. It does not need to own the token\./);
+  assert.match(importPage, /Your wallet does not sign anything to import and does not need to own the token\./);
   assert.match(importPage, /createProjectImport/);
   assert.match(importPage, /ownershipStatus === "ownership_pending"/);
   assert.match(importPage, /params\.set\("claim", "prompt"\)/);
