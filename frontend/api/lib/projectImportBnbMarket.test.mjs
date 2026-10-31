@@ -79,8 +79,9 @@ test('wrong chain, stale block, fork change and hung RPC fail closed',async()=>{
 test('only exact verified BNB factory custody is excluded, not another wallet or token',async()=>{
  const {result}=await read({four:true,graduated:true});const raw={is_honeypot:'0',cannot_sell_all:'0',holders:[{address:pair,percent:'0.8'},{address:wallet,percent:'0.25'}]};
  const scan=custody=>classifyProjectImportSecurity({chainId:56,raw,tokenAddress:token,market:result.market,custody});
- assert.equal(scan(result.custody).details.topHolderPercent,.25);assert.equal(scan([{...result.custody[0],mint:wallet}]).status,'blocked');
- assert.equal(scan([{...result.custody[0],chainId:101}]).status,'blocked');
+ assert.equal(scan(result.custody).details.topHolderPercent,.25);const pairFlagged=c=>{const s=scan(c);return s.details.topHolderPercent===.8&&s.reviewRisks.some(r=>r.code==='holder_concentration_extreme')&&s.status!=='blocked';};
+ assert.ok(pairFlagged([{...result.custody[0],mint:wallet}]));
+ assert.ok(pairFlagged([{...result.custody[0],chainId:101}]));
  assert.ok(scan(result.custody).reviewRisks.some(r=>r.code==='holder_concentration_high'));
 });
 test('BNB display text names Four/Pancake rather than Pump and preserves observed block',async()=>{

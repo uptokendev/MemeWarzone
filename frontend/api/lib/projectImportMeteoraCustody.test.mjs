@@ -49,14 +49,16 @@ test('RPC failure returns no custody, so every holder still counts', async () =>
   assert.deepEqual(custody, []);
 });
 
-test('a Meteora pool vault holding more than 50% no longer blocks the import; a wallet still does', async () => {
+test('more than 50% in one holder never blocks the import (founder 2026-10-31): a pool vault is market, a wallet is a review finding', async () => {
   const mint = Keypair.generate().publicKey.toBase58(), vault = Keypair.generate().publicKey.toBase58();
   const custody = await readMeteoraPoolCustody({ mint, connection: rpc([{ address: vault, account: tokenAccount(DBC_AUTHORITY, mint) }]) });
   const raw = { holders: [{ token_account: vault, account: DBC_AUTHORITY, percent: '0.78' }, { token_account: Keypair.generate().publicKey.toBase58(), account: 'w', percent: '0.04' }] };
   const withVault = classifyProjectImportSecurity({ chainId: 101, raw, tokenAddress: mint, custody });
   assert.ok(!withVault.criticalRisks.some((risk) => risk.code === 'holder_concentration_extreme'));
   const without = classifyProjectImportSecurity({ chainId: 101, raw, tokenAddress: mint, custody: [] });
-  assert.ok(without.criticalRisks.some((risk) => risk.code === 'holder_concentration_extreme'));
+  assert.ok(!without.criticalRisks.some((risk) => risk.code === 'holder_concentration_extreme'));
+  assert.ok(without.reviewRisks.some((risk) => risk.code === 'holder_concentration_extreme'));
+  assert.notEqual(without.status, 'blocked');
 });
 
 import { readMeteoraImportEvidence } from './projectImportMeteoraCustody.js';

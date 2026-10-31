@@ -38,7 +38,7 @@ test("generic placeholders are display fallbacks only when resolved identity is 
 });
 
 test("registration is intentionally ownership-neutral", () => {
-  assert.match(importPage, /Your wallet signs the import request only\. It does not need to own the token\./);
+  assert.match(importPage, /Your wallet does not sign anything to import and does not need to own the token\./);
   assert.match(importPage, /Project ownership can be claimed separately later\./);
   assert.match(importPage, /createProjectImport/);
   assert.doesNotMatch(importPage, /resolveProjectEvmAuthority|claimProjectImport|REQUEST MANUAL REVIEW/);

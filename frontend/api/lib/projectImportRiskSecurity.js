@@ -45,7 +45,8 @@ function holderConcentration(raw, critical, review, context = {}) {
     percentages.push(percent);
   }
   const topPercent = percentages.length ? Math.max(...percentages) : null;
-  add(critical, topPercent !== null && topPercent > 0.5, "holder_concentration_extreme", `Largest listed non-market holder has ${(topPercent * 100).toFixed(1)}% of supply`);
+  // A big holder never blocks an import (founder 2026-10-31); it is shown as a review finding only.
+  add(review, topPercent !== null && topPercent > 0.5, "holder_concentration_extreme", `Largest listed non-market holder has ${(topPercent * 100).toFixed(1)}% of supply`);
   add(review, topPercent !== null && topPercent > 0.2 && topPercent <= 0.5, "holder_concentration_high", `Largest listed non-market holder has ${(topPercent * 100).toFixed(1)}% of supply`);
   return { topHolderPercent:topPercent, excludedMarketInventory };
 }
